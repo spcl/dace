@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+from dataclasses import dataclass
 import itertools
 import inspect
 import networkx as nx
@@ -269,7 +270,7 @@ def parse_dace_program(name: str,
             ProgramVisitor.progress_bar = None
             ProgramVisitor.start_time = 0
 
-    return sdfg
+    return sdfg, visitor
 
 
 # AST node types that are disallowed in DaCe programs
@@ -1027,6 +1028,13 @@ class TaskletTransformer(ExtNodeTransformer):
         return self.generic_visit(node)
 
 
+@dataclass
+class Variable(object):
+    node: ast.AST
+    type: str
+    value: Any
+
+
 class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
@@ -1049,11 +1057,12 @@ class ProgramVisitor(ExtNodeVisitor):
                  nested: bool = False,
                  tmp_idx: int = 0,
                  simplify: Optional[bool] = None,
+                 variables: Optional[Dict[str, Dict[str, Variable]]] = None,
                  variable_p2i_names: Optional[Dict[str, str]] = None,
-                 variable_i2p_names: Optional[Dict[str, str]] = None,
-                 variable_ast_nodes: Optional[Dict[str, str]] = None,
-                 variable_types: Optional[Dict[str, str]] = None,
-                 variable_values: Optional[Dict[str, str]] = None):
+                 variable_i2p_names: Optional[Dict[str, str]] = None):
+                #  variable_ast_nodes: Optional[Dict[str, str]] = None,
+                #  variable_types: Optional[Dict[str, str]] = None,
+                #  variable_values: Optional[Dict[str, str]] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1093,7 +1102,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.scope_vars = {k: k for k in scope_arrays.keys()}
         self.scope_vars.update(scope_vars)
         self.numbers = dict()  # Dict[str, str]
-        self.variables = dict()  # Dict[str, str]
+        # self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.slices: Dict[str, Tuple[str, Memlet]] = {}
@@ -1148,9 +1157,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
         self.variable_p2i_names: Dict[str, str] = dict()  # program_name: internal_name
         self.variable_i2p_names: Dict[str, str] = dict()  # internal_name: program_name
-        self.variable_ast_nodes: Dict[str, ast.AST] = dict() # internal_name: ast_node
-        self.variable_types: Dict[str, str] = dict()  # internal_name: type
-        self.variable_values: Dict[str, Any] = dict()  # internal_name: value
+        self.variables: Dict[str, Dict[str, Variable]] = dict() # internal_name: variable
+        # self.variable_ast_nodes: Dict[str, ast.AST] = dict() # internal_name: ast_node
+        # self.variable_types: Dict[str, str] = dict()  # internal_name: type
+        # self.variable_values: Dict[str, Any] = dict()  # internal_name: value
 
         # Variable types are:
         # - Data: Scalar, Array, View, Stream
@@ -1175,18 +1185,28 @@ class ProgramVisitor(ExtNodeVisitor):
             self.variable_i2p_names.update(variable_i2p_names)
         else:
             self.variable_i2p_names.update({k: k for k in scope_arrays.keys()})
-        if variable_ast_nodes:
-            self.variable_ast_nodes.update(variable_ast_nodes)
+        if variables:
+            self.variables.update(variables)
         else:
-            self.variable_ast_nodes.update({k: ast.Name(id=k, lineno=line_offset, col_offset=col_offset) for k in scope_arrays.keys()})
-        if variable_types:
-            self.variable_types.update(variable_types)
-        else:
-            self.variable_types.update({k: "Data" for k in scope_arrays.keys()})
-        if variable_values:
-            self.variable_values.update(variable_values)
-        else:
-            self.variable_values.update(scope_arrays)
+            self.variables.update({
+                k: Variable(
+                    node=ast.Name(id=k, lineno=line_offset, col_offset=col_offset),
+                    type="Data",
+                    value=v
+                ) for k, v in scope_arrays.items()
+            })
+        # if variable_ast_nodes:
+        #     self.variable_ast_nodes.update(variable_ast_nodes)
+        # else:
+        #     self.variable_ast_nodes.update({k: ast.Name(id=k, lineno=line_offset, col_offset=col_offset) for k in scope_arrays.keys()})
+        # if variable_types:
+        #     self.variable_types.update(variable_types)
+        # else:
+        #     self.variable_types.update({k: "Data" for k in scope_arrays.keys()})
+        # if variable_values:
+        #     self.variable_values.update(variable_values)
+        # else:
+        #     self.variable_values.update(scope_arrays)
 
     @classmethod
     def progress_count(cls) -> int:
@@ -1209,6 +1229,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 cls.progress_bar.update(number)
 
     def visit(self, node: ast.AST):
+        if node is None:
+            return None
         """Visit a node."""
         if hasattr(node, 'lineno'):
             self.current_lineinfo = dtypes.DebugInfo(node.lineno, node.col_offset, node.lineno, node.col_offset,
@@ -1312,12 +1334,12 @@ class ProgramVisitor(ExtNodeVisitor):
             while nodes:
                 nodes = _views_to_data(state, nodes)
 
-        # Try to replace transients with their python-assigned names
-        for pyname, arrname in self.variables.items():
-            if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
-                if self.sdfg.arrays[arrname].transient:
-                    if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
-                        self.sdfg.replace(arrname, pyname)
+        # # Try to replace transients with their python-assigned names
+        # for pyname, arrname in self.variables.items():
+        #     if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
+        #         if self.sdfg.arrays[arrname].transient:
+        #             if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
+        #                 self.sdfg.replace(arrname, pyname)
 
         propagate_states(self.sdfg)
         for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
@@ -3157,16 +3179,19 @@ class ProgramVisitor(ExtNodeVisitor):
             raise NotImplementedError
 
     def visit_NamedExpr(self, node):  # node : ast.NamedExpr
-        self._visit_assign(node, node.target, None)
+        return self._visit_assign(node, node.target, None)
 
     def visit_Assign(self, node: ast.Assign):
+        lhs = []
         # Compute first target
-        self._visit_assign(node, node.targets[0], None)
+        lhs.append(self._visit_assign(node, node.targets[0], None))
 
         # Then, for other targets make copies
         for target in node.targets[1:]:
             assign_from_first = ast.copy_location(ast.Assign(targets=[target], value=node.targets[0]), node)
-            self._visit_assign(assign_from_first, target, None)
+            lhs.append(self._visit_assign(assign_from_first, target, None))
+        
+        return tuple(lhs)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         type_name = rname(node.annotation)
@@ -3184,7 +3209,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if node.value is None and dtype is not None:  # Annotating type without assignment
             self.annotated_types[rname(node.target)] = dtype
             return
-        self._visit_assign(node, node.target, None, dtype=dtype)
+        return self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node: Union[ast.Assign, ast.AnnAssign], node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
@@ -3195,14 +3220,17 @@ class ProgramVisitor(ExtNodeVisitor):
         # If yes, maybe it is better to "append" with tuples and then flatten.
         # Removes complexity from lower-level visitor methods.
         lhs = []
-        if isinstance(node_target, (ast.Tuple, ast.List)):
+        if isinstance(node_target, ast.Tuple):
             for n in node_target.elts:
                 lhs.append(self.visit(n))
         else:
             lhs.append(self.visit(node_target))
 
         results = []
-        if isinstance(node.value, (ast.Tuple, ast.List)):
+        # NOTE: If the node's value is a tuple, we need to make a distinction between the following two cases:
+        # - a, b = c, d
+        # - a = (c, d)
+        if isinstance(node.value, ast.Tuple) and isinstance(node_target, ast.Tuple):
             for n in node.value.elts:
                 results.append(self.visit(n))
         else:
@@ -3211,6 +3239,29 @@ class ProgramVisitor(ExtNodeVisitor):
         # if len(results) != len(elts):
         if len(lhs) != len(results):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
+        
+        for target, result in zip(lhs, results):
+
+            lhs_var = self.variables[target]
+            rhs_var = self.variables[result]
+            if lhs_var.type == "Undefined":
+                lhs_var.type = rhs_var.type
+                lhs_var.value = rhs_var.value  # Do we need to deepcopy?
+            else:
+                raise NotImplementedError
+            # lhs_type = self.variable_types[target]
+            # if lhs_type == "Undefined":
+            #     self.variable_types[target] = self.variable_types[result]
+            #     self.variable_values[target] = self.variable_values[result]
+            # else:
+            #     raise NotImplementedError
+            
+            self._print_variable_info(target)
+        
+        if len(lhs) == 1:
+            return lhs[0]
+        else:
+            return tuple(lhs)
 
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
@@ -4674,6 +4725,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
+        # return self.visit(node.value)
         # Modify node value to become an expression
         new_node = ast.copy_location(ast.Expr(value=node.value), node)
 
@@ -4684,7 +4736,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 node)
             self._visit_assign(new_node, ast_tuple, None, is_return=True)
         else:
-            ast_name = ast.copy_location(ast.Name(id='__return'), node)
+            ast_name = ast.copy_location(ast.Name(id='__return', ctx=ast.Store()), node)
             self._visit_assign(new_node, ast_name, None, is_return=True)
 
     def visit_With(self, node, is_async=False):
@@ -4798,9 +4850,10 @@ class ProgramVisitor(ExtNodeVisitor):
             ntype = "Unknown"
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
-        self.variable_ast_nodes[internal_name] = node
-        self.variable_types[internal_name] = ntype
-        self.variable_values[internal_name] = nvalue
+        self.variables[internal_name] = Variable(node=node, type=ntype, value=nvalue)
+        # self.variable_ast_nodes[internal_name] = node
+        # self.variable_types[internal_name] = ntype
+        # self.variable_values[internal_name] = nvalue
         self._print_variable_info(internal_name)
         return internal_name
 
@@ -4825,9 +4878,10 @@ class ProgramVisitor(ExtNodeVisitor):
         internal_name = self._new_variable_name(node)
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
-        self.variable_ast_nodes[internal_name] = node
-        self.variable_types[internal_name] = "Undefined"
-        self.variable_values[internal_name] = None
+        self.variables[internal_name] = Variable(node=node, type="Undefined", value=None)
+        # self.variable_ast_nodes[internal_name] = node
+        # self.variable_types[internal_name] = "Undefined"
+        # self.variable_values[internal_name] = None
         self._print_variable_info(internal_name)
         return internal_name
 
@@ -4857,29 +4911,57 @@ class ProgramVisitor(ExtNodeVisitor):
             return result
 
     def visit_List(self, node: ast.List):
-        # Recursively loop over elements
-        return [self.visit(a) for a in node.elts]
+         # Lists always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variables[internal_name] = Variable(node=node, type="List", value=[self.visit(a) for a in node.elts])
+        self._print_variable_info(internal_name)
+        return internal_name
+        # # Recursively loop over elements
+        # return [self.visit(a) for a in node.elts]
 
     def visit_Tuple(self, node: ast.Tuple):
         # Slices always generate a new internal variable
         program_name = internal_name = self._new_variable_name(node)
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
-        self.variable_ast_nodes[internal_name] = node
-        self.variable_types[internal_name] = "Tuple"
-        self.variable_values[internal_name] = tuple(self.visit(a) for a in node.elts)
+        self.variables[internal_name] = Variable(node=node, type="Tuple", value=tuple(self.visit(a) for a in node.elts))
+        # self.variable_ast_nodes[internal_name] = node
+        # self.variable_types[internal_name] = "Tuple"
+        # self.variable_values[internal_name] = tuple(self.visit(a) for a in node.elts)
         self._print_variable_info(internal_name)
         return internal_name
 
     def visit_Set(self, node: ast.Set):
+        # Sets always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variables[internal_name] = Variable(node=node, type="Set", value=set(self.visit(a) for a in node.elts))
+        self._print_variable_info(internal_name)
+        return internal_name
         # Recursively loop over elements
         return set(self.visit(a) for a in node.elts)
 
     def visit_Dict(self, node: ast.Dict):
+        # Dictionaries always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variables[internal_name] = Variable(node=node, type="Dict", value=OrderedDict([(self.visit(k), self.visit(v)) for k, v in zip(node.keys, node.values)]))
+        self._print_variable_info(internal_name)
+        return internal_name
         # Recursively loop over elements and return an ordered dictionary (for callback consistency)
         return OrderedDict([(self.visit(k), self.visit(v)) for k, v in zip(node.keys, node.values)])
 
     def visit_Lambda(self, node: ast.Lambda):
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variables[internal_name] = Variable(node=node, type="Lambda", value=astutils.unparse(node))
+        self._print_variable_info(internal_name)
+        return internal_name
         # Return a string representation of the function
         return astutils.unparse(node)
     
@@ -4888,10 +4970,11 @@ class ProgramVisitor(ExtNodeVisitor):
         program_name = internal_name = self._new_variable_name(node)
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
-        self.variable_ast_nodes[internal_name] = node
-        self.variable_types[internal_name] = "Slice"
         lower, upper, step = self.visit(node.lower), self.visit(node.upper), self.visit(node.step)
-        self.variable_values[internal_name] = (lower, upper, step)
+        self.variables[internal_name] = Variable(node=node, type="Slice", value=(lower, upper, step))
+        # self.variable_ast_nodes[internal_name] = node
+        # self.variable_types[internal_name] = "Slice"
+        # self.variable_values[internal_name] = (lower, upper, step)
         self._print_variable_info(internal_name)
         return internal_name
 
@@ -4900,17 +4983,18 @@ class ProgramVisitor(ExtNodeVisitor):
     def _print_variable_info(self, internal_name: str):
 
         program_name = self.variable_i2p_names[internal_name]
-        ast_node = self.variable_ast_nodes[internal_name]
-        vtype = self.variable_types[internal_name]
-        value = self.variable_values[internal_name]
+        variable = self.variables[internal_name]
+        # ast_node = self.variable_ast_nodes[internal_name]
+        # vtype = self.variable_types[internal_name]
+        # value = self.variable_values[internal_name]
 
         report = f"""Variable {internal_name}:
-    Defined at line {ast_node.lineno}, column {ast_node.col_offset}
-    AST node type: {type(ast_node).__name__}
-    Python representation: {astutils.unparse(ast_node)}
+    Defined at line {variable.node.lineno}, column {variable.node.col_offset}
+    AST node type: {type(variable.node).__name__}
+    Python representation: {astutils.unparse(variable.node)}
     Program name: {program_name}
-    Variable type: {vtype}
-    Variable value: {value}
+    Variable type: {variable.type}
+    Variable value: {variable.value}
 """
         print(report)
 
@@ -4952,6 +5036,33 @@ class ProgramVisitor(ExtNodeVisitor):
                 result.append((operand, type(operand)))
 
         return result
+    
+    _op_dict = {
+        'Add': '+',
+        'UAdd': '+',
+        'Sub': '-',
+        'USub': '-',
+        'Mult': '*',
+        'Div': '/',
+        'FloorDiv': '//',
+        'Mod': '%',
+        'Pow': '**',
+        'LShift': '<<',
+        'RShift': '>>',
+        'BitOr': '|',
+        'BitXor': '^',
+        'BitAnd': '&',
+        'And': 'and',
+        'Or': 'or',
+        'Eq': '==',
+        'NotEq': '!=',
+        'Lt': '<',
+        'LtE': '<=',
+        'Gt': '>',
+        'GtE': '>=',
+        'Is': 'is',
+        'IsNot': 'is not'
+    }
 
     def _visit_op(self, node: Union[ast.UnaryOp, ast.BinOp, ast.BoolOp], op1: ast.AST, op2: ast.AST):
         opname = None
@@ -4959,6 +5070,25 @@ class ProgramVisitor(ExtNodeVisitor):
             opname = type(node.op).__name__
         except:
             pass
+
+        op1_name = self.visit(op1)
+        op1_var = self.variables[op1_name]
+        if not op1_var.type.endswith('Constant'):
+            raise NotImplementedError
+        
+        if not op2 is None:
+            op2_name = self.visit(op2)
+            op2_var = self.variables[op2_name]
+            if not op2_var.type.endswith('Constant'):
+                raise NotImplementedError
+
+        if op2 is None:
+            out_value = eval(f"{self._op_dict[opname]} ({op1_var.value})")
+        else:
+            out_value = eval(f"({op1_var.value}) {self._op_dict[opname]} ({op2_var.value})")
+        new_node = ast.Constant(value=out_value, kind=type(out_value).__name__)
+        ast.copy_location(new_node, node)
+        return self.visit(new_node)
 
         # Parse operands
         op1_parsed = self._gettype(op1)
@@ -5024,7 +5154,11 @@ class ProgramVisitor(ExtNodeVisitor):
         last = node.values[0]
         # Syntax of BoolOp is a list of values, we parse left to right
         for i in range(1, len(node.values)):
-            last = self._visit_op(node, last, node.values[i])
+            if isinstance(last, str):
+                last_node = self.variable_ast_nodes[last]
+            else:
+                last_node = last
+            last = self._visit_op(node, last_node, node.values[i])
         return last
 
     def visit_Compare(self, node: ast.Compare):
@@ -5176,32 +5310,32 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse subscript value
         nvalue_dname = astutils.unparse(node.value)  # "Debug" name
         nvalue_iname = self.visit(node.value)  # Internal name
-        nvalue_type = self.variable_types[nvalue_iname]
-        nvalue_value = self.variable_values[nvalue_iname]
-        # print(nvalue_dname, nvalue_iname, nvalue_type, nvalue_value)
+        nvalue_var = self.variables[nvalue_iname]
+        # nvalue_type = self.variable_types[nvalue_iname]
+        # nvalue_value = self.variable_values[nvalue_iname]
 
         # Type checks
         # Undefined variables cannot be subscripted
-        if nvalue_type == "Undefined":
+        if nvalue_var.type == "Undefined":
             raise DaceSyntaxError(self, node, f"Undefined variable {nvalue_dname} cannot be subscripted.")
         # NOTE: Allow only Data slicing (for now)
-        if not nvalue_type.endswith("Data"):
-            raise DaceSyntaxError(self, node, f"{nvalue_type} value {nvalue_dname} cannot be subscripted.")
+        if not nvalue_var.type.endswith("Data"):
+            raise DaceSyntaxError(self, node, f"{nvalue_var.type} value {nvalue_dname} cannot be subscripted.")
         # Value checks
         # Only Arrays and Views can be subscripted
-        if nvalue_type == "Data" and not isinstance(nvalue_value, data.Array):
-            raise DaceSyntaxError(self, node, f"{nvalue_dname} is {type(nvalue_value)} and cannot be subscripted.")
+        if nvalue_var.type == "Data" and not isinstance(nvalue_var.value, data.Array):
+            raise DaceSyntaxError(self, node, f"{nvalue_dname} is {type(nvalue_var.value)} and cannot be subscripted.")
 
         # Parse subscript slice
         nslice_dname = astutils.unparse(node.slice)  # "Debug" name
         nslice_iname = self.visit(node.slice)  # Internal name
-        nslice_type = self.variable_types[nslice_iname]
-        nslice_value = self.variable_values[nslice_iname]
-        # print(nslice_dname, nslice_iname, nslice_type, nslice_value)
+        nslice_var = self.variables[nslice_iname]
+        # nslice_type = self.variable_types[nslice_iname]
+        # nslice_value = self.variable_values[nslice_iname]
 
         # Type checks
         # NOTE: Only allow NumConstants and Slices (for now)
-        if nslice_type not in ("Symbol", "NumConstant", "Slice"):
+        if nslice_var.type not in ("Symbol", "NumConstant", "Slice"):
             raise DaceSyntaxError(self, node, f"Subscript slices may only be numerical constants and (Python) Slices.")
         # Value checks
         # None?
@@ -5209,10 +5343,11 @@ class ProgramVisitor(ExtNodeVisitor):
         program_name = internal_name = self._new_variable_name(node)
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
-        self.variable_ast_nodes[internal_name] = node
-        # print(astutils.unparse(node))
-        self.variable_types[internal_name] = "SlicedData"
-        self.variable_values[internal_name] = {"data": nvalue_iname, "slice": nslice_iname}
+        self.variables[internal_name] = Variable(node=node, type="SlicedData", value={"data": nvalue_iname, "slice": nslice_iname})
+        # self.variable_ast_nodes[internal_name] = node
+        # # print(astutils.unparse(node))
+        # self.variable_types[internal_name] = "SlicedData"
+        # self.variable_values[internal_name] = {"data": nvalue_iname, "slice": nslice_iname}
         self._print_variable_info(internal_name)
         return internal_name
 
