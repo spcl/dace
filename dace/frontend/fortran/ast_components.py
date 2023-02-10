@@ -1,5 +1,4 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from symbol import func_type
 from fparser.two import Fortran2008
 from fparser.two import Fortran2003
 from fparser.two import symbol_table
