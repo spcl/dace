@@ -745,13 +745,17 @@ def unsqueeze_memlet(internal_memlet: Memlet,
             to_unsqueeze = ones
 
         result.subset.unsqueeze(to_unsqueeze)
+        internal_offset = list(internal_offset)
+        for axis in sorted(to_unsqueeze):
+            internal_offset.insert(axis, 0)
     elif len(internal_subset) > len(external_memlet.subset):
         # Try to squeeze internal memlet
-        result.subset.squeeze()
+        remaining = result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Unexpected extra dimensions in internal memlet '
                              'while un-squeezing memlet.\nExternal memlet: %s\n'
                              'Internal memlet: %s' % (external_memlet, internal_memlet))
+        internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
     external_subset = external_memlet.subset.offset_new(external_offset, False)
     result.subset.offset(external_subset, False)
