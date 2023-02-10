@@ -685,7 +685,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    internal_offset = nstate.parent.arrays[inner_edge.data.data].offset
+                    internal_offset = state.parent.arrays[inner_edge.data.data].offset
                     external_offset = state.parent.arrays[top_edge.data.data].offset
                     new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, internal_offset=internal_offset, external_offset=external_offset)
                 if inputs:
