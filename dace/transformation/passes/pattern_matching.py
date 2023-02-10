@@ -166,22 +166,36 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tsdfg)
 
-        original_sdfg = copy.deepcopy(sdfg)
-        failed = False
-        try:
+        if Config.get('debugpass') == True:
+            original_sdfg = copy.deepcopy(sdfg)
+            sdfg_name = f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg"
+            try:
+                applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+            except Exception as e:
+                original_sdfg.save(sdfg_name)
+                print(f'Exception occured when applying {type(match).__name__} on SDFG {match.sdfg_id} and '
+                      f'SDFGState{match.state_id}.')
+                print(f'Last correct SDFG: {sdfg_name}')
+                raise e
+            finally:
+                try:
+                    sdfg.validate()
+                except Exception as e:
+                    original_sdfg.save(sdfg_name)
+                    print(f'Validation failed after applying {type(match).__name__} on SDFG {match.sdfg_id} and '
+                          f'SDFGState{match.state_id}.')
+                    print(f'Last correct SDFG: {sdfg_name}')
+                    raise e
+        else:
             applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
-        except:
-            failed = True
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
                   end='')
-        if self.validate_all or failed:
+        if self.validate_all:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
-                original_sdfg.save(f'before_{match_name}.sdfg')
-                print(f"Failure when applying {match_name} on SDFG {match.sdfg_id} and SDFGState {match.state_id}")
                 raise InvalidSDFGError(
                     f'Validation failed after applying {match_name}. '
                     f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
