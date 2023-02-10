@@ -2,6 +2,7 @@
 """ Contains functions related to pattern matching in transformations. """
 
 import collections
+import copy
 from dataclasses import dataclass
 import time
 
@@ -165,15 +166,22 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tsdfg)
 
-        applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+        original_sdfg = copy.deepcopy(sdfg)
+        failed = False
+        try:
+            applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+        except:
+            failed = True
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
                   end='')
-        if self.validate_all:
+        if self.validate_all or failed:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:
+                original_sdfg.save(f'before_{match_name}.sdfg')
+                print(f"Failure when applying {match_name} on SDFG {match.sdfg_id} and SDFGState {match.state_id}")
                 raise InvalidSDFGError(
                     f'Validation failed after applying {match_name}. '
                     f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
