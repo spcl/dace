@@ -283,7 +283,12 @@ class For_Stmt_Node(FNode):
 
 class Map_Stmt_Node(For_Stmt_Node):
     _attributes = ()
-    _fields = ()
+    _fields = (
+        'init',
+        'cond',
+        'body',
+        'iter',
+    )
 
 
 class If_Stmt_Node(FNode):

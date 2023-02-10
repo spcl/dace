@@ -575,7 +575,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
         if isinstance(i, ast_internal_classes.ParDecl_Node):
             if i.type == "ALL":
                 ranges.append([
-                    ast_internal_classes.Int_Literal_Node(value="0"),
+                    ast_internal_classes.Int_Literal_Node(value="1"),
                     ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
                                                          type="INTEGER",
                                                          arrname=node.name,
@@ -659,7 +659,7 @@ class ArrayToLoop(NodeTransformer):
                         line_number=child.line_number)
                     cond = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                        op="<",
+                        op="<=",
                         rval=finalrange,
                         line_number=child.line_number)
                     iter = ast_internal_classes.BinOp_Node(
