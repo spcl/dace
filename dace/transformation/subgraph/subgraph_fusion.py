@@ -847,34 +847,46 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for map_entry, map_exit in zip(map_entries, map_exits):
             # handle inputs
-            # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
                 out_edges = [
                     e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
+                is_dynamic = False
+                if edge.dst_conn[:3] != "IN_":
+                    is_dynamic = True
+                    dyn_in_conn = edge.dst_conn
 
                 if src in in_nodes:
                     in_conn = None
                     out_conn = None
-                    if src in inconnectors_dict:
+                    if not is_dynamic and src in inconnectors_dict:
                         # for access nodes only
                         in_conn = inconnectors_dict[src][1]
                         out_conn = inconnectors_dict[src][2]
 
                     else:
-                        next_conn = global_map_entry.next_connector()
-                        in_conn = 'IN_' + next_conn
-                        out_conn = 'OUT_' + next_conn
-                        global_map_entry.add_in_connector(in_conn)
-                        global_map_entry.add_out_connector(out_conn)
+                        if is_dynamic:
+                            if dyn_in_conn not in global_map_entry.in_connectors:
+                                global_map_entry.add_in_connector(dyn_in_conn)
+                            in_conn = dyn_in_conn
+                            if out_edges:
+                                if dyn_in_conn not in global_map_entry.out_connectors:
+                                    global_map_entry.add_out_connector(dyn_in_conn)
+                                out_conn = dyn_in_conn
+                        else:
+                            next_conn = global_map_entry.next_connector()
+                            in_conn = 'IN_' + next_conn
+                            out_conn = 'OUT_' + next_conn
+                            global_map_entry.add_in_connector(in_conn)
+                            global_map_entry.add_out_connector(out_conn)
 
-                        if isinstance(src, nodes.AccessNode):
-                            inconnectors_dict[src] = (edge, in_conn, out_conn)
+                            if isinstance(src, nodes.AccessNode):
+                                inconnectors_dict[src] = (edge, in_conn, out_conn)
 
                         # reroute in edge via global_map_entry
-                        self.copy_edge(graph, edge, new_dst = global_map_entry, \
-                                                        new_dst_conn = in_conn)
+                        if not (is_dynamic and list(graph.in_edges_by_connector(global_map_entry, in_conn))):
+                            self.copy_edge(graph, edge, new_dst = global_map_entry, new_dst_conn = in_conn)
 
                     # map out edges to new map
                     for out_edge in out_edges:
