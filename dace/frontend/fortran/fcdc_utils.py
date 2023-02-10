@@ -112,6 +112,7 @@ class TaskletWriter:
         }
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
+        #At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
         return f"ERROR{node.type}"
 
     def write_code(self, node: ast_internal_classes.FNode):
@@ -166,6 +167,8 @@ class TaskletWriter:
             if name == self.input[0]:
                 if self.input[0] != self.input_changes[0]:
                     name = self.input_changes[0]
+                else:
+                    pass
                 self.input.pop(0)
                 self.input_changes.pop(0)
         return name
