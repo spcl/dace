@@ -685,7 +685,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data)
+                    internal_offset = nstate.parent.arrays[inner_edge.data.data].offset
+                    external_offset = state.parent.arrays[top_edge.data.data].offset
+                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, internal_offset=internal_offset, external_offset=external_offset)
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
                         dst = inner_to_outer[inner_edge.dst]
@@ -706,7 +708,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 # Modify all memlets going forward/backward
                 def traverse(mtree_node):
                     result.add(mtree_node.edge)
-                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data, top_edge.data)
+                    internal_offset = state.parent.arrays[mtree_node.edge.data.data].offset
+                    external_offset = state.parent.arrays[top_edge.data.data].offset
+                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data, top_edge.data, internal_offset=internal_offset, external_offset=external_offset)
                     for child in mtree_node.children:
                         traverse(child)
 
