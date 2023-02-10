@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
+import copy
 import dace
 import sympy
 from dace.sdfg import infer_types
@@ -10,6 +11,7 @@ from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
+import time
 from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
@@ -74,7 +76,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            # sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:
@@ -130,7 +132,26 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 cf.expansion_split = fusion_condition.expansion_split
                 cf.stencil_strides = fusion_condition.stencil_strides
 
-                cf.apply(sdfg)
+                if config.Config.get('debugpass') == True:
+                    original_sdfg = copy.deepcopy(sdfg)
+                    sdfg_name = f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg"
+                    try:
+                        cf.apply(sdfg) 
+                    except Exception as e:
+                        original_sdfg.save(sdfg_name)
+                        print(f'Exception occured when applying {type(cf).__name__}.')
+                        print(f'Last correct SDFG: {sdfg_name}')
+                        raise e
+                    finally:
+                        try:
+                            sdfg.validate()
+                        except Exception as e:
+                            original_sdfg.save(sdfg_name)
+                            print(f'Validation failed after applying {type(cf).__name__}.')
+                            print(f'Last correct SDFG: {sdfg_name}')
+                            raise e
+                else:
+                    cf.apply(sdfg)
                 applied_transformations += 1
 
             if recursive:
