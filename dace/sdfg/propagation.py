@@ -1047,7 +1047,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                internal_offset = sdfg.arrays[internal_memlet.data].offset
+                external_offset = parent_sdfg.arrays[iedge.data.data].offset
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True, internal_offset=internal_offset, external_offset=external_offset)
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1067,7 +1069,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                internal_offset = sdfg.arrays[internal_memlet.data].offset
+                external_offset = parent_sdfg.arrays[oedge.data.data].offset
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True, internal_offset=internal_offset, external_offset=external_offset)
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                     if rng[1] + 1 == s:
