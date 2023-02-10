@@ -402,6 +402,22 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     delete __state->gpu_context;
 }}
 
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
+{{
+    if (streamid < 0 || streamid >= {nstreams})
+        return false;
+
+    __state->gpu_context->streams[streamid] = stream;
+
+    return true;
+}}
+
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
+{{
+    for (int i = 0; i < {nstreams}; ++i)
+        __state->gpu_context->streams[i] = stream;
+}}
+
 {localcode}
 """.format(params=params_comma,
            initcode=initcode.getvalue(),
