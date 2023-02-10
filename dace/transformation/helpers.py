@@ -713,20 +713,18 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
 
-        :param internal_memlet: The internal memlet (inside nested SDFG)
-                                before modification.
+        :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
-        :param use_src_subset: If both sides of the memlet refer to same array,
-                               prefer source subset.
-        :param use_dst_subset: If both sides of the memlet refer to same array,
-                               prefer destination subset.
+        :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
+        :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
+        :param internal_offset: The internal memlet's data descriptor offset.
+        :param external_offset: The external memlet's data descriptor offset.
         :return: Offset Memlet to set on the resulting graph.
     """
-    internal_offset = internal_offset or [0] * len(internal_memlet.data)
-    external_offset = external_offset or [0] * len(external_memlet.data)
-
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    internal_offset = internal_offset or [0] * len(internal_subset)
+    external_offset = external_offset or [0] * len(external_memlet.subset)
     internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
     result.subset = internal_subset
@@ -777,11 +775,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
 
     # Actual result preserves 'other subset' and placement of subsets in memlet
     actual_result = Memlet.from_memlet(internal_memlet)
-    if actual_result.subset != internal_subset and actual_result.other_subset:
-        actual_result.other_subset = result.subset
-    else:
-        actual_result.data = external_memlet.data
-        actual_result.subset = result.subset
+    actual_result.data = external_memlet.data
+    actual_result.subset = result.subset
     actual_result._is_data_src = internal_memlet._is_data_src
 
     return actual_result
