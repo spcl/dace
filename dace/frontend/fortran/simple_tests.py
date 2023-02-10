@@ -1,6 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
+from fparser.common.readfortran import FortranFileReader
 from fparser.two.parser import ParserFactory
 import sys, os
 import numpy as np
@@ -9,7 +10,14 @@ current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 
+from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
+from fparser.two.symbol_table import SymbolTable
+
+import dace.frontend.fortran.ast_components as ast_components
+import dace.frontend.fortran.ast_transforms as ast_transforms
+import dace.frontend.fortran.fcdc_utils as fcdc_utils
+import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_simplify():
@@ -268,6 +276,32 @@ def test_fortran_frontend_array_access():
     sdfg(d_0=a)
     assert (a[0] == 42)
     assert (a[1] == 5.5)
+    assert (a[2] == 42)
+
+
+def test_fortran_frontend_array_3dmap():
+    test_string = """
+                    PROGRAM array_3dmap_test
+                    implicit none
+                    double precision d(4,4,4)
+                    CALL array_3dmap_test_function(d)
+                    end
+
+                    SUBROUTINE array_3dmap_test_function(d)
+                    double precision d(4,4,4)
+
+                    d(:,:,:)=7
+                    
+                    END SUBROUTINE array_3dmap_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_3dmap_test")
+    sdfg.simplify(verbose=True)
+    from dace.transformation.auto import auto_optimize as aopt
+    aopt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
+    a = np.full([4, 4, 4], 42, order="F", dtype=np.float64)
+    sdfg(d_0=a)
+    assert (a[0, 0, 0] == 7)
+    assert (a[3, 3, 3] == 7)
 
 
 def test_fortran_frontend_array_ranges():
@@ -485,19 +519,20 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_access()
-    test_fortran_frontend_simplify()
-    test_fortran_frontend_input_output_connector()
-    test_fortran_frontend_view_test()
-    test_fortran_frontend_view_test_2()
-    test_fortran_frontend_view_test_3()
-    test_fortran_frontend_array_ranges()
-    test_fortran_frontend_if1()
-    test_fortran_frontend_loop1()
-    test_fortran_frontend_function_statement1()
+    test_fortran_frontend_array_3dmap()
+    #test_fortran_frontend_array_access()
+    #test_fortran_frontend_simplify()
+    #test_fortran_frontend_input_output_connector()
+    #test_fortran_frontend_view_test()
+    #test_fortran_frontend_view_test_2()
+    #test_fortran_frontend_view_test_3()
+    #test_fortran_frontend_array_ranges()
+    #test_fortran_frontend_if1()
+    #test_fortran_frontend_loop1()
+    #test_fortran_frontend_function_statement1()
 
-    test_fortran_frontend_pow1()
-    test_fortran_frontend_pow2()
-    test_fortran_frontend_sign1()
+    #test_fortran_frontend_pow1()
+    #test_fortran_frontend_pow2()
+    #test_fortran_frontend_sign1()
     #test_fortran_frontend_scalar()
     print("All tests passed")
