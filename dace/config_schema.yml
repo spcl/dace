@@ -792,6 +792,12 @@ required:
         default: false
         title: Debug printing
         description: Enable verbose printouts.
+    
+    debugpass:
+        type: bool
+        default: false
+        title: Debug transformation pass
+        description: Enable saving SDFG before applying a (sub-)pass.
 
     progress:
         type: bool
