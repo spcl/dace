@@ -1,17 +1,16 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 import dace.sdfg.utils
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
-                                              to_cublas_computetype)
+from dace.libraries.blas.blas_helpers import (to_blastype, check_access, to_cublas_computetype)
 from dace.libraries.sparse import environments
 import numpy as np
+
 
 def _is_complex(dtype):
     if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
@@ -70,8 +69,7 @@ def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
             result[edge.src_conn] = (edge, outer_array, size, strides)
     for name, res in result.items():
         if res is None:
-            raise ValueError("Matrix multiplication connector "
-                             "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
     return result
 
 
@@ -146,7 +144,7 @@ class ExpandCSRMVPure(ExpandTransformation):
 
         # data -> outer map
         outer_map_entry, outer_map_exit = nstate.add_map("spmv_1", dict(i='0:' + str(array_a_rows.shape[0] - 1)))
-        
+
         outer_map_entry.add_in_connector("IN__a_vals")
         outer_map_entry.add_in_connector("IN__a_cols")
         outer_map_entry.add_in_connector("IN__a_rows")
@@ -181,8 +179,7 @@ class ExpandCSRMVPure(ExpandTransformation):
                         mm.Memlet.from_array("_a_cols", array_a_cols))
 
         inner_map_entry.add_in_connector("IN_tmp_b")
-        nstate.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", 
-                        mm.Memlet.from_array("_b", array_b))
+        nstate.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", mm.Memlet.from_array("_b", array_b))
 
         inner_map_entry.add_out_connector("OUT_tmp_a_vals")
         inner_map_entry.add_out_connector("OUT_tmp_a_cols")
@@ -196,25 +193,24 @@ class ExpandCSRMVPure(ExpandTransformation):
                                          },
                                          outputs={'lookup': None},
                                          code="lookup = __ind_b[index_a_cols_0]")
-        
+
         nstate.add_edge(inner_map_entry, "OUT_tmp_a_cols", tasklet_ind, "index_a_cols_0",
                         mm.Memlet.simple("_a_cols", "j"))
-        nstate.add_edge(inner_map_entry, "OUT_tmp_b", tasklet_ind, "__ind_b",
-                        mm.Memlet.from_array("_b", array_b))
+        nstate.add_edge(inner_map_entry, "OUT_tmp_b", tasklet_ind, "__ind_b", mm.Memlet.from_array("_b", array_b))
 
         # inner map -> spmv
         tasklet_mult = nstate.add_tasklet("spmv", {
-                                            "__a": None,
-                                            "__b": None
-                                        }, {"__o": None},
-                                        code=f"__o = {node.alpha} * (__a * __b)")
-        
+            "__a": None,
+            "__b": None
+        }, {"__o": None},
+                                          code=f"__o = {node.alpha} * (__a * __b)")
+
         nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
         nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
 
         # indirection -> spmv
         nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
-        
+
         # spmv -> inner map
         inner_map_exit.add_in_connector("IN__c_1")
         nstate.add_edge(tasklet_mult, "__o", inner_map_exit, "IN__c_1",
@@ -223,9 +219,8 @@ class ExpandCSRMVPure(ExpandTransformation):
         # inner map -> outer map
         inner_map_exit.add_out_connector("OUT__c_1")
         outer_map_exit.add_in_connector("IN__c")
-        nstate.add_edge(inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c",
-                        mm.Memlet("_c[i]", data="_c"))
-        
+        nstate.add_edge(inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c", mm.Memlet("_c[i]", data="_c"))
+
         # outer map -> data
         outer_map_exit.add_out_connector("OUT__c")
         nstate.add_edge(outer_map_exit, "OUT__c", c_node, None, mm.Memlet.from_array("_c", array_c))
@@ -241,7 +236,7 @@ class ExpandCSRMVMKL(ExpandTransformation):
     environments = [environments.IntelMKLSparse]
 
     @staticmethod
-    def expansion(node: dace.sdfg.nodes.LibraryNode, state: SDFGState, sdfg: SDFG):
+    def expansion(node, state: SDFGState, sdfg: SDFG):
         node.validate(sdfg, state)
 
         operands = _get_csrmv_operands(node, state, sdfg)
@@ -502,7 +497,7 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
 @dace.library.node
 class CSRMV(dace.sdfg.nodes.LibraryNode):
     """
-    Executes alpha * (A @ B) + beta * C. C should be unidirectionally broadcastable (ONNX terminology) to A @ b. TODO:why
+    Executes alpha * (A @ B) + beta * C. C should be unidirectionally broadcastable (ONNX terminology) to A @ b.
     A is a sparse matrix in CSR format, while b and c are dense vectors.
     """
 
@@ -559,11 +554,9 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one output from matrix-vector product")
         if len(size_a_rowptr) != 1 or len(size_a_cols) != 1 or len(size_a_vals) != 1:
             raise ValueError("Expected rowptr,cols,vals of CSR matrix A as 1D array inputs, got {},{},{}".format(
-                len(size_a_rowptr), len(size_a_cols), len(size_a_vals)
-            ))
+                len(size_a_rowptr), len(size_a_cols), len(size_a_vals)))
         if len(size_b) != 1:
             raise ValueError("Matrix-vector product only supported on vector B")
-        
 
         A_rows = size_a_rowptr[0] - 1
         out_memlet = out_edges[0].data
@@ -574,6 +567,3 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Matrix-vector product only supported on vector C")
         if size_in_c is not None and size_in_c != size_out_c:
             raise ValueError("Input vector C must match output vector C.")
-
-
-

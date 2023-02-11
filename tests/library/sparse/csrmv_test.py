@@ -16,8 +16,8 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     sdfg.add_array("A_val", shape=(NNZ, ), dtype=dtype, transient=False)
     sdfg.add_array("A_row", shape=(N + 1, ), dtype=dace.int32, transient=False)
     sdfg.add_array("A_col", shape=(NNZ, ), dtype=dace.int32, transient=False)
-    sdfg.add_array("C", shape=(N,), dtype=dtype, transient=False)
-    sdfg.add_array("B", shape=(M,), dtype=dtype, transient=False)
+    sdfg.add_array("C", shape=(N, ), dtype=dtype, transient=False)
+    sdfg.add_array("B", shape=(M, ), dtype=dtype, transient=False)
 
     state = sdfg.add_state("state", is_start_state=True)
     a_row_node = state.add_access("A_row")
@@ -113,5 +113,3 @@ if __name__ == "__main__":
     test_csrmv(1.0, 1.0, "cuSPARSE", dace.float64)
     test_csrmv(2.0, 2.0, "cuSPARSE", dace.float32)
     test_csrmv(2.0, 2.0, "cuSPARSE", dace.float64)
-
-
