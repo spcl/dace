@@ -567,7 +567,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           rangepos: list,
                           count: int,
                           newbody: list,
-                          declaration=True):
+                          declaration=True,
+                          is_sum_to_loop=False):
 
     currentindex = 0
     indices = []
@@ -599,8 +600,13 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     ]))
             indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
         else:
-            indices.append(
-                ast_internal_classes.BinOp_Node(op="-", lval=i, rval=ast_internal_classes.Int_Literal_Node(value="1")))
+            #if is_sum_to_loop:
+            indices.append(i)
+        #else:
+        #    indices.append(
+        #        ast_internal_classes.BinOp_Node(op="-",
+        #                                        lval=i,
+        #                                        rval=ast_internal_classes.Int_Literal_Node(value="1")))
         currentindex += 1
 
     node.indices = indices
@@ -722,7 +728,7 @@ class SumToLoop(NodeTransformer):
                 rangeposrval = []
                 rangesrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, False)
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, False, True)
 
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,
@@ -743,7 +749,7 @@ class SumToLoop(NodeTransformer):
                         line_number=child.line_number)
                     cond = ast_internal_classes.BinOp_Node(
                         lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                        op="<",
+                        op="<=",
                         rval=finalrange,
                         line_number=child.line_number)
                     iter = ast_internal_classes.BinOp_Node(
