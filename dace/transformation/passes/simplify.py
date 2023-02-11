@@ -79,18 +79,21 @@ class SimplifyPass(ppl.FixedPointPipeline):
             for sd in sdfg.all_sdfgs_recursive():
                 if config.Config.get('debugpass') == True:
                     original_sdfg = copy.deepcopy(sd)
+                    sdfg_name = f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg"
                     try:
                         subret = p.apply_pass(sd, state)  
                     except Exception as e:
-                        original_sdfg.save(f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg")
+                        original_sdfg.save(sdfg_name)
                         print(f'Exception occured when applying {type(p).__name__}.')
+                        print(f'Last correct SDFG: {sdfg_name}')
                         raise e
                     finally:
                         try:
                             sd.validate()
                         except Exception as e:
-                            original_sdfg.save(f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg")
+                            original_sdfg.save(sdfg_name)
                             print(f'Validation failed after applying {type(p).__name__}.')
+                            print(f'Last correct SDFG: {sdfg_name}')
                             raise e
                 else:
                     subret = p.apply_pass(sd, state)
