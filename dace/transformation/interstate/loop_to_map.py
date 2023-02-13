@@ -477,12 +477,18 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
+        repl_dict = dict()
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of
             # the loop expresions
             access_node = body.add_read(rd)
-            body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
+            # Find new name
+            new_rd = sdfg._find_new_name(rd)
+            repl_dict[rd] = new_rd
+            body.add_memlet_path(access_node, entry, dst_conn=new_rd, memlet=memlet.Memlet(rd))
+        if repl_dict:
+            map.range.replace(repl_dict)
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
