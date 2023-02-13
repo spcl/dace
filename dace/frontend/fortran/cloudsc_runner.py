@@ -26,7 +26,7 @@ if __name__ == "__main__":
     #testname = "arrayrange1"
     #testname = "cloudsc2ad"
     #testname = "cloudsc2nl-minimal"
-    testname = "cloudscexp2"
+    testname = "cloudscexp2-marcin"
     reader = FortranFileReader(os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90"))
     ast = parser(reader)
     tables = SymbolTable
