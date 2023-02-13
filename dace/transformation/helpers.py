@@ -776,8 +776,15 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     # Actual result preserves 'other subset' and placement of subsets in memlet
     actual_result = Memlet.from_memlet(internal_memlet)
     actual_result.data = external_memlet.data
-    actual_result.subset = result.subset
-    actual_result._is_data_src = internal_memlet._is_data_src
+    if actual_result.other_subset:
+        if internal_memlet.data == external_memlet.data:
+            actual_result.subset = result.subset
+        else:
+            actual_result.other_subset = actual_result.subset
+            actual_result.subset = result.subset
+            actual_result._is_data_src = not actual_result._is_data_src
+    else:
+        actual_result.subset = result.subset
 
     return actual_result
 

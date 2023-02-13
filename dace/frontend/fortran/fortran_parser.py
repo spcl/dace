@@ -669,14 +669,15 @@ class AST_translator:
             arrays = self.get_arrays_in_context(sdfg)
             if i.name in sdfg.symbols:
                 continue
-            if mapped_name in arrays and mapped_name not in input_names:
+            if mapped_name in arrays:  # and mapped_name not in input_names:
+                count = input_names.count(mapped_name)
                 input_names.append(mapped_name)
-                input_names_tasklet.append(i.name)
+                input_names_tasklet.append(i.name + "_" + str(count) + "_in")
 
         substate = fcdc_utils.add_simple_state_to_sdfg(
             self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]))
 
-        input_names_tasklet = [i_t + "_in" for i_t in input_names]
+        #input_names_tasklet = [i_t + "_in" for i_t in input_names]
         output_names_changed = [o_t + "_out" for o_t in output_names]
         #output_names_changed = [o_t for o_t in output_names_tasklet]
         #output_names_dict = {on: dace.pointer(dace.int32) for on in output_names_changed}
@@ -741,7 +742,9 @@ class AST_translator:
                 special_list_in[self.name_mapping[sdfg][libstate] + "_task"] = dtypes.pointer(
                     sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
                 special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
-            used_vars = [node for node in ast_transforms.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)]
+            used_vars = [
+                node for node in ast_transforms.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)
+            ]
 
             for i in used_vars:
                 for j in sdfg.arrays:
