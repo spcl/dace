@@ -1183,36 +1183,63 @@ class CPUCodeGen(TargetCodeGenerator):
         defined = None
 
         if var_type in [DefinedType.Scalar, DefinedType.Pointer, DefinedType.ArrayInterface]:
-            if output:
-                if is_pointer and var_type == DefinedType.ArrayInterface:
-                    result += "{} {} = {};".format(memlet_type, local_name, expr)
-                elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
-                    # Dynamic WCR memlets start uninitialized
-                    result += "{} {};".format(memlet_type, local_name)
-                    defined = DefinedType.Scalar
 
+            # FIXME: fix for cloudsc. We have a scalar loaded from an array that is incorrectly placed in GPU memory.
+            # This might not be needed once the other issue is fixed.
+            # FIXME: this code should not be here - we should refactor this to a generic C++ codegen
+            # that dispatches to the appropriate backend.
+            from dace.codegen.targets import cuda
+            # Handle CPU code reading data from GPU memory.
+            if cuda.is_gpu_data(desc) and not cuda.CUDACodeGen._in_device_code:
+
+                # Dynamic memlet does not play a role here - we always need to read from the GPU.
+
+                # First define the scalar.
+                if not is_scalar:
+                    raise NotImplementedError('Cannot load a non-scalar from GPU array')
+                result += f'{memlet_type} {local_name};\n'
+
+                # FIXME: this should be in the CUDA codegen
+                # FIXME: add support for hip (different backend)
+                # FIXME: we should synchronize here, but we don't know the stream
+                result += f'cudaMemcpy(&{local_name},'\
+                    f'&{expr},'\
+                    f'sizeof({desc.dtype}),'\
+                    'cudaMemcpyDeviceToHost);'
+
+            # Handle CPU code reading data from CPU memory and GPU code reading data from GPU memory.
             else:
-                if not memlet.dynamic:
-                    if is_scalar:
-                        # We can pre-read the value
+                # FIXME: what is output in this context? Unclear, missing documentation.
+                if output:
+                    if is_pointer and var_type == DefinedType.ArrayInterface:
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
-                    else:
-                        # constexpr arrays
-                        if memlet.data in self._frame.symbols_and_constants(sdfg):
-                            result += "const {} {} = {};".format(memlet_type, local_name, expr)
-                        else:
-                            # Pointer reference
-                            result += "{} {} = {};".format(ctypedef, local_name, expr)
+                    elif not memlet.dynamic or (memlet.dynamic and memlet.wcr is not None):
+                        # Dynamic WCR memlets start uninitialized
+                        result += "{} {};".format(memlet_type, local_name)
+                        defined = DefinedType.Scalar
+
                 else:
-                    # Variable number of reads: get a const reference that can
-                    # be read if necessary
-                    memlet_type = 'const %s' % memlet_type
-                    if is_pointer:
-                        # This is done to make the reference constant, otherwise
-                        # compilers error out with initial reference value.
-                        memlet_type += ' const'
-                    result += "{} &{} = {};".format(memlet_type, local_name, expr)
-                defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
+                    if not memlet.dynamic:
+                        if is_scalar:
+                            # We can pre-read the value
+                            result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        else:
+                            # constexpr arrays
+                            if memlet.data in self._frame.symbols_and_constants(sdfg):
+                                result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                            else:
+                                # Pointer reference
+                                result += "{} {} = {};".format(ctypedef, local_name, expr)
+                    else:
+                        # Variable number of reads: get a const reference that can
+                        # be read if necessary
+                        memlet_type = 'const %s' % memlet_type
+                        if is_pointer:
+                            # This is done to make the reference constant, otherwise
+                            # compilers error out with initial reference value.
+                            memlet_type += ' const'
+                        result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                    defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:

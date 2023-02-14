@@ -52,6 +52,16 @@ def cpu_to_gpu_cpred(sdfg, state, src_node, dst_node):
         return False
     return True
 
+_CUDA_STORAGE_TYPES = (
+    dtypes.StorageType.GPU_Global,
+    dtypes.StorageType.GPU_Shared
+)
+
+def is_gpu_data(data: dt.Data):
+    """
+    :return: True if this array is placed on GPU memory
+    """
+    return data.storage in _CUDA_STORAGE_TYPES
 
 @registry.autoregister_params(name='cuda')
 class CUDACodeGen(TargetCodeGenerator):
@@ -1145,7 +1155,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 'cudaMemcpyHostToDevice);\n'
             )
         else:
+            # FIXME: cloudsc fix, support generating inputs on CPU and GPU when accessing memory.
+            # Should not be needed
+            CUDACodeGen._in_device_code = True
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+            CUDACodeGen._in_device_code = False
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, memlet, function_stream, callsite_stream):
 
@@ -1578,7 +1592,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             
-            # FIXME: identical fix to the one on line 1567
+            # FIXME: cloudsc identical fix to the one on line 1567
             # We solve a situation where there is a memlet to a dynamic map where the destination connection
             # is identical to the data
             if e.data.data == e.dst_conn:
@@ -1843,6 +1857,9 @@ void  *{kname}_args[] = {{ {kargs} }};
         dsym = [symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(krange))]
         bidx = krange.coord_at(dsym)
 
+        # FIXME: cloudsc fix, support generating inputs on CPU and GPU when accessing memory.
+        # Should not be needed
+        CUDACodeGen._in_device_code = True
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(sdfg.states()[state_id], dfg_scope.source_nodes()[0]):
             
@@ -1856,6 +1873,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 sdfg, state_id,
                 dfg_scope.source_nodes()[0])
+        CUDACodeGen._in_device_code = False
 
         # do not generate an index if the kernel map is persistent
         if node.map.schedule != dtypes.ScheduleType.GPU_Persistent:
