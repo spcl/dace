@@ -565,7 +565,6 @@ def auto_optimize(sdfg: SDFG,
 
     if device == dtypes.DeviceType.GPU:
         sdfg.apply_gpu_transformations_cloudsc()
-        sdfg.simplify()
 
     # fuse subgraphs greedily
     sdfg.simplify()
