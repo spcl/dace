@@ -929,7 +929,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.SumToLoop().visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor().visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__)
+    ast2sdfg = AST_translator(own_ast, source_string)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
