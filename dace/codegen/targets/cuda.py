@@ -1155,11 +1155,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 'cudaMemcpyHostToDevice);\n'
             )
         else:
-            # FIXME: cloudsc fix, support generating inputs on CPU and GPU when accessing memory.
-            # Should not be needed
-            CUDACodeGen._in_device_code = True
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
-            CUDACodeGen._in_device_code = False
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, memlet, function_stream, callsite_stream):
 
