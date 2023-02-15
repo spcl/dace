@@ -1041,7 +1041,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 index = 0
                 for i in range(len(desc.shape)):
                     if i in invariant_dimensions[data_name]:
-                        min_offset.append(desc.offset[i])
+                        min_offset.append(-desc.offset[i])
                     else:
                         min_offset.append(min_offsets_cropped[index])
                         index += 1
@@ -1107,9 +1107,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for iedge in in_edges:
                     for edge in graph.memlet_tree(iedge):
                         if edge.data.data == node.data:
-                            edge.data.subset.offset(min_offset, False)
+                            edge.data.subset.offset(min_offset, True)
                         elif edge.data.other_subset:
-                            edge.data.other_subset.offset(min_offset, False)
+                            edge.data.other_subset.offset(min_offset, True)
                     # nested SDFG: adjust arrays connected
                     if isinstance(iedge.src, nodes.NestedSDFG):
                         nsdfg = iedge.src.sdfg
@@ -1119,9 +1119,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
                         if edge.data.data == node.data:
-                            edge.data.subset.offset(min_offset, False)
+                            edge.data.subset.offset(min_offset, True)
                         elif edge.data.other_subset:
-                            edge.data.other_subset.offset(min_offset, False)
+                            edge.data.other_subset.offset(min_offset, True)
                         # nested SDFG: adjust arrays connected
                         if isinstance(edge.dst, nodes.NestedSDFG):
                             nsdfg = edge.dst.sdfg
