@@ -1013,7 +1013,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         data_intermediate = set([node.data for node in intermediate_nodes])
         for data_name in data_intermediate:
-            if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
+            desc = sdfg.data(data_name)
+            if subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
 
@@ -1035,12 +1036,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # calculate the new transient array size.
                 target_subset.offset(min_offsets_cropped, True)
 
-                # re-add invariant dimensions with offset 0 and save to min_offsets
+                # re-add invariant dimensions with the corresponding offset and save to min_offsets
                 min_offset = []
                 index = 0
-                for i in range(len(sdfg.data(data_name).shape)):
+                for i in range(len(desc.shape)):
                     if i in invariant_dimensions[data_name]:
-                        min_offset.append(0)
+                        min_offset.append(desc.offset[i])
                     else:
                         min_offset.append(min_offsets_cropped[index])
                         index += 1
@@ -1050,7 +1051,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # determine the shape of the new array.
                 new_data_shape = []
                 index = 0
-                for i, sz in enumerate(sdfg.data(data_name).shape):
+                for i, sz in enumerate(desc.shape):
                     if i in invariant_dimensions[data_name]:
                         new_data_shape.append(sz)
                     else:
@@ -1063,7 +1064,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_offset = [0] * len(new_data_shape)
 
                 # compress original shape
-                change_data(sdfg.data(data_name),
+                change_data(desc,
                             shape=new_data_shape,
                             strides=new_data_strides,
                             total_size=new_data_totalsize,
@@ -1106,9 +1107,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for iedge in in_edges:
                     for edge in graph.memlet_tree(iedge):
                         if edge.data.data == node.data:
-                            edge.data.subset.offset(min_offset, True)
+                            edge.data.subset.offset(min_offset, False)
                         elif edge.data.other_subset:
-                            edge.data.other_subset.offset(min_offset, True)
+                            edge.data.other_subset.offset(min_offset, False)
                     # nested SDFG: adjust arrays connected
                     if isinstance(iedge.src, nodes.NestedSDFG):
                         nsdfg = iedge.src.sdfg
@@ -1118,9 +1119,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 for cedge in out_edges:
                     for edge in graph.memlet_tree(cedge):
                         if edge.data.data == node.data:
-                            edge.data.subset.offset(min_offset, True)
+                            edge.data.subset.offset(min_offset, False)
                         elif edge.data.other_subset:
-                            edge.data.other_subset.offset(min_offset, True)
+                            edge.data.other_subset.offset(min_offset, False)
                         # nested SDFG: adjust arrays connected
                         if isinstance(edge.dst, nodes.NestedSDFG):
                             nsdfg = edge.dst.sdfg
@@ -1134,7 +1135,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if oedge.dst == global_map_exit and \
                                             oedge.data.other_subset is None:
                             oedge.data.other_subset = dcpy(oedge.data.subset)
-                            oedge.data.other_subset.offset(min_offset, True)
+                            oedge.data.other_subset.offset(min_offset, False)
 
         # consolidate edges if desired
         if self.consolidate:
