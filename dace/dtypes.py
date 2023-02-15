@@ -16,6 +16,7 @@ from dace.registry import extensible_enum, undefined_safe_enum
 @undefined_safe_enum
 @extensible_enum
 class DeviceType(aenum.AutoNumberEnum):
+    Generic = ()
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
     FPGA = ()  #: FPGA (Intel or Xilinx)
