@@ -1021,11 +1021,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 in_edges_iter = iter(in_edges)
                 in_edge = next(in_edges_iter)
                 target_subset = dcpy(in_edge.data.subset)
+                # Make 0-based
+                target_subset.offset(desc.offset, False)
                 target_subset.pop(invariant_dimensions[data_name])
                 while True:
                     try:  # executed if there are multiple in_edges
                         in_edge = next(in_edges_iter)
                         target_subset_curr = dcpy(in_edge.data.subset)
+                        # Make 0-based
+                        target_subset_curr.offset(desc.offset, False)
                         target_subset_curr.pop(invariant_dimensions[data_name])
                         target_subset = subsets.union(target_subset, \
                                                       target_subset_curr)
@@ -1041,7 +1045,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 index = 0
                 for i in range(len(desc.shape)):
                     if i in invariant_dimensions[data_name]:
-                        min_offset.append(-desc.offset[i])
+                        min_offset.append(0)
                     else:
                         min_offset.append(min_offsets_cropped[index])
                         index += 1
@@ -1061,7 +1065,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_strides = [data._prod(new_data_shape[i + 1:]) for i in range(len(new_data_shape))]
 
                 new_data_totalsize = data._prod(new_data_shape)
-                new_data_offset = [0] * len(new_data_shape)
+                # new_data_offset = [0] * len(new_data_shape)
+                new_data_offset = desc.offset
 
                 # compress original shape
                 change_data(desc,
