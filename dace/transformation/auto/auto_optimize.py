@@ -602,6 +602,13 @@ def auto_optimize(sdfg: SDFG,
             # node.map.collapse = len(node.map.range)
             pass
 
+    if device == dtypes.DeviceType.Generic:
+        # Validate at the end
+        if validate or validate_all:
+            sdfg.validate()
+
+        return sdfg
+
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
