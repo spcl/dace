@@ -1821,14 +1821,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
 
+                # If we defaulted to a fixed number of threads per block, offset by thread ID
+                block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                if not has_tbmap or has_dtbmap:
+                    block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+
                 # Delinearize third dimension if necessary
                 if i == 2 and len(krange) > 3:
-                    block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
-                else:
-                    block_expr = 'blockIdx.%s' % _named_idx(i)
-                    # If we defaulted to 32 threads per block, offset by thread ID
-                    if not has_tbmap or has_dtbmap:
-                        block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+                    block_expr = f'({block_expr} / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
@@ -1839,8 +1839,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             if len(krange) > 3:
                 for i in range(3, len(krange)):
                     varname = kernel_map.params[-i - 1]
+
+                    block_expr = 'blockIdx.z'
+                    if not has_tbmap or has_dtbmap:
+                        block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
+
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                    block_expr = '(%s / (%s)) %% (%s)' % (
+                        block_expr,
                         _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
                     )
