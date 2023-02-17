@@ -3058,9 +3058,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self._visit_assign(assign_from_first, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
-        type_name = rname(node.annotation)
         try:
-            dtype = eval(astutils.unparse(node.annotation), self.globals, self.defined)
+            dtype = astutils.evalnode(node.annotation, self.defined)
             if isinstance(dtype, data.Data):
                 simple_type = dtype.dtype
             else:
@@ -3069,6 +3068,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise TypeError
         except:
             dtype = None
+            type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
             self.annotated_types[rname(node.target)] = dtype
