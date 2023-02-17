@@ -3059,7 +3059,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         try:
-            dtype = astutils.evalnode(node.annotation, self.defined)
+            dtype = astutils.evalnode(node.annotation, {**self.globals, **self.defined})
             if isinstance(dtype, data.Data):
                 simple_type = dtype.dtype
             else:
