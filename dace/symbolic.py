@@ -971,7 +971,8 @@ class BitwiseOpConverter(ast.NodeTransformer):
         ast.BitXor: 'BitwiseXor',
         ast.Invert: 'BitwiseNot',
         ast.LShift: 'LeftShift',
-        ast.RShift: 'RightShift'
+        ast.RShift: 'RightShift',
+        ast.FloorDiv: 'int_floor',
     }
 
     def visit_UnaryOp(self, node):
@@ -980,7 +981,7 @@ class BitwiseOpConverter(ast.NodeTransformer):
                 ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
-        return node
+        return self.generic_visit(node)
 
     def visit_BinOp(self, node):
         if type(node.op) in BitwiseOpConverter._ast_to_sympy_functions:
@@ -990,7 +991,7 @@ class BitwiseOpConverter(ast.NodeTransformer):
                                 args=[self.visit(value) for value in (node.left, node.right)],
                                 keywords=[])
             return ast.copy_location(new_node, node)
-        return node
+        return self.generic_visit(node)
 
 
 @lru_cache(maxsize=16384)
@@ -1054,7 +1055,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
 
     # NOTE: If the expression contains bitwise operations, replace them with user-functions.
     # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
-    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]', expr):
+    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]', expr):
         expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
