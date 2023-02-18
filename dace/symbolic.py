@@ -1048,15 +1048,16 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(_sympy_clash)
 
-    # Sympy processes "not/and/or" as direct evaluation. Replace with
-    # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
-        expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
+    if isinstance(expr, str):
+        # Sympy processes "not/and/or" as direct evaluation. Replace with
+        # And/Or(x, y), Not(x)
+        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
+            expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
-    # NOTE: If the expression contains bitwise operations, replace them with user-functions.
-    # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
-    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]', expr):
-        expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
+        # NOTE: If the expression contains bitwise operations, replace them with user-functions.
+        # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
+        if re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]', expr):
+            expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
