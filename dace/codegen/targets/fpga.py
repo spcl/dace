@@ -1629,7 +1629,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 else:
                     raise TypeError("Memory copy type mismatch: {} vs {}".format(host_dtype, device_dtype))
 
-            copysize = " * ".join([cppunparse.pyexpr2cpp(dace.symbolic.symstr(s)) for s in copy_shape])
+            copysize = " * ".join([cppunparse.pyexpr2cpp(dace.symbolic.symstr(s, cpp_mode=True)) for s in copy_shape])
 
             src_subset = memlet.src_subset or memlet.subset
             dst_subset = memlet.dst_subset or memlet.subset
@@ -2198,13 +2198,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # ranges could have been defined in terms of floor/ceiling. Before printing the code
             # they are converted from a symbolic expression to a C++ compilable expression
             for it, r in reversed(list(zip(pipeline.params, pipeline.range))):
-                callsite_stream.write("if ({it} >= {end}) {{\n{it} = {begin};\n".format(it=it,
-                                                                                        begin=dace.symbolic.symstr(
-                                                                                            r[0]),
-                                                                                        end=dace.symbolic.symstr(r[1])))
+                callsite_stream.write("if ({it} >= {end}) {{\n{it} = {begin};\n".format(
+                    it=it,
+                    begin=dace.symbolic.symstr(r[0], cpp_mode=True),
+                    end=dace.symbolic.symstr(r[1], cpp_mode=True)))
             for it, r in zip(pipeline.params, pipeline.range):
                 callsite_stream.write("}} else {{\n{it} += {step};\n}}\n".format(it=it,
-                                                                                 step=dace.symbolic.symstr(r[2])))
+                                                                                 step=dace.symbolic.symstr(
+                                                                                     r[2], cpp_mode=True)))
             if len(cond) > 0:
                 callsite_stream.write("}\n")
             callsite_stream.write("}\n}\n")
