@@ -22,9 +22,7 @@ int main(int argc, char **argv) {
     if (colon)
       *(char *)colon = '\0';
 
-    // Trim starting "gfx"
-    std::string str = prop.gcnArchName + 3;
-
+    std::string str = prop.gcnArchName;
     architectures.insert(str);
   }
 

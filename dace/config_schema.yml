@@ -313,7 +313,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '35'
+                        default: '60'
 
                     hip_arch:
                         type: str
@@ -322,7 +322,7 @@ required:
                             Additional HIP architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '906'
+                        default: 'gfx906'
 
                     default_block_size:
                         type: str
