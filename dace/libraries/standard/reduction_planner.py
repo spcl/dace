@@ -5,6 +5,17 @@ from dace.data import Array
 from typing import List
 import dataclasses
 from dace.frontend.python.replacements import Size
+from sympy import Expr
+from dace import symbolic
+
+
+def expr_is_contained(expr, other_expr):
+    if not (isinstance(expr, Expr) and isinstance(other_expr, Expr)):
+        return False
+    for symbol in expr.free_symbols:
+        if symbol not in other_expr.free_symbols:
+            return False
+    return True
 
 
 def combine(shape, strides, dims):
@@ -19,7 +30,9 @@ def combine(shape, strides, dims):
 
     new_stride_element = strides[dims[0]]
     for d in dims[0:]:
-        new_stride_element = min(new_stride_element, strides[d])
+        if (strides[d] < new_stride_element) == True or strides[d] == 1 or expr_is_contained(
+                strides[d], new_stride_element):
+            new_stride_element = strides[d]
 
     combined_strides = strides[0:dims[0]]
     combined_strides.append(new_stride_element)
@@ -99,7 +112,7 @@ def simplify_input(shape, strides, axes):
         r = rem[1]
         s = shape[rem[0]]
         for i in range(len(out_strides)):
-            if out_strides[i] > r:
+            if (out_strides[i] > r) == True or r == 1 or expr_is_contained(r, out_strides[i]):
                 out_strides[i] //= s
 
     return shape, strides, axes, out_shape, out_strides
@@ -208,13 +221,7 @@ def get_reduction_schedule(in_array: Array,
         schedule.changed_axes = [axes[-1] - len(axes) + 1]
 
         # compute strides of this input shape
-        removed_shapes = [s for i, s in enumerate(schedule.in_shape) if i in axes[:-1]]
-        removed_strides = [s for i, s in enumerate(schedule.in_strides) if i in axes[:-1]]
         schedule.changed_in_strides = [s for i, s in enumerate(schedule.in_strides) if i not in axes[:-1]]
-        for i in range(len(schedule.changed_in_strides)):
-            for r in range(len(removed_strides)):
-                schedule.changed_in_strides[i] = schedule.changed_in_strides[i] if schedule.changed_in_strides[
-                    i] < removed_strides[r] else schedule.changed_in_strides[i] // removed_shapes[r]
 
         axes = schedule.changed_axes
         shape = schedule.changed_in_shape
@@ -242,8 +249,8 @@ def get_reduction_schedule(in_array: Array,
             schedule.grid = [1]
 
         # 32 threads per block unless contiguous dimension too small
-        threads_per_block = warp_size if (
-            shape[contiguous_dimension] > warp_size) == True else shape[contiguous_dimension]
+        threads_per_block = shape[contiguous_dimension] if (
+            shape[contiguous_dimension] < warp_size) == True else warp_size
         schedule.block = [threads_per_block]
 
         stride = warp_size * num_loaded_elements if schedule.vectorize else warp_size
@@ -260,14 +267,15 @@ def get_reduction_schedule(in_array: Array,
         # we are reducing a non-contiguous dimension
 
         schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
-        schedule.grid.append(shape[contiguous_dimension] / 32)  # each block computes 32 output values
+        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32) # each block computes 32 output values
+        schedule.grid.append(grid_dim)
 
         schedule.block = [16, 32]  # we use 16 threads per output value (could be any value in {1, ... , 32})
 
         schedule.shared_mem_size = 32  # each block uses 32 shared memory locations
         schedule.sequential = [shape[axes[0]]]  # the 16 threads sum up the whole axis
 
-        if use_mini_warps and shape[contiguous_dimension] <= 16:
+        if use_mini_warps and (shape[contiguous_dimension] <= 16) == True:
             # we turn on mini_warps
             schedule.mini_warps = True
             schedule.num_mini_warps = warp_size // shape[contiguous_dimension]
@@ -279,14 +287,15 @@ def get_reduction_schedule(in_array: Array,
     num_threads = 1
     for t in schedule.block:
         num_threads *= t
-    if num_threads > 1024:
+    if (num_threads > 1024) == True:
         # too many threads per block
         schedule.error = 'Schedule is invalid (more than 1024 threads per block). Falling back to pure expansion.'
     whole_grid = schedule.additional_grid + schedule.grid
     last_grid_dim = 1
     for b in whole_grid[:-2]:
         last_grid_dim *= b
-    if whole_grid[-1] > 2147483647 or (len(whole_grid) > 1 and whole_grid[-2] > 65535) or last_grid_dim > 65535:
+    if (whole_grid[-1] > 2147483647) == True or (len(whole_grid) > 1
+                                                 and whole_grid[-2] > 65535) == True or (last_grid_dim > 65535) == True:
         # grid dimension must not exceed 2147483647, resp . 65535
         schedule.error = 'Schedule is invalid (some grid dimension too large). Falling back to pure expansion.'
 
