@@ -212,7 +212,6 @@ class InterstateEdge(object):
         """ Returns a set of symbols used in this edge's properties. """
         return self.read_symbols() - set(self.assignments.keys())
 
-
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
@@ -1571,7 +1570,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Reconnect
         for e in self.in_edges(state):
             self.remove_edge(e)
-            self.add_edge(e.src, new_state, e.data)
+            self.add_edge(e.src, new_state, copy.deepcopy(e.data))
         # Add unconditional connection between the new state and the current
         self.add_edge(new_state, state, InterstateEdge())
         return new_state
@@ -1590,7 +1589,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Reconnect
         for e in self.out_edges(state):
             self.remove_edge(e)
-            self.add_edge(new_state, e.dst, e.data)
+            self.add_edge(new_state, e.dst, copy.deepcopy(e.data))
         # Add unconditional connection between the current and the new state
         self.add_edge(state, new_state, InterstateEdge())
         return new_state
@@ -2230,7 +2229,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 index += 1
             if self.name != sdfg.name:
                 warnings.warn('SDFG "%s" is already loaded by another object, '
-                            'recompiling under a different name.' % self.name)
+                              'recompiling under a different name.' % self.name)
 
             try:
                 # Fill in scope entry/exit connectors
