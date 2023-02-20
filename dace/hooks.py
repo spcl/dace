@@ -334,7 +334,7 @@ def _install_hooks_helper(config_name: str, register_hook_func: Callable[[Genera
     hooklist = hooklist.split(',')
     for hook in hooklist:
         hookfunc = pydoc.locate(hook)
-        register_hook_func(_as_context_manager(hookfunc))
+        register_hook_func(context_manager=_as_context_manager(hookfunc))
 
 
 def _install_hooks_from_config():
