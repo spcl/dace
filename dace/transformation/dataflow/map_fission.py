@@ -160,10 +160,10 @@ class MapFission(transformation.SingleStateTransformation):
             # in other scopes or states
             if expr_index == 0:
                 # Find all nodes not in subgraph
-                not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
+                not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode) and sdfg.arrays[n.data].transient)
                 not_subgraph.update(
                     set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
-                        if isinstance(n, nodes.AccessNode)))
+                        if isinstance(n, nodes.AccessNode) and sdfg.arrays[n.data].transient))
 
                 for _, component_out in components:
                     for e in sg.out_edges(component_out):
