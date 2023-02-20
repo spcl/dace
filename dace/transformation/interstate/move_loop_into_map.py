@@ -2,12 +2,14 @@
 """ Moves a loop around a map into the map """
 
 import copy
+import dace
 import dace.transformation.helpers as helpers
 import networkx as nx
+from dace.codegen import control_flow as cf
 from dace.sdfg.scope import ScopeTree
 from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, propagation
+from dace.sdfg import nodes, propagation, utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from sympy import diff
@@ -258,3 +260,174 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         # Second propagation for refined accesses.
         propagation.propagate_memlets_scope(sdfg, body, scope_tree)
+
+
+class MoveMapIntoLoop(transformation.SingleStateTransformation):
+    """
+    Moves a map around a loop into the loop
+    """
+
+    map_entry = transformation.PatternNode(nodes.EntryNode)
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+    map_exit = transformation.PatternNode(nodes.ExitNode)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg, cls.map_exit)]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+
+        # If the body a loop?
+        nsdfg = self.nested_sdfg.sdfg
+        components = helpers.find_sdfg_control_flow(nsdfg)
+        # Body must contain a single control-flow component
+        if len(components) != 1:
+            return False
+        cf_node: cf.ControlFlow
+        _, cf_node = list(components.values())[0]
+        # Component must be ForScope
+        if not isinstance(cf_node, cf.ForScope):
+            return False
+
+        mparams = set(self.map_entry.map.params)
+
+        # Obtain loop information
+        guard: sd.SDFGState = cf_node.guard
+        body: sd.SDFGState = cf_node.body.first_state
+
+        # Obtain iteration variable, range, and stride
+        loop_info = find_for_loop(nsdfg, guard, body)
+        if not loop_info:
+            return False
+        itervar, (start, end, step), (_, body_end) = loop_info
+        for s in (start, end, step):
+            if any(p in s.free_symbols for p in mparams):
+                return False
+
+        # Collect read and writes from states
+        read_set: Set[str] = set()
+        write_set: Set[str] = set()
+        for state in nsdfg.states():
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+
+        # Check for map parameters in data descriptors
+        for arr in (read_set | write_set):
+            if any(p in set(map(str, nsdfg.arrays[arr].free_symbols)) for p in mparams):
+                return False
+
+        def test_subset_dependency(subset: sbs.Subset) -> Tuple[bool, List[int]]:
+            dims = []
+            for i, r in enumerate(subset):
+                if not isinstance(r, (list, tuple)):
+                    r = [r]
+                fsymbols = set()
+                for token in r:
+                    if symbolic.issymbolic(token):
+                        fsymbols = fsymbols.union({str(s) for s in token.free_symbols})
+                if itervar in fsymbols:
+                    if fsymbols.intersection(mparams):
+                        return (False, [])
+                    else:
+                        # Strong checks
+                        if not permissive:
+                            # Only indices allowed
+                            if len(r) > 1 and r[0] != r[1]:
+                                return (False, [])
+                            derivative = diff(r[0])
+                            # Index function must be injective
+                            if not (((derivative > 0) == True) or ((derivative < 0) == True)):
+                                return (False, [])
+                        dims.append(i)
+            return (True, dims)
+
+        # Check that NestedSDFG memlets depend on map params in a consistent manner
+        # a. A container must either not depend at all on itervar, or depend on it always in the same dimensions.
+        # b. Abort when a dimension depends on both the itervar and a Map parameter.
+        data_dependency = dict()
+        for state in nsdfg.states():
+            for e in state.edges():
+                if any(p in e.data.free_symbols for p in mparams):
+                    e.data.try_initialize(nsdfg, state, e)
+                    for i, subset in enumerate((e.data.src_subset, e.data.dst_subset)):
+                        if subset:
+                            if i == 0:
+                                access = state.memlet_path(e)[0].src
+                            else:
+                                access = state.memlet_path(e)[-1].dst
+                            passed, dims = test_subset_dependency(subset)
+                            if not passed:
+                                return False
+                            if dims:
+                                if access.data in data_dependency:
+                                    if data_dependency[access.data] != dims:
+                                        return False
+                                else:
+                                    data_dependency[access.data] = dims
+
+        return True
+
+    def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
+
+        nsdfg = self.nested_sdfg.sdfg
+        components = helpers.find_sdfg_control_flow(nsdfg)
+        cf_node: cf.ForScope
+        _, cf_node = list(components.values())[0]
+        mparams = set(self.map_entry.map.params)
+
+        # Obtain loop information
+        guard: sd.SDFGState = cf_node.guard
+        body: sd.SDFGState = cf_node.body.first_state
+
+        # Obtain iteration variable, range, and stride
+        loop_info = find_for_loop(nsdfg, guard, body)
+        if not loop_info:
+            return False
+        itervar, (start, end, step), (_, body_end) = loop_info
+
+        forward_loop = step > 0
+
+        # nest map's content in sdfg
+        map_subgraph = graph.scope_subgraph(self.map_entry, include_entry=True, include_exit=True)
+        new_nsdfg = helpers.nest_state_subgraph(sdfg, graph, map_subgraph, full_data=True)
+
+        # replicate loop in nested sdfg
+        new_before, new_guard, new_after = new_nsdfg.sdfg.add_loop(
+            before_state=None,
+            loop_state=new_nsdfg.sdfg.nodes()[0],
+            loop_end_state=None,
+            after_state=None,
+            loop_var=itervar,
+            initialize_expr=f'{start}',
+            condition_expr=f'{itervar} <= {end}' if forward_loop else f'{itervar} >= {end}',
+            increment_expr=f'{itervar} + {step}' if forward_loop else f'{itervar} - {abs(step)}')
+        new_nsdfg.sdfg.start_state = new_nsdfg.sdfg.node_id(new_before)
+
+        # remove inner loop
+        for e in nsdfg.in_edges(guard):
+            if e.src not in (body, body_end):
+                nsdfg.remove_node(e.src)
+                # nsdfg.remove_edge(e)
+        for e in nsdfg.out_edges(guard):
+            if e.dst not in (body, body_end):
+                nsdfg.remove_node(e.dst)
+                # nsdfg.remove_edge(e)
+        nsdfg.remove_node(guard)
+
+        # Add itervar to nested-nested SDFG
+        if itervar in nsdfg.symbols:
+            nsdfg.parent_nsdfg_node.symbol_mapping[itervar] = dace.symbol(itervar, nsdfg.symbols[itervar])
+        else:
+            nsdfg.add_symbol(itervar, dace.int32)
+            nsdfg.parent_nsdfg_node.symbol_mapping[itervar] = dace.symbol(itervar, dace.int32)
+
+        from dace.transformation.interstate import RefineNestedAccess
+        propagation.propagate_states(new_nsdfg.sdfg)
+        propagation.propagate_memlets_state(new_nsdfg.sdfg, nsdfg.parent)
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        propagation.propagate_memlets_state(sdfg, graph)
