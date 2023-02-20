@@ -303,7 +303,7 @@ if(DACE_ENABLE_HIP)
 
   # Add flags to compile for local AMD architectures
   foreach(var ${LOCAL_HIP_ARCHITECTURES})
-    list(APPEND HIP_HIPCC_FLAGS --offload-arch=gfx${var})
+    list(APPEND HIP_HIPCC_FLAGS --offload-arch=${var})
   endforeach()
 
   # Add flags from dace config
