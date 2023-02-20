@@ -32,7 +32,7 @@ def test_hooks():
 
     @contextmanager
     def ctxmgr(sdfg):
-        called_list.append('ctxmgr-before-' + sdfg.name)
+        called_list.append('ctxmgr-before-' + sdfg.name[-6:])
         yield
         called_list.append('ctxmgr-after')
 
@@ -76,8 +76,8 @@ def test_profile():
     assert len(prof.times) == 2
     assert len(prof.times[0][1]) == 10
     assert len(prof.times[1][1]) == 10
-    assert prof.times[0][0] == 'test2'
-    assert prof.times[1][0] == 'test1'
+    assert prof.times[0][0].endswith('test2')
+    assert prof.times[1][0].endswith('test1')
 
 
 if __name__ == '__main__':
