@@ -26,8 +26,8 @@ if __name__ == "__main__":
     #testname = "arrayrange1"
     #testname = "cloudsc2ad"
     #testname = "cloudsc2nl-minimal"
-    testname = "cloudscexp2-marcin"
-    reader = FortranFileReader(os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90"))
+    testname = "cloudscexp2"
+    reader = FortranFileReader(os.path.realpath("/home/alexnick/Projects/dace/" + testname + ".f90"))
     ast = parser(reader)
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
@@ -60,10 +60,10 @@ if __name__ == "__main__":
     sdfg.reset_sdfg_list()
 
     sdfg.validate()
-    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + "_initial.sdfg")
+    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_initial_nomlim.sdfg")
     sdfg.simplify(verbose=True)
-    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + "_simplify.sdfg")
+    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_simplify_nomlim.sdfg")
     from dace.transformation.auto import auto_optimize as aopt
-    aopt.auto_optimize(sdfg, dtypes.DeviceType.CPU)
-    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + "_optimized.sdfg")
+    aopt.auto_optimize(sdfg, dtypes.DeviceType.Generic)
+    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_optimized_nomlim.sdfg")
     sdfg.compile()
