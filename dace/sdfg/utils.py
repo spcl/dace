@@ -1629,3 +1629,68 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
             squeezed.append(i)
 
     return dimension_mapping, unsqueezed, squeezed
+
+
+def normalize_offsets(sdfg: SDFG):
+    """
+    Normalizes descriptor offsets to 0 and adjusts the Memlet subsets accordingly. This operation is done in-place.
+
+    :param sdfg: The SDFG to be normalized.
+    """
+
+    for sd in sdfg.all_sdfgs_recursive():
+        offsets = dict()
+        for arrname, arrdesc in sd.arrays.items():
+            if not isinstance(arrdesc, dt.Array):  # NOTE: Does this work with Views properly?
+                continue
+            if any(o != 0 for o in arrdesc.offset):
+                offsets[arrname] = arrdesc.offset
+                arrdesc.offset = [0] * len(arrdesc.shape)
+        if offsets:
+            for e in sd.edges():
+                memlets = e.data.get_read_memlets(sd.arrays)
+                repl_dict = dict()
+                for m in memlets:
+                    if m.data in offsets:
+                        key = str(m)
+                        m.subset.offset(offsets[m.data], False)
+                        repl_dict[key] = m
+                if repl_dict:
+                    # TODO: This doesn't work.
+                    e.data.replace_dict(repl_dict, replace_keys=False)
+            for state in sd.states():
+                # NOTE: Ideally, here we just want to iterate over the edges. However, we need to handle both the
+                # subset and the other subset. Therefore, it is safer to traverse the Memlet paths.
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode) and node.data in offsets:
+                        off = offsets[node.data]
+                        visited = set()
+                        for e0 in state.all_edges(node):
+                            for e1 in state.memlet_path(e0):
+                                if e1 in visited:
+                                    continue
+                                visited.add(e1)
+                                if e1.data.data == node.data:
+                                    e1.data.subset.offset(off, False)
+                                else:
+                                    e1.data.other_subset.offset(off, False)
+
+
+def prune_symbols(sdfg: SDFG):
+    """
+    Prunes unused symbols from the SDFG and the NestedSDFG symbol mappings. This operation is done in place. See also
+    `dace.transformation.interstate.PruneSymbols`.
+
+    :param sdfg: The SDFG to have its symbols pruned.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                prune_symbols(node.sdfg)
+                declared_symbols = set(node.sdfg.symbols.keys())
+                free_symbols = node.sdfg.free_symbols
+                defined_symbols = declared_symbols - free_symbols
+                for s in defined_symbols:
+                    del node.sdfg.symbols[s]
+                    if s in node.symbol_mapping:
+                        del node.symbol_mapping[s]
