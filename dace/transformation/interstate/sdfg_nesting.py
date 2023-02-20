@@ -132,6 +132,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             nstate = nested_sdfg.sdfg.node(0)
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
+                    # TODO: Is the following correct?
                     if (node.data in out_connectors and nstate.out_degree(node) > 0
                             and (node.data not in in_connectors or nstate.in_degree(node) > 0)):
                         return False
@@ -507,14 +508,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_dst_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True)
+                                    internal_offset = state.parent.arrays[e.data.data].offset
+                                    external_offset = state.parent.arrays[outer_edge.data.data].offset
+                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True, internal_offset=internal_offset, external_offset=external_offset)
                                     e._data.dst_subset = new_memlet.subset
                     # NOTE: Node is source
                     for edge in state.out_edges(node):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_src_subset(e, state):
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True)
+                                    internal_offset = state.parent.arrays[e.data.data].offset
+                                    external_offset = state.parent.arrays[outer_edge.data.data].offset
+                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True, internal_offset=internal_offset, external_offset=external_offset)
                                     e._data.src_subset = new_memlet.subset
 
         # If source/sink node is not connected to a source/destination access
