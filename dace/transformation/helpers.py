@@ -342,24 +342,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                 states.add(init)
                 guard = init
 
-            # if guard in visited:
-            #     if visited[guard]:
-            #         guard_copy = _copy_state(sdfg, guard, False, states)
-            #         guard.remove_nodes_from(guard.nodes())
-            #         states.remove(guard)
-            #         states.add(guard_copy)
-            #         guard = guard_copy
-            #     else:
-            #         del components[guard]
-            #         del visited[guard]
-
-            # if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
-            #         and cft.children[i + 1].state is fexit):
-            #     fexit_copy = _copy_state(sdfg, fexit, True, states)
-            #     fexit.remove_nodes_from(fexit.nodes())
-            #     states.remove(fexit)
-            #     states.add(fexit_copy)
-
             components[guard] = (states, child)
             visited.update({s: guard for s in states})
         elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
@@ -370,8 +352,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
-                    # if len(guard.nodes()) > 0:
-                    #     raise NotImplementedError
                     guard = sdfg.add_state_after(guard, f"new_{guard.label}")
                 else:
                     del components[visited[guard]]
@@ -382,24 +362,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[ifexit]]
                 del visited[ifexit]
-
-            # if guard in visited:
-            #     if visited[guard]:
-            #         guard_copy = _copy_state(sdfg, guard, False, states)
-            #         guard.remove_nodes_from(guard.nodes())
-            #         states.remove(guard)
-            #         states.add(guard_copy)
-            #         guard = guard_copy
-            #     else:
-            #         del components[guard]
-            #         del visited[guard]
-
-            # if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
-            #         and cft.children[i + 1].state is ifexit):
-            #     ifexit_copy = _copy_state(sdfg, ifexit, True, states)
-            #     ifexit.remove_nodes_from(ifexit.nodes())
-            #     states.remove(ifexit)
-            #     states.add(ifexit_copy)
 
             components[guard] = (states, child)
             visited.update({s: guard for s in states})
@@ -444,9 +406,6 @@ def nest_sdfg_control_flow(sdfg: SDFG, components=None):
         return
 
     for i, (start, (component, cf_node)) in enumerate(components.items()):
-        # sym_out = True
-        # if isinstance(cf_node, cf.ForScope):
-        #     sym_out = False
         nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start, sym_out=False)
 
 
