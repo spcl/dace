@@ -213,6 +213,14 @@ required:
                     All stack allocated arrays (i.e. StorageType.Register) with
                     size larger than this will be allocated on the heap.
 
+            extra_cmake_args:
+                type: str
+                default: ''
+                title: Additional CMake configuration arguments
+                description: >
+                    If set, specifies additional arguments to the initial invocation
+                    of ``cmake``.
+
             #############################################
             # CPU compiler
             cpu:
@@ -257,10 +265,10 @@ required:
                 required:
                     backend:
                         type: str
-                        default: 'cuda'
+                        default: 'auto'
                         title: Compilation backend
                         description: >
-                            Backend to compile for ('cuda' for NVIDIA or 'hip' for AMD).
+                            Backend to compile for ('auto' for automatic detection, 'cuda' for NVIDIA, or 'hip' for AMD).
 
                     path:
                         type: str
@@ -288,7 +296,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '35'
+                        default: '60'
 
                     hip_arch:
                         type: str
@@ -297,7 +305,7 @@ required:
                             Additional HIP architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '906'
+                        default: 'gfx906'
 
                     default_block_size:
                         type: str
