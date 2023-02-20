@@ -184,6 +184,14 @@ class SingleState(ControlFlow):
 
 
 @dataclass
+class MultiState(ControlFlow):
+    """ A control flow element containing multiple states. """
+
+    # The beginning state/guard in this element.
+    state: SDFGState
+
+
+@dataclass
 class GeneralBlock(ControlFlow):
     """ 
     General (or unrecognized) control flow block with gotos between states. 
