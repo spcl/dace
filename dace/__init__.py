@@ -11,6 +11,7 @@ from .frontend.operations import *
 
 from . import data, subsets
 from .config import Config
+from .hooks import *
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet

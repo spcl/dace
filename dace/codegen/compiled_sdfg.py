@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 import sympy as sp
 
-from dace import data as dt, dtypes, symbolic
+from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
@@ -305,10 +305,8 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self._initialize(initargtuple)
-            # PROFILING
-            if Config.get_bool('profiling'):
-                operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc, self._libhandle, *argtuple)
-            else:
+            
+            with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
                 self._cfunc(self._libhandle, *argtuple)
 
             return self._convert_return_values()

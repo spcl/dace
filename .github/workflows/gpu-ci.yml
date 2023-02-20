@@ -32,7 +32,6 @@ jobs:
     - name: Run pytest GPU
       run: |
         export DACE_cache=single
-        export DACE_optimizer_interface=" "
         . /opt/setupenv
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
         codecov

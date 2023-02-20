@@ -14,7 +14,7 @@ from dace import dtypes
 from dace.config import Config
 
 
-def timethis(sdfg, title, flop_count, f, *args, **kwargs):
+def timethis(sdfg, title, flop_count, f, *args, REPS=None, **kwargs):
     """ Runs a function multiple (`DACE_treps`) times, logs the running times 
         to a file, and prints the median time (with FLOPs if given).
 
@@ -30,7 +30,7 @@ def timethis(sdfg, title, flop_count, f, *args, **kwargs):
     """
 
     start = timer()
-    REPS = int(Config.get('treps'))
+    REPS = REPS or int(Config.get('treps'))
 
     times = [start] * (REPS + 1)
     ret = None

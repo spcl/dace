@@ -10,7 +10,7 @@ import sympy
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 import warnings
 
-from dace import symbolic, data, dtypes
+from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG
@@ -426,26 +426,23 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
         if self.recreate_sdfg:
-            # Allow CLI to prompt for optimizations
-            if Config.get_bool('optimizer', 'transform_on_call'):
-                sdfg = sdfg.optimize()
-
             # Invoke auto-optimization as necessary
             if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
                 sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
                 sdfg.simplify()
 
-        # Compile SDFG (note: this is done after symbol inference due to shape
-        # altering transformations such as Vectorization)
-        binaryobj = sdfg.compile(validate=self.validate)
+        with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
+            # Compile SDFG (note: this is done after symbol inference due to shape
+            # altering transformations such as Vectorization)
+            binaryobj = sdfg.compile(validate=self.validate)
 
-        # Recreate key and add to cache
-        cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
-                                        constant_args)
-        self._cache.add(cachekey, sdfg, binaryobj)
+            # Recreate key and add to cache
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                            constant_args)
+            self._cache.add(cachekey, sdfg, binaryobj)
 
-        # Call SDFG
-        result = binaryobj(**sdfg_args)
+            # Call SDFG
+            result = binaryobj(**sdfg_args)
 
         return result
 

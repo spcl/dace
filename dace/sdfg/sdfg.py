@@ -22,7 +22,7 @@ import sympy as sp
 
 import dace
 import dace.serialize
-from dace import (data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
+from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
@@ -2150,32 +2150,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for k, v in syms.items():
             self.add_constant(str(k), v)
 
-    def optimize(self, optimizer=None) -> 'SDFG':
-        """
-        Optimize an SDFG using the CLI or external hooks.
-
-        :param optimizer: If defines a valid class name, it will be called
-                          during compilation to transform the SDFG as
-                          necessary. If None, uses configuration setting.
-        :return: An SDFG (returns self if optimizer is in place)
-        """
-        # Fill in scope entry/exit connectors
-        self.fill_scope_connectors()
-
-        optclass = _get_optimizer_class(optimizer)
-        if optclass is not None:
-            # Propagate memlets in the graph
-            if self._propagate:
-                propagate_memlets_sdfg(self)
-
-            opt = optclass(self)
-            sdfg = opt.optimize()
-        else:
-            sdfg = self
-
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-        return sdfg
-
     def is_loaded(self) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current
@@ -2322,17 +2296,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
-        if Config.get_bool('optimizer', 'transform_on_call'):
-            sdfg = self.optimize()
-        else:
-            sdfg = self
+        with hooks.invoke_sdfg_call_hooks(self) as sdfg:
+            binaryobj = sdfg.compile()
 
-        binaryobj = sdfg.compile()
+            # Verify passed arguments (if enabled)
+            if Config.get_bool('frontend', 'check_args'):
+                sdfg.argument_typecheck(args, kwargs)
 
-        # Verify passed arguments (if enabled)
-        if Config.get_bool('frontend', 'check_args'):
-            sdfg.argument_typecheck(args, kwargs)
-        return binaryobj(*args, **kwargs)
+            return binaryobj(*args, **kwargs)
 
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
@@ -2679,25 +2650,3 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
-
-
-def _get_optimizer_class(class_override):
-    """ Imports and returns a class string defined in the configuration
-        (under "optimizer.interface") or overridden in the input
-        class_override argument. Empty string, False, or failure to find the
-        class skips the process.
-
-        :note: This method uses pydoc to locate the class.
-    """
-    clazz = class_override
-    if class_override is None:
-        clazz = Config.get("optimizer", "interface")
-
-    if clazz == "" or clazz is False or str(clazz).strip() == "":
-        return None
-
-    result = locate(clazz)
-    if result is None:
-        warnings.warn('Optimizer interface class "%s" not found' % clazz)
-
-    return result
