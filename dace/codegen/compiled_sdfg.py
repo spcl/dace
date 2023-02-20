@@ -166,7 +166,8 @@ class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
-        self._sdfg = sdfg
+        from dace.sdfg import SDFG
+        self._sdfg: SDFG = sdfg
         self._lib = lib
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)

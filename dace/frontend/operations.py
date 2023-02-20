@@ -2,6 +2,7 @@
 from __future__ import print_function
 from functools import partial
 
+from contextlib import contextmanager
 from timeit import default_timer as timer
 import time
 import ast
@@ -12,69 +13,86 @@ import sys
 
 from dace import dtypes
 from dace.config import Config
+from typing import Any, List, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.codegen.compiled_sdfg import CompiledSDFG
 
 
-def timethis(sdfg, title, flop_count, f, *args, REPS=None, **kwargs):
-    """ Runs a function multiple (`DACE_treps`) times, logs the running times 
-        to a file, and prints the median time (with FLOPs if given).
-
-        :param sdfg: The SDFG belonging to the measurement.
-        :param title: A title of the measurement.
-        :param flop_count: Number of floating point operations in `program`.
-                           If greater than zero, produces a median FLOPS 
-                           report.
-        :param f: The function to measure.
-        :param args: Arguments to invoke the function with.
-        :param kwargs: Keyword arguments to invoke the function with.
-        :return: Latest return value of the function.
+class CompiledSDFGProfiler:
+    """
+    A context manager that prints the time it takes to execute the generated SDFG code
+    (excluding init and shutdown).
     """
 
-    start = timer()
-    REPS = REPS or int(Config.get('treps'))
+    times: List[Tuple[str, List[float]]]  #: The list of names and times for each SDFG called within the context.
 
-    times = [start] * (REPS + 1)
-    ret = None
-    print('\nProfiling...')
-    iterator = range(REPS)
-    if Config.get_bool('profiling_status'):
+    def __init__(self, repetitions: int = 0) -> None:
+        self.repetitions = repetitions or int(Config.get('treps'))
+        if self.repetitions < 1:
+            raise ValueError('Number of repetitions must be at least 1')
+        self.times = []
+
+    @contextmanager
+    def time_compiled_sdfg(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+        start = timer()
+
+        times = [start] * (self.repetitions + 1)
+        ret = None
+        print('\nProfiling...')
+
+        iterator = range(self.repetitions)
+        if Config.get_bool('profiling_status'):
+            try:
+                from tqdm import tqdm
+                iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
+            except ImportError:
+                print('WARNING: Cannot show profiling progress, missing optional '
+                      'dependency tqdm...\n\tTo see a live progress bar please install '
+                      'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                      'this warning) set `profiling_status` to false in the dace '
+                      'config (~/.dace.conf).')
+
+        for i in iterator:
+            # Call function
+            compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+            times[i + 1] = timer()
+
+        diffs = np.array([(times[i] - times[i - 1]) for i in range(1, self.repetitions + 1)])
+
+        # Create profiling directory if it doesn't exist
+        profiling_dir = os.path.join(compiled_sdfg.sdfg.build_folder, 'profiling')
+        os.makedirs(profiling_dir, exist_ok=True)
+        timestamp_string = str(int(time.time() * 1000))
+        outfile_path = os.path.join(profiling_dir, 'results-' + timestamp_string + '.csv')
+
+        # Write profiling results to file
+        with open(outfile_path, 'w') as f:
+            f.write('Program,Runtime_sec\n')
+            for d in diffs:
+                f.write('%s,%.8f\n' % (compiled_sdfg.sdfg.name, d))
+
+        # Print profiling results
+        time_secs = np.median(diffs)
+        print(compiled_sdfg.sdfg.name, time_secs * 1000, 'ms')
+
+        self.times.append((compiled_sdfg.sdfg.name, diffs))
+
+        #####################################
+        # Ensure internal SDFG will not be called by triggering an exception
+        orig_func = compiled_sdfg._cfunc
+        compiled_sdfg._cfunc = None
+
         try:
-            from tqdm import tqdm
-            iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
-        except ImportError:
-            print('WARNING: Cannot show profiling progress, missing optional '
-                  'dependency tqdm...\n\tTo see a live progress bar please install '
-                  'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                  'this warning) set `profiling_status` to false in the dace '
-                  'config (~/.dace.conf).')
-    for i in iterator:
-        # Call function
-        ret = f(*args, **kwargs)
-        times[i + 1] = timer()
+            yield
+        except TypeError:
+            pass
 
-    diffs = np.array([(times[i] - times[i - 1]) for i in range(1, REPS + 1)])
+        #####################################
+        # Restore state after raised exception
+        compiled_sdfg._cfunc = orig_func
 
-    problem_size = sys.argv[1] if len(sys.argv) >= 2 else 0
-
-    profiling_dir = os.path.join(sdfg.build_folder, 'profiling')
-    os.makedirs(profiling_dir, exist_ok=True)
-    timestamp_string = str(int(time.time() * 1000))
-    outfile_path = os.path.join(profiling_dir, 'results-' + timestamp_string + '.csv')
-
-    with open(outfile_path, 'w') as f:
-        f.write('Program,Optimization,Problem_Size,Runtime_sec\n')
-        for d in diffs:
-            f.write('%s,%s,%s,%.8f\n' % (sdfg.name, title, problem_size, d))
-
-    if flop_count > 0:
-        gflops_arr = (flop_count / diffs) * 1e-9
-        time_secs = np.median(diffs)
-        GFLOPs = (flop_count / time_secs) * 1e-9
-        print(title, GFLOPs, 'GFLOP/s       (', time_secs * 1000, 'ms)')
-    else:
-        time_secs = np.median(diffs)
-        print(title, time_secs * 1000, 'ms')
-
-    return ret
+        return ret
 
 
 def detect_reduction_type(wcr_str, openmp=False):

@@ -21,28 +21,71 @@ _SDFG_CALL_HOOKS: List[GeneratorType] = []
 _COMPILED_SDFG_CALL_HOOKS: List[GeneratorType] = []
 
 
-def register_sdfg_call_hook(hook: GeneratorType) -> int:
+def _register_hook(hook_list: List[GeneratorType], before_hook: Optional[Callable[..., None]],
+                   after_hook: Optional[Callable[..., None]], context_manager: Optional[GeneratorType]) -> int:
+    """
+    Internal function that registers function or context manager hooks to be called.
+    :param hook_list: The list of hooks to register to.
+    :param before_hook: An optional hook to call before the event.
+    :param after_hook: An optional hook to call after the event.
+    :param context_manager: A context manager to use around the event. This field
+                            can only be used if both ``before_hook`` and ``after_hook`` are ``None``.
+    :return: The unique identifier of the hook (for removal).
+    """
+    if before_hook is None and after_hook is None and context_manager is None:
+        raise ValueError('At least one of before_hook, after_hook, or context_manager must be specified')
+    if (before_hook is not None or after_hook is not None) and context_manager is not None:
+        raise ValueError('Cannot specify both before_hook/after_hook and context_manager')
+
+    if context_manager is not None:
+        hook = context_manager
+    else:
+        # Wrap the hooks in a context manager
+        @contextmanager
+        def hook(*args, **kwargs):
+            if before_hook is not None:
+                before_hook(*args, **kwargs)
+            try:
+                yield
+            finally:
+                if after_hook is not None:
+                    after_hook(*args, **kwargs)
+
+    hook_id = len(hook_list)
+    hook_list.append(hook)
+    return hook_id
+
+
+def register_sdfg_call_hook(*,
+                            before_hook: Optional[CallHookType] = None,
+                            after_hook: Optional[CallHookType] = None,
+                            context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when an SDFG is called.
     
-    :param hook: The hook to register.
+    :param before_hook: An optional hook to call before the SDFG is compiled and run.
+    :param after_hook: An optional hook to call after the SDFG is compiled and run.
+    :param context_manager: A context manager to use around the SDFG's compilation and running. This field
+                            can only be used if both ``before_hook`` and ``after_hook`` are ``None``.
     :return: The unique identifier of the hook (for removal).
     """
-    hook_id = len(_SDFG_CALL_HOOKS)
-    _SDFG_CALL_HOOKS.append(hook)
-    return hook_id
+    return _register_hook(_SDFG_CALL_HOOKS, before_hook, after_hook, context_manager)
 
 
-def register_compiled_sdfg_call_hook(hook: GeneratorType) -> int:
+def register_compiled_sdfg_call_hook(*,
+                                     before_hook: Optional[CompiledCallHookType] = None,
+                                     after_hook: Optional[CompiledCallHookType] = None,
+                                     context_manager: Optional[GeneratorType] = None) -> int:
     """
     Registers a hook that is called when a compiled SDFG is called.
     
-    :param hook: The hook to register.
+    :param before_hook: An optional hook to call before the compiled SDFG is called.
+    :param after_hook: An optional hook to call after the compiled SDFG is called.
+    :param context_manager: A context manager to use around the compiled SDFG's C function. This field
+                            can only be used if both ``before_hook`` and ``after_hook`` are ``None``.
     :return: The unique identifier of the hook (for removal).
     """
-    hook_id = len(_COMPILED_SDFG_CALL_HOOKS)
-    _COMPILED_SDFG_CALL_HOOKS.append(hook)
-    return hook_id
+    return _register_hook(_COMPILED_SDFG_CALL_HOOKS, before_hook, after_hook, context_manager)
 
 
 def unregister_sdfg_call_hook(hook_id: int):
@@ -51,6 +94,8 @@ def unregister_sdfg_call_hook(hook_id: int):
 
     :param hook_id: The unique identifier of the hook.
     """
+    if hook_id >= len(_SDFG_CALL_HOOKS):
+        raise ValueError('Invalid hook ID')
     _SDFG_CALL_HOOKS[hook_id] = None
 
 
@@ -60,32 +105,47 @@ def unregister_compiled_sdfg_call_hook(hook_id: int):
     
     :param hook_id: The unique identifier of the hook.
     """
+    if hook_id >= len(_COMPILED_SDFG_CALL_HOOKS):
+        raise ValueError('Invalid hook ID')
     _COMPILED_SDFG_CALL_HOOKS[hook_id] = None
 
 
 @contextmanager
-def on_call(before_call: CallHookType, after_call: Optional[CallHookType] = None):
+def on_call(*,
+            before: Optional[CallHookType] = None,
+            after: Optional[CallHookType] = None,
+            context_manager: Optional[GeneratorType] = None):
     """
-    Context manager that registers a hook to be called before an SDFG is
-    compiled and run.
+    Context manager that registers a function to be called around each SDFG call.
+    Use this to modify the SDFG before it is compiled and run.
 
-    Example use:
+    For example, to print the SDFG before it is compiled and run:
 
     .. code-block:: python
 
-        with dace.on_call(lambda sdfg: print('Before', sdfg.name),
-                          lambda sdfg: print('After', sdfg.name)):
-            program(...)
-            # ...
+        # Will print "some_program was called"
+        with dace.hooks.on_call(before=lambda sdfg: print(f'{sdfg.name} was called')):
+            some_program(...)
 
+        # Alternatively, using a context manager
+        @contextmanager
+        def print_sdfg_name(sdfg: dace.SDFG):
+            print(f'{sdfg.name} is going to be compiled and run')
+            yield
+            print(f'{sdfg.name} has finished running')
+        
+        with dace.hooks.on_each_sdfg(context_manager=print_sdfg_name):
+            some_program(...)
+        
 
-    :param hook: A function to be called before the SDFG call or a context
-                 manager to be called around it.
-    :param after_call: If a function was given to ``hook``, an optional
-                       function to be called after the SDFG call.
+    :param before: An optional function that is called before the SDFG is compiled and run. This function
+                   should take an SDFG as its only argument.
+    :param after: An optional function that is called after the SDFG is compiled and run. This function
+                  should take an SDFG as its only argument.
+    :param context_manager: A context manager to use around the SDFG's compilation and running. This field
+                            can only be used if both ``before`` and ``after`` are ``None``.
     """
-    hook = _as_context_manager(before_call, after_call)
-    hook_id = register_sdfg_call_hook(hook)
+    hook_id = register_sdfg_call_hook(before_hook=before, after_hook=after, context_manager=context_manager)
     try:
         yield
     finally:
@@ -93,18 +153,37 @@ def on_call(before_call: CallHookType, after_call: Optional[CallHookType] = None
 
 
 @contextmanager
-def on_compiled_sdfg_call(before_call: CompiledCallHookType, after_call: Optional[CompiledCallHookType] = None):
+def on_compiled_sdfg_call(*,
+                          before: Optional[CompiledCallHookType] = None,
+                          after: Optional[CompiledCallHookType] = None,
+                          context_manager: Optional[GeneratorType] = None):
     """
-    Context manager that registers a hook to be called before a compiled SDFG is
-    invoked.
+    Context manager that registers a function to be called around each compiled SDFG call.
+    Use this to wrap the compiled SDFG's C function call.
 
-    :param hook: A function to be called before the SDFG call or a context
-                 manager to be called around it.
-    :param after_call: If a function was given to ``hook``, an optional
-                       function to be called after the SDFG call.
+    For example, to time the execution of the compiled SDFG:
+
+    .. code-block:: python
+
+        @contextmanager
+        def time_compiled_sdfg(csdfg: dace.codegen.compiled_sdfg.CompiledSDFG, *args, **kwargs):
+            start = time.time()
+            yield
+            end = time.time()
+            print(f'Compiled SDFG {csdfg.sdfg.name} took {end - start} seconds')
+        
+        with dace.hooks.on_compiled_sdfg_call(context_manager=time_compiled_sdfg):
+            some_program(...)
+            other_program(...)
+        
+    :param before: An optional function that is called before the compiled SDFG is called. This function
+                   should take a compiled SDFG object, its arguments and keyword arguments.
+    :param after: An optional function that is called after the compiled SDFG is called. This function
+                  should take a compiled SDFG object, its arguments and keyword arguments.
+    :param context_manager: A context manager to use around the compiled SDFG's C function. This field
+                            can only be used if both ``before`` and ``after`` are ``None``.
     """
-    hook = _as_context_manager(before_call, after_call)
-    hook_id = register_compiled_sdfg_call_hook(hook)
+    hook_id = register_compiled_sdfg_call_hook(before_hook=before, after_hook=after, context_manager=context_manager)
     try:
         yield
     finally:
@@ -154,6 +233,9 @@ def _as_context_manager(begin_func: Union[Callable[..., Any], ContextManager],
 
 @contextmanager
 def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
+    """
+    Internal context manager that calls all SDFG call hooks in their registered order.
+    """
     if not _SDFG_CALL_HOOKS:
         yield sdfg
         return
@@ -169,6 +251,9 @@ def invoke_sdfg_call_hooks(sdfg: 'SDFG'):
 
 @contextmanager
 def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+    """
+    Internal context manager that calls all compiled SDFG call hooks in their registered order.
+    """
     if not _COMPILED_SDFG_CALL_HOOKS:
         yield compiled_sdfg
         return
@@ -187,49 +272,33 @@ def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[A
 # Built-in hooks
 
 
-class SDFGProfiler:
-    """
-    Simple profiler class that invokes an SDFG multiple times and prints/stores
-    the wall-clock time.
-    """
-    def __init__(self, repetitions: int) -> None:
-        if repetitions < 1:
-            raise ValueError('Number of repetitions must be at least 1')
-        self.reps = repetitions
-        self.csdfg = None
-        self.orig_func = None
-
-    def __call__(self, csdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
-        from dace.frontend.operations import timethis
-        timethis(csdfg._sdfg, 'DaCe', 0, csdfg._cfunc, csdfg._libhandle, *args, REPS=self.reps)
-
-        # Ensure internal SDFG will not be called by triggering an exception
-        self.csdfg = csdfg
-        self.orig_func = csdfg._cfunc
-        csdfg._cfunc = None
-
-        return self
-
-    def __enter__(self):
-        # Do nothing
-        pass
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # Restore state and return True regardless of the raised exception
-        self.csdfg._cfunc = self.orig_func
-        self.csdfg = self.orig_func = None
-        return True
-
-
 @contextmanager
 def profile(repetitions: int = 100):
     """
-    Context manager that enables profiling of an entire SDFG with wall-clock timing.
-    
-    :param repetitions: Number of repetitions to call the SDFG.
+    Context manager that enables profiling of each called DaCe program. If repetitions is greater than 1, the
+    program is run multiple times and the average execution time is reported.
+
+    Example usage:
+
+    .. code-block:: python
+
+        with dace.profile(repetitions=100) as profiler:
+            some_program(...)
+            # ...
+            other_program(...)
+
+        # Print all execution times of the last called program
+        print(profiler.times[-1])
+
+
+    :param repetitions: The number of times to run each DaCe program.
+    :note: Running functions multiple times may affect the results of the program.
     """
-    profiler = SDFGProfiler(repetitions)
-    with on_compiled_sdfg_call(profiler):
+    from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
+
+    profiler = CompiledSDFGProfiler(repetitions)
+
+    with on_compiled_sdfg_call(context_manager=profiler.time_compiled_sdfg):
         yield profiler
 
 
@@ -266,8 +335,8 @@ def _install_hooks_from_config():
 
     # Convenience hooks
     if config.Config.get_bool('profiling'):
-        repetitions = config.Config.get('treps')
-        register_compiled_sdfg_call_hook(SDFGProfiler(repetitions))
+        from dace.frontend.operations import CompiledSDFGProfiler
+        register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler().time_compiled_sdfg)
 
 
 _install_hooks_from_config()

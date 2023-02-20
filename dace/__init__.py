@@ -7,11 +7,13 @@ from .dtypes import *
 from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
-from .frontend.operations import *
+from .frontend.operations import reduce, elementwise
 
-from . import data, subsets
+# Import built-in hooks
+from .hooks import profile
+
+from . import data, subsets, hooks
 from .config import Config
-from .hooks import *
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
 from .memlet import Memlet
