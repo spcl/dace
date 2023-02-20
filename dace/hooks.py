@@ -296,9 +296,17 @@ def profile(repetitions: int = 100):
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
 
+    # If already profiling, return existing profiler and change its properties
+    for hook in _COMPILED_SDFG_CALL_HOOKS:
+        if isinstance(hook, CompiledSDFGProfiler):
+            hook.times.clear()
+            hook.repetitions = repetitions
+            yield hook
+            return
+
     profiler = CompiledSDFGProfiler(repetitions)
 
-    with on_compiled_sdfg_call(context_manager=profiler.time_compiled_sdfg):
+    with on_compiled_sdfg_call(context_manager=profiler):
         yield profiler
 
 
@@ -336,7 +344,7 @@ def _install_hooks_from_config():
     # Convenience hooks
     if config.Config.get_bool('profiling'):
         from dace.frontend.operations import CompiledSDFGProfiler
-        register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler().time_compiled_sdfg)
+        register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())
 
 
 _install_hooks_from_config()

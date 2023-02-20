@@ -34,7 +34,7 @@ class CompiledSDFGProfiler:
         self.times = []
 
     @contextmanager
-    def time_compiled_sdfg(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+    def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
         start = timer()
 
         times = [start] * (self.repetitions + 1)
