@@ -121,19 +121,22 @@ stream will be used). This is sometimes preferable for performance.
 Using AMD GPUs
 --------------
 
-AMD GPUs are supported in the same way as NVIDIA GPUs. The only difference is that the target should be changed from 
-``cuda`` to ``hip``. To run a program on an AMD GPU, you can configure the ``.dace.conf`` file and change the appropriate
+AMD GPUs are supported in the same way as NVIDIA GPUs. By default, DaCe is set to autodetect which GPU is connected to the current system.
+If this fails, or you have both and want to use AMD, the target should be changed from ``auto`` to
+``cuda`` or ``hip``. The default block size would also be suboptimal, as AMD GPUs have a wavefront size of 64 rather than 32.
+
+To run a program on an AMD GPU, you can configure the ``.dace.conf`` file and change the appropriate, but optional,
 settings. For example:
 
 .. code-block:: yaml
 
     compiler:
       cuda:
-        # Change the backend from CUDA to HIP
+        # Change the backend to HIP (optional)
         backend: hip
 
         # Specify the AMD GPU architecture (optional)
-        hip_arch: '906'
+        hip_arch: 'gfx906'
 
         # Override default block size (optional but important due to warp/wavefront size)
         default_block_size: 64,1,1

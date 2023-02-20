@@ -412,6 +412,11 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     node.implementation = "pure"
                     continue
+                # use GPUAuto expansion if applicable
+                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                        and state.scope_dict()[node] is None):
+                    node.implementation = 'GPUAuto'
+                    continue
                 # Use CUB for device-level reductions
                 if ('CUDA (device)' in node.implementations
                         and not is_devicelevel_gpu_kernel(state.parent, state, node)
