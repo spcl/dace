@@ -577,7 +577,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
-    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    # sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
