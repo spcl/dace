@@ -3,16 +3,16 @@ import sys
 from .version import __version__
 from .dtypes import *
 
+# Import built-in hooks
+from .builtin_hooks import *
+
 # Python frontend
 from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
 from .frontend.operations import reduce, elementwise
 
-# Import built-in hooks
-from .hooks import profile
-
-from . import data, subsets, hooks
+from . import data, hooks, subsets
 from .config import Config
 from .sdfg import SDFG, SDFGState, InterstateEdge, nodes
 from .sdfg.propagation import propagate_memlets_sdfg, propagate_memlet
@@ -21,6 +21,9 @@ from .symbolic import symbol
 
 # Run Jupyter notebook code
 from .jupyter import *
+
+# Import hooks from config last (as it may load classes from within dace)
+hooks._install_hooks_from_config()
 
 
 # Hack that enables using @dace as a decorator

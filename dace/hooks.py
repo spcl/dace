@@ -135,7 +135,7 @@ def on_call(*,
             yield
             print(f'{sdfg.name} has finished running')
         
-        with dace.hooks.on_each_sdfg(context_manager=print_sdfg_name):
+        with dace.hooks.on_call(context_manager=print_sdfg_name):
             some_program(...)
         
 
@@ -268,64 +268,6 @@ def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[A
 
         yield compiled_sdfg
 
-
-##############################################################################
-# Built-in hooks
-
-
-@contextmanager
-def profile(repetitions: int = 100, warmup: int = 0):
-    """
-    Context manager that enables profiling of each called DaCe program. If repetitions is greater than 1, the
-    program is run multiple times and the average execution time is reported.
-
-    Example usage:
-
-    .. code-block:: python
-
-        with dace.profile(repetitions=100) as profiler:
-            some_program(...)
-            # ...
-            other_program(...)
-
-        # Print all execution times of the last called program (other_program)
-        print(profiler.times[-1])
-
-
-    :param repetitions: The number of times to run each DaCe program.
-    :param warmup: Number of additional repetitions to run the program without measuring time.
-    :note: Running functions multiple times may affect the results of the program.
-    """
-    from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
-
-    # If already profiling, return existing profiler and change its properties
-    for hook in _COMPILED_SDFG_CALL_HOOKS:
-        if isinstance(hook, CompiledSDFGProfiler):
-            hook.times.clear()
-            hook.repetitions = repetitions
-            hook.warmup = warmup
-            yield hook
-            return
-
-    profiler = CompiledSDFGProfiler(repetitions, warmup)
-
-    with on_compiled_sdfg_call(context_manager=profiler):
-        yield profiler
-
-
-def cli_optimize_on_call(sdfg: 'SDFG'):
-    """
-    Calls a command-line interface for interactive SDFG transformations
-    on every DaCe program call.
-
-    :param sdfg: The current SDFG to optimize.
-    """
-
-    from dace.transformation.optimizer import SDFGOptimizer
-    opt = SDFGOptimizer(sdfg)
-    return opt.optimize()
-
-
 ##########################################################################
 # Install hooks from configuration upon import
 
@@ -353,4 +295,3 @@ def _install_hooks_from_config():
         register_compiled_sdfg_call_hook(context_manager=CompiledSDFGProfiler())
 
 
-_install_hooks_from_config()
