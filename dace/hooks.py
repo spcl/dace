@@ -7,6 +7,7 @@ from typing import Any, Callable, Generator, List, Optional, Tuple, Union, Conte
 from contextlib import contextmanager, ExitStack
 import pydoc
 from dace import config
+import warnings
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
@@ -334,6 +335,9 @@ def _install_hooks_helper(config_name: str, register_hook_func: Callable[[Genera
     hooklist = hooklist.split(',')
     for hook in hooklist:
         hookfunc = pydoc.locate(hook)
+        if hookfunc is None:
+            warnings.warn(f'Hook "{hook}" was not found or could not be loaded. Skipping.')
+            continue
         register_hook_func(context_manager=_as_context_manager(hookfunc))
 
 

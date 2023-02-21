@@ -8,7 +8,7 @@ import runpy
 import sys
 import os
 import shutil
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
@@ -137,6 +137,9 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
     file = args.file
     sys.argv = [file] + args.args
 
+    # Enable relevant call hooks
+    hooks = enable_hooks(args)
+
     # Run script or module
     retval = None
     errcode = 0
@@ -152,14 +155,35 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
                 print('daceprof: Application returned error code', ex.code)
                 errcode = ex.code
 
+    # Unregister hooks
+    for hook in hooks:
+        dace.hooks.unregister_sdfg_call_hook(hook)
+
     # TODO: Get instrumentation report file
 
     return retval, errcode
 
 
-def enable_hooks(args: argparse.Namespace, func: Callable[[], None]):
+def enable_hooks(args: argparse.Namespace) -> List[int]:
     # profile_entire_sdfg = args.type is None
-    pass
+    registered = []
+    
+    if args.sequential:
+        def make_sequential(sdfg: dace.SDFG):
+            # Disable OpenMP sections
+            for sd in sdfg.all_sdfgs_recursive():
+                sd.openmp_sections = False
+            # Disable OpenMP maps
+            for n, _ in sdfg.all_nodes_recursive():
+                if isinstance(n, dace.nodes.EntryNode):
+                    sched = getattr(n, 'schedule', False)
+                    if sched == dace.ScheduleType.CPU_Multicore or sched == dace.ScheduleType.Default:
+                        n.schedule = dace.ScheduleType.Sequential
+
+        registered.append(dace.hooks.register_sdfg_call_hook(before_hook=make_sequential))
+    
+
+    return registered
 
 
 def print_report(args: argparse.Namespace, reportfile: str):
