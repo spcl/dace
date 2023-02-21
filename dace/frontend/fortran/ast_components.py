@@ -944,7 +944,10 @@ class InternalFortranAst:
                 names_filtered.extend(ii.name for ii in i.vardecl if j.name == ii.name)
         decl_filtered = []
         for i in decls:
-            if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
+            # NOTE: Assignment/named expressions (walrus operator) works with Python 3.8 and later.
+            # if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
+            vardecl_filtered = [ii for ii in i.vardecl if ii.name not in names_filtered]
+            if vardecl_filtered:
                 decl_filtered.append(ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl_filtered))
         return ast_internal_classes.Specification_Part_Node(specifications=decl_filtered,
                                                             symbols=symbols,
