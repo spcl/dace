@@ -28,7 +28,7 @@ def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> T:
     ...
 
 
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], list[Type[T]]]):
+def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
     if isinstance(node, list):
         children = node
     else:
