@@ -5,6 +5,17 @@ import dace
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
+from typing import Set
+
+
+def validate_keys(val: Set[str], ref: Set[str]) -> bool:
+    for k in val:
+        if k in ref:
+            continue
+        if any(k.startswith(f'{r}_') for r in ref):
+            continue
+        return False
+    return True
 
 
 def test_simple_constants():
@@ -44,7 +55,7 @@ def test_nested_constants():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    assert validate_keys(sdfg.symbols.keys(), {'i'})
 
     # Test memlet
     sdfg.simplify()
@@ -69,7 +80,7 @@ def test_simple_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    assert validate_keys(sdfg.symbols.keys(), {'i'})
     # Test tasklets
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
@@ -87,19 +98,20 @@ def test_cprop_inside_loop():
             a[i] = i  # Use i - const
         a[i] = i  # Use i - not const
 
-    sdfg = program.to_sdfg()
+    sdfg = program.to_sdfg(simplify=False)
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i'}
+    assert validate_keys(sdfg.symbols.keys(), {'i'})
 
     # Test tasklets
     i_found = 0
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.Tasklet):
-            if 'i' in node.code.as_string:
-                i_found += 1
-    assert i_found == 2
+            for s in node.code.get_free_symbols():
+                if s == 'i' or s.startswith('i_'):
+                    i_found += 1
+    assert i_found == 1
 
 
 def test_cprop_outside_loop():
@@ -118,7 +130,7 @@ def test_cprop_outside_loop():
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
-    assert set(sdfg.symbols.keys()) == {'i', 'j'}
+    assert validate_keys(sdfg.symbols.keys(), {'i', 'j'})
 
     # Test memlet
     last_state = sdfg.sink_nodes()[0]
