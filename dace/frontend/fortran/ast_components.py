@@ -5,7 +5,7 @@ from fparser.two import symbol_table
 
 import copy
 from dace.frontend.fortran import ast_internal_classes
-from ast_internal_classes import FNode, Name_Node
+from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
 from typing import Any, List, Tuple, Type, TypeVar, Union, overload
 
 #We rely on fparser to provide an initial AST and convert to a version that is more suitable for our purposes
@@ -28,7 +28,7 @@ def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Type[T]) -> T:
     ...
 
 
-def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], list[Type[T]]]):
+def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type[T], List[Type[T]]]):
     if isinstance(node, list):
         children = node
     else:
@@ -967,7 +967,10 @@ class InternalFortranAst:
                 names_filtered.extend(ii.name for ii in i.vardecl if j.name == ii.name)
         decl_filtered = []
         for i in decls:
-            if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
+            # NOTE: Assignment/named expressions (walrus operator) works with Python 3.8 and later.
+            # if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
+            vardecl_filtered = [ii for ii in i.vardecl if ii.name not in names_filtered]
+            if vardecl_filtered:
                 decl_filtered.append(ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl_filtered))
         return ast_internal_classes.Specification_Part_Node(specifications=decl_filtered,
                                                             symbols=symbols,

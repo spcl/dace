@@ -1638,6 +1638,9 @@ def normalize_offsets(sdfg: SDFG):
     :param sdfg: The SDFG to be normalized.
     """
 
+    import ast
+    from dace.frontend.python import astutils
+
     for sd in sdfg.all_sdfgs_recursive():
         offsets = dict()
         for arrname, arrdesc in sd.arrays.items():
@@ -1649,15 +1652,26 @@ def normalize_offsets(sdfg: SDFG):
         if offsets:
             for e in sd.edges():
                 memlets = e.data.get_read_memlets(sd.arrays)
-                repl_dict = dict()
                 for m in memlets:
                     if m.data in offsets:
-                        key = str(m)
                         m.subset.offset(offsets[m.data], False)
-                        repl_dict[key] = m
-                if repl_dict:
-                    # TODO: This doesn't work.
-                    e.data.replace_dict(repl_dict, replace_keys=False)
+                for node in ast.walk(e.data.condition.code[0]):
+                    if isinstance(node, ast.Subscript):
+                        m = memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+                for k, v in e.data.assignments.items():
+                    vast = ast.parse(v)
+                    for node in ast.walk(vast):
+                        if isinstance(node, ast.Subscript):
+                            m = memlets.pop(0)
+                            subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                            assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                            node.slice = ast.copy_location(subscript.slice, node.slice)
+                    newv = astutils.unparse(vast)
+                    e.data.assignments[k] = newv
+                assert not memlets
             for state in sd.states():
                 # NOTE: Ideally, here we just want to iterate over the edges. However, we need to handle both the
                 # subset and the other subset. Therefore, it is safer to traverse the Memlet paths.
@@ -1666,7 +1680,7 @@ def normalize_offsets(sdfg: SDFG):
                         off = offsets[node.data]
                         visited = set()
                         for e0 in state.all_edges(node):
-                            for e1 in state.memlet_path(e0):
+                            for e1 in state.memlet_tree(e0):
                                 if e1 in visited:
                                     continue
                                 visited.add(e1)

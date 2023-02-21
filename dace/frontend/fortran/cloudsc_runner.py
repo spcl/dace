@@ -1,33 +1,29 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
-
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
-import numpy as np
-
-current = os.path.dirname(os.path.realpath(__file__))
-parent = os.path.dirname(current)
-sys.path.append(parent)
-
-from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import argparse
+from dace import SDFG, nodes, dtypes
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
-
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.fcdc_utils as fcdc_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from fparser.common.readfortran import FortranFileReader
+from fparser.two.parser import ParserFactory
+from fparser.two.symbol_table import SymbolTable
+import os
+
+
 
 if __name__ == "__main__":
-    parser = ParserFactory().create(std="f2008")
-    #testname = "int_assign"
 
-    #testname = "arrayrange1"
-    #testname = "cloudsc2ad"
-    #testname = "cloudsc2nl-minimal"
-    testname = "cloudscexp2"
-    reader = FortranFileReader(os.path.realpath("/home/alexnick/Projects/dace/" + testname + ".f90"))
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('-t', '--testname', type=str, nargs='?', default='cloudscexp2')
+    argparser.add_argument('-f', '--folder', type=str, nargs='?', default=None)
+    argparser.add_argument('-x', '--extension', type=str, nargs='?', default='f90')
+    args = vars(argparser.parse_args())
+    testname = args['testname']
+    folder = args['folder'] or os.getcwd()
+    extension = args['extension']
+
+    parser = ParserFactory().create(std="f2008")
+    reader = FortranFileReader(os.path.realpath(os.path.join(folder, f'{testname}.{extension}')))
     ast = parser(reader)
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
@@ -60,10 +56,18 @@ if __name__ == "__main__":
     sdfg.reset_sdfg_list()
 
     sdfg.validate()
-    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_initial_nomlim.sdfg")
+    sdfg.save(os.path.join(folder, f'{testname}_initial.sdfg'))
+    from dace.transformation.passes import ScalarToSymbolPromotion
+    for sd in sdfg.all_sdfgs_recursive():
+        promoted = ScalarToSymbolPromotion().apply_pass(sd, {})
+        print(f"Promoted the following scalars: {promoted}")
+    sdfg.save(os.path.join(folder, f'{testname}_promoted.sdfg'))
+    from dace.sdfg import utils
+    utils.normalize_offsets(sdfg)
+    sdfg.save(os.path.join(folder, f'{testname}_normalized.sdfg'))
     sdfg.simplify(verbose=True)
-    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_simplify_nomlim.sdfg")
+    sdfg.save(os.path.join(folder, f'{testname}_simplified.sdfg'))
     from dace.transformation.auto import auto_optimize as aopt
     aopt.auto_optimize(sdfg, dtypes.DeviceType.Generic)
-    sdfg.save("/home/alexnick/Projects/dace/" + testname + "_optimized_nomlim.sdfg")
+    sdfg.save(os.path.join(folder, f'{testname}_optimized.sdfg'))
     sdfg.compile()

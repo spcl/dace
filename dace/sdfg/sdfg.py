@@ -603,19 +603,29 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                      replace_in_graph: bool = True,
                      replace_keys: bool = True) -> None:
         """
-        Replaces all occurrences of keys in the given dictionary with the mapped
-        values.
+        Replaces all occurrences of keys in the given dictionary with the mapped values.
 
         :param repldict: The replacement dictionary.
-        :param replace_keys: If False, skips replacing assignment keys.
         :param symrepl: A symbolic expression replacement dictionary (for performance reasons).
         :param replace_in_graph: Whether to replace in SDFG nodes / edges.
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
+
+        # Make an intermediate replacement for symbols that already exist in the SDFG.
+        intermediate_repl = dict()
+        defined_symbols = self.symbols.keys() - self.free_symbols
+        for v in repldict.values():
+            strv = str(v)
+            if strv in defined_symbols:
+                intermediate_repl[strv] = self.find_new_symbol(strv)
+        if intermediate_repl:
+            self.replace_dict(intermediate_repl, replace_in_graph=replace_in_graph, replace_keys=replace_keys)
+
         symrepl = symrepl or {
             symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
+
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:

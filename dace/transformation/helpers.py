@@ -782,8 +782,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
-        external_subset = external_memlet.subset.offset_new(external_offset, False)
-        ones = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
+        ones = [i for i, d in enumerate(shape) if d == 1]
 
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
@@ -793,6 +792,15 @@ def unsqueeze_memlet(internal_memlet: Memlet,
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
+
+        # NOTE: There can be an issue where a unitary dimension wasn't squeezed, e.g., when using the dataflow syntax.
+        # In such cases, more ones than necessary will be detected.
+        # TODO: Find a better solution
+        if len(internal_subset) + len(to_unsqueeze) > len(external_memlet.subset):
+            external_subset = external_memlet.subset.offset_new(external_offset, False)
+            to_unsqueeze = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
+        if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
+            raise NotImplementedError
 
         result.subset.unsqueeze(to_unsqueeze)
         internal_offset = list(internal_offset)
