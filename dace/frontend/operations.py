@@ -27,10 +27,14 @@ class CompiledSDFGProfiler:
 
     times: List[Tuple[str, List[float]]]  #: The list of names and times for each SDFG called within the context.
 
-    def __init__(self, repetitions: int = 0) -> None:
+    def __init__(self, repetitions: int = 0, warmup: int = 0) -> None:
         self.repetitions = repetitions or int(Config.get('treps'))
+        self.warmup = warmup
         if self.repetitions < 1:
             raise ValueError('Number of repetitions must be at least 1')
+        if self.warmup < 0:
+            raise ValueError('Warmup repetitions cannot be negative')
+
         self.times = []
 
     @contextmanager
@@ -41,7 +45,7 @@ class CompiledSDFGProfiler:
         ret = None
         print('\nProfiling...')
 
-        iterator = range(self.repetitions)
+        iterator = range(self.warmup + self.repetitions)
         if Config.get_bool('profiling_status'):
             try:
                 from tqdm import tqdm
@@ -53,10 +57,13 @@ class CompiledSDFGProfiler:
                       'this warning) set `profiling_status` to false in the dace '
                       'config (~/.dace.conf).')
 
+        offset = 1 - self.warmup
+        times[0] = timer()
         for i in iterator:
             # Call function
             compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
-            times[i + 1] = timer()
+            if i >= self.warmup:
+                times[i + offset] = timer()
 
         diffs = np.array([(times[i] - times[i - 1]) for i in range(1, self.repetitions + 1)])
 

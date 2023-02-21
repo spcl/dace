@@ -143,7 +143,7 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
     # Run script or module
     retval = None
     errcode = 0
-    with dace.profile(repetitions=args.repetitions) as profiler:
+    with dace.profile(repetitions=args.repetitions, warmup=args.warmup) as profiler:
         try:
             if args.module:
                 runpy.run_module(file, run_name='__main__')
@@ -167,7 +167,7 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
 def enable_hooks(args: argparse.Namespace) -> List[int]:
     # profile_entire_sdfg = args.type is None
     registered = []
-    
+
     if args.sequential:
         def make_sequential(sdfg: dace.SDFG):
             # Disable OpenMP sections

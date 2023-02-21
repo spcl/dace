@@ -274,7 +274,7 @@ def invoke_compiled_sdfg_call_hooks(compiled_sdfg: 'CompiledSDFG', args: Tuple[A
 
 
 @contextmanager
-def profile(repetitions: int = 100):
+def profile(repetitions: int = 100, warmup: int = 0):
     """
     Context manager that enables profiling of each called DaCe program. If repetitions is greater than 1, the
     program is run multiple times and the average execution time is reported.
@@ -288,11 +288,12 @@ def profile(repetitions: int = 100):
             # ...
             other_program(...)
 
-        # Print all execution times of the last called program
+        # Print all execution times of the last called program (other_program)
         print(profiler.times[-1])
 
 
     :param repetitions: The number of times to run each DaCe program.
+    :param warmup: Number of additional repetitions to run the program without measuring time.
     :note: Running functions multiple times may affect the results of the program.
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
@@ -302,10 +303,11 @@ def profile(repetitions: int = 100):
         if isinstance(hook, CompiledSDFGProfiler):
             hook.times.clear()
             hook.repetitions = repetitions
+            hook.warmup = warmup
             yield hook
             return
 
-    profiler = CompiledSDFGProfiler(repetitions)
+    profiler = CompiledSDFGProfiler(repetitions, warmup)
 
     with on_compiled_sdfg_call(context_manager=profiler):
         yield profiler
