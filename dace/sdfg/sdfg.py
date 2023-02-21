@@ -1596,14 +1596,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
-        index = 0
+        
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
                  | self._rdistrarrays.keys())
-        while (name + ('_%d' % index)) in names:
-            index += 1
-
-        return name + ('_%d' % index)
-
+        return dt.find_new_name(name,names)
+                 
+        
     def find_new_constant(self, name: str):
         """
         Tries to find a new constant name by adding an underscore and a number.

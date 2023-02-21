@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import config, dtypes, registry
 from dace.sdfg import nodes, is_devicelevel_gpu
+from dace.codegen import common
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 
 
@@ -8,7 +9,7 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 class GPUEventProvider(InstrumentationProvider):
     """ Timing instrumentation that reports GPU/copy time using CUDA/HIP events. """
     def __init__(self):
-        self.backend = config.Config.get('compiler', 'cuda', 'backend')
+        self.backend = common.get_gpu_backend()
         super().__init__()
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
