@@ -139,5 +139,235 @@ END SUBROUTINE enthalpy_flux_due_to_precipitation_routine
     assert np.allclose(pfhpsl_f, pfhpsl_d)
     assert np.allclose(pfhpsn_f, pfhpsn_d)
 
+
+def test_fluxes():
+
+    fsource = """
+PROGRAM fluxes
+
+    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+
+    INTEGER(KIND=JPIM), PARAMETER  :: KLON = 100
+    INTEGER(KIND=JPIM), PARAMETER  :: KLEV = 100
+
+    INTEGER(KIND=JPIM)  :: KIDIA 
+    INTEGER(KIND=JPIM)  :: KFDIA 
+    ! DOUBLE PRECISION RLVTT
+    ! DOUBLE PRECISION RLSTT
+    ! DOUBLE PRECISION PFPLSL(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFPLSN(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFHPSL(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFHPSN(KLON,KLEV+1)
+
+    DOUBLE PRECISION PFSQLF(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQIF(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQLNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQNNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQRF(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQSF(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQRNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQSNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQLTUR(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQITUR(KLON,KLEV+1)
+
+    DOUBLE PRECISION PVFL(KLON,KLEV)
+    DOUBLE PRECISION PVFI(KLON,KLEV)
+    DOUBLE PRECISION PAPH(KLON,KLEV+1)
+    DOUBLE PRECISION PLUDE(KLON,KLEV) 
+
+    INTEGER(KIND=JPIM), PARAMETER  :: NCLV = 100
+    INTEGER(KIND=JPIM)  :: NCLDQL
+    INTEGER(KIND=JPIM)  :: NCLDQI
+    INTEGER(KIND=JPIM)  :: NCLDQR
+    INTEGER(KIND=JPIM)  :: NCLDQS
+    INTEGER(KIND=JPIM)  :: NCLDQV
+
+    DOUBLE PRECISION ZQX0(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZLNEG(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZQXN2D(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZFOEALFA(KLON,KLEV+1) 
+
+    DOUBLE PRECISION ZRG_R, ZQTMST, PTSPHY
+
+
+    CALL fluxes_routine(&
+        & KLON, KLEV, KIDIA, KFDIA,&
+        & PFSQLF,   PFSQIF ,  PFCQNNG,  PFCQLNG,&
+        & PFSQRF,   PFSQSF ,  PFCQRNG,  PFCQSNG,&
+        & PFSQLTUR, PFSQITUR ,&
+        & NCLV, NCLDQL, NCLDQI, NCLDQR, NCLDQS, NCLDQV,&
+        & PVFL, PVFI, PAPH, PLUDE,&
+        & ZQX0, ZLNEG, ZQXN2D, ZFOEALFA,&
+        & ZRG_R, ZQTMST, PTSPHY)
+
+END
+
+SUBROUTINE fluxes_routine(&
+    & KLON, KLEV, KIDIA, KFDIA,&
+    & PFSQLF,   PFSQIF ,  PFCQNNG,  PFCQLNG,&
+    & PFSQRF,   PFSQSF ,  PFCQRNG,  PFCQSNG,&
+    & PFSQLTUR, PFSQITUR ,&
+    & NCLV, NCLDQL, NCLDQI, NCLDQR, NCLDQS, NCLDQV,&
+    & PVFL, PVFI, PAPH, PLUDE,&
+    & ZQX0, ZLNEG, ZQXN2D, ZFOEALFA,&
+    & ZRG_R, ZQTMST, PTSPHY)
+
+    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+
+    INTEGER(KIND=JPIM)  :: KLON
+    INTEGER(KIND=JPIM)  :: KLEV
+    INTEGER(KIND=JPIM)  :: KIDIA 
+    INTEGER(KIND=JPIM)  :: KFDIA 
+    ! DOUBLE PRECISION RLVTT
+    ! DOUBLE PRECISION RLSTT
+    ! DOUBLE PRECISION PFPLSL(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFPLSN(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFHPSL(KLON,KLEV+1)
+    ! DOUBLE PRECISION PFHPSN(KLON,KLEV+1)
+
+    DOUBLE PRECISION PFSQLF(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQIF(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQLNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQNNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQRF(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQSF(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQRNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFCQSNG(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQLTUR(KLON,KLEV+1)
+    DOUBLE PRECISION PFSQITUR(KLON,KLEV+1)
+
+    DOUBLE PRECISION PVFL(KLON,KLEV)
+    DOUBLE PRECISION PVFI(KLON,KLEV)
+    DOUBLE PRECISION PAPH(KLON,KLEV+1)
+    DOUBLE PRECISION PLUDE(KLON,KLEV) 
+
+    INTEGER(KIND=JPIM)  :: NCLV
+    INTEGER(KIND=JPIM)  :: NCLDQL
+    INTEGER(KIND=JPIM)  :: NCLDQI
+    INTEGER(KIND=JPIM)  :: NCLDQR
+    INTEGER(KIND=JPIM)  :: NCLDQS
+    INTEGER(KIND=JPIM)  :: NCLDQV
+
+    DOUBLE PRECISION ZQX0(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZLNEG(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZQXN2D(KLON,KLEV,NCLV)
+    DOUBLE PRECISION ZFOEALFA(KLON,KLEV+1) 
+
+    DOUBLE PRECISION ZRG_R, ZGDPH_R, ZQTMST, ZALFAW, PTSPHY
+
+    INTEGER(KIND=JPIM)  :: JK, JL
+
+    DO JL=KIDIA,KFDIA
+        PFSQLF(JL,1)  = 0.0
+        PFSQIF(JL,1)  = 0.0
+        PFSQRF(JL,1)  = 0.0
+        PFSQSF(JL,1)  = 0.0
+        PFCQLNG(JL,1) = 0.0
+        PFCQNNG(JL,1) = 0.0
+        PFCQRNG(JL,1) = 0.0 !rain
+        PFCQSNG(JL,1) = 0.0 !snow
+        ! fluxes due to turbulence
+        PFSQLTUR(JL,1) = 0.0
+        PFSQITUR(JL,1) = 0.0
+    ENDDO
+
+    DO JK=1,KLEV
+        DO JL=KIDIA,KFDIA
+
+            ZGDPH_R = -ZRG_R*(PAPH(JL,JK+1)-PAPH(JL,JK))*ZQTMST
+            PFSQLF(JL,JK+1)  = PFSQLF(JL,JK)
+            PFSQIF(JL,JK+1)  = PFSQIF(JL,JK)
+            PFSQRF(JL,JK+1)  = PFSQLF(JL,JK)
+            PFSQSF(JL,JK+1)  = PFSQIF(JL,JK)
+            PFCQLNG(JL,JK+1) = PFCQLNG(JL,JK)
+            PFCQNNG(JL,JK+1) = PFCQNNG(JL,JK)
+            PFCQRNG(JL,JK+1) = PFCQLNG(JL,JK)
+            PFCQSNG(JL,JK+1) = PFCQNNG(JL,JK)
+            PFSQLTUR(JL,JK+1) = PFSQLTUR(JL,JK)
+            PFSQITUR(JL,JK+1) = PFSQITUR(JL,JK)
+
+            ZALFAW=ZFOEALFA(JL,JK)
+
+            ! Liquid , LS scheme minus detrainment
+            PFSQLF(JL,JK+1)=PFSQLF(JL,JK+1)+ &
+            &(ZQXN2D(JL,JK,NCLDQL)-ZQX0(JL,JK,NCLDQL)+PVFL(JL,JK)*PTSPHY-ZALFAW*PLUDE(JL,JK))*ZGDPH_R
+            ! liquid, negative numbers
+            PFCQLNG(JL,JK+1)=PFCQLNG(JL,JK+1)+ZLNEG(JL,JK,NCLDQL)*ZGDPH_R
+
+            ! liquid, vertical diffusion
+            PFSQLTUR(JL,JK+1)=PFSQLTUR(JL,JK+1)+PVFL(JL,JK)*PTSPHY*ZGDPH_R
+
+            ! Rain, LS scheme 
+            PFSQRF(JL,JK+1)=PFSQRF(JL,JK+1)+(ZQXN2D(JL,JK,NCLDQR)-ZQX0(JL,JK,NCLDQR))*ZGDPH_R 
+            ! rain, negative numbers
+            PFCQRNG(JL,JK+1)=PFCQRNG(JL,JK+1)+ZLNEG(JL,JK,NCLDQR)*ZGDPH_R
+
+            ! Ice , LS scheme minus detrainment
+            PFSQIF(JL,JK+1)=PFSQIF(JL,JK+1)+ &
+            & (ZQXN2D(JL,JK,NCLDQI)-ZQX0(JL,JK,NCLDQI)+PVFI(JL,JK)*PTSPHY-(1.0-ZALFAW)*PLUDE(JL,JK))*ZGDPH_R
+            ! ice, negative numbers
+            PFCQNNG(JL,JK+1)=PFCQNNG(JL,JK+1)+ZLNEG(JL,JK,NCLDQI)*ZGDPH_R
+
+            ! ice, vertical diffusion
+            PFSQITUR(JL,JK+1)=PFSQITUR(JL,JK+1)+PVFI(JL,JK)*PTSPHY*ZGDPH_R
+
+            ! snow, LS scheme
+            PFSQSF(JL,JK+1)=PFSQSF(JL,JK+1)+(ZQXN2D(JL,JK,NCLDQS)-ZQX0(JL,JK,NCLDQS))*ZGDPH_R 
+            ! snow, negative numbers
+            PFCQSNG(JL,JK+1)=PFCQSNG(JL,JK+1)+ZLNEG(JL,JK,NCLDQS)*ZGDPH_R
+        ENDDO
+    ENDDO
+
+END SUBROUTINE fluxes_routine
+    """
+
+    ffunc = get_fortran(fsource, 'fluxes', 'fluxes_routine')
+    sdfg = get_sdfg(fsource, 'fluxes')
+
+    rng = np.random.default_rng(42)
+
+    klon, klev, nclv = 10, 10, 10
+    kidia, kfdia = 2, 8
+    ncldql, ncldqi, ncldqr, ncldqs, ncldqv = 3, 4, 5, 6, 7
+
+    inputs = dict()
+    inputs['KLON'] = klon
+    inputs['KLEV'] = klev
+    inputs['KIDIA'] = kidia
+    inputs['KFDIA'] = kfdia
+    inputs['NCLV'] = nclv
+    inputs['NCLDQL'] = ncldql
+    inputs['NCLDQI'] = ncldqi
+    inputs['NCLDQR'] = ncldqr
+    inputs['NCLDQS'] = ncldqs
+    inputs['NCLDQV'] = ncldqv
+
+    for name in ('PAPH', 'ZFOEALFA'):
+        inputs[name] = np.asfortranarray(rng.random((klon, klev+1)))
+    for name in ('PVFL', 'PVFI', 'PLUDE'):
+        inputs[name] = np.asfortranarray(rng.random((klon, klev)))
+    for name in ('ZQX0', 'ZLNEG', 'ZQXN2D'):
+        inputs[name] = np.asfortranarray(rng.random((klon, klev, nclv)))
+    for name in ('ZRG_R', 'ZQTMST', 'PTSPHY'):
+        inputs[name] = rng.random()
+    
+    outputs_f = dict()
+    outputs_d = dict()
+
+    for name in ('PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'):
+        farr = np.asfortranarray(rng.random((klon, klev+1)))
+        darr = np.copy(farr)
+        outputs_f[name] = farr
+        outputs_d[name] = darr
+
+    ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
+    sdfg(**inputs, **outputs_d)
+
+    for k in outputs_f.keys():
+        farr = outputs_f[k]
+        darr = outputs_f[k]
+        assert np.allclose(farr, darr)
+
 if __name__ == "__main__":
     test_enthalpy_flux_due_to_precipitation()
+    test_fluxes()
