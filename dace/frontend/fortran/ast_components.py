@@ -5,7 +5,7 @@ from fparser.two import symbol_table
 
 import copy
 from dace.frontend.fortran import ast_internal_classes
-from ast_internal_classes import FNode, Name_Node
+from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
 from typing import Any, List, Tuple, Type, TypeVar, Union, overload
 
 #We rely on fparser to provide an initial AST and convert to a version that is more suitable for our purposes
