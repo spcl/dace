@@ -279,6 +279,58 @@ def test_fortran_frontend_array_access():
     assert (a[2] == 42)
 
 
+def test_fortran_frontend_array_access():
+    test_string = """
+                    PROGRAM access_test
+                    implicit none
+                    double precision d(4)
+                    CALL array_access_test_function(d)
+                    end
+
+                    SUBROUTINE array_access_test_function(d)
+                    double precision d(4)
+
+                    d(2)=5.5
+                    
+                    END SUBROUTINE array_access_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
+    sdfg.simplify(verbose=True)
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d_0=a)
+    assert (a[0] == 42)
+    assert (a[1] == 5.5)
+    assert (a[2] == 42)
+
+
+def test_fortran_frontend_real_kind_selector():
+    test_string = """
+                    PROGRAM real_kind_selector_test
+                    implicit none
+                    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13,300)
+                    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+                    REAL(KIND=JPRB) d(4)
+                    CALL real_kind_selector_test_function(d)
+                    end
+
+                    SUBROUTINE real_kind_selector_test_function(d)
+                    REAL(KIND=JPRB) d(4)
+                    INTEGER(KIND=JPIM) i
+
+                    i=7
+                    d(2)=5.5+i
+                    
+                    END SUBROUTINE real_kind_selector_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "real_kind_selector_test")
+    sdfg.simplify(verbose=True)
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0] == 42)
+    assert (a[1] == 12.5)
+    assert (a[2] == 42)
+
+
 def test_fortran_frontend_twoconnector():
     test_string = """
                     PROGRAM twoconnector_test
@@ -543,21 +595,22 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_3dmap()
-    test_fortran_frontend_twoconnector()
-    test_fortran_frontend_array_access()
-    test_fortran_frontend_simplify()
-    test_fortran_frontend_input_output_connector()
-    test_fortran_frontend_view_test()
-    test_fortran_frontend_view_test_2()
-    test_fortran_frontend_view_test_3()
-    test_fortran_frontend_array_ranges()
-    test_fortran_frontend_if1()
-    test_fortran_frontend_loop1()
-    test_fortran_frontend_function_statement1()
+    # test_fortran_frontend_array_3dmap()
+    test_fortran_frontend_real_kind_selector()
+    # test_fortran_frontend_twoconnector()
+    # test_fortran_frontend_array_access()
+    # test_fortran_frontend_simplify()
+    # test_fortran_frontend_input_output_connector()
+    # test_fortran_frontend_view_test()
+    # test_fortran_frontend_view_test_2()
+    # test_fortran_frontend_view_test_3()
+    # test_fortran_frontend_array_ranges()
+    # test_fortran_frontend_if1()
+    # test_fortran_frontend_loop1()
+    # test_fortran_frontend_function_statement1()
 
-    test_fortran_frontend_pow1()
-    test_fortran_frontend_pow2()
-    test_fortran_frontend_sign1()
+    # test_fortran_frontend_pow1()
+    # test_fortran_frontend_pow2()
+    # test_fortran_frontend_sign1()
     #test_fortran_frontend_scalar()
     print("All tests passed")

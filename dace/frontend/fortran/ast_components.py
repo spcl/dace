@@ -99,6 +99,7 @@ class InternalFortranAst:
         self.ast = ast
         self.tables = tables
         self.functions_and_subroutines = []
+        self.symbols = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -380,7 +381,16 @@ class InternalFortranAst:
                                                          line_number=line)
         # TODO This needs a better translation
         elif name.name == "__dace_selected_real_kind":
-            return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
+            if args.args[0].value == '13' and args.args[1].value == '300':
+                return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
+            elif args.args[0].value == '2' and args.args[1].value == '1':
+                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
+            elif args.args[0].value == '4' and args.args[1].value == '2':
+                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
+            elif args.args[0].value == '6' and args.args[1].value == '37':
+                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
+            else:
+                raise NotImplementedError("Only real*8 is supported")
         func_types = {
             "__dace_int": "INT",
             "__dace_dble": "DOUBLE",
@@ -485,11 +495,23 @@ class InternalFortranAst:
             if type_of_node.items[1] is not None:
                 if not derived_type:
                     kind = type_of_node.items[1].items[1].string
+                    if self.symbols[kind] is not None:
+                        if basetype == "REAL":
+                            if self.symbols[kind].value == "8":
+                                basetype = "REAL8"
+                        elif basetype == "INTEGER":
+                            if self.symbols[kind].value == "4":
+                                basetype = "INTEGER"
+                        else:
+                            raise TypeError("Derived type not supported")
+                    else:
+                        raise TypeError("Derived type not supported")
                 if derived_type:
                     raise TypeError("Derived type not supported")
         if not derived_type:
             testtype = self.types[basetype]
         else:
+
             testtype = basetype
 
         # get the names of the variables being defined
@@ -555,6 +577,7 @@ class InternalFortranAst:
                                                        line_number=node.item.span))
             else:
                 if size is None:
+                    self.symbols[actual_name.name] = init
                     vardecls.append(
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
                                                               type=testtype,
