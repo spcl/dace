@@ -1,12 +1,15 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from copy import deepcopy
-from dace import data, dtypes, sdfg as sd, symbolic
+import ctypes.util
+from dace import config, data, dtypes, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from functools import lru_cache
 from io import StringIO
+import os
+import subprocess
 from typing import List, Optional, Set, Union
 import warnings
 
@@ -94,3 +97,50 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     strio = StringIO()
     InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
     return strio.getvalue().strip()
+
+
+@lru_cache()
+def get_gpu_backend() -> str:
+    """
+    Returns the currently-selected GPU backend. If automatic,
+    will perform a series of checks to see if an NVIDIA device exists,
+    then if an AMD device exists, or fail.
+    Otherwise, chooses the configured backend in ``compiler.cuda.backend``.
+    """
+    backend: str = config.Config.get('compiler', 'cuda', 'backend')
+    if backend and backend != 'auto':
+        return backend
+
+    def _try_execute(cmd: str) -> bool:
+        process = subprocess.Popen(cmd.split(' '), stderr=subprocess.STDOUT, stdout=subprocess.PIPE, shell=True)
+        errcode = process.wait()
+        return errcode == 0
+
+    # Test 1: Test for existence of *-smi
+    if _try_execute('nvidia-smi'):
+        return 'cuda'
+    if _try_execute('rocm-smi'):
+        return 'hip'
+
+    # Test 2: Attempt to check with CMake
+    if _try_execute('cmake --find-package -DNAME=CUDA -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
+        return 'cuda'
+    if _try_execute('cmake --find-package -DNAME=HIP -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST'):
+        return 'hip'
+
+    # Test 3: Environment variables
+    if os.getenv('HIP_PLATFORM') == 'amd':
+        return 'hip'
+    elif os.getenv('CUDA_HOME'):
+        return 'cuda'
+
+    # Test 4: Runtime libraries
+    if ctypes.util.find_library('amdhip64') and not ctypes.util.find_library('cudart'):
+        return 'hip'
+    elif ctypes.util.find_library('cudart') and not ctypes.util.find_library('amdhip64'):
+        return 'cuda'
+
+    raise RuntimeError('Cannot autodetect existence of NVIDIA or AMD GPU, please '
+                       'set the DaCe configuration entry ``compiler.cuda.backend`` '
+                       'or the ``DACE_compiler_cuda_backend`` environment variable '
+                       'to either "cuda" or "hip".')
