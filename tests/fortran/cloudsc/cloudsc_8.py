@@ -2,6 +2,7 @@
 import copy
 import dace
 from dace.frontend.fortran import fortran_parser
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols
 from importlib import import_module
@@ -155,9 +156,9 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
 
 @pytest.mark.parametrize("program, device", [
     pytest.param('cloudsc_8b', dace.DeviceType.CPU),
-    # pytest.param('cloudsc_8b', dace.DeviceType.GPU, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8b', dace.DeviceType.GPU, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8c', dace.DeviceType.CPU),
-    # pytest.param('cloudsc_8c', dace.DeviceType.GPU, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8c', dace.DeviceType.GPU, marks=pytest.mark.gpu),
 ])
 def test_program(program: str, device: dace.DeviceType):
 
@@ -166,8 +167,9 @@ def test_program(program: str, device: dace.DeviceType):
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
     sdfg = get_sdfg(fsource, program_name)
-    if device != dace.DeviceType.CPU:
-        raise NotImplementedError
+    if device == dace.DeviceType.GPU:
+        auto_optimize(sdfg, device)
+        sdfg.apply_gpu_transformations()
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
