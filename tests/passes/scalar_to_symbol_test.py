@@ -188,8 +188,10 @@ def test_promote_array_assignment():
             A[:] += j
 
     sdfg: dace.SDFG = testprog6.to_sdfg(simplify=False)
-    assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
-    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert scalar_to_symbol.find_promotable_scalars(sdfg, integers_only=False) == {'j'}
+    scal2sym = scalar_to_symbol.ScalarToSymbolPromotion()
+    scal2sym.integers_only = False
+    scal2sym.apply_pass(sdfg, {})
     sdfg.apply_transformations_repeated(isxf.StateFusion)
 
     # There should be 4 states:

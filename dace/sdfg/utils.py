@@ -1629,3 +1629,82 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
             squeezed.append(i)
 
     return dimension_mapping, unsqueezed, squeezed
+
+
+def normalize_offsets(sdfg: SDFG):
+    """
+    Normalizes descriptor offsets to 0 and adjusts the Memlet subsets accordingly. This operation is done in-place.
+
+    :param sdfg: The SDFG to be normalized.
+    """
+
+    import ast
+    from dace.frontend.python import astutils
+
+    for sd in sdfg.all_sdfgs_recursive():
+        offsets = dict()
+        for arrname, arrdesc in sd.arrays.items():
+            if not isinstance(arrdesc, dt.Array):  # NOTE: Does this work with Views properly?
+                continue
+            if any(o != 0 for o in arrdesc.offset):
+                offsets[arrname] = arrdesc.offset
+                arrdesc.offset = [0] * len(arrdesc.shape)
+        if offsets:
+            for e in sd.edges():
+                memlets = e.data.get_read_memlets(sd.arrays)
+                for m in memlets:
+                    if m.data in offsets:
+                        m.subset.offset(offsets[m.data], False)
+                for node in ast.walk(e.data.condition.code[0]):
+                    if isinstance(node, ast.Subscript):
+                        m = memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+                for k, v in e.data.assignments.items():
+                    vast = ast.parse(v)
+                    for node in ast.walk(vast):
+                        if isinstance(node, ast.Subscript):
+                            m = memlets.pop(0)
+                            subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                            assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                            node.slice = ast.copy_location(subscript.slice, node.slice)
+                    newv = astutils.unparse(vast)
+                    e.data.assignments[k] = newv
+                assert not memlets
+            for state in sd.states():
+                # NOTE: Ideally, here we just want to iterate over the edges. However, we need to handle both the
+                # subset and the other subset. Therefore, it is safer to traverse the Memlet paths.
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode) and node.data in offsets:
+                        off = offsets[node.data]
+                        visited = set()
+                        for e0 in state.all_edges(node):
+                            for e1 in state.memlet_tree(e0):
+                                if e1 in visited:
+                                    continue
+                                visited.add(e1)
+                                if e1.data.data == node.data:
+                                    e1.data.subset.offset(off, False)
+                                else:
+                                    e1.data.other_subset.offset(off, False)
+
+
+def prune_symbols(sdfg: SDFG):
+    """
+    Prunes unused symbols from the SDFG and the NestedSDFG symbol mappings. This operation is done in place. See also
+    `dace.transformation.interstate.PruneSymbols`.
+
+    :param sdfg: The SDFG to have its symbols pruned.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                prune_symbols(node.sdfg)
+                declared_symbols = set(node.sdfg.symbols.keys())
+                free_symbols = node.sdfg.free_symbols
+                defined_symbols = declared_symbols - free_symbols
+                for s in defined_symbols:
+                    del node.sdfg.symbols[s]
+                    if s in node.symbol_mapping:
+                        del node.symbol_mapping[s]

@@ -1013,18 +1013,23 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         data_intermediate = set([node.data for node in intermediate_nodes])
         for data_name in data_intermediate:
-            if subgraph_contains_data[data_name] and isinstance(sdfg.data(data_name), dace.data.Array):
+            desc = sdfg.data(data_name)
+            if subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
 
                 in_edges_iter = iter(in_edges)
                 in_edge = next(in_edges_iter)
                 target_subset = dcpy(in_edge.data.subset)
+                # Make 0-based
+                target_subset.offset(desc.offset, False)
                 target_subset.pop(invariant_dimensions[data_name])
                 while True:
                     try:  # executed if there are multiple in_edges
                         in_edge = next(in_edges_iter)
                         target_subset_curr = dcpy(in_edge.data.subset)
+                        # Make 0-based
+                        target_subset_curr.offset(desc.offset, False)
                         target_subset_curr.pop(invariant_dimensions[data_name])
                         target_subset = subsets.union(target_subset, \
                                                       target_subset_curr)
@@ -1035,10 +1040,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # calculate the new transient array size.
                 target_subset.offset(min_offsets_cropped, True)
 
-                # re-add invariant dimensions with offset 0 and save to min_offsets
+                # re-add invariant dimensions with the corresponding offset and save to min_offsets
                 min_offset = []
                 index = 0
-                for i in range(len(sdfg.data(data_name).shape)):
+                for i in range(len(desc.shape)):
                     if i in invariant_dimensions[data_name]:
                         min_offset.append(0)
                     else:
@@ -1050,7 +1055,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # determine the shape of the new array.
                 new_data_shape = []
                 index = 0
-                for i, sz in enumerate(sdfg.data(data_name).shape):
+                for i, sz in enumerate(desc.shape):
                     if i in invariant_dimensions[data_name]:
                         new_data_shape.append(sz)
                     else:
@@ -1060,10 +1065,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_strides = [data._prod(new_data_shape[i + 1:]) for i in range(len(new_data_shape))]
 
                 new_data_totalsize = data._prod(new_data_shape)
-                new_data_offset = [0] * len(new_data_shape)
+                # new_data_offset = [0] * len(new_data_shape)
+                new_data_offset = desc.offset
 
                 # compress original shape
-                change_data(sdfg.data(data_name),
+                change_data(desc,
                             shape=new_data_shape,
                             strides=new_data_strides,
                             total_size=new_data_totalsize,
@@ -1134,7 +1140,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if oedge.dst == global_map_exit and \
                                             oedge.data.other_subset is None:
                             oedge.data.other_subset = dcpy(oedge.data.subset)
-                            oedge.data.other_subset.offset(min_offset, True)
+                            oedge.data.other_subset.offset(min_offset, False)
 
         # consolidate edges if desired
         if self.consolidate:

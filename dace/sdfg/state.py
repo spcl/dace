@@ -964,7 +964,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
         # Add symbols from inter-state edges along the path to the state
         try:
-            start_state = sdfg.start_state
+            start_state = self
             for e in sdfg.predecessor_state_transitions(start_state):
                 symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:

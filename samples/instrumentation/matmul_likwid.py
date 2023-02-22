@@ -57,9 +57,6 @@ C = np.zeros((m, n), dtype=np.float32)
 for nsdfg in sdfg.all_sdfgs_recursive():
     for state in nsdfg.nodes():
         state.instrument = dace.InstrumentationType.LIKWID_CPU
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                node.instrument = dace.InstrumentationType.LIKWID_CPU
 
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different

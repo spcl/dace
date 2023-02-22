@@ -227,7 +227,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     interstate_symbols = set()
     for edge in sdfg.edges():
         interstate_symbols |= edge.data.free_symbols
-    for candidate in (candidates - interstate_symbols):
+    for candidate in set(candidates):
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
 

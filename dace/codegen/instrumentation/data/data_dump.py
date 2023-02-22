@@ -5,6 +5,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.scope import is_devicelevel_fpga
 from dace.sdfg.state import SDFGState
+from dace.codegen import common
 from dace.codegen.targets import cpp
 import os
 from typing import Tuple, TYPE_CHECKING
@@ -19,7 +20,7 @@ class DataInstrumentationProviderMixin:
         if self.gpu_runtime_init:
             return
         self.gpu_runtime_init = True
-        self.backend = config.Config.get('compiler', 'cuda', 'backend')
+        self.backend = common.get_gpu_backend()
         if self.backend == 'cuda':
             header_name = 'cuda_runtime.h'
         elif self.backend == 'hip':
