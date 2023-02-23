@@ -1375,7 +1375,14 @@ class ProgramVisitor(ExtNodeVisitor):
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
 
-        return pv.parse_program(node, is_tasklet)
+        try:
+            return pv.parse_program(node, is_tasklet)
+        except SkipCall:
+            raise
+        except Exception:
+            # Propagate line information upwards (for reporting) in case of exception
+            self.current_lineinfo = pv.current_lineinfo
+            raise
 
     def _symbols_from_params(self, params: List[Tuple[str, Union[str, dtypes.typeclass]]],
                              memlet_inputs: Dict[str, Memlet]) -> Dict[str, symbolic.symbol]:
@@ -3051,9 +3058,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self._visit_assign(assign_from_first, target, None)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
-        type_name = rname(node.annotation)
         try:
-            dtype = eval(astutils.unparse(node.annotation), self.globals, self.defined)
+            dtype = astutils.evalnode(node.annotation, {**self.globals, **self.defined})
             if isinstance(dtype, data.Data):
                 simple_type = dtype.dtype
             else:
@@ -3062,6 +3068,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise TypeError
         except:
             dtype = None
+            type_name = rname(node.annotation)
             warnings.warn('typeclass {} is not supported'.format(type_name))
         if node.value is None and dtype is not None:  # Annotating type without assignment
             self.annotated_types[rname(node.target)] = dtype
@@ -3114,9 +3121,17 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Skip error if the arrays are defined exactly in the same way.
                     # Change target to a full-range subscript.
                     target = ast.parse(f"{name}[:]").body[0].value
+                    target = ast.copy_location(target, node_target)
                     assert isinstance(target, ast.Subscript)
                 else:
                     raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
+
+                # If the target is a view, we can't assign two different arrays to it
+                if isinstance(result, str) and true_name in self.views and self.views[true_name][0] != result:
+                    raise DaceSyntaxError(
+                        self, target,
+                        f'Cannot assign array "{result}" to view "{name}" because it is already assigned to array "{self.views[true_name][0]}".'
+                    )
 
             if is_return and true_name:
                 if (isinstance(result, str) and result in self.sdfg.arrays

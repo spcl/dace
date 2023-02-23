@@ -166,6 +166,8 @@ class Memlet(object):
         else:
             attrs['dst_subset'] = None
 
+        attrs['is_data_src'] = self._is_data_src
+
         # Fill in legacy (DEPRECATED) values for backwards compatibility
         attrs['num_accesses'] = \
             str(self.volume) if not self.dynamic else -1
@@ -178,7 +180,12 @@ class Memlet(object):
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
                                                 context=context,
-                                                ignore_properties={'src_subset', 'dst_subset', 'num_accesses'})
+                                                ignore_properties={'src_subset', 'dst_subset', 'num_accesses', 'is_data_src'})
+        
+        # Allow serialized memlet to override src/dst_subset to disambiguate self-copies
+        if 'is_data_src' in json_obj['attributes']:
+            ret._is_data_src = json_obj['attributes']['is_data_src']
+        
         if context:
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']

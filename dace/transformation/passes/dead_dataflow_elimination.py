@@ -30,9 +30,8 @@ class DeadDataflowElimination(ppl.Pass):
                                              default=False,
                                              desc='If True, does not remove library nodes if their results are unused. '
                                              'Otherwise removes library nodes without side effects.')
-    remove_persistent_memory = properties.Property(dtype=bool,
-                                                   default=False,
-                                                   desc='If True, marks code with Persistent allocation lifetime as dead')
+    remove_persistent_memory = properties.Property(
+        dtype=bool, default=False, desc='If True, marks code with Persistent allocation lifetime as dead')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -138,17 +137,19 @@ class DeadDataflowElimination(ppl.Pass):
                                     predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
                             # Pruning connectors on tasklets sometimes needs to change their code
-                            elif (isinstance(leaf.src, nodes.Tasklet) and leaf.src.code.language != dtypes.Language.Python):
+                            elif (isinstance(leaf.src, nodes.Tasklet)
+                                  and leaf.src.code.language != dtypes.Language.Python):
                                 if leaf.src.code.language == dtypes.Language.CPP:
                                     ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
                                     if ctype is None:
-                                        raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                                'tasklet due to connector type inference failure.')
+                                        raise NotImplementedError(
+                                            f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                            'tasklet due to connector type inference failure.')
                                     # Add definition
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                            'tasklet due to its code language.')
+                                                              'tasklet due to its code language.')
                             state.remove_memlet_path(leaf)
 
                     # Remove the node itself as necessary
@@ -174,9 +175,10 @@ class DeadDataflowElimination(ppl.Pass):
                         node.sdfg.arrays[conn].transient = True
 
             # Update read sets for the predecessor states to reuse
-            access_nodes -= result[state]
-            access_node_names = set(n.data for n in access_nodes if state.out_degree(n) > 0)
-            access_sets[state] = (access_node_names, access_sets[state][1])
+            remaining_access_nodes = set(n for n in (access_nodes - result[state]) if state.out_degree(n) > 0)
+            removed_data_containers = set(n.data for n in result[state]
+                                          if isinstance(n, nodes.AccessNode) and n not in remaining_access_nodes)
+            access_sets[state] = (access_sets[state][0] - removed_data_containers, access_sets[state][1])
 
         return result or None
 
@@ -234,8 +236,8 @@ class DeadDataflowElimination(ppl.Pass):
                     if _has_side_effects(l.src, sdfg):
                         return False
 
-                    # If data is connected to a nested SDFG as an input/output, do not remove
-                    if (isinstance(l.src, nodes.NestedSDFG)
+                    # If data is connected to a nested SDFG or library node as an input/output, do not remove
+                    if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
                         return False
 

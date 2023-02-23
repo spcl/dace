@@ -322,7 +322,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
     # Returns the optimized library node implementations for the given target
     # device
     if device is dtypes.DeviceType.GPU:
-        return ['cuBLAS', 'cuSolverDn', 'CUB', 'pure']
+        return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
     elif device is dtypes.DeviceType.FPGA:
         return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
     elif device is dtypes.DeviceType.CPU:
@@ -334,7 +334,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
-        return result + ['OpenMP', 'pure']
+        return result + ['pure']
 
     return ['pure']
 
@@ -411,6 +411,11 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
             if isinstance(node, dace.nodes.LibraryNode):
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     node.implementation = "pure"
+                    continue
+                # use GPUAuto expansion if applicable
+                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                        and state.scope_dict()[node] is None):
+                    node.implementation = 'GPUAuto'
                     continue
                 # Use CUB for device-level reductions
                 if ('CUDA (device)' in node.implementations

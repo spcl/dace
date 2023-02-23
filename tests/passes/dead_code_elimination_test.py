@@ -151,6 +151,44 @@ def test_dde_scope_reconnect():
     sdfg.validate()
 
 
+@pytest.mark.parametrize('libnode', (False, True))
+def test_dde_inout(libnode):
+    """ Tests nested SDFG with the same array as input and output. """
+    sdfg = dace.SDFG('dde_inout')
+    sdfg.add_array('a', [20], dace.float64)
+    sdfg.add_transient('b', [20], dace.float64)
+    state = sdfg.add_state()
+
+    if not libnode:
+
+        @dace.program
+        def nested(a: dace.float64[20], b: dace.float64[20]):
+            for i in range(1, 20):
+                b[i] = a[i - 1] + 1
+            for i in range(19):
+                a[i] = b[i + 1] + 1
+
+        nsdfg = nested.to_sdfg(simplify=False)
+        node = state.add_nested_sdfg(nsdfg, None, {'b'}, {'a', 'b'})
+        outconn = 'b'
+    else:
+        node = dace.nodes.LibraryNode('tester')  # Library node without side effects
+        node.add_in_connector('b')
+        node.add_out_connector('a')
+        node.add_out_connector('bout')
+        state.add_node(node)
+        outconn = 'bout'  # Library node has different output connector name
+
+    state.add_edge(node, 'a', state.add_write('a'), None, dace.Memlet('a'))
+    state.add_edge(state.add_read('b'), None, node, 'b', dace.Memlet('b'))
+    state.add_edge(node, outconn, state.add_write('b'), None, dace.Memlet('b'))
+
+    assert sorted([n.data for n in state.data_nodes()]) == ['a', 'b', 'b']
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert sorted([n.data for n in state.data_nodes()]) == ['a', 'b', 'b']
+    sdfg.validate()
+
+
 def test_dce():
     """ End-to-end test evaluating both dataflow and state elimination. """
     # Code should end up as b[:] = a + 2; b += 1
@@ -224,6 +262,8 @@ if __name__ == '__main__':
     test_dde_access_node_in_scope(True)
     test_dde_connectors()
     test_dde_scope_reconnect()
+    test_dde_inout(False)
+    test_dde_inout(True)
     test_dce()
     test_dce_callback()
     test_dce_callback_manual()
