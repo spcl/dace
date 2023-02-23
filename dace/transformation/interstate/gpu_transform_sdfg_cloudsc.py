@@ -193,6 +193,7 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
             cloned_arrays[onodename] = name
 
         # Replace nodes
+        access_nodes = set()
         for state in sdfg.nodes():
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.data in cloned_arrays):
@@ -323,6 +324,38 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                     'exclude_copyin': ','.join([str(n) for n in excl_copyin]),
                     'exclude_copyout': ','.join([str(n) for n in excl_copyout])
                 })
+
+        for state in sdfg.nodes():
+            for node in state.nodes(): 
+                if isinstance(node, nodes.Tasklet):    
+                    # Ignore tasklets that are already in the GPU kernel
+                    if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(state.parent, state, node):
+
+                        # Find CPU tasklets that write to the GPU by checking all outgoing edges
+                        for outgoing_conn in node.out_connectors:
+                            
+                            for outgoing_edge in state.edges_by_connector(node, outgoing_conn):
+                            
+                                data_desc = outgoing_edge.dst.desc(sdfg)
+                                if data_desc.storage in gpu_storage:
+                                    
+                                    new_data_desc = data_desc.clone()
+                                    # FIXME: check here if the CPU array already exists? or did we move everything to GPU?
+                                    new_data_name = 'cpu_' + outgoing_conn
+                                    if new_data_name not in sdfg.arrays:
+                                        sdfg.add_datadesc(new_data_name, new_data_desc)
+                                    
+                                    gpu_acc_node = outgoing_edge.dst
+                                    cpu_acc_node = nodes.AccessNode(new_data_name)
+                                    
+                                    # create new edge from CPU access node to GPU access node to trigger a copy
+                                    # We keep the shape of data access to be the same as the original one
+                                    cpu_gpu_memlet = memlet.Memlet.simple(gpu_acc_node.data, outgoing_edge.data.subset)
+                                    state.add_nedge(cpu_acc_node, gpu_acc_node, cpu_gpu_memlet)
+                                    
+                                    # now, replace the edge such that the CPU tasklet writes to the CPU array
+                                    outgoing_edge._dst = cpu_acc_node
+                                    outgoing_edge._data = memlet.Memlet.simple(new_data_name, outgoing_edge.data.subset)
 
         # Step 9: Simplify
         if not self.simplify:
