@@ -403,8 +403,8 @@ class Memlet(object):
             other_data = path[-1].dst.data
         elif not self._is_data_src and isinstance(path[0].src, nodes.AccessNode):
             other_data = path[0].src.data
-        # If there is `other_data`, `other_subset`` is None, and `other_data`'s shape covers `subset``,
-        # then set `other_subset`` equal to `subset`.`
+        # If there is `other_data`, `other_subset` is None, and `other_data`'s shape covers `subset`,
+        # then set `other_subset` equal to `subset`.
         if other_data is not None and self.other_subset is None:
             desc_subset = subsets.Range.from_array(sdfg.arrays[other_data])
             if desc_subset.covers(self.subset):
