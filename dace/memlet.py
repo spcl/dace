@@ -398,9 +398,17 @@ class Memlet(object):
         if (self.data is not None and self.subset is None):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
 
-        # If other_subset is None, set it to the same range as subset
-        if self.other_subset is None:
-            self.other_subset = dcpy(self.subset)
+        other_data = None
+        if self._is_data_src and isinstance(path[-1].dst, nodes.AccessNode):
+            other_data = path[-1].dst.data
+        elif not self._is_data_src and isinstance(path[0].src, nodes.AccessNode):
+            other_data = path[0].src.data
+        # If there is `other_data`, `other_subset`` is None, and `other_data`'s shape covers `subset``,
+        # then set `other_subset`` equal to `subset`.`
+        if other_data is not None and self.other_subset is None:
+            desc_subset = subsets.Range.from_array(sdfg.arrays[other_data])
+            if desc_subset.covers(self.subset):
+                self.other_subset = dcpy(self.subset)
 
     def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
