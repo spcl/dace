@@ -101,30 +101,41 @@ data = {
     'PVFL': (parameters['KLON'], parameters['KLEV']),
     'ZFOEALFA': (parameters['KLON'], parameters['KLEV']+1),
     'ZLNEG': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'ZPFPLSX': (parameters['KLON'], parameters['KLEV']+1, parameters['NCLV']),
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV'])
 }
 
 
 programs = {
+    'cloudsc_8': 'flux_diagnostics',
+    'cloudsc_8a': 'copy_precipitation_arrays',
     'cloudsc_8b': 'fluxes',
     'cloudsc_8c': 'enthalpy_flux_due_to_precipitation',
 }
 
 
 program_parameters = {
-    'cloudsc_8b': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'), 
+    'cloudsc_8': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
+    'cloudsc_8a': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
+    'cloudsc_8b': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
     'cloudsc_8c': ('KLON', 'KLEV', 'KIDIA', 'KFDIA')
 }
 
 
 program_inputs = {
+    'cloudsc_8': ('RLSTT', 'RLVTT', 'ZPFPLSX',
+                  'PAPH', 'ZFOEALFA', 'PVFL', 'PVFI', 'PLUDE', 'ZQX0', 'ZLNEG', 'ZQXN2D', 'ZRG_R', 'ZQTMST', 'PTSPHY'),
+    'cloudsc_8a': ('ZPFPLSX',),
     'cloudsc_8b': ('PAPH', 'ZFOEALFA', 'PVFL', 'PVFI', 'PLUDE', 'ZQX0', 'ZLNEG', 'ZQXN2D', 'ZRG_R', 'ZQTMST', 'PTSPHY'),
     'cloudsc_8c': ('RLSTT', 'RLVTT', 'PFPLSL', 'PFPLSN')
 }
 
 
 program_outputs = {
+    'cloudsc_8': ('PFPLSL', 'PFPLSN', 'PFHPSL', 'PFHPSN',
+                  'PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
+    'cloudsc_8a': ('PFPLSL', 'PFPLSN'),
     'cloudsc_8b': ('PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
     'cloudsc_8c': ('PFHPSL', 'PFHPSN')
 }
@@ -155,10 +166,14 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
 
 
 @pytest.mark.parametrize("program, device", [
+    pytest.param('cloudsc_8a', dace.DeviceType.CPU),
+    pytest.param('cloudsc_8a', dace.DeviceType.GPU, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8b', dace.DeviceType.CPU),
     pytest.param('cloudsc_8b', dace.DeviceType.GPU, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8c', dace.DeviceType.CPU),
     pytest.param('cloudsc_8c', dace.DeviceType.GPU, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8', dace.DeviceType.CPU),
+    pytest.param('cloudsc_8', dace.DeviceType.GPU, marks=pytest.mark.gpu),
 ])
 def test_program(program: str, device: dace.DeviceType):
 
@@ -186,5 +201,7 @@ def test_program(program: str, device: dace.DeviceType):
 
 
 if __name__ == "__main__":
+    test_program('cloudsc_8a', dace.DeviceType.CPU)
     test_program('cloudsc_8b', dace.DeviceType.CPU)
     test_program('cloudsc_8c', dace.DeviceType.CPU)
+    test_program('cloudsc_8', dace.DeviceType.CPU)
