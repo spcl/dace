@@ -81,6 +81,7 @@ data = {
     'PTSPHY': (0,),
     'RALSDCP': (0,),
     'RALVDCP': (0,),
+    'RLMIN': (0,),
     'RLSTT': (0,),
     'RLVTT': (0,),
     'ZRG_R': (0,),
@@ -109,6 +110,7 @@ data = {
     'tendency_loc_cld': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'tendency_loc_q': (parameters['KLON'], parameters['KLEV']),
     'tendency_loc_T': (parameters['KLON'], parameters['KLEV']),
+    'ZA': (parameters['KLON'], parameters['KLEV']),
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
     'ZCONVSRCE': (parameters['KLON'], parameters['NCLV']),
     'ZCOVPTOT': (parameters['KLON'],),
@@ -117,6 +119,9 @@ data = {
     'ZFALLSRCE': (parameters['KLON'], parameters['NCLV']),
     'ZFLUXQ': (parameters['KLON'], parameters['NCLV']),
     'ZFOEALFA': (parameters['KLON'], parameters['KLEV']+1),
+    'ZICEFRAC': (parameters['KLON'], parameters['KLEV']),
+    'ZLI': (parameters['KLON'], parameters['KLEV']),
+    'ZLIQFRAC': (parameters['KLON'], parameters['KLEV']),
     'ZLNEG': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZPFPLSX': (parameters['KLON'], parameters['KLEV']+1, parameters['NCLV']),
     'ZPSUPSATSRCE': (parameters['KLON'], parameters['NCLV']),
@@ -128,6 +133,7 @@ data = {
 
 
 programs = {
+    'cloudsc_1f': 'liq_ice_fractions',
     'cloudsc_6': 'update_tendancies',
     'cloudsc_8': 'flux_diagnostics',
     'cloudsc_8a': 'copy_precipitation_arrays',
@@ -137,6 +143,7 @@ programs = {
 
 
 program_parameters = {
+    'cloudsc_1f': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQI', 'NCLDQL'),
     'cloudsc_6': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQV', 'NCLDTOP'),
     'cloudsc_8': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
     'cloudsc_8a': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
@@ -146,6 +153,7 @@ program_parameters = {
 
 
 program_inputs = {
+    'cloudsc_1f': ('RLMIN', 'ZQX',),
     'cloudsc_6': ('RALSDCP', 'RALVDCP', 'ZQTMST', 'ZQX', 'ZQX0', 'ZDA', 'ZPSUPSATSRCE', 'ZCONVSRCE',
                   'ZFALLSINK', 'ZFALLSRCE', 'ZCONVSINK', 'ZQXN', 'IPHASE', 'ZCOVPTOT'),
     'cloudsc_8': ('RLSTT', 'RLVTT', 'ZPFPLSX',
@@ -157,6 +165,7 @@ program_inputs = {
 
 
 program_outputs = {
+    'cloudsc_1f': ('ZA', 'ZLIQFRAC', 'ZICEFRAC'),
     'cloudsc_6': ('ZFLUXQ', 'tendency_loc_T', 'tendency_loc_cld', 'tendency_loc_q', 'tendency_loc_a', 'PCOVPTOT'),
     'cloudsc_8': ('PFPLSL', 'PFPLSN', 'PFHPSL', 'PFHPSN',
                   'PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
@@ -191,6 +200,8 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
 
 
 @pytest.mark.parametrize("program, device", [
+    pytest.param('cloudsc_1', dace.DeviceType.CPU),
+    pytest.param('cloudsc_1f', dace.DeviceType.GPU, marks=pytest.mark.gpu),
     pytest.param('cloudsc_6', dace.DeviceType.CPU),
     pytest.param('cloudsc_6', dace.DeviceType.GPU, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8a', dace.DeviceType.CPU),
@@ -211,7 +222,6 @@ def test_program(program: str, device: dace.DeviceType):
     sdfg = get_sdfg(fsource, program_name)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
-        sdfg.apply_gpu_transformations()
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
@@ -228,6 +238,7 @@ def test_program(program: str, device: dace.DeviceType):
 
 
 if __name__ == "__main__":
+    test_program('cloudsc_1f', dace.DeviceType.CPU)
     test_program('cloudsc_6', dace.DeviceType.CPU)
     test_program('cloudsc_8a', dace.DeviceType.CPU)
     test_program('cloudsc_8b', dace.DeviceType.CPU)
