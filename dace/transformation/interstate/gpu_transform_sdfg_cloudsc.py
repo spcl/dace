@@ -387,12 +387,13 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
 
                                     # create new edge from CPU access node to GPU access node to trigger a copy
                                     # We keep the shape of data access to be the same as the original one
-                                    cpu_gpu_memlet = memlet.Memlet.simple(gpu_acc_node.data, outgoing_edge.data.subset)
+                                    cpu_gpu_memlet = memlet.Memlet(expr=None, data=gpu_acc_node.data, subset=outgoing_edge.data.subset, other_subset=outgoing_edge.data.subset)
+                                    cpu_gpu_memlet._src_subset = outgoing_edge.data.subset
                                     state.add_nedge(cpu_acc_node, gpu_acc_node, cpu_gpu_memlet)
 
                                     # now, replace the edge such that the CPU tasklet writes to the CPU array
                                     outgoing_edge._dst = cpu_acc_node
-                                    outgoing_edge._data = memlet.Memlet.simple(new_data_name, outgoing_edge.data.subset)
+                                    outgoing_edge._data = memlet.Memlet(expr=None, data=new_data_name, subset=outgoing_edge.data.subset)
 
         # Step 9: Simplify
         if not self.simplify:
