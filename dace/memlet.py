@@ -406,10 +406,13 @@ class Memlet(object):
         # If there is "other_data" (and "data") but there is no "other_subset", then set "other_subset"
         # to the same range as "subset", if the shape of "other_data" covers the "subset" or the shape of "data".
         if other_data is not None and self.data is not None and self.other_subset is None:
-            data_subset = subsets.Range.from_array(sdfg.arrays[self.data])
-            other_data_subset = subsets.Range.from_array(sdfg.arrays[other_data])
-            if other_data_subset.covers(self.subset) or other_data_subset.covers(data_subset):
-                self.other_subset = dcpy(self.subset)
+            data_desc = sdfg.arrays[self.data]
+            other_data_desc = sdfg.arrays[other_data]
+            if len(data_desc.shape) == len(other_data_desc.shape):
+                data_subset = subsets.Range.from_array(data_desc)
+                other_data_subset = subsets.Range.from_array(other_data_desc)
+                if other_data_subset.covers(self.subset) or other_data_subset.covers(data_subset):
+                    self.other_subset = dcpy(self.subset)
 
     def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
