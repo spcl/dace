@@ -92,6 +92,11 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
           - transients are not touched yet
     """
 
+    # FIXME: do we still need it?
+    toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=True)
+
+    register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=True)
+
     simplify = Property(desc='Reapply simplification after modifying graph', dtype=bool, default=True)
 
     exclude_copyin = Property(desc="Exclude these arrays from being copied into the device "
@@ -331,6 +336,42 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                     'cloned_arrays': cloned_arrays | self.cloned_arrays
                 })
 
+        #######################################################
+        # Step 6: Modify transient data storage
+
+        # FIXME: we need a heuristic to decide whether to move a transient to GPU or not.
+
+        const_syms = xfh.constant_symbols(sdfg)
+
+        for state in sdfg.nodes():
+            sdict = state.scope_dict()
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient:
+                    nodedesc = node.desc(sdfg)
+
+                    # Special case: nodes that lead to dynamic map ranges must stay on host
+                    if any(isinstance(state.memlet_path(e)[-1].dst, nodes.EntryNode) for e in state.out_edges(node)):
+                        continue
+
+                    if sdict[node] is None and nodedesc.storage not in gpu_storage:
+
+                        # Scalars were already checked.
+                        if isinstance(nodedesc, data.Scalar) and not node.data in gpu_scalars:
+                            continue
+
+                        # NOTE: the cloned arrays match too but it's the same storage so we don't care
+                        nodedesc.storage = dtypes.StorageType.GPU_Global
+
+                        # Try to move allocation/deallocation out of loops
+                        dsyms = set(map(str, nodedesc.free_symbols))
+                        if (self.toplevel_trans and not isinstance(nodedesc, (data.Stream, data.View))
+                                and len(dsyms - const_syms) == 0):
+                            nodedesc.lifetime = dtypes.AllocationLifetime.SDFG
+                    elif nodedesc.storage not in gpu_storage:
+                        # Make internal transients registers
+                        if self.register_trans:
+                            nodedesc.storage = dtypes.StorageType.Register
+
         for state in sdfg.nodes():
             for node in state.nodes():
                 if isinstance(node, nodes.Tasklet):
@@ -353,14 +394,17 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                         new_data_name = self.cloned_arrays[array_name]['cpu']
 
                                         cpu_acc_node: Optional[nodes.AccessNode] = None
-                                        for n in state.nodes():
-                                            if isinstance(n, nodes.AccessNode) and n.data == new_data_name:
-                                                cpu_acc_node = n
-                                                break
+                                        #for n in state.nodes():
+                                        #    if isinstance(n, nodes.AccessNode) and n.data == new_data_name:
+                                        #        cpu_acc_node = n
+                                        #        break
 
                                         if cpu_acc_node is None:
                                             cpu_acc_node = nodes.AccessNode(new_data_name)
-                                            state.add_node(cpu_acc_node)
+                                            #state.add_node(cpu_acc_node)
+
+                                            if 'ZWTOT' in new_data_name:
+                                                print(new_data_name, id(cpu_acc_node))
 
                                     # There's only a transient GPU array, we need to create a CPU array
                                     else:
@@ -381,13 +425,13 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                             #if parent_nsdfg is not None and new_data_name not in parent_nsdfg.out_connectors:
                                             #    parent_nsdfg.add_out_connector(new_data_name)
 
-                                            state.add_node(cpu_acc_node)
+                                            #state.add_node(cpu_acc_node)
 
                                     gpu_acc_node = outgoing_edge.dst
 
                                     # create new edge from CPU access node to GPU access node to trigger a copy
                                     # We keep the shape of data access to be the same as the original one
-                                    cpu_gpu_memlet = memlet.Memlet(expr=None, data=gpu_acc_node.data, subset=outgoing_edge.data.subset, other_subset=outgoing_edge.data.subset)
+                                    cpu_gpu_memlet = memlet.Memlet(expr=None, data=cpu_acc_node.data, subset=outgoing_edge.data.subset, other_subset=outgoing_edge.data.subset)
                                     cpu_gpu_memlet._src_subset = outgoing_edge.data.subset
                                     state.add_nedge(cpu_acc_node, gpu_acc_node, cpu_gpu_memlet)
 
@@ -395,8 +439,71 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     outgoing_edge._dst = cpu_acc_node
                                     outgoing_edge._data = memlet.Memlet(expr=None, data=new_data_name, subset=outgoing_edge.data.subset)
 
+                        # Find CPU tasklets that read from the GPU by checking all incoming edges
+                        for incoming_conn in node.in_connectors:
+
+                            for incoming_edge in state.edges_by_connector(node, incoming_conn):
+
+                                data_desc = incoming_edge.src.desc(sdfg)
+                                if data_desc.storage in gpu_storage:
+
+                                    # Is there already a CPU array for this? If yes, we want to use it.
+                                    array_name = incoming_edge.src.data
+                                    # FIXME: avoid a redundant allocation - if the array is already allocated, we should use it
+                                    # None indicates there was a clone before
+                                    if array_name in self.cloned_arrays and self.cloned_arrays[array_name]['cpu'] is not None:
+                                        new_data_name = self.cloned_arrays[array_name]['cpu']
+
+                                        cpu_acc_node: Optional[nodes.AccessNode] = None
+                                        #for n in state.nodes():
+                                        #    if isinstance(n, nodes.AccessNode) and n.data == new_data_name:
+                                        #        cpu_acc_node = n
+                                        #        break
+
+                                        if cpu_acc_node is None:
+                                            cpu_acc_node = nodes.AccessNode(new_data_name)
+                                            #state.add_node(cpu_acc_node)
+                                            if 'ZWTOT' in new_data_name:
+                                                print(new_data_name, id(cpu_acc_node))
+
+                                    # There's only a transient GPU array, we need to create a CPU array
+                                    else:
+                                        new_data_desc = data_desc.clone()
+                                        # We allocate it locally only for the purpose of touching some data on the CPU
+                                        new_data_desc.transient = True
+                                        new_data_desc.storage = dtypes.StorageType.CPU_Heap
+
+                                        new_data_name = 'cpu_' + array_name
+                                        cpu_acc_node = nodes.AccessNode(new_data_name)
+
+                                        if new_data_name not in sdfg.arrays:
+                                            sdfg.add_datadesc(new_data_name, new_data_desc)
+
+                                            self.cloned_arrays[array_name] = {'cpu': new_data_name, 'gpu': array_name}
+
+                                            #parent_nsdfg = sdfg.parent_nsdfg_node
+                                            #if parent_nsdfg is not None and new_data_name not in parent_nsdfg.out_connectors:
+                                            #    parent_nsdfg.add_out_connector(new_data_name)
+
+                                            #state.add_node(cpu_acc_node)
+
+                                    gpu_acc_node = incoming_edge.src
+
+                                    # create new edge from the GPU access node to CPU access node to trigger a copy
+                                    # We keep the shape of data access to be the same as the original one
+                                    gpu_cpu_memlet = memlet.Memlet(expr=None, data=gpu_acc_node.data, subset=incoming_edge.data.subset, other_subset=incoming_edge.data.subset)
+                                    gpu_cpu_memlet._src_subset = incoming_edge.data.subset
+                                    state.add_nedge(gpu_acc_node, cpu_acc_node, gpu_cpu_memlet)
+
+                                    # now, replace the edge such that the CPU tasklet reads from the CPU array
+                                    incoming_edge._src = cpu_acc_node
+                                    incoming_edge._data = memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset)
+
+        print('Save')
+        sdfg.save('broken-graph-after-transform.sdfg')
         # Step 9: Simplify
         if not self.simplify:
             return
 
+        print('Simplify')
         sdfg.simplify()
