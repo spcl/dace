@@ -291,6 +291,48 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
 
         return True
+    
+    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+        """
+        This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
+        i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
+
+        For simplicity, it is assumed that the for-loop can be safely transformed to a Map. The method applies only to
+        bodies that become a NestedSDFG.
+
+        :param name: The name of array.
+        :param itervar: The for-loop iteration variable.
+        :param sdfg: The SDFG containing the states that comprise the body of the for-loop.
+        :param states: A list of states that comprise the body of the for-loop.
+        :return: True if the array is thread-local, otherwise False.
+        """
+
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, dt.Array):
+            # Scalars are always thread-local.
+            return True
+        if itervar in (str(s) for s in desc.free_symbols):
+            # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
+            return True
+        for state in states:
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                for e in state.out_edges(node):
+                    src_subset = e.data.get_src_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if src_subset and itervar in src_subset.free_symbols:
+                        return False
+                for e in state.in_edges(node):
+                    dst_subset = e.data.get_dst_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if dst_subset and itervar in dst_subset.free_symbols:
+                        return False
+        return True
 
     def apply(self, _, sdfg: sd.SDFG):
         from dace.sdfg.propagation import align_memlet
@@ -356,7 +398,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if (isinstance(node, nodes.AccessNode) and node.data == name):
                             found = True
                             break
-                if not found:
+                if not found and self._is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
             for name in set(unique_set):
@@ -472,6 +514,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     desc.transient = False
                     nsdfg.sdfg.add_datadesc(sym, desc)
                     body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
+            for name, desc in nsdfg.sdfg.arrays.items():
+                if desc.transient and not self._is_array_thread_local(name, itervar, nsdfg.sdfg, nsdfg.sdfg.states()):
+                    odesc = copy.deepcopy(desc)
+                    sdfg.arrays[name] = odesc
+                    desc.transient = False
+                    wnode = body.add_access(name)
+                    nsdfg.add_out_connector(name)
+                    body.add_edge(nsdfg, name, wnode, None, memlet.Memlet.from_array(name, odesc))
 
             nstate = nsdfg.sdfg.node(0)
             init_state = nsdfg.sdfg.add_state_before(nstate)
@@ -601,5 +651,5 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
         for sym in symbols_to_remove:
-            if helpers.is_symbol_unused(sdfg, sym):
+            if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)
