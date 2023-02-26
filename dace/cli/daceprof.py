@@ -197,8 +197,29 @@ def print_report(args: argparse.Namespace, reportfile: str):
         report.sortby(args.sort, args.ascending)
 
     if args.csv:
-        print(report.as_csv())
-    print(report)
+        durations, counters = report.as_csv()
+        if args.output:  # Print to file
+            durfile = args.output + '.durations.csv'
+            ctrfile = args.output + '.counters.csv'
+            if durations:
+                with open(durfile, 'w') as fp:
+                    fp.write(durations)
+                print(f'Durations saved to {durfile}')
+            if counters:
+                with open(ctrfile, 'w') as fp:
+                    fp.write(counters)
+                print(f'Counters saved to {ctrfile}')
+        else:  # Print to console
+            if durations:
+                print('Durations:')
+                print(durations)
+            if durations and counters:
+                print('\n')
+            if counters:
+                print('Counters:')
+                print(counters)
+    else:
+        print(report)
 
 
 def main():

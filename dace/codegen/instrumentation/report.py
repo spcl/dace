@@ -4,14 +4,23 @@
 import json
 import numpy as np
 import re
+from typing import Dict, List, Tuple, Union
+from io import StringIO
 
 from collections import defaultdict
 
+UUIDType = Tuple[int, int, int]
+
 
 class InstrumentationReport(object):
+    """
+    An object that represents a DaCe program instrumentation report.
+    Such reports may include runtimes of all or parts of an SDFG, as well as performance counters.
 
+    Instrumentation reports are stored as JSON files, in the Chrome Tracing format.
+    """
     @staticmethod
-    def get_event_uuid(event):
+    def get_event_uuid(event) -> UUIDType:
         uuid = (-1, -1, -1)
         if 'args' in event:
             args = event['args']
@@ -28,8 +37,12 @@ class InstrumentationReport(object):
         match = re.match(r'.*report-(\d+)\.json', filename)
         self.name = match.groups()[0] if match is not None else 'N/A'
 
-        self.durations = {}
-        self.counters = {}
+        # UUID -> Name -> Thread ID -> Times
+        self.durations: Dict[UUIDType, Dict[str, Dict[int, List[float]]]] = {}
+
+        # UUID -> Name -> Counter -> Thread ID -> Values
+        self.counters: Dict[UUIDType, Dict[str, Dict[str, Dict[int, List[float]]]]] = {}
+
         self._sortcat = None
         self._sortdesc = False
 
@@ -42,14 +55,14 @@ class InstrumentationReport(object):
 
             self.sdfg_hash = report['sdfgHash']
 
-            events = report['traceEvents']
+            events: Dict[str, Union[str, int, Dict[str, float]]] = report['traceEvents']
             for event in events:
                 if not "ph" in event:
                     continue
 
-                phase = event["ph"]
-                tid = event["tid"]
-                name = event['name']
+                phase: str = event["ph"]
+                tid: int = event["tid"]
+                name: str = event['name']
                 if phase == 'X':
                     # Time
                     uuid = self.get_event_uuid(event)
@@ -67,8 +80,8 @@ class InstrumentationReport(object):
                     if name not in self.counters[uuid]:
                         self.counters[uuid][name] = defaultdict(list)
 
-
-                    for counter, value in event["args"].items():
+                    ctrs: Dict[str, float] = event["args"]
+                    for counter, value in ctrs.items():
                         if counter == "sdfg_id" or counter == "state_id" or counter == "id":
                             continue
 
@@ -82,8 +95,7 @@ class InstrumentationReport(object):
 
     def sortby(self, column: str, ascending: bool = False):
         if (column and column.lower() not in ('counter', 'value', 'min', 'max', 'mean', 'median')):
-            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are '
-                             'supported')
+            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are supported')
         self._sortcat = column if column is None else column.lower()
         self._sortdesc = not ascending
 
@@ -278,8 +290,8 @@ class InstrumentationReport(object):
                             else:
                                 label = ""
 
-                            string, sdfg, state = self._get_counters_string(counter, label, thread_values, element, sdfg,
-                                                                            state, string, row_format, COLW,
+                            string, sdfg, state = self._get_counters_string(counter, label, thread_values, element,
+                                                                            sdfg, state, string, row_format, COLW,
                                                                             with_element_heading)
 
                             with_element_heading = False
@@ -287,3 +299,41 @@ class InstrumentationReport(object):
                 string += ('-' * (COLW * 5)) + '\n'
 
         return string
+
+    def as_csv(self) -> Tuple[str, str]:
+        """
+        Generates a CSV version of the report.        
+
+        :return: A tuple of two strings: (durations CSV, counters CSV).
+        """
+
+        durations_csv, counters_csv = StringIO(), StringIO()
+
+        # Create durations CSV
+        if len(self.durations) > 0:
+            durations_csv.write('Name,SDFG,State,Node,Thread,MinMS,MeanMS,MedianMS,MaxMS\n')
+
+            for element, events in self.durations.items():
+                for name, times in events.items():
+                    for tid, runtimes in times.items():
+                        sdfg, state, node = element
+                        nptimes = np.array(runtimes)
+                        mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
+                            nptimes)
+                        durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{mint},{meant},{mediant},{maxt}\n')
+
+        # Create counters CSV
+        if len(self.counters) > 0:
+            counters_csv.write('Counter,Name,SDFG,State,Node,Thread,Min,Mean,Median,Max\n')
+
+            for element, events in self.counters.items():
+                for name, counters in events.items():
+                    for ctrname, ctrvalues in counters.items():
+                        for tid, values in ctrvalues.items():
+                            sdfg, state, node = element
+                            npval = np.array(values)
+                            mint, meant, mediant, maxt = np.min(npval), np.mean(npval), np.median(npval), np.max(npval)
+                            counters_csv.write(
+                                f'{ctrname},{name},{sdfg},{state},{node},{tid},{mint},{meant},{mediant},{maxt}\n')
+
+        return durations_csv.getvalue(), counters_csv.getvalue()
