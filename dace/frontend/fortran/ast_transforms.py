@@ -181,7 +181,9 @@ class CallExtractorNodeLister(NodeVisitor):
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
                 stop = True
-        if not stop and node.name.name not in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh"]:
+        if not stop and node.name.name not in [
+                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon"
+        ]:
             self.nodes.append(node)
         return self.generic_visit(node)
 
@@ -195,7 +197,7 @@ class CallExtractor(NodeTransformer):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
-        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh"]:
+        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon"]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
