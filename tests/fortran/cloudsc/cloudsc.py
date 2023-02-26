@@ -2,9 +2,10 @@
 import copy
 import dace
 from dace.frontend.fortran import fortran_parser
+from dace.sdfg import utils
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes import RemoveUnusedSymbols
+from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from importlib import import_module
 import numpy as np
 from numbers import Number
@@ -36,7 +37,7 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
         return function
 
 
-def get_sdfg(source: str, program_name: str) -> dace.SDFG:
+def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) -> dace.SDFG:
 
     intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
     
@@ -55,8 +56,14 @@ def get_sdfg(source: str, program_name: str) -> dace.SDFG:
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
 
-    my_simplify = Pipeline([RemoveUnusedSymbols()])
+    if normalize_offsets:
+        my_simplify = Pipeline([RemoveUnusedSymbols(), ScalarToSymbolPromotion()])
+    else:
+        my_simplify = Pipeline([RemoveUnusedSymbols()])
     my_simplify.apply_pass(sdfg, {})
+
+    if normalize_offsets:
+        utils.normalize_offsets(sdfg)
 
     return sdfg
 
@@ -67,23 +74,36 @@ parameters = {
     'KIDIA': 2,
     'KFDIA': 8,
     'NCLV': 10,
-    'NCLDQL': 3,
-    'NCLDQI': 4,
+    'NCLDQI': 3,
+    'NCLDQL': 4,
     'NCLDQR': 5,
     'NCLDQS': 6,
     'NCLDQV': 7,
-    'NCLDQV': 8,
     'NCLDTOP': 1,
+    'NSSOPT': 1,
 }
 
 
 data = {
     'PTSPHY': (0,),
+    'R2ES': (0,),
+    'R3IES': (0,),
+    'R3LES': (0,),
+    'R4IES': (0,),
+    'R4LES': (0,),
     'RALSDCP': (0,),
     'RALVDCP': (0,),
+    'RAMIN': (0,),
+    'RKOOP1': (0,),
+    'RKOOP2': (0,),
+    'RKOOPTAU': (0,),
     'RLMIN': (0,),
     'RLSTT': (0,),
     'RLVTT': (0,),
+    'RTHOMO': (0,),
+    'RTT': (0,),
+    'ZEPSEC': (0,),
+    'ZEPSILON': (0,),
     'ZRG_R': (0,),
     'ZQTMST': (0,),
     'IPHASE': (parameters['NCLV'],),
@@ -104,6 +124,7 @@ data = {
     'PFSQRF': (parameters['KLON'], parameters['KLEV']+1),
     'PFSQSF': (parameters['KLON'], parameters['KLEV']+1),
     'PLUDE': (parameters['KLON'], parameters['KLEV']),
+    'PSUPSAT': (parameters['KLON'], parameters['KLEV']),
     'PVFI': (parameters['KLON'], parameters['KLEV']),
     'PVFL': (parameters['KLON'], parameters['KLEV']),
     'tendency_loc_a': (parameters['KLON'], parameters['KLEV']),
@@ -113,6 +134,7 @@ data = {
     'ZA': (parameters['KLON'], parameters['KLEV']),
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
     'ZCONVSRCE': (parameters['KLON'], parameters['NCLV']),
+    'ZCORQSICE': (parameters['KLON']),
     'ZCOVPTOT': (parameters['KLON'],),
     'ZDA': (parameters['KLON']),
     'ZFALLSINK': (parameters['KLON'], parameters['NCLV']),
@@ -125,15 +147,20 @@ data = {
     'ZLNEG': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZPFPLSX': (parameters['KLON'], parameters['KLEV']+1, parameters['NCLV']),
     'ZPSUPSATSRCE': (parameters['KLON'], parameters['NCLV']),
+    'ZSOLQA': (parameters['KLON'], parameters['NCLV'], parameters['NCLV']),
+    'ZQSICE': (parameters['KLON'], parameters['KLEV']),
     'ZQX': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'ZQXFG': (parameters['KLON'], parameters['NCLV']),
     'ZQXN': (parameters['KLON'], parameters['NCLV']),
-    'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV'])
+    'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'ZTP1': (parameters['KLON'], parameters['KLEV']),
 }
 
 
 programs = {
     'cloudsc_1f': 'liq_ice_fractions',
+    'cloudsc_3p1': 'ice_supersaturation_adjustment',
     'cloudsc_6': 'update_tendancies',
     'cloudsc_8': 'flux_diagnostics',
     'cloudsc_8a': 'copy_precipitation_arrays',
@@ -144,6 +171,7 @@ programs = {
 
 program_parameters = {
     'cloudsc_1f': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQI', 'NCLDQL'),
+    'cloudsc_3p1': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDTOP', 'NCLDQI', 'NCLDQL', 'NCLDQV', 'NSSOPT'),
     'cloudsc_6': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQV', 'NCLDTOP'),
     'cloudsc_8': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
     'cloudsc_8a': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
@@ -154,6 +182,8 @@ program_parameters = {
 
 program_inputs = {
     'cloudsc_1f': ('RLMIN', 'ZQX',),
+    'cloudsc_3p1': ('PTSPHY', 'RAMIN', 'RKOOP1', 'RKOOP2', 'RKOOPTAU', 'R2ES', 'R3IES', 'R3LES', 'R4IES', 'R4LES',
+                    'RTHOMO', 'RTT', 'ZEPSEC', 'ZEPSILON', 'PSUPSAT', 'ZA', 'ZCORQSICE', 'ZQSICE', 'ZQX', 'ZTP1'),
     'cloudsc_6': ('RALSDCP', 'RALVDCP', 'ZQTMST', 'ZQX', 'ZQX0', 'ZDA', 'ZPSUPSATSRCE', 'ZCONVSRCE',
                   'ZFALLSINK', 'ZFALLSRCE', 'ZCONVSINK', 'ZQXN', 'IPHASE', 'ZCOVPTOT'),
     'cloudsc_8': ('RLSTT', 'RLVTT', 'ZPFPLSX',
@@ -166,6 +196,7 @@ program_inputs = {
 
 program_outputs = {
     'cloudsc_1f': ('ZA', 'ZLIQFRAC', 'ZICEFRAC'),
+    'cloudsc_3p1': ('ZSOLQA', 'ZQXFG'),
     'cloudsc_6': ('ZFLUXQ', 'tendency_loc_T', 'tendency_loc_cld', 'tendency_loc_q', 'tendency_loc_a', 'PCOVPTOT'),
     'cloudsc_8': ('PFPLSL', 'PFPLSN', 'PFHPSL', 'PFHPSN',
                   'PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
@@ -199,27 +230,43 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     return out_data
 
 
-@pytest.mark.parametrize("program, device", [
-    pytest.param('cloudsc_1', dace.DeviceType.CPU),
-    pytest.param('cloudsc_1f', dace.DeviceType.GPU, marks=pytest.mark.gpu),
-    pytest.param('cloudsc_6', dace.DeviceType.CPU),
-    pytest.param('cloudsc_6', dace.DeviceType.GPU, marks=pytest.mark.gpu),
-    pytest.param('cloudsc_8a', dace.DeviceType.CPU),
-    pytest.param('cloudsc_8a', dace.DeviceType.GPU, marks=pytest.mark.gpu),
-    pytest.param('cloudsc_8b', dace.DeviceType.CPU),
-    pytest.param('cloudsc_8b', dace.DeviceType.GPU, marks=pytest.mark.gpu),
-    pytest.param('cloudsc_8c', dace.DeviceType.CPU),
-    pytest.param('cloudsc_8c', dace.DeviceType.GPU, marks=pytest.mark.gpu),
-    pytest.param('cloudsc_8', dace.DeviceType.CPU),
-    pytest.param('cloudsc_8', dace.DeviceType.GPU, marks=pytest.mark.gpu),
+@pytest.mark.parametrize("program, device", "normalize_offsets", [
+    pytest.param('cloudsc_1f', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_1f', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_1f', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_1f', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_3p1', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_3p1', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_3p1', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_3p1', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_6', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_6', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_6', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_6', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8a', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_8a', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_8a', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8a', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8b', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_8b', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_8b', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8b', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8c', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_8c', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_8c', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8c', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_8', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_8', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_8', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
 ])
-def test_program(program: str, device: dace.DeviceType):
+def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
 
     fsource = read_source(program)
     program_name = programs[program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
-    sdfg = get_sdfg(fsource, program_name)
+    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
 
@@ -238,9 +285,17 @@ def test_program(program: str, device: dace.DeviceType):
 
 
 if __name__ == "__main__":
-    test_program('cloudsc_1f', dace.DeviceType.CPU)
-    test_program('cloudsc_6', dace.DeviceType.CPU)
-    test_program('cloudsc_8a', dace.DeviceType.CPU)
-    test_program('cloudsc_8b', dace.DeviceType.CPU)
-    test_program('cloudsc_8c', dace.DeviceType.CPU)
-    test_program('cloudsc_8', dace.DeviceType.CPU)
+    test_program('cloudsc_1f', dace.DeviceType.CPU, False)
+    test_program('cloudsc_1f', dace.DeviceType.CPU, True)
+    test_program('cloudsc_3p1', dace.DeviceType.CPU, False)
+    test_program('cloudsc_3p1', dace.DeviceType.CPU, True)
+    test_program('cloudsc_6', dace.DeviceType.CPU, False)
+    test_program('cloudsc_6', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8a', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8a', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8b', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8b', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8c', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8c', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8', dace.DeviceType.CPU, True)
