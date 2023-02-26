@@ -401,23 +401,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 if not found and self._is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
-            for name in set(unique_set):
-                if isinstance(sdfg.arrays[name], dt.Array):
-                    found = False
-                    for state in states:
-                        for node in state.data_nodes():
-                            if node.data != name:
-                                continue
-                            for e in state.all_edges(node):
-                                if itervar in e.data.free_symbols:
-                                    found = True
-                                    unique_set.remove(name)
-                                    break
-                            if found:
-                                break
-                        if found:
-                            break
-
             # Find NestedSDFG's connectors
             read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
             write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}

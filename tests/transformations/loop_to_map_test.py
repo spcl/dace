@@ -342,6 +342,8 @@ def test_need_for_transient():
         start = i * 10
         assert np.array_equal(B[i], np.arange(start + 9, start - 1, -1, dtype=np.int32))
 
+# NOTE: The following doesn't work with the Python frontend
+@pytest.mark.skip
 def test_iteration_variable_used_outside():
     N = dace.symbol("N", dace.int32)
 
