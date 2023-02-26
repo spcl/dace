@@ -8,7 +8,7 @@ import sympy as sp
 import networkx as nx
 from typing import Dict, List, Optional, Set, Tuple
 
-from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
+from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
@@ -358,6 +358,23 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                             break
                 if not found:
                     unique_set.add(name)
+
+            for name in set(unique_set):
+                if isinstance(sdfg.arrays[name], dt.Array):
+                    found = False
+                    for state in states:
+                        for node in state.data_nodes():
+                            if node.data != name:
+                                continue
+                            for e in state.all_edges(node):
+                                if itervar in e.data.free_symbols:
+                                    found = True
+                                    unique_set.remove(name)
+                                    break
+                            if found:
+                                break
+                        if found:
+                            break
 
             # Find NestedSDFG's connectors
             read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
