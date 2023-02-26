@@ -118,7 +118,7 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
         return 'Choose either script, module, or input file.'
     if args.input and (args.file or args.args):
         return 'Input file mode cannot specify additional arguments.'
-    if args.input and args.output:
+    if args.input and args.output and not args.csv:
         return 'Cannot load and save a report at the same time.'
     if args.save_data and args.restore_data:
         return 'Choose either saving data or restoring it.'
