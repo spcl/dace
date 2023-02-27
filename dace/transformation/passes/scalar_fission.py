@@ -2,7 +2,8 @@
 from collections import defaultdict
 from typing import Any, Dict, Optional, Set
 
-from dace import SDFG
+from dace import SDFG, InterstateEdge
+from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
 
@@ -69,14 +70,17 @@ class ScalarFission(ppl.Pass):
 
                     # Replace all dominated reads and connected memlets.
                     for read in shadowed_reads:
-                        read_node = read[1]
-                        read_node.data = newname
-                        for iedge in read[0].in_edges(read_node):
-                            if iedge.data.data == name:
-                                iedge.data.data = newname
-                        for oeade in read[0].out_edges(read_node):
-                            if oeade.data.data == name:
-                                oeade.data.data = newname
+                        if isinstance(read[1], nd.AccessNode):
+                            read_node = read[1]
+                            read_node.data = newname
+                            for iedge in read[0].in_edges(read_node):
+                                if iedge.data.data == name:
+                                    iedge.data.data = newname
+                            for oeade in read[0].out_edges(read_node):
+                                if oeade.data.data == name:
+                                    oeade.data.data = newname
+                        elif isinstance(read[1], InterstateEdge):
+                            read[1].replace_dict({name: newname})
 
                     results[name].add(newname)
         return results

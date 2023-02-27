@@ -187,7 +187,7 @@ def test_scalar_write_shadow_interstate():
     Tests the scalar write shadow pass with interstate edge reads being shadowed.
     """
     # Construct the SDFG.
-    sdfg = dace.SDFG('scalar_split')
+    sdfg = dace.SDFG('scalar_isedge')
 
     N = dace.symbol('N')
     sdfg.add_array('A', [N], dace.int32)
