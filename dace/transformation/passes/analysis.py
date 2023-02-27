@@ -3,9 +3,13 @@
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties
+from dace.sdfg import nodes as nd
 from typing import Dict, Set, Tuple, Any, Optional
 import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
+
+
+WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]], Set[Tuple[SDFGState, nd.AccessNode]]]]
 
 
 @properties.make_properties
@@ -81,7 +85,7 @@ class AccessSets(ppl.Pass):
 
 
 @properties.make_properties
-class FindAccessNodes(ppl.Pass):
+class FindAccessStates(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.
     """
@@ -119,11 +123,43 @@ class FindAccessNodes(ppl.Pass):
 
 
 @properties.make_properties
-class ScalarWriteShaddowScopes(ppl.Pass):
+class FindAccessNodes(ppl.Pass):
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes
+
+    def apply_pass(self, top_sdfg: SDFG,
+                   _) -> Dict[int, Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]]:
+        """
+        :return: A dictionary mapping each data descriptor name to a dictionary keyed by states with all access nodes
+                 that use that data descriptor.
+        """
+        top_result: Dict[int, Dict[str, Set[nd.AccessNode]]] = dict()
+
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            result: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = defaultdict(
+                lambda: defaultdict(lambda: [set(), set()]))
+            for state in sdfg.nodes():
+                for anode in state.data_nodes():
+                    if state.in_degree(anode) > 0:
+                        result[anode.data][state][1].add(anode)
+                    if state.out_degree(anode) > 0:
+                        result[anode.data][state][0].add(anode)
+            top_result[sdfg.sdfg_id] = result
+        return top_result
+
+
+@properties.make_properties
+class ScalarWriteShadowScopes(ppl.Pass):
     """
-    For each scalar or array of size 1, create a dictionary mapping each state containing a write to that data container
-    to the set of states that are shaddowed by that write. This means all states containing reads from that data
-    container that are dominated by a given write to that container.
+    For each scalar or array of size 1, create a dictionary mapping each write to that data container
+    to the set of reads that are shadowed / dominated by that write.
     """
 
     CATEGORY: str = 'Analysis'
@@ -136,77 +172,69 @@ class ScalarWriteShaddowScopes(ppl.Pass):
         return modified & ppl.Modifies.States
 
     def depends_on(self):
-        return {AccessSets}
+        return {AccessSets, FindAccessNodes}
 
-    def apply_pass(self, top_sdfg: SDFG,
-                   pipeline_results: Dict[str, Any]) -> Dict[int, Dict[str, Dict[SDFGState, Set[SDFGState]]]]:
+    def _find_dominating_write(
+            self, desc: str, state: SDFGState, read: nd.AccessNode,
+            access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]], state_idom: Dict[SDFGState,
+                                                                                                           SDFGState],
+            access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]]) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
+        # If the read is also a write, it shadows itself.
+        iedges = state.in_edges(read)
+        if len(iedges) > 0 and any(not e.data.is_empty() for e in iedges):
+            return (state, read)
+
+        # Find a dominating write within the same state.
+        # TODO: Can this be done more efficiently?
+        closest_candidate = None
+        write_nodes = access_nodes[desc][state][1]
+        for cand in write_nodes:
+            if nxsp.has_path(state._nx, cand, read):
+                if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
+                    closest_candidate = cand
+        if closest_candidate is not None:
+            return (state, closest_candidate)
+
+        # Find the dominating write state if the current state is not the dominating write state.
+        write_state = None
+        nstate = state_idom[state] if state_idom[state] != state else None
+        while nstate is not None and write_state is None:
+            if desc in access_sets[nstate][1]:
+                write_state = nstate
+            nstate = state_idom[nstate] if state_idom[nstate] != nstate else None
+        if write_state is not None:
+            closest_candidate = None
+            for cand in access_nodes[desc][write_state][1]:
+                if write_state.out_degree(cand) == 0:
+                    closest_candidate = cand
+                    break
+                elif closest_candidate is None or nxsp.has_path(write_state._nx, closest_candidate, cand):
+                    closest_candidate = cand
+            if closest_candidate is not None:
+                return (write_state, closest_candidate)
+
+        return None
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[int, WriteScopeDict]:
         """
-        :return: A dictionary mapping each data descriptor name to a dictionary, where states with writes to that data
-                 descriptor are mapped to the set of states that are in the scope of that write.
+        :return: A dictionary mapping each data descriptor name to a dictionary, where writes to that data descriptor
+                 and the states they are contained in are mapped to the set of reads (and their states) that are in the
+                 scope of that write.
         """
-        top_result: Dict[int, Dict[str, Dict[SDFGState, Set[SDFGState]]]] = {}
+        top_result: Dict[int, WriteScopeDict] = dict()
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[str, Dict[SDFGState, Set[SDFGState]]] = dict()
+            result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: set()))
             idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-            access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.sdfg_id]
-            for state in sdfg.states():
-                accesses = access_sets[state]
-                reads = accesses[0]
-                writes = accesses[1]
-                for desc in reads:
-                    # We only look at scalars or arrays with size 1 in this pass.
-                    if desc not in sdfg.arrays or sdfg.arrays[desc].total_size != 1:
-                        continue
+            access_sets: Dict[SDFGState, Tuple[Set[str],
+                                               Set[str]]] = pipeline_results[AccessSets.__name__][sdfg.sdfg_id]
+            access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
+                FindAccessNodes.__name__][sdfg.sdfg_id]
 
-                    if desc not in result:
-                        result[desc] = dict()
-                    write_state = None
-                    if desc in writes:
-                        # There may be a self-write, i.e. a write to the same data descriptor in the same state. In this
-                        # case, we need to check if that write happens before the read.
-                        # We check all reads from the given descriptor.
-                        read_nodes = set()
-                        write_nodes = set()
-                        for dnode in state.data_nodes():
-                            if dnode.data == desc:
-                                iedges = state.in_edges(dnode)
-                                oedges = state.in_edges(dnode)
-                                for edge in iedges:
-                                    if not edge.data.is_empty():
-                                        write_nodes.add(dnode)
-                                        break
-                                for edge in oedges:
-                                    if not edge.data.is_empty():
-                                        read_nodes.add(dnode)
-                                        break
-                        all_shaddowed = True
-                        for read_node in read_nodes:
-                            shaddowed = False
-                            if read_node in write_nodes:
-                                shaddowed = True
-                            else:
-                                for candidate in write_nodes:
-                                    if nxsp.has_path(sdfg.nx, candidate, read_node):
-                                        shaddowed = True
-                                        break
-                            if not shaddowed:
-                                all_shaddowed = False
-                                break
-                        if all_shaddowed:
-                            write_state = state
-
-                    # Find the dominating write state if the current state is not the shaddowing write state.
-                    nstate = idom[state] if idom[state] != state else None
-                    while nstate is not None and write_state is None:
-                        if desc in access_sets[nstate][1]:
-                            write_state = nstate
-                        nstate = idom[nstate] if idom[nstate] != nstate else None
-
-                    # Add the read to the scope of any found write state, or to the scope of 'None' if no write state
-                    # was found.
-                    if write_state not in result[desc]:
-                        result[desc][write_state] = set()
-                    result[desc][write_state].add(state)
+            for desc in sdfg.arrays:
+                for state in access_nodes[desc].keys():
+                    for read_node in access_nodes[desc][state][0]:
+                        write = self._find_dominating_write(desc, state, read_node, access_nodes, idom, access_sets)
+                        result[desc][write].add((state, read_node))
             top_result[sdfg.sdfg_id] = result
         return top_result
