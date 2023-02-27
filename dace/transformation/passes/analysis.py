@@ -124,6 +124,10 @@ class FindAccessStates(ppl.Pass):
 
 @properties.make_properties
 class FindAccessNodes(ppl.Pass):
+    """
+    For each data descriptor, creates a dictionary mapping states to all read and write access nodes with the given
+    data descriptor.
+    """
 
     CATEGORY: str = 'Analysis'
 
@@ -252,7 +256,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames
                             if desc in syms:
-                                write = self._find_dominating_write(desc, state, oedge, access_nodes, idom, access_sets)
-                                result[desc][write].add((state, oedge))
+                                write = self._find_dominating_write(desc, state, oedge.data, access_nodes, idom, access_sets)
+                                result[desc][write].add((state, oedge.data))
             top_result[sdfg.sdfg_id] = result
         return top_result

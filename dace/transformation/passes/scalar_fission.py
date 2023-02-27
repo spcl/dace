@@ -8,6 +8,9 @@ from dace.transformation.passes import analysis as ap
 
 
 class ScalarFission(ppl.Pass):
+    """
+    Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.
+    """
 
     CATEGORY: str = 'Optimization Preparation'
 
@@ -21,6 +24,15 @@ class ScalarFission(ppl.Pass):
         return {ap.ScalarWriteShadowScopes}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        """
+        Rename scalars and arrays of size 1 based on dominated scopes.
+
+        :param sdfg: The SDFG to modify.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: A dictionary mapping the original name to a set of all new names created for each data container.
+        """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
         shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.sdfg_id]
