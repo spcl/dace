@@ -436,8 +436,9 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     state.add_nedge(cpu_acc_node, gpu_acc_node, cpu_gpu_memlet)
 
                                     # now, replace the edge such that the CPU tasklet writes to the CPU array
-                                    outgoing_edge._dst = cpu_acc_node
-                                    outgoing_edge._data = memlet.Memlet(expr=None, data=new_data_name, subset=outgoing_edge.data.subset)
+                                    subset = outgoing_edge.data.subset
+                                    state.remove_edge(outgoing_edge)
+                                    state.add_edge(node, outgoing_conn, cpu_acc_node, None, memlet.Memlet(expr=None, data=new_data_name, subset=subset))
 
                         # Find CPU tasklets that read from the GPU by checking all incoming edges
                         for incoming_conn in node.in_connectors:
@@ -496,8 +497,8 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     state.add_nedge(gpu_acc_node, cpu_acc_node, gpu_cpu_memlet)
 
                                     # now, replace the edge such that the CPU tasklet reads from the CPU array
-                                    incoming_edge._src = cpu_acc_node
-                                    incoming_edge._data = memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset)
+                                    state.remove_edge(incoming_edge)
+                                    state.add_edge(cpu_acc_node, None, node, incoming_conn, memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset))
 
         print('Save')
         sdfg.save('broken-graph-after-transform.sdfg')
