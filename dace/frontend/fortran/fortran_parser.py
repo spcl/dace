@@ -280,9 +280,9 @@ class AST_translator:
                 (len(variables_in_call) == len(parameters) + 1
                  and not isinstance(node.result_type, ast_internal_classes.Void))):
             for i in variables_in_call:
-                print("VAR CALL: ", i)
+                print("VAR CALL: ", i.name)
             for j in parameters:
-                print("LOCAL TO UPDATE: ", j)
+                print("LOCAL TO UPDATE: ", j.name)
             raise ValueError("number of parameters does not match the function signature")
 
         # creating new arrays for nested sdfg
@@ -638,7 +638,7 @@ class AST_translator:
         calls.visit(node)
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
-            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh", "__dace_epsilon"]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg)
