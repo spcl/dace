@@ -28,6 +28,10 @@ class ScalarFission(ppl.Pass):
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
+            # If this isn't a scalar or an array of size 1, don't do anything.
+            if desc.total_size != 1:
+                continue
+
             # If there is only one scope, don't do anything.
             if len(write_scope_dict) <= 1:
                 continue
@@ -40,6 +44,8 @@ class ScalarFission(ppl.Pass):
                 if write is not None:
                     newdesc = desc.clone()
                     newname = sdfg.add_datadesc(name, newdesc, find_new_name=True)
+
+                    # Replace the write and any connected memlets with writes to the new data container.
                     write_node = write[1]
                     write_node.data = newname
                     for iedge in write[0].in_edges(write_node):
@@ -48,6 +54,8 @@ class ScalarFission(ppl.Pass):
                     for oeade in write[0].out_edges(write_node):
                         if oeade.data.data == name:
                             oeade.data.data = newname
+
+                    # Replace all dominated reads and connected memlets.
                     for read in shadowed_reads:
                         read_node = read[1]
                         read_node.data = newname
@@ -57,6 +65,7 @@ class ScalarFission(ppl.Pass):
                         for oeade in read[0].out_edges(read_node):
                             if oeade.data.data == name:
                                 oeade.data.data = newname
+
                     results[name].add(newname)
         return results
 
