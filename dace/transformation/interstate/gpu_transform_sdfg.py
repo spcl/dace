@@ -5,7 +5,7 @@ from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
-from dace.properties import Property, make_properties
+from dace.properties import DictProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
 from typing import Dict
@@ -192,6 +192,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # Step 1: Create cloned GPU arrays and replace originals
 
         cloned_arrays = {}
+        already_cloned_arrays = {n: None for n, d in sdfg.arrays.items() if d.storage in gpu_storage}
         for inodename, inode in set(input_nodes):
             if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
@@ -427,7 +428,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges
 
-        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys())
+        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(already_cloned_arrays.keys())
 
         for state in list(sdfg.nodes()):
             arrays_used = set()
@@ -461,10 +462,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         else:
                             desc = sdfg.arrays[hostname]
                         devicename = nname
+                    elif nname in already_cloned_arrays:
+                        hostname = already_cloned_arrays[nname]
+                        if not hostname:
+                            desc = sdfg.arrays[nname].clone()
+                            desc.storage = dtypes.StorageType.CPU_Heap
+                            desc.transient = True
+                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                            already_cloned_arrays[nname] = hostname
+                        else:
+                            desc = sdfg.arrays[hostname]
+                        devicename = nname
                     else:
                         desc = sdfg.arrays[nname]
                         hostname = nname
                         devicename = cloned_arrays[nname]
+
 
                     src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
                     dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
