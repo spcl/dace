@@ -225,6 +225,7 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
         for nname, desc in dtypes.deduplicate(input_nodes):
             if nname in excluded_copyin or nname not in cloned_arrays:
                 continue
+
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(cloned_arrays[nname]['gpu'], debuginfo=desc.debuginfo)
             copyin_state.add_node(src_array)
@@ -500,8 +501,71 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     state.remove_edge(incoming_edge)
                                     state.add_edge(cpu_acc_node, None, node, incoming_conn, memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset))
 
-        print('Save')
-        sdfg.save('broken-graph-after-transform.sdfg')
+        # FIXME: if we should avoid a copy when this is truly a symbol - just a single copy?
+        cloned_data = set(self.cloned_arrays.keys()).union(gpu_scalars.keys())
+
+        for state in list(sdfg.nodes()):
+            arrays_used = set()
+            for e in sdfg.out_edges(state):
+                # Used arrays = intersection between symbols and cloned data
+                arrays_used.update(set(e.data.free_symbols) & cloned_data)
+
+            # Create a state and copy out used arrays
+            if len(arrays_used) > 0:
+
+                co_state = sdfg.add_state(state.label + '_icopyout')
+
+                # Reconnect outgoing edges to after interim copyout state
+                for e in sdfg.out_edges(state):
+                    sdutil.change_edge_src(sdfg, state, co_state)
+                # Add unconditional edge to interim state
+                sdfg.add_edge(state, co_state, sd.InterstateEdge())
+
+                # Add copy-out nodes
+                for nname in arrays_used:
+
+                    # Handle GPU scalars
+                    if nname in gpu_scalars:
+                        hostname = gpu_scalars[nname]
+                        if not hostname:
+                            desc = sdfg.arrays[nname].clone()
+                            desc.storage = dtypes.StorageType.CPU_Heap
+                            desc.transient = True
+                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                            gpu_scalars[nname] = hostname
+                        else:
+                            desc = sdfg.arrays[hostname]
+                        devicename = nname
+                    # cloned array previously - in an outer SDFG
+                    elif nname in self.cloned_arrays:
+
+                        if self.cloned_arrays[nname]['cpu'] is None:
+                            desc = sdfg.arrays[nname].clone()
+                            desc.storage = dtypes.StorageType.CPU_Heap
+                            desc.transient = True
+                            hostname = sdfg.add_datadesc('cpu_' + nname, desc, find_new_name=True)
+                            cloned_arrays[nname] = {'cpu': hostname, 'gpu': nname}
+                        else:
+                            desc = sdfg.arrays[nname]
+                            hostname = self.cloned_arrays[nname]['cpu']
+
+                        devicename = nname
+                    # array cloned here
+                    else:
+                        desc = sdfg.arrays[nname]
+                        hostname = nname
+                        devicename = cloned_arrays[nname]['gpu']
+
+                    src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
+                    dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
+                    co_state.add_node(src_array)
+                    co_state.add_node(dst_array)
+                    co_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
+                    #co_state.add_nedge(src_array, dst_array, memlet.Memlet(expr=None, data=dst_array.data, subset=dst_array.data.subset))
+                    #state.add_edge(src_array, None, dst_array, memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset))
+                    for e in sdfg.out_edges(co_state):
+                        e.data.replace(devicename, hostname, False)
+
         # Step 9: Simplify
         if not self.simplify:
             return
