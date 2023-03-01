@@ -1032,12 +1032,26 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # Also make sure that there's no symbol in the border memlet's
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
-                if border_memlet.src_subset is not None and any(s not in outer_symbols
-                                                                for s in border_memlet.src_subset.free_symbols):
-                    border_memlet.src_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                if border_memlet.dst_subset is not None and any(s not in outer_symbols
-                                                                for s in border_memlet.dst_subset.free_symbols):
-                    border_memlet.dst_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                if border_memlet.src_subset is not None:
+                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                    for i, rng in enumerate(border_memlet.src_subset):
+                        fall_back = False
+                        for item in rng:
+                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                fall_back = True
+                                break
+                        if fall_back:
+                            border_memlet.src_subset[i] = fallback_subset[i]
+                if border_memlet.dst_subset is not None:
+                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                    for i, rng in enumerate(border_memlet.dst_subset):
+                        fall_back = False
+                        for item in rng:
+                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                fall_back = True
+                                break
+                        if fall_back:
+                            border_memlet.dst_subset[i] = fallback_subset[i]
 
     # Propagate the inside 'border' memlets outside the SDFG by
     # offsetting, and unsqueezing if necessary.

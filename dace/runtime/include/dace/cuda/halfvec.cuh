@@ -3,7 +3,7 @@
 #define __DACE_HALFVEC_H
 
 // Only enable for supporting GPUs
-#if __CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__)
+#if (__CUDA_ARCH__ >= 530 || !defined(__CUDA_ARCH__))
 
 // Support for half-precision vector types in CUDA/HIP
 #ifdef __CUDACC__
@@ -14,6 +14,7 @@
 
 // Scalar functions
 namespace dace { namespace math {
+#ifndef __HIPCC__
     DACE_DFI half max(half a, half b) {
         return __hgt(a, b) ? a : b;
     }
@@ -25,15 +26,18 @@ namespace dace { namespace math {
     DACE_DFI half exp(half val) {
         return hexp(val);
     }
+#endif
 
     DACE_DFI half reciprocal(half val) {
         return hrcp(val);
     }
 }}
 
+#ifndef __HIPCC__
 using dace::math::max;
 using dace::math::tanh;
 using dace::math::exp;
+#endif
 using dace::math::reciprocal;
 
 
@@ -521,10 +525,12 @@ DACE_DFI half8 op(half8 x) {                                               \
                  op(x.h2<2>()), op(x.h2<3>()));                            \
 }
 
+#ifndef __HIPCC__
 namespace dace { namespace math {
     HALF_VEC_UFUNC(exp)
     HALF_VEC_UFUNC(tanh)
 } }
+#endif
 
 // Vector comparison functions
 DACE_DFI half2 max(half2 a, half2 b) {
@@ -535,12 +541,17 @@ DACE_DFI half4 max(half4 a, half b) {
     half2 bvec = __half2half2(b);
     return half4(max(a.h2<0>(), bvec), max(a.h2<1>(), bvec));
 }
+
+#ifndef __HIPCC__
 DACE_DFI half4 max(half a, half4 b) { return max(b, a); }
+#endif
 
 DACE_DFI half4 max(half4 a, half2 b) {
     return half4(max(a.h2<0>(), b), max(a.h2<1>(), b));
 }
+#ifndef __HIPCC__
 DACE_DFI half4 max(half2 a, half4 b) { return max(b, a); }
+#endif
 
 DACE_DFI half4 max(half4 a, half4 b) {
     return half4(max(a.h2<0>(), b.h2<0>()), max(a.h2<1>(), b.h2<1>()));
@@ -553,7 +564,9 @@ DACE_DFI half8 max(half8 a, half b) {
                  max(a.h2<2>(), bvec),
                  max(a.h2<3>(), bvec));
 }
+#ifndef __HIPCC__
 DACE_DFI half8 max(half a, half8 b) { return max(b, a); }
+#endif
 
 DACE_DFI half8 max(half8 a, half2 b) {
     return half8(max(a.h2<0>(), b), 

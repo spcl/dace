@@ -110,7 +110,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, numpy.number):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
+    elif isinstance(obj, (Number, numpy.number, numpy.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):
         # NoneType is void *
@@ -212,8 +212,7 @@ class Data:
     # `validate` function.
     def _validate(self):
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values '
-                            'or symbols')
+            raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
         return True
 
     def to_json(self):
@@ -397,7 +396,7 @@ class Scalar(Data):
     @property
     def optional(self) -> bool:
         return False
-    
+
     @property
     def pool(self) -> bool:
         return False
@@ -552,12 +551,10 @@ class Array(Data):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
-        if shape is None:
-            raise IndexError('Shape must not be None')
-
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+
         if start_offset is not None:
             self.start_offset = start_offset
         self.optional = optional
@@ -580,7 +577,6 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
-
         self.validate()
 
     def __repr__(self):
@@ -623,8 +619,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer '
-                            'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer ' 'values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -710,6 +705,45 @@ class Array(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+    def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
+        """
+        Used to set properties which depend on the shape of the array
+        either to their default value, which depends on the shape, or
+        if explicitely provided to the given value. For internal use only.
+        """
+        if shape is None:
+            raise IndexError('Shape must not be None')
+
+        if strides is not None:
+            self.strides = cp.copy(strides)
+        else:
+            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+
+        if strides is not None and shape is not None and total_size is None:
+            # Compute the minimal total_size that could be used with strides and shape
+            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
+        else:
+            self.total_size = total_size or _prod(shape)
+
+        if offset is not None:
+            self.offset = cp.copy(offset)
+        else:
+            self.offset = [0] * len(shape)
+
+    def set_shape(
+        self,
+        new_shape,
+        strides=None,
+        total_size=None,
+        offset=None,
+    ):
+        """
+        Updates the shape of an array.
+        """
+        self.shape = new_shape
+        self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
+        self.validate()
 
 
 @make_properties
@@ -896,7 +930,6 @@ class View(Array):
     In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
     generate Views.
     """
-
     def validate(self):
         super().validate()
 
@@ -920,7 +953,6 @@ class Reference(Array):
     
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
-
     def validate(self):
         super().validate()
 

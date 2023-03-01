@@ -28,7 +28,7 @@ class ArrayElimination(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessNodes}
+        return {ap.StateReachability, ap.FindAccessStates}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -41,9 +41,9 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes'][sdfg.sdfg_id]
+        access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.sdfg_id]
 
         # Traverse SDFG backwards
         try:

@@ -197,8 +197,8 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
 @click.option('-K', type=int, default=64)
 @click.option('-N', type=int, default=64)
 @click.option('--version',
-              type=click.Choice(
-                  ('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'fpga_naive', 'fpga_library')),
+              type=click.Choice(('unoptimized', 'optimize_cpu', 'optimize_gpu', 'mkl', 'cublas', 'rocblas',
+                                 'fpga_naive', 'fpga_library')),
               default='unoptimized')
 @click.option('--verify/--no-verify', default=True)
 def cli(m, k, n, version, verify):
@@ -241,6 +241,11 @@ def cli(m, k, n, version, verify):
     elif version == 'cublas':
         # Set default implementation to CUBLAS
         dace.libraries.blas.default_implementation = 'cuBLAS'
+        # Call program
+        C = matmul_lib(A, B)
+    elif version == 'rocblas':
+        # Set default implementation to rocBLAS
+        dace.libraries.blas.default_implementation = 'rocBLAS'
         # Call program
         C = matmul_lib(A, B)
     elif version == 'fpga_naive':

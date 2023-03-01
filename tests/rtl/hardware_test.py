@@ -5,9 +5,20 @@ import numpy as np
 import importlib.util
 from pathlib import Path
 import pytest
+from dace.transformation.dataflow import StreamingMemory, Vectorization
+from dace.transformation.interstate import FPGATransformState
+from dace.transformation.subgraph import TemporalVectorization
 
 
-def make_vadd_sdfg(N, veclen=8):
+def make_vadd_sdfg(N: dace.symbol, veclen: int = 8):
+    '''
+    Function for generating a simple vector addition SDFG that adds a vector `A` of `N` elements to a scalar `B` into a vector `C` of `N` elements, all using SystemVerilog.
+    The tasklet creates `veclen` instances of a floating point adder that operates on `N` elements. 
+
+    :param N: The number of elements the SDFG takes as input and output.
+    :param veclen: The number of floating point adders to instantiate.
+    :return: An SDFG that has arguments `A`, `B` and `C`.
+    '''
     # add sdfg
     sdfg = dace.SDFG('floating_point_vector_plus_scalar')
 
@@ -179,6 +190,15 @@ def make_vadd_sdfg(N, veclen=8):
 
 
 def make_vadd_multi_sdfg(N, M):
+    '''
+    Function for constructing an SDFG that adds a constant (42) to a an array `A` of `N` elements into a vector `B`.
+    Each instance of an adder is within its own Processing Element (PE), along with a reader and writer to/from global memory.
+    This SDFG also utilizes array of streams, giving each compute PE its own set of in- and output streams.
+
+    :param N: The number of elements to compute on.
+    :param M: The number of compute PEs to initialize.
+    :return: An SDFG that has arguments `A` and `B`. 
+    '''
     # add sdfg
     sdfg = dace.SDFG(f'integer_vector_plus_42_multiple_kernels_{N.get() // M.get()}')
 
@@ -300,6 +320,10 @@ def make_vadd_multi_sdfg(N, M):
 
 @rtl_test()
 def test_hardware_vadd():
+    '''
+    Test for the simple vector addition. 
+    '''
+
     # add symbol
     N = dace.symbol('N')
     N.set(32)
@@ -321,6 +345,9 @@ def test_hardware_vadd():
 
 @rtl_test()
 def test_hardware_add42_single():
+    '''
+    Test for adding a constant using a single PE. 
+    '''
     N = dace.symbol('N')
     M = dace.symbol('M')
 
@@ -344,11 +371,16 @@ def test_hardware_add42_single():
 
 @pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
 def test_hardware_axpy_double_pump(veclen=2):
+    '''
+    Tests manual application of the multi-pumping optimization applied to the AXPY program from BLAS.
+
+    :param veclen: The vectorization length to instantiate. Must be a multiple of 2.
+    '''
     with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
         # Grab the double pumped AXPY implementation the samples directory
         spec = importlib.util.spec_from_file_location(
             "axpy",
-            Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
+            Path(__file__).parent.parent.parent / "samples" / "fpga" / "rtl" / "axpy_double_pump.py")
         axpy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(axpy)
 
@@ -377,12 +409,84 @@ def test_hardware_axpy_double_pump(veclen=2):
 
 @rtl_test()
 def test_hardware_axpy_double_pump_vec2():
+    '''
+    Tests double pumping with a vector length of 2.
+    '''
     return test_hardware_axpy_double_pump(veclen=2)
 
 
 @rtl_test()
 def test_hardware_axpy_double_pump_vec4():
+    '''
+    Tests double pumping with a vector length of 4.
+    '''
     return test_hardware_axpy_double_pump(veclen=4)
+
+
+@rtl_test()
+def test_hardware_vadd_temporal_vectorization():
+    '''
+    Tests whether the multi-pumping optimization can be applied automatically by applying the temporal vectorization transformation. It starts from a numpy vector addition for generating the SDFG. This SDFG is then optimized by applying the vectorization, streaming memory, fpga and temporal vectorization transformations in that order.
+    '''
+    # TODO !!!!! THIS TEST STALLS IN HARDWARE EMULATION WITH VITIS 2021.2 !!!!!
+    # But it works fine for 2020.2 and 2022.2. It seems like everything but the
+    # last transaction correctly goes through just fine. The last transaction
+    # is never output by the floating point adder, but the inputs are consumed. 
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        # Generate the test data and expected results
+        size_n = 1024
+        veclen = 4
+        N = dace.symbol('N')
+        N.set(size_n)
+        x = np.random.rand(N.get()).astype(np.float32)
+        y = np.random.rand(N.get()).astype(np.float32)
+        result = np.zeros(N.get(), dtype=np.float32)
+        expected = x + y
+
+        # Generate the initial SDFG
+        def np_vadd(x: dace.float32[N], y: dace.float32[N]):
+            return x + y
+
+        sdfg = dace.program(np_vadd).to_sdfg()
+
+        # Apply vectorization transformation
+        ambles = size_n % veclen != 0
+        map_entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
+        applied = sdfg.apply_transformations(
+            Vectorization, {
+                'vector_len': veclen,
+                'preamble': ambles,
+                'postamble': ambles,
+                'propagate_parent': True,
+                'strided_map': False,
+                'map_entry': map_entry
+            })
+        assert (applied == 1)
+
+        # Transform to an FPGA implementation
+        applied = sdfg.apply_transformations(FPGATransformState)
+        assert (applied == 1)
+
+        # Apply streaming memory transformation
+        applied = sdfg.apply_transformations_repeated(StreamingMemory, {
+            'storage': dace.StorageType.FPGA_Local,
+            'buffer_size': 1
+        })
+        assert (applied == 3)
+
+        # Apply temporal vectorization transformation
+        sgs = dace.sdfg.concurrent_subgraphs(sdfg.states()[0])
+        sf = TemporalVectorization()
+        cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
+        assert (sum(cba) == 1)
+        [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+
+        # Run the program and verify the results
+        sdfg.specialize({'N': N.get()})
+        sdfg(x=x, y=y, __return=result)
+        assert (np.allclose(expected, result))
+
+        return sdfg
 
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
@@ -412,6 +516,7 @@ if __name__ == '__main__':
     # These tests should only be run in hardware* mode
     with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
         test_hardware_vadd(None)
+        test_hardware_vadd_temporal_vectorization(None)
         test_hardware_add42_single(None)
         # TODO disabled due to problem with array of streams in Vitis 2021.1
         #test_hardware_add42_multi(None)
