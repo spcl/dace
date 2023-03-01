@@ -82,10 +82,10 @@ or to print an existing report:
 
     # Filtering arguments
     group = parser.add_argument_group('filtering arguments')
-    group.add_argument('--interactive',
-                       '-I',
-                       help='Shows interactive prompts about which parts of the program to profile',
-                       action='store_true')
+    # group.add_argument('--interactive',
+    #                    '-I',
+    #                    help='Shows interactive prompts about which parts of the program to profile',
+    #                    action='store_true')
     group.add_argument('--filter',
                        '-f',
                        help='Filter profiled elements with wildcards (e.g., *_map, assign_??). '
@@ -126,7 +126,7 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
     return None
 
 
-def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitCode]:
+def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[InstrumentationReport], Optional[str], ExitCode]:
     """
     Runs the script or module and returns the report file.
 
@@ -142,6 +142,7 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
 
     # Run script or module
     retval = None
+    reportfile = None
     errcode = 0
     with dace.profile(repetitions=args.repetitions, warmup=args.warmup) as profiler:
         try:
@@ -159,9 +160,12 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[str], ExitC
     for hook in hooks:
         dace.hooks.unregister_sdfg_call_hook(hook)
 
-    # TODO: Get instrumentation report file
+    # Get instrumentation report file, if filled
+    if profiler.report.events:
+        retval = profiler.report
+        reportfile = profiler.filename
 
-    return retval, errcode
+    return retval, reportfile, errcode
 
 
 def enable_hooks(args: argparse.Namespace) -> List[int]:
@@ -169,6 +173,7 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
     registered = []
 
     if args.sequential:
+
         def make_sequential(sdfg: dace.SDFG):
             # Disable OpenMP sections
             for sd in sdfg.all_sdfgs_recursive():
@@ -181,18 +186,21 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
                         n.schedule = dace.ScheduleType.Sequential
 
         registered.append(dace.hooks.register_sdfg_call_hook(before_hook=make_sequential))
-    
 
     return registered
 
 
-def print_report(args: argparse.Namespace, reportfile: str):
-    path = os.path.abspath(reportfile)
-    if not os.path.isfile(path):
-        print(path, 'does not exist, aborting.')
-        exit(1)
+def print_report(args: argparse.Namespace, reportfile: Union[str, InstrumentationReport]):
+    if isinstance(reportfile, str):
+        path = os.path.abspath(reportfile)
+        if not os.path.isfile(path):
+            print(path, 'does not exist, aborting.')
+            exit(1)
 
-    report = InstrumentationReport(path)
+        report = InstrumentationReport(path)
+    else:
+        report = reportfile
+
     if args.sort:
         report.sortby(args.sort, args.ascending)
 
@@ -234,16 +242,17 @@ def main():
 
     # Execute program or module
     if not args.input:
-        reportfile, errcode = run_script_or_module(args)
+        report, reportfile, errcode = run_script_or_module(args)
 
-        if reportfile is None:
+        if report is None:
             print('daceprof: No DaCe program calls detected or no report file generated.')
         else:
             if args.output:  # Save report
                 shutil.copyfile(reportfile, args.output)
             else:  # Print report
-                print('daceprof: Report file saved at', os.path.abspath(reportfile))
-                print_report(args, reportfile)
+                if reportfile:
+                    print('daceprof: Report file saved at', os.path.abspath(reportfile))
+                print_report(args, report)
 
         # Forward error code from internal application
         if errcode:

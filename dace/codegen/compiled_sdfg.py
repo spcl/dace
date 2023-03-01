@@ -172,6 +172,7 @@ class CompiledSDFG(object):
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)
         self._lastargs = ()
+        self.do_not_execute = False
 
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
@@ -308,7 +309,8 @@ class CompiledSDFG(object):
                 self._initialize(initargtuple)
             
             with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
-                self._cfunc(self._libhandle, *argtuple)
+                if self.do_not_execute is False:
+                    self._cfunc(self._libhandle, *argtuple)
 
             return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):

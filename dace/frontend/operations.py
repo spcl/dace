@@ -16,6 +16,7 @@ from dace.config import Config
 from typing import Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from dace.sdfg import SDFG
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
 
@@ -25,9 +26,12 @@ class CompiledSDFGProfiler:
     (excluding init and shutdown).
     """
 
-    times: List[Tuple[str, List[float]]]  #: The list of names and times for each SDFG called within the context.
+    times: List[Tuple['SDFG', List[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
 
     def __init__(self, repetitions: int = 0, warmup: int = 0) -> None:
+        # Avoid import loop
+        from dace.codegen.instrumentation import report
+
         self.repetitions = repetitions or int(Config.get('treps'))
         self.warmup = warmup
         if self.repetitions < 1:
@@ -36,9 +40,13 @@ class CompiledSDFGProfiler:
             raise ValueError('Warmup repetitions cannot be negative')
 
         self.times = []
+        # Create an empty instrumentation report
+        self.report = report.InstrumentationReport(None)
 
     @contextmanager
     def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+        from dace.codegen.instrumentation import report  # Avoid import loop
+
         start = timer()
 
         times = [start] * (self.repetitions + 1)
@@ -58,6 +66,7 @@ class CompiledSDFGProfiler:
                       'config (~/.dace.conf).')
 
         offset = 1 - self.warmup
+        start_time = int(time.time())
         times[0] = timer()
         for i in iterator:
             # Call function
@@ -65,39 +74,36 @@ class CompiledSDFGProfiler:
             if i >= self.warmup:
                 times[i + offset] = timer()
 
-        diffs = np.array([(times[i] - times[i - 1]) for i in range(1, self.repetitions + 1)])
+        diffs = np.array([(times[i] - times[i - 1])*1e3 for i in range(1, self.repetitions + 1)])
 
-        # Create profiling directory if it doesn't exist
-        profiling_dir = os.path.join(compiled_sdfg.sdfg.build_folder, 'profiling')
-        os.makedirs(profiling_dir, exist_ok=True)
-        timestamp_string = str(int(time.time() * 1000))
-        outfile_path = os.path.join(profiling_dir, 'results-' + timestamp_string + '.csv')
-
-        # Write profiling results to file
-        with open(outfile_path, 'w') as f:
-            f.write('Program,Runtime_sec\n')
-            for d in diffs:
-                f.write('%s,%.8f\n' % (compiled_sdfg.sdfg.name, d))
+        # Add entries to the instrumentation report
+        self.report.name = self.report.name or start_time
+        if not self.report.sdfg_hash:
+            self.report.sdfg_hash = compiled_sdfg.sdfg.hash_sdfg()
+        pid = os.getpid()
+        self.report.events.extend([
+            report.DurationEvent(f'Python call to {compiled_sdfg.sdfg.name}', 'Timer', (0, -1, -1), times[i],
+                                 (times[i + 1] - times[i]) * 1e6, pid) for i in range(self.repetitions)
+        ])
+        self.report.durations[(0, -1, -1)][f'Python call to {compiled_sdfg.sdfg.name}'][-1].extend(diffs)
 
         # Print profiling results
-        time_secs = np.median(diffs)
-        print(compiled_sdfg.sdfg.name, time_secs * 1000, 'ms')
+        time_msecs = np.median(diffs)
+        print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
 
-        self.times.append((compiled_sdfg.sdfg.name, diffs))
-
-        #####################################
-        # Ensure internal SDFG will not be called by triggering an exception
-        orig_func = compiled_sdfg._cfunc
-        compiled_sdfg._cfunc = None
-
-        try:
-            yield
-        except TypeError:
-            pass
+        # Save every call separately
+        self.times.append((compiled_sdfg.sdfg, diffs))
 
         #####################################
-        # Restore state after raised exception
-        compiled_sdfg._cfunc = orig_func
+        # Ensure internal SDFG will not be called
+        old_dne = compiled_sdfg.do_not_execute
+        compiled_sdfg.do_not_execute = True
+
+        yield
+
+        #####################################
+        # Restore state after skipping contents
+        compiled_sdfg.do_not_execute = old_dne
 
         return ret
 

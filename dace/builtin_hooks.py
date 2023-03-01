@@ -3,10 +3,12 @@
 A set of built-in hooks.
 """
 from contextlib import contextmanager
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
+
 
 @contextmanager
 def profile(repetitions: int = 100, warmup: int = 0):
@@ -34,6 +36,8 @@ def profile(repetitions: int = 100, warmup: int = 0):
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
     from dace.hooks import on_compiled_sdfg_call, _COMPILED_SDFG_CALL_HOOKS
 
+    # TODO: By default, do not profile every invocation
+
     # If already profiling, return existing profiler and change its properties
     for hook in _COMPILED_SDFG_CALL_HOOKS:
         if isinstance(hook, CompiledSDFGProfiler):
@@ -47,6 +51,18 @@ def profile(repetitions: int = 100, warmup: int = 0):
 
     with on_compiled_sdfg_call(context_manager=profiler):
         yield profiler
+
+    # After profiling is complete, store the file
+    if len(profiler.times) == 0:
+        return
+
+    if len(profiler.times) > 1:
+        # More than one profile saves locally to the cwd
+        profiler.filename = f'report-{profiler.report.name}.json'
+    else:
+        profiler.filename = os.path.join(profiler.times[0][0].build_folder, 'perf', f'report-{profiler.report.name}.json')
+
+    profiler.report.save(profiler.filename)
 
 
 def cli_optimize_on_call(sdfg: 'SDFG'):
