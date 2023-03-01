@@ -1,15 +1,73 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implementation of the performance instrumentation report. """
 
+from dataclasses import dataclass
 import json
 import numpy as np
 import re
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from io import StringIO
 
 from collections import defaultdict
 
 UUIDType = Tuple[int, int, int]
+
+
+def _uuid_to_dict(uuid: UUIDType) -> Dict[str, int]:
+    result = {}
+    if uuid[0] != -1:
+        result['sdfg_id'] = uuid[0]
+    if uuid[1] != -1:
+        result['state_id'] = uuid[1]
+    if uuid[2] != -1:
+        result['id'] = uuid[2]
+
+    return result
+
+
+@dataclass
+class DurationEvent:
+    """
+    Instrumentation report event of a duration (e.g., execution time).
+    """
+    name: str  #: Event name
+    category: str  #: Category
+    uuid: UUIDType  #: Unique locator for SDFG/state/node/edge
+    timestamp: int  #: Beginning time (in microseconds)
+    duration: float  #: Duration (in microseconds)
+    pid: int  #: Process ID
+    tid: int = -1  #: Thread ID (or -1 if not applicable)
+    additional_info: Optional[Dict[str, Any]] = None  #: More arguments in the event
+
+    def save(self) -> Dict[str, Any]:
+        info = self.additional_info or {}
+        args = {**info, **_uuid_to_dict(self.uuid)}
+        return dict(name=self.name,
+                    cat=self.category,
+                    ph='X',
+                    ts=self.timestamp,
+                    dur=self.duration,
+                    pid=self.pid,
+                    tid=self.tid,
+                    args=args)
+
+
+@dataclass
+class CounterEvent:
+    """
+    Instrumentation report event of a counter (e.g., performance counters).
+    """
+    name: str  #: Event name
+    category: str  #: Category
+    uuid: UUIDType  #: Unique locator for SDFG/state/node/edge
+    timestamp: int  #: Event time (in microseconds)
+    counters: Dict[str, float]  #: Counter names and their values
+    pid: int  #: Process ID
+    tid: int = -1  #: Thread ID (or -1 if not applicable)
+
+    def save(self) -> Dict[str, Any]:
+        args = {**self.counters, **_uuid_to_dict(self.uuid)}
+        return dict(name=self.name, cat=self.category, ph='C', ts=self.timestamp, pid=self.pid, tid=self.tid, args=args)
 
 
 class InstrumentationReport(object):
@@ -20,8 +78,9 @@ class InstrumentationReport(object):
     Instrumentation reports are stored as JSON files, in the Chrome Tracing format.
     """
     @staticmethod
-    def get_event_uuid(event) -> UUIDType:
+    def get_event_uuid_and_other_info(event) -> Tuple[UUIDType, Dict[str, Any]]:
         uuid = (-1, -1, -1)
+        other_info = {}
         if 'args' in event:
             args = event['args']
             if 'sdfg_id' in args and args['sdfg_id'] is not None:
@@ -30,21 +89,35 @@ class InstrumentationReport(object):
                     uuid = (uuid[0], args['state_id'], -1)
                     if 'id' in args and args['id'] is not None:
                         uuid = (uuid[0], uuid[1], args['id'])
-        return uuid
+            other_info = {k: v for k, v in args.items() if k not in ('sdfg_id', 'state_id', 'id')}
+        return uuid, other_info
 
     def __init__(self, filename: str):
-        # Parse file
-        match = re.match(r'.*report-(\d+)\.json', filename)
-        self.name = match.groups()[0] if match is not None else 'N/A'
+        self.name = None
 
+        # Raw events
+        self.events: List[Union[DurationEvent, CounterEvent]] = []
+
+        # Summarized fields:
         # UUID -> Name -> Thread ID -> Times
-        self.durations: Dict[UUIDType, Dict[str, Dict[int, List[float]]]] = {}
+        self.durations: Dict[UUIDType,
+                             Dict[str, Dict[int,
+                                            List[float]]]] = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
         # UUID -> Name -> Counter -> Thread ID -> Values
-        self.counters: Dict[UUIDType, Dict[str, Dict[str, Dict[int, List[float]]]]] = {}
+        self.counters: Dict[UUIDType, Dict[str, Dict[str, Dict[int, List[float]]]]] = defaultdict(dict)
 
         self._sortcat = None
         self._sortdesc = False
+        self.sdfg_hash: str = ''
+
+        if not filename:  # Empty instrumentation report
+            return
+
+        # Parse file
+        match = re.match(r'.*report-(\d+)\.json', filename)
+        self.name = match.groups()[0] if match is not None else 'N/A'
+        self.filepath = filename
 
         with open(filename, 'r') as fp:
             report = json.load(fp)
@@ -53,42 +126,55 @@ class InstrumentationReport(object):
                 print(filename, 'is not a valid SDFG instrumentation report!')
                 return
 
-            self.sdfg_hash = report['sdfgHash']
-
-            events: Dict[str, Union[str, int, Dict[str, float]]] = report['traceEvents']
-            for event in events:
-                if not "ph" in event:
+            # Parse events from file
+            self.sdfg_hash: str = report['sdfgHash']
+            for event in report['traceEvents']:
+                if "ph" not in event:
                     continue
+                uuid, other_info = self.get_event_uuid_and_other_info(event)
+                if event['ph'] == 'X':  # Duration event
+                    self.events.append(
+                        DurationEvent(event['name'], event['cat'], uuid, event['ts'], event['dur'], event['pid'],
+                                      event['tid'], other_info))
+                elif event['ph'] == 'C':  # Counter event
+                    self.events.append(
+                        CounterEvent(event['name'], event['cat'], uuid, event['ts'], other_info, event['pid'],
+                                     event['tid']))
 
-                phase: str = event["ph"]
-                tid: int = event["tid"]
-                name: str = event['name']
-                if phase == 'X':
-                    # Time
-                    uuid = self.get_event_uuid(event)
-                    if uuid not in self.durations:
-                        self.durations[uuid] = {}
-                    if name not in self.durations[uuid]:
-                        self.durations[uuid][name] = defaultdict(list)
+        # Summarize events for printouts
+        self.process_events()
 
-                    self.durations[uuid][name][tid].append(event['dur'] / 1000)
-                elif phase == "C":
-                    # Counter
-                    uuid = self.get_event_uuid(event)
-                    if uuid not in self.counters:
-                        self.counters[uuid] = {}
-                    if name not in self.counters[uuid]:
-                        self.counters[uuid][name] = defaultdict(list)
+    def process_events(self):
+        """
+        Summarizes the events in the report into dictionaries.
+        """
+        for event in self.events:
+            name = event.name
+            uuid = event.uuid
+            tid = event.tid
 
-                    ctrs: Dict[str, float] = event["args"]
-                    for counter, value in ctrs.items():
-                        if counter == "sdfg_id" or counter == "state_id" or counter == "id":
-                            continue
+            if isinstance(event, DurationEvent):
+                # Time
+                if uuid not in self.durations:
+                    self.durations[uuid] = {}
+                if name not in self.durations[uuid]:
+                    self.durations[uuid][name] = defaultdict(list)
 
-                        if counter not in self.counters[uuid][name]:
-                            self.counters[uuid][name][counter] = defaultdict(list)
+                self.durations[uuid][name][tid].append(event['dur'] / 1000)
 
-                        self.counters[uuid][name][counter][tid].append(value)
+            elif isinstance(event, CounterEvent):
+                # Counter
+                if uuid not in self.counters:
+                    self.counters[uuid] = {}
+                if name not in self.counters[uuid]:
+                    self.counters[uuid][name] = defaultdict(list)
+
+                ctrs = event.counters
+                for counter, value in ctrs.items():
+                    if counter not in self.counters[uuid][name]:
+                        self.counters[uuid][name][counter] = defaultdict(list)
+
+                    self.counters[uuid][name][counter][tid].append(value)
 
     def __repr__(self):
         return 'InstrumentationReport(name=%s)' % self.name
@@ -311,20 +397,21 @@ class InstrumentationReport(object):
 
         # Create durations CSV
         if len(self.durations) > 0:
-            durations_csv.write('Name,SDFG,State,Node,Thread,MinMS,MeanMS,MedianMS,MaxMS\n')
+            durations_csv.write('Name,SDFG,State,Node,Thread,Count,MinMS,MeanMS,MedianMS,MaxMS\n')
 
             for element, events in self.durations.items():
                 for name, times in events.items():
                     for tid, runtimes in times.items():
                         sdfg, state, node = element
                         nptimes = np.array(runtimes)
+                        cnt = len(runtimes)
                         mint, meant, mediant, maxt = np.min(nptimes), np.mean(nptimes), np.median(nptimes), np.max(
                             nptimes)
-                        durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{mint},{meant},{mediant},{maxt}\n')
+                        durations_csv.write(f'{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 
         # Create counters CSV
         if len(self.counters) > 0:
-            counters_csv.write('Counter,Name,SDFG,State,Node,Thread,Min,Mean,Median,Max\n')
+            counters_csv.write('Counter,Name,SDFG,State,Node,Thread,Count,Min,Mean,Median,Max\n')
 
             for element, events in self.counters.items():
                 for name, counters in events.items():
@@ -332,8 +419,22 @@ class InstrumentationReport(object):
                         for tid, values in ctrvalues.items():
                             sdfg, state, node = element
                             npval = np.array(values)
+                            cnt = len(values)
                             mint, meant, mediant, maxt = np.min(npval), np.mean(npval), np.median(npval), np.max(npval)
                             counters_csv.write(
-                                f'{ctrname},{name},{sdfg},{state},{node},{tid},{mint},{meant},{mediant},{maxt}\n')
+                                f'{ctrname},{name},{sdfg},{state},{node},{tid},{cnt},{mint},{meant},{mediant},{maxt}\n')
 
         return durations_csv.getvalue(), counters_csv.getvalue()
+
+    def save(self, filename: str) -> None:
+        """
+        Stores an instrumentation report to a file in the Chrome Tracing JSON format.
+
+        :param filename: The file name to store.
+        """
+
+        report_json = {}
+        report_json['sdfgHash'] = self.sdfg_hash
+        report_json['traceEvents'] = [ev.save() for ev in self.events]
+        with open(filename, 'w') as fp:
+            json.dump(report_json, fp)
