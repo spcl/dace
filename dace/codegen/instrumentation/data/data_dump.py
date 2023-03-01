@@ -106,6 +106,11 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             # Only run on host code
             return
 
+        condition_preamble, condition_postamble = '', ''
+        if node.instrument_condition is not None and not node.instrument_condition.as_string == '1':
+            condition_preamble = f'if ({node.instrument_condition.as_string})' + ' {'
+            condition_postamble = '}'
+
         desc = node.desc(sdfg)
 
         # Obtain a pointer for arrays and scalars
@@ -130,11 +135,13 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         strides = ', '.join(cpp.sym2cpp(s) for s in desc.strides)
 
         # Write code
+        inner_stream.write(condition_preamble, sdfg, state_id, node_id)
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
             f'"{node.data}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
+        inner_stream.write(condition_postamble, sdfg, state_id, node_id)
 
 
 @registry.autoregister_params(type=dtypes.DataInstrumentationType.Restore)
@@ -178,6 +185,11 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             # Only run on host code
             return
 
+        condition_preamble, condition_postamble = '', ''
+        if node.instrument_condition is not None and not node.instrument_condition.as_string == '1':
+            condition_preamble = f'if ({node.instrument_condition.as_string})' + ' {'
+            condition_postamble = '}'
+
         desc = node.desc(sdfg)
 
         # Obtain a pointer for arrays and scalars
@@ -198,8 +210,10 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             preamble, postamble, ptrname = self._generate_copy_to_device(node, desc, ptrname)
 
         # Write code
+        inner_stream.write(condition_preamble, sdfg, state_id, node_id)
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
             f'"{node.data}", "{uuid}");\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
+        inner_stream.write(condition_postamble, sdfg, state_id, node_id)

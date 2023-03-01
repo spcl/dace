@@ -2,6 +2,7 @@
 from typing import Optional
 import dace
 from dace import nodes
+from dace.properties import CodeBlock
 import numpy as np
 import pytest
 
@@ -212,6 +213,34 @@ def test_dinstr_symbolic():
     assert np.allclose(dreport['tmp'], A + 1)
 
 
+def test_dinstr_in_loop_conditional():
+    @dace.program
+    def dinstr(A: dace.float64[20]):
+        tmp = np.copy(A)
+        for i in range(20):
+            tmp[i] = np.sum(tmp)
+        return tmp
+
+    sdfg = dinstr.to_sdfg(simplify=True)
+
+    # Set instrumentation on all access nodes
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode):
+            node.instrument = dace.DataInstrumentationType.Save
+            node.instrument_condition = CodeBlock('i == 0', language=dace.Language.CPP)
+
+    A = np.ones((20,))
+    B = np.ones((20,))
+    B[0] = 20
+    _ = sdfg(A)
+    dreport = sdfg.get_instrumented_data()
+    assert len(dreport.keys()) == 3
+    assert len(dreport['__return']) == 3
+
+    assert np.allclose(dreport['__return'][0], A)
+    assert np.allclose(dreport['__return'][-1], B)
+
+
 if __name__ == '__main__':
     test_dump()
     test_dump_gpu()
@@ -221,3 +250,4 @@ if __name__ == '__main__':
     test_dinstr_in_loop()
     test_dinstr_strided()
     test_dinstr_symbolic()
+    test_dinstr_in_loop_conditional()
