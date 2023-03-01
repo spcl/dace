@@ -43,7 +43,8 @@ def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGStat
 
 def multistate_cutout(*states: SDFGState,
                       in_translation: Optional[TranslationDictT] = None,
-                      out_translation: Optional[TranslationDictT] = None) -> SDFG:
+                      out_translation: Optional[TranslationDictT] = None,
+                      make_side_effects_global: bool = True) -> SDFG:
     """
     Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -55,7 +56,11 @@ def multistate_cutout(*states: SDFGState,
     :see: _stateset_predecessor_frontier
 
     :param states: The subgraph states to cut out.
-    :param inserted_states: A dictionary that provides a mapping from the original states to their cutout counterparts.
+    :param in_translation: A dictionary mapping the original SDFG elements to their cutout counterparts.
+    :param out_translation: A dictionary mapping the cutout SDFG elements to their original counterparts.
+    :param make_side_effects_global: If True, all transient data containers which are read inside the cutout but may
+                                     be written to _before_ the cutout, or any data containers which are written to
+                                     inside the cutout but may be read _after_ the cutout, are made global.
     """
     create_element = copy.deepcopy
 
@@ -164,6 +169,14 @@ def multistate_cutout(*states: SDFGState,
                 desc = sdfg.arrays[s]
                 new_sdfg.add_datadesc(s, desc)
 
+    # Determine what counts as inputs / outputs to the cutout and make those data containers global / non-transient.
+    if make_side_effects_global:
+        in_reach, out_reach = determine_cutout_reachability(new_sdfg, sdfg, in_translation, out_translation)
+        input_config = cutout_determine_input_config(new_sdfg, in_reach, in_translation, out_translation)
+        output_config = cutout_determine_output_configuration(new_sdfg, out_reach, in_translation, out_translation)
+        for d_name in input_config.union(output_config):
+            new_sdfg.arrays[d_name].transient = False
+
     return new_sdfg
 
 
@@ -176,13 +189,18 @@ def cutout_state(state: SDFGState,
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
-    to run the graph separately. In addition, all transient data containers created outside the cut out graph will
-    become global.
+    to run the graph separately. In addition, all transient data containers that may contain data when the cutout is
+    executed are made global, as well as any transient data containers which are written to inside the cutout but may
+    be read after the cutout.
     
     :param state: The SDFG state in which the subgraph resides.
     :param nodes: The nodes in the subgraph to cut out.
     :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
-    :param inserted_nodes: A dictionary mapping the original nodes to the new nodes in the cutout SDFG.
+    :param in_translation: A dictionary mapping the original elements to the new elements in the cutout SDFG.
+    :param out_translation: A dictionary mapping new elements in the cutout SDFG to their original elements.
+    :param make_side_effects_global: If True, all transient data containers which are read inside the cutout but may
+                                     be written to _before_ the cutout, or any data containers which are written to
+                                     inside the cutout but may be read _after_ the cutout, are made global.
     """
     create_element = copy.deepcopy if make_copy else (lambda x: x)
     sdfg = state.parent
@@ -278,7 +296,7 @@ def cutout_state(state: SDFGState,
     if make_side_effects_global:
         in_reach, out_reach = determine_cutout_reachability(new_sdfg, sdfg, in_translation, out_translation)
         input_config = cutout_determine_input_config(new_sdfg, in_reach, in_translation, out_translation)
-        output_config = cutout_determine_system_state(new_sdfg, out_reach, in_translation, out_translation)
+        output_config = cutout_determine_output_configuration(new_sdfg, out_reach, in_translation, out_translation)
         for d_name in input_config.union(output_config):
             new_sdfg.arrays[d_name].transient = False
 
@@ -291,6 +309,8 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
                                        to_connector: Union[str, None]) -> data.Data:
     """
     Add an alibi data container and access node to a dangling connector inside of scopes.
+    Alibi nodes are never transient because they always represent a 'border' of the cutout and will consequently
+    be accessed by other nodes outside of the cutout (i.e. at a minimum the data containers they are extracted from).
     """
     original_edge.data
     access_size = original_edge.data.subset.size_exact()
@@ -342,6 +362,12 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             # Special case: IN_* connectors are not traversed further
             if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith('IN_')):
                 continue
+
+            # We don't want to extend access nodes over scope entry nodes, but rather we want to introduce alibi data
+            # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
+            if isinstance(e.src, nd.EntryNode) and e.src not in result and state.exit_node(e.src) not in result:
+                continue
+
             mpath = state.memlet_path(e)
             new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
             result.extend(new_nodes)
@@ -352,6 +378,12 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             # Special case: OUT_* connectors are not traversed further
             if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith('OUT_')):
                 continue
+
+            # We don't want to extend access nodes over scope exit nodes, but rather we want to introduce alibi data
+            # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
+            if isinstance(e.dst, nd.ExitNode) and e.dst not in result and state.entry_node(e.dst) not in result:
+                continue
+
             mpath = state.memlet_path(e)
             new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
             result.extend(new_nodes)
@@ -378,6 +410,19 @@ def determine_cutout_reachability(
         in_translation: TranslationDictT,
         out_translation: TranslationDictT,
         state_reach: Dict[SDFGState, Set[SDFGState]] = None) -> Tuple[Set[SDFGState], Set[SDFGState]]:
+    """
+    For a given cutout and its original SDFG, determine what parts of the SDFG (set of states) can reach the cutout,
+    and what set of states can be reached from the cutout.
+
+    :param ct: The cutout SDFG.
+    :param sdfg: The original SDFG.
+    :param in_translation: The translation dictionary from the original SDFG elements to cutout elements.
+    :param out_translation: The translation dictionary from the cutout elements to original SDFG elements.
+    :param state_reach: The state reachability dictionary for the original SDFG. If not provided, it will be computed
+                        on-the-fly.
+    :return: A tuple of two sets of states. The first set contains the states that can reach the cutout, and the second
+             set contains the states that can be reached from the cutout.
+    """
     if state_reach is None:
         original_sdfg_id = out_translation[sdfg.sdfg_id]
         state_reachability_dict = StateReachability().apply_pass(sdfg.sdfg_list[original_sdfg_id], None)
@@ -399,6 +444,18 @@ def determine_cutout_reachability(
 
 def cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: TranslationDictT,
                                   out_translation: TranslationDictT) -> Set[str]:
+    """
+    Determines the input configuration for a given cutout SDFG.
+    The input configuration is the set of data descriptors that are read inside the cutout, but may be written to
+    before the cutout is executed. Consequently, this contains any data container that may influence the computations
+    inside the cutout.
+
+    :param ct: The cutout SDFG.
+    :param inverse_cutout_reach: The set of states that can reach the cutout.
+    :param in_translation: The translation dictionary from the original SDFG elements to cutout elements.
+    :param out_translation: The translation dictionary from the cutout elements to original SDFG elements.
+    :return: The set of data descriptor names that are part of the input configuration.
+    """
     input_configuration = set()
     check_for_write_before = set()
     cutout_states = set(ct.states())
@@ -448,8 +505,20 @@ def cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState]
     return input_configuration
 
 
-def cutout_determine_system_state(ct: SDFG, cutout_reach: Set[SDFGState], in_translation: TranslationDictT,
-                                  out_translation: TranslationDictT) -> Set[str]:
+def cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState], in_translation: TranslationDictT,
+                                          out_translation: TranslationDictT) -> Set[str]:
+    """
+    Determines the output configuration for a given cutout SDFG.
+    The output configuration is the set of data descriptors that are written inside the cutout, but may be read from
+    after the cutout is executed. Consequently, this contains any data container that may influence the computations
+    of the original SDFG after the cutout.
+
+    :param ct: The cutout SDFG.
+    :param cutout_reach: The set of states that can be reached from the cutout.
+    :param in_translation: The translation dictionary from the original SDFG elements to cutout elements.
+    :param out_translation: The translation dictionary from the cutout elements to original SDFG elements.
+    :return: The set of data descriptor names that are part of the output configuration.
+    """
     system_state = set()
     check_for_read_after = set()
     cutout_states = set(ct.states())
