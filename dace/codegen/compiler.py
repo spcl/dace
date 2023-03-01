@@ -9,6 +9,7 @@ import collections
 import os
 import six
 import shutil
+import shlex
 import subprocess
 import re
 from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union
@@ -166,6 +167,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
     cmake_command += sorted(environment_flags)
+
+    cmake_command += shlex.split(Config.get('compiler', 'extra_cmake_args'))
 
     # Replace backslashes with forward slashes
     cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
