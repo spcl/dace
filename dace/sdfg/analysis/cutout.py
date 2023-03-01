@@ -5,7 +5,7 @@ testing or optimization.
 """
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union
+from typing import Deque, Dict, List, Set, Tuple, Union, Optional
 from dace import data
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
@@ -42,8 +42,8 @@ def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGStat
 
 
 def multistate_cutout(*states: SDFGState,
-                      in_translation: TranslationDictT = None,
-                      out_translation: TranslationDictT = None) -> SDFG:
+                      in_translation: Optional[TranslationDictT] = None,
+                      out_translation: Optional[TranslationDictT] = None) -> SDFG:
     """
     Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
 
@@ -68,7 +68,7 @@ def multistate_cutout(*states: SDFGState,
 
     # Determine the start state and ensure there IS a unique start state. If there is no unique start state, keep adding
     # states from the predecessor frontier in the state machine until a unique start state can be determined.
-    start_state: SDFGState = None
+    start_state: Optional[SDFGState] = None
     for state in cutout_states:
         if state == sdfg.start_state:
             start_state = state
@@ -123,9 +123,9 @@ def multistate_cutout(*states: SDFGState,
 
     # Add all states and state transitions required to the new cutout SDFG by traversing the state machine edges.
     if in_translation is None:
-        in_translation: TranslationDictT = dict()
+        in_translation = dict()
     if out_translation is None:
-        out_translation: TranslationDictT = dict()
+        out_translation = dict()
     sg_edges: List[Edge[InterstateEdge]] = subgraph.edges()
     for is_edge in sg_edges:
         if is_edge.src not in in_translation:
@@ -170,8 +170,9 @@ def multistate_cutout(*states: SDFGState,
 def cutout_state(state: SDFGState,
                  *nodes: nd.Node,
                  make_copy: bool = True,
-                 in_translation: TranslationDictT = None,
-                 out_translation: TranslationDictT = None) -> SDFG:
+                 in_translation: Optional[TranslationDictT] = None,
+                 out_translation: Optional[TranslationDictT] = None,
+                 make_side_effects_global: bool = True) -> SDFG:
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -238,37 +239,48 @@ def cutout_state(state: SDFGState,
     # dangling connectors on other nodes.
     for orig_node in in_translation.keys():
         new_node = in_translation[orig_node]
-        if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
-            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
-            for conn in (new_node.in_connectors.keys() - used_connectors):
-                new_node.remove_in_connector(conn)
-            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
-            for conn in (new_node.out_connectors.keys() - used_connectors):
-                new_node.remove_out_connector(conn)
-        else:
-            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
-            for conn in (new_node.in_connectors.keys() - used_connectors):
-                for e in state.in_edges(orig_node):
-                    if e.dst_conn and e.dst_conn == conn:
-                        _create_alibi_access_node_for_edge(new_sdfg, new_state, sdfg, e, None, None, new_node, conn)
-                        prune = False
-                        break
-                if prune:
+        if isinstance(new_node, nd.Node):
+            if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
+                used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+                for conn in (new_node.in_connectors.keys() - used_connectors):
                     new_node.remove_in_connector(conn)
-            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
-            for conn in (new_node.out_connectors.keys() - used_connectors):
-                for e in state.out_edges(orig_node):
-                    if e.src_conn and e.src_conn == conn:
-                        _create_alibi_access_node_for_edge(new_sdfg, new_state, sdfg, e, new_node, conn, None, None)
-                        prune = False
-                        break
-                if prune:
+                used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+                for conn in (new_node.out_connectors.keys() - used_connectors):
                     new_node.remove_out_connector(conn)
+            else:
+                used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+                for conn in (new_node.in_connectors.keys() - used_connectors):
+                    prune = True
+                    for e in state.in_edges(orig_node):
+                        if e.dst_conn and e.dst_conn == conn:
+                            _create_alibi_access_node_for_edge(new_sdfg, new_state, sdfg, e, None, None, new_node, conn)
+                            prune = False
+                            break
+                    if prune:
+                        new_node.remove_in_connector(conn)
+                used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+                for conn in (new_node.out_connectors.keys() - used_connectors):
+                    prune = True
+                    for e in state.out_edges(orig_node):
+                        if e.src_conn and e.src_conn == conn:
+                            _create_alibi_access_node_for_edge(new_sdfg, new_state, sdfg, e, new_node, conn, None, None)
+                            prune = False
+                            break
+                    if prune:
+                        new_node.remove_out_connector(conn)
 
     in_translation[state] = new_state
     out_translation[new_state] = state
     in_translation[sdfg.sdfg_id] = new_sdfg.sdfg_id
     out_translation[new_sdfg.sdfg_id] = sdfg.sdfg_id
+
+    # Determine what counts as inputs / outputs to the cutout and make those data containers global / non-transient.
+    if make_side_effects_global:
+        in_reach, out_reach = determine_cutout_reachability(new_sdfg, sdfg, in_translation, out_translation)
+        input_config = cutout_determine_input_config(new_sdfg, in_reach, in_translation, out_translation)
+        output_config = cutout_determine_system_state(new_sdfg, out_reach, in_translation, out_translation)
+        for d_name in input_config.union(output_config):
+            new_sdfg.arrays[d_name].transient = False
 
     return new_sdfg
 
@@ -308,6 +320,7 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
         target_state.add_edge(alibi_access_node, None, to_node, to_connector, Memlet(memlet_str))
     else:
         target_state.add_edge(from_node, from_connector, alibi_access_node, None, Memlet(memlet_str))
+    return target_sdfg.arrays[container_name]
 
 
 def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:
@@ -381,7 +394,7 @@ def determine_cutout_reachability(
         for rstate in state_reach[original_state]:
             if (rstate not in in_translation or in_translation[rstate] not in cutout_states):
                 cutout_reach.add(rstate)
-    return [inverse_cutout_reach, cutout_reach]
+    return (inverse_cutout_reach, cutout_reach)
 
 
 def cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: TranslationDictT,
