@@ -72,7 +72,7 @@ program_outputs = {
     'cloudsc_class1_2857': ('PFHPSL', 'PFHPSN'),
     'cloudsc_class2_781': ('ZA', 'ZLIQFRAC', 'ZICEFRAC', 'ZLI'),
     'cloudsc_class2_1762': ('ZCOVPTOT', 'ZCOVPCLR', 'ZCOVPMAX', 'ZRAINCLD', 'ZSNOWCLD'),
-    'cloudsc_class2_1001': ('ZSOLQA', 'ZQXFG'),
+    'cloudsc_class2_1001': ('ZSOLQA', 'ZQXFG', 'ZSOLAC', 'ZFOKOOP', 'ZPSUPSATSRCE', 'ZSUPSAT'),
     'cloudsc_class2_1516': ('ZCOVPTOT', 'ZICENUCLEI', 'ZSOLQA', 'ZQXFG'),
     'cloudsc_class3_691': ('ZQX', 'ZLNEG', 'tendency_loc_q', 'tendency_loc_T'),
     'cloudsc_class3_965': ('ZSOLQA',),
@@ -182,10 +182,12 @@ data = {
     'RLMIN': (0,),
     'RLSTT': (0,),
     'RLVTT': (0,),
+    'RPRECRHMAX': (0,),
     'RTAUMEL': (0,),
     'RTHOMO': (0,),
     'RTT': (0,),
     'RV': (0,),
+    'RVRFACTOR': (0,),
     'ZEPSEC': (0,),
     'ZEPSILON': (0,),
     'ZRG_R': (0,),
@@ -232,6 +234,7 @@ data = {
     'ZCOVPTOT': (parameters['KLON'],),
     'ZCOVPCLR': (parameters['KLON'],),
     'ZCOVPMAX': (parameters['KLON'],),
+    'ZDTGDP': (parameters['KLON'],),
     'ZICENUCLEI': (parameters['KLON'],),
     'ZRAINCLD': (parameters['KLON'],),
     'ZSNOWCLD': (parameters['KLON'],),
@@ -251,15 +254,18 @@ data = {
     'ZLNEG': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZPFPLSX': (parameters['KLON'], parameters['KLEV']+1, parameters['NCLV']),
     'ZPSUPSATSRCE': (parameters['KLON'], parameters['NCLV']),
-    'ZSOLQA': (parameters['KLON'], parameters['NCLV'], parameters['NCLV']),
     'ZMELTMAX': (parameters['KLON'],),
     'ZQPRETOT': (parameters['KLON'],),
+    'ZQSLIQ': (parameters['KLON'], parameters['KLEV']),
     'ZQSICE': (parameters['KLON'], parameters['KLEV']),
     'ZQX': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQXFG': (parameters['KLON'], parameters['NCLV']),
     'ZQXN': (parameters['KLON'], parameters['NCLV']),
     'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'ZSOLAC': (parameters['KLON'],),
+    'ZSOLQA': (parameters['KLON'], parameters['NCLV'], parameters['NCLV']),
+    'ZSUPSAT': (parameters['KLON'],),
     'ZTP1': (parameters['KLON'], parameters['KLEV']),
     'PT': (parameters['KLON'], parameters['KLEV']),
     'PQ': (parameters['KLON'], parameters['KLEV']),
@@ -317,10 +323,17 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     sdfg(**inputs, **outputs_d)
 
+    print(program)
     for k in outputs_f.keys():
         farr = outputs_f[k]
         darr = outputs_f[k]
         assert np.allclose(farr, darr)
+        print(f"variable {k:20} ", end="")
+        print(f"Sum: {farr.sum():.2e}", end=", ")
+        print(f"avg: {np.average(farr):.2e}", end=", ")
+        print(f"median: {np.median(farr):.2e}", end=", ")
+        print(f"nnz: {np.count_nonzero(farr)}", end=", ")
+        print(f"#: {np.prod(farr.shape)}")
     print("Success")
 
 
@@ -332,10 +345,25 @@ if __name__=="__main__":
     # test_program('cloudsc_class1_2857', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class2_781', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class2_1762', dace.DeviceType.CPU, False)
-    # Produces a warning: UserWarning: WARNING: Use of uninitialized transient "ZFOKOOP" in state _state_l101_c101_4,
-    # maybe this var is not passed or something similar
     # test_program('cloudsc_class2_1001', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class2_1516', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class3_691', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class3_965', dace.DeviceType.CPU, False)
-    test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
+    # test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
+
+    # does currently not work, due to errors/problems when simplifying the SDFG
+    # test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
+    # Does not work:
+    # Fails to find /usr/local/cuda/include/cooperative_groups.h which is not present on this ault (06) node, but on the
+    # login node
+    # test_program('cloudsc_class1_670', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class1_2783', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class1_2857', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class2_781', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class2_1762', dace.DeviceType.GPU, False)
+    # Does not work
+    test_program('cloudsc_class2_1001', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class2_1516', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class3_691', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class3_965', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class3_1985', dace.DeviceType.GPU, False)
