@@ -585,14 +585,15 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                                                          pos=currentindex)
                 ])
             else:
-                ranges.append([
+                """ ranges.append([
                     ast_internal_classes.BinOp_Node(op="-",
                                                     lval=i.range[0],
                                                     rval=ast_internal_classes.Int_Literal_Node(value="1")),
                     ast_internal_classes.BinOp_Node(op="-",
                                                     lval=i.range[1],
                                                     rval=ast_internal_classes.Int_Literal_Node(value="1"))
-                ])
+                ]) """
+                ranges.append([i.range[0], i.range[1]])
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
