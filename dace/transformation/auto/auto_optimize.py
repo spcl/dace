@@ -566,12 +566,6 @@ def auto_optimize(sdfg: SDFG,
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
 
-    # Apply GPU transformations and set library node implementations
-
-    if device == dtypes.DeviceType.GPU:
-        sdfg.apply_gpu_transformations()
-        sdfg.simplify()
-
     # fuse subgraphs greedily
     sdfg.simplify()
 
@@ -583,6 +577,11 @@ def auto_optimize(sdfg: SDFG,
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
     # sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
+    # Apply GPU transformations and set library node implementations
+    if device == dtypes.DeviceType.GPU:
+        sdfg.apply_gpu_transformations()
+        sdfg.simplify()
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
