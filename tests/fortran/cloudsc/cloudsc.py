@@ -17,7 +17,6 @@ import tempfile
 from typing import Dict, Union
 
 
-
 def read_source(filename: str, extension: str = 'f90') -> str:
     source = None
     with open(os.path.join(os.path.dirname(__file__), f'{filename}.{extension}'), 'r') as file:
