@@ -690,13 +690,39 @@ class ScalarToSymbolPromotion(passes.Pass):
             state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
 
         # Step 5: Data descriptor management
+        non_transients: Dict[str, str] = dict()
         for scalar in to_promote:
             desc = sdfg.arrays[scalar]
+            new_scalar_name = sdfg._find_new_name(scalar)
             sdfg.remove_data(scalar, validate=False)
             # If the scalar is already a symbol (e.g., as part of an array size),
             # do not re-add the symbol
             if scalar not in sdfg.symbols:
                 sdfg.add_symbol(scalar, desc.dtype)
+            if not desc.transient:
+                non_transients[scalar] = new_scalar_name
+                sdfg.add_datadesc(new_scalar_name, desc)
+                if sdfg.parent:
+                    in_connectors = sdfg.parent_nsdfg_node.in_connectors
+                    if scalar in in_connectors:
+                        for e in sdfg.parent.in_edges_by_connector(sdfg.parent_nsdfg_node, scalar):
+                            e._dst_conn = new_scalar_name
+                        in_connectors[new_scalar_name] = in_connectors[scalar]
+                        del in_connectors[scalar]
+                        sdfg.parent_nsdfg_node.in_connectors = in_connectors
+                    out_connectors = sdfg.parent_nsdfg_node.out_connectors
+                    if scalar in out_connectors:
+                        for e in sdfg.parent.out_edges_by_connector(sdfg.parent_nsdfg_node, scalar):
+                            e._src_conn = new_scalar_name
+                        out_connectors[new_scalar_name] = out_connectors[scalar]
+                        del out_connectors[scalar]
+                        sdfg.parent_nsdfg_node.out_connectors = out_connectors
+
+        # Step 5.1: Create init state for non-transient scalars
+        if non_transients:
+            start_state = sdfg.start_state
+            new_start_state = sdfg.add_state('new_init', is_start_state=True)
+            sdfg.add_edge(new_start_state, start_state, sd.InterstateEdge(assignments=non_transients))
 
         # Step 6: Inter-state edge cleanup
         cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
