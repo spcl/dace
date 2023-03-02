@@ -226,7 +226,7 @@ class AccessNode(Node):
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
                               desc="Instrument data contents at this access",
                               default=dtypes.DataInstrumentationType.No_Instrumentation)
-    instrument_condition = CodeProperty(desc="Condition under which to trigger the instrument",
+    instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
                                         default=CodeBlock("1", language=dtypes.Language.CPP))
 
     def __init__(self, data, debuginfo=None):
