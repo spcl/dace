@@ -232,6 +232,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param use_cache: If True, tries to find an already parsed SDFG in the local cache. Otherwise, re-parses SDFG.
         :return: An SDFG object that can be transformed, saved, or called.
         """
+        # Check if reparse_sdfg or recompile keyword arguments are being ignored
+        if 'reparse_sdfg' in kwargs or 'recompile' in kwargs:
+            warnings.warn("The 'reparse_sdfg' and 'recompile' keyword arguments are ignored when calling to_sdfg().", UserWarning)
 
         if use_cache:
             # Update global variables with current closure
