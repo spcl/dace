@@ -182,8 +182,6 @@ class ScalarWriteShadowScopes(ppl.Pass):
         access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]],
         state_idom: Dict[SDFGState, SDFGState], access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]]
     ) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
-        write_state = None
-
         if isinstance(read, nd.AccessNode):
             # If the read is also a write, it shadows itself.
             iedges = state.in_edges(read)
@@ -200,17 +198,24 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         closest_candidate = cand
             if closest_candidate is not None:
                 return (state, closest_candidate)
-
-            # Find the dominating write state if the current state is not the dominating write state.
-            write_state = None
-            nstate = state_idom[state] if state_idom[state] != state else None
-            while nstate is not None and write_state is None:
-                if desc in access_sets[nstate][1]:
-                    write_state = nstate
-                nstate = state_idom[nstate] if state_idom[nstate] != nstate else None
         elif isinstance(read, InterstateEdge):
-            # Consider the current state as the write state, since the read is happening on an outgoing interstate edge.
-            write_state = state
+            # Attempt to find a shadowing write in the current state.
+            # TODO: Can this be done more efficiently?
+            closest_candidate = None
+            write_nodes = access_nodes[desc][state][1]
+            for cand in write_nodes:
+                if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
+                    closest_candidate = cand
+            if closest_candidate is not None:
+                return (state, closest_candidate)
+
+        # Find the dominating write state if the current state is not the dominating write state.
+        write_state = None
+        nstate = state_idom[state] if state_idom[state] != state else None
+        while nstate is not None and write_state is None:
+            if desc in access_sets[nstate][1]:
+                write_state = nstate
+            nstate = state_idom[nstate] if state_idom[nstate] != nstate else None
 
         # Find a dominating write in the write state, i.e., the 'last' write to the data container.
         if write_state is not None:

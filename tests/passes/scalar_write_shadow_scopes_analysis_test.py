@@ -100,7 +100,6 @@ def test_scalar_write_shadow_split():
                                          (loop_2_2, loop2_read_a)])
     assert results[0]['B'][None] == set([(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
                                          (loop_2_2, loop2_read_b)])
-    print(results)
 
 def test_scalar_write_shadow_fused():
     """
@@ -180,7 +179,6 @@ def test_scalar_write_shadow_fused():
     assert results[0]['tmp'][(loop_2, tmp2_read_write)] == set([(loop_2, tmp2_read_write)])
     assert results[0]['A'][None] == set([(loop_1, a1_read), (loop_2, a2_read)])
     assert results[0]['B'][None] == set([(loop_1, b1_read), (loop_2, b2_read)])
-    print(results)
 
 def test_scalar_write_shadow_interstate():
     """
@@ -276,7 +274,6 @@ def test_scalar_write_shadow_interstate():
                                          (loop_2_2, loop2_read_a)])
     assert results[0]['B'][None] == set([(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
                                          (loop_2_2, loop2_read_b)])
-    print(results)
 
 if __name__ == '__main__':
     test_scalar_write_shadow_split()
