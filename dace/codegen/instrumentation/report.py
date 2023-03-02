@@ -160,7 +160,7 @@ class InstrumentationReport(object):
                 if name not in self.durations[uuid]:
                     self.durations[uuid][name] = defaultdict(list)
 
-                self.durations[uuid][name][tid].append(event['dur'] / 1000)
+                self.durations[uuid][name][tid].append(event.duration / 1000)
 
             elif isinstance(event, CounterEvent):
                 # Counter
