@@ -241,7 +241,7 @@ class CUDACodeGen(TargetCodeGenerator):
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
-                access_nodes = ap.FindAccessNodes().apply_pass(top_sdfg, {})
+                access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
 
             reachable = reachability[sdfg.sdfg_id]
             access_sets = access_nodes[sdfg.sdfg_id]
