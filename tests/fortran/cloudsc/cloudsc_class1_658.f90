@@ -2,7 +2,6 @@ PROGRAM non_clv_init
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
-    ! Why are these set here again?
     INTEGER(KIND=JPIM), PARAMETER  :: KLON = 100
     INTEGER(KIND=JPIM), PARAMETER  :: KLEV = 100
     INTEGER(KIND=JPIM), PARAMETER  :: NCLV = 100
@@ -12,7 +11,6 @@ PROGRAM non_clv_init
     INTEGER(KIND=JPIM) NCLDQV 
 
     REAL(KIND=JPRB) PTSPHY
-    ! tendency_tmp was originally a class where the different attributes t, q and a were used
     REAL(KIND=JPRB) tendency_tmp_t(KLON,KLEV)
     REAL(KIND=JPRB) tendency_tmp_q(KLON,KLEV)
     REAL(KIND=JPRB) tendency_tmp_a(KLON,KLEV)
@@ -47,7 +45,6 @@ SUBROUTINE non_clv_init_routine( &
     INTEGER(KIND=JPIM) NCLDQV 
 
     REAL(KIND=JPRB) PTSPHY
-    ! tendency_tmp was originally a class where the different attributes t, q and a were used
     REAL(KIND=JPRB) tendency_tmp_t(KLON,KLEV)
     REAL(KIND=JPRB) tendency_tmp_q(KLON,KLEV)
     REAL(KIND=JPRB) tendency_tmp_a(KLON,KLEV)
