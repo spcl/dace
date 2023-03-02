@@ -28,6 +28,7 @@ programs = {
     'cloudsc_class3_691': 'tidy_up_cloud_cover',
     'cloudsc_class3_965': 'evaporate_small_liquid_ice',
     'cloudsc_class3_1985': 'melting_snow_ice',
+    'cloudsc_class3_2120': 'rain_evaporation',
 }
 
 
@@ -44,6 +45,7 @@ program_parameters = {
     'cloudsc_class3_691': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL'),
     'cloudsc_class3_965': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL', 'NCLDTOP'),
     'cloudsc_class3_1985': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQS','NCLDQI', 'NCLDQL', 'NCLDTOP'),
+    'cloudsc_class3_2120': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQR', 'NCLDTOP'),
 }
 
 
@@ -62,6 +64,9 @@ program_inputs = {
     'cloudsc_class3_691': ('RLMIN', 'RAMIN', 'ZQTMST', 'RALVDCP', 'RALSDCP', 'ZA'),
     'cloudsc_class3_965': ('RLMIN', 'ZQX'),
     'cloudsc_class3_1985': ('ZEPSEC', 'RTT', 'PTSPHY', 'ZRLDCP', 'RTAUMEL', 'ZQSICE', 'ZQXFG', 'ZTP1', 'PAP', 'ZQX'),
+    'cloudsc_class3_2120': ('RPRECRHMAX', 'ZCOVPMAX', 'ZEPSEC', 'ZEPSILON', 'RVRFACTOR', 'RG', 'RPECONS', 'PTSPHY',
+                            'ZRG_R', 'RCOVPMIN', 'ZA', 'ZQX', 'ZQSLIQ', 'ZCOVPCLR', 'ZDTGDP', 'PAP', 'PAPH',
+                            'ZCORQSLIQ', 'ZDP'),
 }
 
 
@@ -77,6 +82,7 @@ program_outputs = {
     'cloudsc_class3_691': ('ZQX', 'ZLNEG', 'tendency_loc_q', 'tendency_loc_T'),
     'cloudsc_class3_965': ('ZSOLQA',),
     'cloudsc_class3_1985': ('ZICETOT', 'ZMELTMAX'),
+    'cloudsc_class3_2120': ('ZSOLQA', 'ZCOVPTOT', 'ZQXFG'),
 }
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -182,6 +188,7 @@ data = {
     'RLMIN': (0,),
     'RLSTT': (0,),
     'RLVTT': (0,),
+    'RPECONS': (0,),
     'RPRECRHMAX': (0,),
     'RTAUMEL': (0,),
     'RTHOMO': (0,),
@@ -231,6 +238,7 @@ data = {
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
     'ZCONVSRCE': (parameters['KLON'], parameters['NCLV']),
     'ZCORQSICE': (parameters['KLON']),
+    'ZCORQSLIQ': (parameters['KLON']),
     'ZCOVPTOT': (parameters['KLON'],),
     'ZCOVPCLR': (parameters['KLON'],),
     'ZCOVPMAX': (parameters['KLON'],),
@@ -350,6 +358,7 @@ if __name__=="__main__":
     # test_program('cloudsc_class3_691', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class3_965', dace.DeviceType.CPU, False)
     # test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
+    # test_program('cloudsc_class3_2120', dace.DeviceType.CPU, False)
 
     # does currently not work, due to errors/problems when simplifying the SDFG
     # test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
@@ -362,8 +371,9 @@ if __name__=="__main__":
     # test_program('cloudsc_class2_781', dace.DeviceType.GPU, False)
     # test_program('cloudsc_class2_1762', dace.DeviceType.GPU, False)
     # Does not work
-    test_program('cloudsc_class2_1001', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class2_1001', dace.DeviceType.GPU, False)
     # test_program('cloudsc_class2_1516', dace.DeviceType.GPU, False)
     # test_program('cloudsc_class3_691', dace.DeviceType.GPU, False)
     # test_program('cloudsc_class3_965', dace.DeviceType.GPU, False)
     # test_program('cloudsc_class3_1985', dace.DeviceType.GPU, False)
+    # test_program('cloudsc_class3_2120', dace.DeviceType.CPU, False)
