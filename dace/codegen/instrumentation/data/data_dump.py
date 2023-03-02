@@ -6,9 +6,12 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.scope import is_devicelevel_fpga
 from dace.sdfg.state import SDFGState
 from dace.codegen import common
+from dace.codegen import cppunparse
 from dace.codegen.targets import cpp
+from dace.properties import CodeBlock
 import os
-from typing import Tuple, TYPE_CHECKING
+import warnings
+from typing import Tuple, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -107,8 +110,17 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             return
 
         condition_preamble, condition_postamble = '', ''
-        if node.instrument_condition is not None and not node.instrument_condition.as_string == '1':
-            condition_preamble = f'if ({node.instrument_condition.as_string})' + ' {'
+        condition: Optional[CodeBlock] = node.instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
             condition_postamble = '}'
 
         desc = node.desc(sdfg)
@@ -186,8 +198,17 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             return
 
         condition_preamble, condition_postamble = '', ''
-        if node.instrument_condition is not None and not node.instrument_condition.as_string == '1':
-            condition_preamble = f'if ({node.instrument_condition.as_string})' + ' {'
+        condition: Optional[CodeBlock] = node.instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
             condition_postamble = '}'
 
         desc = node.desc(sdfg)

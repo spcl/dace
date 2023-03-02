@@ -213,7 +213,7 @@ def test_dinstr_symbolic():
     assert np.allclose(dreport['tmp'], A + 1)
 
 
-def test_dinstr_in_loop_conditional():
+def test_dinstr_in_loop_conditional_cpp():
     @dace.program
     def dinstr(A: dace.float64[20]):
         tmp = np.copy(A)
@@ -241,6 +241,36 @@ def test_dinstr_in_loop_conditional():
     assert np.allclose(dreport['__return'][-1], B)
 
 
+def test_dinstr_in_loop_conditional_python():
+    @dace.program
+    def dinstr(A: dace.float64[20]):
+        tmp = np.copy(A)
+        for i in range(20):
+            tmp[i] = np.sum(tmp)
+        return tmp
+
+    sdfg = dinstr.to_sdfg(simplify=True)
+
+    # Set instrumentation on all access nodes
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode):
+            node.instrument = dace.DataInstrumentationType.Save
+            node.instrument_condition = CodeBlock('i ** 2 == 4', language=dace.Language.Python)
+
+    A = np.ones((20,))
+    B = np.ones((20,))
+    C = np.ones((20,))
+    ret = sdfg(A)
+    dreport = sdfg.get_instrumented_data()
+    B[0:2] = ret[0:2]
+    C[0:3] = ret[0:3]
+    assert len(dreport.keys()) == 2
+    assert len(dreport['__return']) == 2
+
+    assert np.allclose(dreport['__return'][0], B)
+    assert np.allclose(dreport['__return'][1], C)
+
+
 if __name__ == '__main__':
     test_dump()
     test_dump_gpu()
@@ -250,4 +280,5 @@ if __name__ == '__main__':
     test_dinstr_in_loop()
     test_dinstr_strided()
     test_dinstr_symbolic()
-    test_dinstr_in_loop_conditional()
+    test_dinstr_in_loop_conditional_cpp()
+    test_dinstr_in_loop_conditional_python()
