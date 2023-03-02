@@ -263,6 +263,7 @@ def test_inline_unsqueeze3():
             assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
 
 
+# NOTE: Issue with serialization
 @pytest.mark.skip
 def test_inline_unsqueeze4():
 
