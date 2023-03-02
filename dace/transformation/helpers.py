@@ -763,7 +763,6 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
-
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
@@ -783,7 +782,6 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
-
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
@@ -823,12 +821,10 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
                              'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
             rb, re, rs = result.subset.ranges[i]
             result.subset.ranges[i] = (original_minima[i], re, rs)
-
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
         raise NotImplementedError
@@ -1373,13 +1369,11 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode)
-                and isinstance(graph.parent.arrays[node.data], data.Stream)):
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
             nodedesc = graph.parent.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
-                    dtypes.StorageType.CPU_ThreadLocal
+                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
             ]:
                 return False
 
