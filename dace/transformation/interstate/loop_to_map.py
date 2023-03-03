@@ -122,7 +122,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
 
         # Find all loop-body states
-        states: List[SDFGState] = in_order_states[loop_begin_idx:loop_end_idx + 1]
+        states: List[SDFGState] = list(sdutil.dfs_conditional(sdfg, [begin], lambda _, c: c is not guard))
 
         assert (body_end in states)
 
@@ -142,7 +142,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 read_symbols -= symbols_that_may_be_used
                 used_before_assignment |= read_symbols
                 # If symbol was read before it is assigned, the loop cannot be parallel
-                if e.data.assignments.keys() & used_before_assignment:
+                assigned_symbols = set()
+                for k, v in e.data.assignments.items():
+                    try:
+                        fsyms = v.free_symbols
+                    except AttributeError:
+                        fsyms = set()
+                    if not k in fsyms:
+                        assigned_symbols.add(k)
+                if assigned_symbols & used_before_assignment:
                     return False
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
@@ -213,7 +221,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Check that the iteration variable and other symbols are not used on other edges or states
         # before they are reassigned
-        for state in in_order_states[loop_end_idx + 1:]:
+        for state in in_order_states[loop_begin_idx + 1:]:
+            if state in states:
+                continue
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
