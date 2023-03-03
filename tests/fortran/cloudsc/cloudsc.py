@@ -349,10 +349,10 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_8', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     # does currently not work, due to errors/problems when simplifying the SDFG
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, True),
     # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
@@ -430,8 +430,8 @@ if __name__ == "__main__":
     test_program('cloudsc_8', dace.DeviceType.CPU, False)
     test_program('cloudsc_8', dace.DeviceType.CPU, True)
     # does currently not work, due to errors/problems when simplifying the SDFG
-    # test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
     test_program('cloudsc_class1_670', dace.DeviceType.CPU, False)
     test_program('cloudsc_class1_670', dace.DeviceType.CPU, True)
     test_program('cloudsc_class1_2783', dace.DeviceType.CPU, False)
