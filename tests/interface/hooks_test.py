@@ -76,8 +76,8 @@ def test_profile():
     assert len(prof.times) == 2
     assert len(prof.times[0][1]) == 10
     assert len(prof.times[1][1]) == 10
-    assert prof.times[0][0].endswith('test2')
-    assert prof.times[1][0].endswith('test1')
+    assert prof.times[0][0].name.endswith('test2')
+    assert prof.times[1][0].name.endswith('test1')
 
 
 if __name__ == '__main__':
