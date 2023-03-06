@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from dace.sdfg.analysis import cutout
+from dace.sdfg.analysis.cutout import SDFGCutout
 import pytest
 
 
@@ -18,7 +18,7 @@ def test_cutout_onenode():
     assert state.number_of_nodes() == 8
     node = next(n for n in state if isinstance(n, dace.nodes.LibraryNode))
 
-    cut_sdfg = cutout.cutout_state(state, node)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, node)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 4
     assert len(cut_sdfg.arrays) == 3
@@ -39,7 +39,7 @@ def test_cutout_multinode():
     nodes = [n for n in state if isinstance(n, (dace.nodes.LibraryNode, dace.nodes.Tasklet))]
     assert len(nodes) == 2
 
-    cut_sdfg = cutout.cutout_state(state, *nodes)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, *nodes)
     assert cut_sdfg.number_of_nodes() == 1
     assert cut_sdfg.node(0).number_of_nodes() == 7
     assert len(cut_sdfg.arrays) == 5
@@ -79,7 +79,7 @@ def test_cutout_complex_case():
     state.add_memlet_path(t2, mx, d, memlet=dace.Memlet('D[i]'), src_conn='o')
 
     # Cutout
-    cut_sdfg = cutout.cutout_state(state, t2, me, mx)
+    cut_sdfg = SDFGCutout.singlestate_cutout(state, t2, me, mx)
     cut_sdfg.validate()
     assert cut_sdfg.arrays.keys() == {'B', 'ind', 'D'}
 
@@ -118,7 +118,7 @@ def test_cutout_implicit_array():
         return out
 
     sdfg = spmm.to_sdfg()
-    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c = SDFGCutout.singlestate_cutout(sdfg.start_state, *sdfg.start_state.nodes())
     c.validate()
 
 
@@ -130,7 +130,7 @@ def test_cutout_init_map():
         A[:] = 0
 
     sdfg = init.to_sdfg()
-    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c = SDFGCutout.singlestate_cutout(sdfg.start_state, *sdfg.start_state.nodes())
     c.validate()
 
 
@@ -185,7 +185,7 @@ def test_cutout_alibi_nodes():
     state.add_edge(acc_tmp6, None, t4, 'i3', dace.Memlet('tmp6'))
     state.add_memlet_path(t4, map_exit, write_c, src_conn='o', memlet=dace.Memlet('C[i, j]'))
 
-    ct = cutout.cutout_state(state, t4)
+    ct = SDFGCutout.singlestate_cutout(state, t4)
 
     assert ('__cutout_C' in ct.arrays)
     assert ('tmp2' in ct.arrays)
@@ -218,7 +218,7 @@ def test_multistate_cutout_simple_expand():
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
     in_translation = dict()
-    ct = cutout.multistate_cutout(s6, s7, in_translation=in_translation)
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s6, s7, in_translation=in_translation)
     assert len(ct.nodes()) == 3
     assert (in_translation[s5] in ct.nodes())
     assert (in_translation[s6] in ct.nodes())
@@ -249,7 +249,7 @@ def test_multistate_cutout_complex_expand():
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
     in_translation = dict()
-    ct = cutout.multistate_cutout(s4, s5, s6, s7, in_translation=in_translation)
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s4, s5, s6, s7, in_translation=in_translation)
     assert len(ct.nodes()) == 7
     assert (in_translation[s1] in ct.nodes())
     assert (in_translation[s2] in ct.nodes())
@@ -303,7 +303,7 @@ def test_input_output_configuration():
     s3.add_edge(t5, 'b', write_b, None, dace.Memlet('B[0]'))
     s3.add_edge(t6, 'b', w_tmp3, None, dace.Memlet('tmp3[0]'))
 
-    ct = cutout.cutout_state(s2, t2, t3, t4)
+    ct = SDFGCutout.singlestate_cutout(s2, t2, t3, t4)
 
     assert ct.arrays['tmp1'].transient == False
     assert ct.arrays['tmp2'].transient == False
