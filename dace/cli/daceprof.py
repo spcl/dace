@@ -227,6 +227,30 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
     return registered
 
 
+def save_as_csv(args: argparse.Namespace, report: InstrumentationReport):
+    durations, counters = report.as_csv()
+    if args.output:  # Print to file
+        durfile = args.output + '.durations.csv'
+        ctrfile = args.output + '.counters.csv'
+        if durations:
+            with open(durfile, 'w') as fp:
+                fp.write(durations)
+            print(f'Durations saved to {durfile}')
+        if counters:
+            with open(ctrfile, 'w') as fp:
+                fp.write(counters)
+            print(f'Counters saved to {ctrfile}')
+    else:  # Print to console
+        if durations:
+            print('Durations:')
+            print(durations)
+        if durations and counters:
+            print('\n')
+        if counters:
+            print('Counters:')
+            print(counters)
+
+
 def print_report(args: argparse.Namespace, reportfile: Union[str, InstrumentationReport]):
     if isinstance(reportfile, str):
         path = os.path.abspath(reportfile)
@@ -242,27 +266,7 @@ def print_report(args: argparse.Namespace, reportfile: Union[str, Instrumentatio
         report.sortby(args.sort, args.ascending)
 
     if args.csv:
-        durations, counters = report.as_csv()
-        if args.output:  # Print to file
-            durfile = args.output + '.durations.csv'
-            ctrfile = args.output + '.counters.csv'
-            if durations:
-                with open(durfile, 'w') as fp:
-                    fp.write(durations)
-                print(f'Durations saved to {durfile}')
-            if counters:
-                with open(ctrfile, 'w') as fp:
-                    fp.write(counters)
-                print(f'Counters saved to {ctrfile}')
-        else:  # Print to console
-            if durations:
-                print('Durations:')
-                print(durations)
-            if durations and counters:
-                print('\n')
-            if counters:
-                print('Counters:')
-                print(counters)
+        save_as_csv(args, report)
     else:
         print(report)
 
@@ -285,7 +289,10 @@ def main():
             print('daceprof: No DaCe program calls detected or no report file generated.')
         else:
             if args.output:  # Save report
-                shutil.copyfile(report.filepath, args.output)
+                if args.csv:
+                    save_as_csv(args, report)
+                else:
+                    shutil.copyfile(report.filepath, args.output)
             else:  # Print report
                 if report:
                     print('daceprof: Report file saved at', os.path.abspath(report.filepath))
