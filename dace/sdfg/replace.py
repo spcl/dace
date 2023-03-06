@@ -1,13 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
+import re
+import warnings
+from typing import Any, Dict, Optional, Union
+
+import sympy as sp
+
+import dace
 from dace import dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
-import re
-import sympy as sp
-from typing import Any, Dict, Optional, Union
-import warnings
 
 tokenize_cpp = re.compile(r'\b\w+\b')
 
@@ -44,6 +47,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
     """ 
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
+
     :param subgraph: The given graph or subgraph to replace in.
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
@@ -73,6 +77,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
 def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
+    
     :param subgraph: The given graph or subgraph to replace in.
     :param name: Name to find.
     :param new_name: Name to replace.

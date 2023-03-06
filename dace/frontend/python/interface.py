@@ -26,6 +26,9 @@ def program(f: F) -> parser.DaceProgram:
 def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
             constant_functions=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
@@ -36,15 +39,27 @@ def program(f: F,
             *args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
             constant_functions=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
     ``@dace.method``.
+
     :param f: The function to define as the entry point.
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -55,7 +70,15 @@ def program(f: F,
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions)
+    return parser.DaceProgram(f,
+                              args,
+                              kwargs,
+                              auto_optimize,
+                              device,
+                              constant_functions,
+                              recreate_sdfg=recreate_sdfg,
+                              regenerate_code=regenerate_code,
+                              recompile=recompile)
 
 
 function = program
@@ -80,14 +103,26 @@ def method(f: F,
            *args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           recreate_sdfg: bool = True,
+           regenerate_code: bool = True,
+           recompile: bool = True,
            constant_functions=False,
            **kwargs) -> parser.DaceProgram:
     """ 
     Entry point to a data-centric program that is a method or  a ``classmethod``. 
+
     :param f: The method to define as the entry point.
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -108,10 +143,38 @@ def method(f: F,
             objid = id(obj)
             if objid in self.wrapped:
                 return self.wrapped[objid]
-            prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=True)
+            prog = parser.DaceProgram(f,
+                                      args,
+                                      kwargs,
+                                      auto_optimize,
+                                      device,
+                                      constant_functions,
+                                      recreate_sdfg=recreate_sdfg,
+                                      regenerate_code=regenerate_code,
+                                      recompile=recompile,
+                                      method=True)
             prog.methodobj = obj
             self.wrapped[objid] = prog
             return prog
+
+        def __call__(self, *call_args, **call_kwargs):
+            # When called as-is, treat as an unbounded function (dace.program)
+            if None not in self.wrapped:
+                prog = parser.DaceProgram(f,
+                                          args,
+                                          kwargs,
+                                          auto_optimize,
+                                          device,
+                                          constant_functions,
+                                          recreate_sdfg=recreate_sdfg,
+                                          regenerate_code=regenerate_code,
+                                          recompile=recompile,
+                                          method=False)
+                self.wrapped[None] = prog
+            else:
+                prog = self.wrapped[None]
+
+            return prog(*call_args, **call_kwargs)
 
     return MethodWrapper()
 
@@ -145,6 +208,7 @@ class MapGenerator:
     def __iter__(self):
         return ndloop.ndrange(self.rng)
 
+
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
 
@@ -152,6 +216,7 @@ class MapMetaclass(type):
     def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
         """ 
         Iterates over an N-dimensional region in parallel.
+
         :param rng: A slice or a tuple of multiple slices, representing the
                     N-dimensional range to iterate over.
         :return: Generator of N-dimensional tuples of iterates.
@@ -177,6 +242,7 @@ class consume:
         input stream and the contents. The contents are run by the given number
         of processing elements, who will try to pop elements from the input
         stream until a given quiescence condition is reached. 
+
         :param stream: The stream to pop from.
         :param processing_elements: The number of processing elements to use.
         :param condition: A custom condition for stopping to consume. If None,
@@ -252,6 +318,7 @@ class tasklet(metaclass=TaskletMetaclass):
 def unroll(generator):
     """
     Explicitly annotates that a loop should be unrolled during parsing.
+
     :param generator: The original generator to loop over.
     :note: Only use with stateless and compile-time evaluateable loops!
     """
@@ -261,6 +328,7 @@ def unroll(generator):
 def nounroll(generator):
     """
     Explicitly annotates that a loop should not be unrolled during parsing.
+
     :param generator: The original generator to loop over.
     """
     yield from generator
@@ -270,6 +338,7 @@ def in_program() -> bool:
     """
     Returns True if in a DaCe program parsing context. This function can be used to test whether the current
     code runs inside the ``@dace.program`` parser.
+    
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False

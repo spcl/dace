@@ -440,3 +440,4 @@ if __name__ == "__main__":
     test_symexpr_bool()
     test_sym_sym()
     test_mixed()
+    test_bool_bool()

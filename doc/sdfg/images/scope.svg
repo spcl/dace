@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 width="222.44px" height="168.44px" viewBox="0 0 222.44 168.44" enable-background="new 0 0 222.44 168.44" xml:space="preserve">
+<rect x="3" y="41.62" fill-rule="evenodd" clip-rule="evenodd" fill="#DCDCDC" width="214" height="83.91"/>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M4.9,42.31l37.61-39h134.97l37.61,39H4.9z"/>
+<text transform="matrix(1 0 0 1 42.4649 31.8521)" font-family="'Arial'" font-size="27px">Entry Node</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M215.09,126.22l-37.61,39H42.51l-37.61-39H215.09z"/>
+<text transform="matrix(1 0 0 1 51.4695 154.0989)" font-family="'Arial'" font-size="27px">Exit Node</text>
+<text transform="matrix(1 0 0 1 66.6309 88.9112)" font-family="'Arial'" font-size="20px">Subgraph</text>
+</svg>

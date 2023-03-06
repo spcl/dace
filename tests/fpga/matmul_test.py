@@ -19,10 +19,10 @@ def create_gemm_sdfg(sdfg_name,
                      transB=False,
                      vec_width=1,
                      expansion_args=None):
-    '''
+    """
     Build an SDFG that perform the given GEMM operation along the given axis
     Input data A, B, and C is not vectorized
-    '''
+    """
     sdfg = dace.SDFG(sdfg_name)
 
     ###########################################################################

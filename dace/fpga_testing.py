@@ -101,6 +101,7 @@ def _run_fpga_test(vendor: str, test_function: Callable, test_timeout: int, run_
         if vendor == "xilinx":
             Config.set("compiler", "fpga", "vendor", value="xilinx")
             Config.set("compiler", "xilinx", "mode", value="simulation")
+            Config.set("compiler", "xilinx", "frequency", value="100") # 100 is the vitis_hls default
 
             # Simulation in software
             print_status(f"{base_name} [Xilinx]: Running simulation.")

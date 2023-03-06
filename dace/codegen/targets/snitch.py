@@ -13,7 +13,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.targets.cpp import sym2cpp
@@ -584,7 +584,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self.dispatcher, sdfg, memlet, src_node, dst_node,
+                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
                     self.packed_types)
             dbg(f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
                 )

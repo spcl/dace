@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -51,7 +52,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack"
         codecov
 
     - name: Test OpenBLAS LAPACK

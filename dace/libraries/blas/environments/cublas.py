@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
+import ctypes.util
 
 
 @dace.library.environment
@@ -37,3 +38,22 @@ cublasHandle_t &__dace_cublas_handle = __state->cublas_handle.Get(__dace_cuda_de
 cublasSetStream(__dace_cublas_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)
+
+    @staticmethod
+    def _find_library():
+        # *nix-based search
+        blas_path = ctypes.util.find_library('cublas')
+        if blas_path:
+            return [blas_path]
+
+        # Windows-based search
+        versions = (10, 11, 12)
+        for version in versions:
+            blas_path = ctypes.util.find_library(f'cublas64_{version}')
+            if blas_path:
+                return [blas_path]
+        return []
+
+    @staticmethod
+    def is_installed():
+        return len(cuBLAS._find_library()) > 0

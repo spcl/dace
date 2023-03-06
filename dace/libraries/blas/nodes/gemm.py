@@ -209,12 +209,12 @@ class ExpandGemmMKL(ExpandTransformation):
 
 
 @dace.library.expansion
-class ExpandGemmCuBLAS(ExpandTransformation):
+class ExpandGemmGPUBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = []
 
-    @staticmethod
-    def expansion(node, state, sdfg):
+    @classmethod
+    def expansion(cls, node, state, sdfg):
         node.validate(sdfg, state)
 
         # Find inputs and output
@@ -241,7 +241,7 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                          for desc in (adesc, bdesc, cdesc))
 
         dtype = adesc.dtype.base_type
-        func = '%sgemm' % to_blastype(dtype.type)
+        func = cls.funcname(to_blastype(dtype.type))
         if dtype == dace.float16:
             cdtype = '__half'
             factort = 'Half'
@@ -252,22 +252,22 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             cdtype = 'double'
             factort = 'Double'
         elif dtype == dace.complex64:
-            cdtype = 'cuComplex'
+            cdtype = f'{cls.dtype_backend}Complex'
             factort = 'Complex64'
         elif dtype == dace.complex128:
-            cdtype = 'cuDoubleComplex'
+            cdtype = f'{cls.dtype_backend}DoubleComplex'
             factort = 'Complex128'
         else:
             raise ValueError("Unsupported type: " + str(dtype))
 
-        call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
+        call_prefix = cls.environments[0].handle_setup_code(node)
         call_suffix = ''
 
         # Handle alpha / beta
         constants = {
-            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+            1.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{factort}Pone()",
             #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
-            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+            0.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{factort}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -281,11 +281,11 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
+            call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);'''
+            call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
             alpha = f'({cdtype} *)&alpha'
             beta = f'({cdtype} *)&beta'
         else:
@@ -300,8 +300,12 @@ class ExpandGemmCuBLAS(ExpandTransformation):
 
         # Matrix multiplication
         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-            call = '''cublas{func}(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+            opt['backend'] = cls.backend
+            opt['backend_op_ta'] = cls.backend_op(opt['ta'])
+            opt['backend_op_tb'] = cls.backend_op(opt['tb'])
+
+            call = '''{backend}blas{func}(__dace_{backend}blas_handle,
+                {backend_op_ta}, {backend_op_tb},
                 {M}, {N}, {K},
                 {alpha},
                 ({dtype}*){arr_prefix}{x}, {lda},
@@ -313,17 +317,18 @@ class ExpandGemmCuBLAS(ExpandTransformation):
                 acctype = node.compute_type
             elif node.accumulator_type is not None:
                 acc_dtype: dtypes.typeclass = node.accumulator_type
-                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
+                acctype = f'{cls.backend.upper()}BLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
             else:
-                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
+                acctype = f'{cls.backend.upper()}BLAS_COMPUTE_{to_cublas_computetype(dtype)}'
 
-            algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
+            algorithm = f'{cls.backend.upper()}BLAS_GEMM_DEFAULT_TENSOR_OP'
             if node.algorithm is not None:
                 algorithm = node.algorithm
 
             call = f'''
-            cublasGemmEx(__dace_cublas_handle,
-                CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+            {cls.backend}blas{cls.ex_suffix}(__dace_{cls.backend}blas_handle,
+                {cls.backend_op(opt['ta'])},
+                {cls.backend_op(opt['tb'])},
                 {opt['M']}, {opt['N']}, {opt['K']},
                 {alpha},
                 {arr_prefix}{opt['x']},
@@ -399,6 +404,48 @@ class ExpandGemmCuBLAS(ExpandTransformation):
 
 
 @dace.library.expansion
+class ExpandGemmCuBLAS(ExpandGemmGPUBLAS):
+    environments = [environments.cublas.cuBLAS]
+    backend = 'cu'
+    dtype_backend = 'cu'
+    set_pointer_mode = 'cublasSetPointerMode'
+    pointer_host = 'CUBLAS_POINTER_MODE_HOST'
+    pointer_device = 'CUBLAS_POINTER_MODE_DEVICE'
+    ex_suffix = 'GemmEx'
+
+    @classmethod
+    def backend_op(cls, mode: str) -> str:
+        return f'CUBLAS_OP_{mode}'
+
+    @classmethod
+    def funcname(cls, dtype: str) -> str:
+        return f'{dtype}gemm'
+
+
+@dace.library.expansion
+class ExpandGemmRocBLAS(ExpandGemmGPUBLAS):
+    environments = [environments.rocblas.rocBLAS]
+    backend = 'roc'
+    dtype_backend = 'hip'
+    set_pointer_mode = 'rocblas_set_pointer_mode'
+    pointer_host = 'rocblas_pointer_mode_host'
+    pointer_device = 'rocblas_pointer_mode_device'
+    ex_suffix = '_gemm_ex'
+
+    @classmethod
+    def backend_op(cls, mode: str) -> str:
+        if mode == 'N':
+            return 'rocblas_operation_none'
+        elif mode == 'T':
+            return 'rocblas_operation_transpose'
+        raise ValueError(f'Invalid gemm matrix operation {mode}')
+
+    @classmethod
+    def funcname(cls, dtype: str) -> str:
+        return f'_{dtype.lower()}gemm'
+
+
+@dace.library.expansion
 class ExpandGemmPBLAS(ExpandTransformation):
 
     environments = []
@@ -446,7 +493,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, num_pes=32, tile_size_m=None):
-        '''
+        """
         GEMM node expansion.
 
         :param node: Node to expand.
@@ -459,7 +506,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
                             If set to None, no tiling is used, corresponding to setting the tile size
                             equal to the number of columns of B/C.
         :return:
-        '''
+        """
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
@@ -911,6 +958,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         "MKL": ExpandGemmMKL,
         "OpenBLAS": ExpandGemmOpenBLAS,
         "cuBLAS": ExpandGemmCuBLAS,
+        "rocBLAS": ExpandGemmRocBLAS,
         "PBLAS": ExpandGemmPBLAS,
         "FPGA1DSystolic": ExpandGemmFPGA1DSystolic
     }
@@ -985,7 +1033,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(size0) != 2 or len(size1) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
-            raise ValueError("Inputs to matrix-matrix product " "must agree in the k-dimension")
+            raise ValueError("Inputs to matrix-matrix product "
+                             "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size3 = out_subset.size()
@@ -994,7 +1043,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2 and list(size3) != [size0[-2], size1[-1]]:
-            raise ValueError("Output to matrix-matrix product must agree in the m and n " "dimensions")
+            raise ValueError("Output to matrix-matrix product must agree in the m and n "
+                             "dimensions")
 
 
 # Numpy replacement

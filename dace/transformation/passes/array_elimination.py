@@ -2,21 +2,24 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from dace import SDFG, SDFGState, data
+from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
-                                          SqueezeViewRemove, UnsqueezeViewRemove)
+                                          SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 
+@properties.make_properties
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,
     and duplicate access nodes.
     """
+
+    CATEGORY: str = 'Simplification'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
@@ -25,11 +28,12 @@ class ArrayElimination(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.StateReachability, ap.FindAccessNodes}
+        return {ap.StateReachability, ap.FindAccessStates}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
         Removes redundant arrays and access nodes.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -37,9 +41,9 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes'][sdfg.sdfg_id]
+        access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.sdfg_id]
 
         # Traverse SDFG backwards
         try:
@@ -63,6 +67,9 @@ class ArrayElimination(ppl.Pass):
 
             # Update access nodes with merged nodes
             access_nodes = {k: [n for n in v if n not in removed_nodes] for k, v in access_nodes.items()}
+
+            # Remove redundant views
+            removed_nodes |= self.remove_redundant_views(sdfg, state, access_nodes)
 
             # Remove redundant copies and views
             removed_nodes |= self.remove_redundant_copies(sdfg, state, removable_data, access_nodes)
@@ -113,6 +120,28 @@ class ArrayElimination(ppl.Pass):
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)
+        return removed_nodes
+
+    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]]):
+        """
+        Removes access nodes that contain views, which can be represented normally by memlets. For example, slices.
+        """
+        removed_nodes: Set[nodes.AccessNode] = set()
+        xforms = [RemoveSliceView()]
+        state_id = sdfg.node_id(state)
+
+        for nodeset in access_nodes.values():
+            for anode in list(nodeset):
+                for xform in xforms:
+                    # Quick path to setup match
+                    candidate = {type(xform).view: anode}
+                    xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+
+                    # Try to apply
+                    if xform.can_be_applied(state, 0, sdfg):
+                        xform.apply(state, sdfg)
+                        removed_nodes.add(anode)
+                        nodeset.remove(anode)
         return removed_nodes
 
     def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],

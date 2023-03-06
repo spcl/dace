@@ -16,12 +16,12 @@ from dace import data as dt
 from dace import dtypes, registry
 from dace import sdfg as sd
 from dace import subsets, symbolic
-from dace.codegen import cppunparse
+from dace.codegen import common, cppunparse
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, unparse_cr_split)
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
@@ -61,8 +61,6 @@ class CUDACodeGen(TargetCodeGenerator):
     _in_device_code = False
 
     def __init__(self, frame_codegen, sdfg: SDFG):
-        self.backend = Config.get('compiler', 'cuda', 'backend')
-        self.language = 'cu' if self.backend == 'cuda' else 'cpp'
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         dispatcher = self._dispatcher
@@ -77,13 +75,6 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
         self._scope_has_collaborative_copy = False
-        target_type = "" if self.backend == 'cuda' else self.backend
-        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
-                                      '',
-                                      self.language,
-                                      CUDACodeGen,
-                                      'CUDA',
-                                      target_type=target_type)
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -149,6 +140,17 @@ class CUDACodeGen(TargetCodeGenerator):
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
+        # Determine GPU backend
+        self.backend = common.get_gpu_backend()
+        self.language = 'cu' if self.backend == 'cuda' else 'cpp'
+        target_type = "" if self.backend == 'cuda' else self.backend
+        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
+                                      '',
+                                      self.language,
+                                      CUDACodeGen,
+                                      'CUDA',
+                                      target_type=target_type)
+
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
@@ -157,7 +159,7 @@ class CUDACodeGen(TargetCodeGenerator):
                 if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
-                        None, nsdfg, e.data, e.src, e.dst)
+                        None, nsdfg, state, e, e.src, e.dst)
                     dims = len(copy_shape)
 
                     # Skip supported copy types
@@ -229,7 +231,7 @@ class CUDACodeGen(TargetCodeGenerator):
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
-                access_nodes = ap.FindAccessNodes().apply_pass(top_sdfg, {})
+                access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
 
             reachable = reachability[sdfg.sdfg_id]
             access_sets = access_nodes[sdfg.sdfg_id]
@@ -275,6 +277,24 @@ class CUDACodeGen(TargetCodeGenerator):
                             # will be released
 
                     self.pool_release[(sdfg, aname)] = (state, terminators)
+
+            # If there is unfreed pooled memory, free at the end of the SDFG
+            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            if unfreed:
+                # Find or make single sink node
+                sinks = sdfg.sink_nodes()
+                if len(sinks) == 1:
+                    sink = sinks[0]
+                elif len(sinks) > 1:
+                    sink = sdfg.add_state()
+                    for s in sinks:
+                        sdfg.add_edge(s, sink)
+                else:  # len(sinks) == 0:
+                    raise ValueError('End state not found when trying to free pooled memory')
+
+                # Add sink as terminator state
+                for arr in unfreed:
+                    self.pool_release[(sdfg, arr)] = (sink, set())
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -382,6 +402,22 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     delete __state->gpu_context;
 }}
 
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
+{{
+    if (streamid < 0 || streamid >= {nstreams})
+        return false;
+
+    __state->gpu_context->streams[streamid] = stream;
+
+    return true;
+}}
+
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
+{{
+    for (int i = 0; i < {nstreams}; ++i)
+        __state->gpu_context->streams[i] = stream;
+}}
+
 {localcode}
 """.format(params=params_comma,
            initcode=initcode.getvalue(),
@@ -416,6 +452,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 for e in state.in_edges(node):
                     if hasattr(e.src, '_cuda_stream'):
                         return True
+        for s, _ in self.pool_release.values():
+            if s is state:
+                return True
         return False
 
     @property
@@ -436,7 +475,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
 
         # Get CUDA architectures from configuration
-        backend = Config.get('compiler', 'cuda', 'backend')
+        backend = common.get_gpu_backend()
         if backend == 'cuda':
             cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
             cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
@@ -692,6 +731,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
+            
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -872,7 +912,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # Copy after which data is needed by the host
                     is_sync = True
                 elif dst_node._cuda_stream != src_node._cuda_stream:
-                    syncwith[dst_node._cuda_stream] = edge._cuda_event
+                    syncwith[dst_node._cuda_stream] = getattr(edge, '_cuda_event', None)
                 else:
                     pass  # Otherwise, no need to synchronize
             elif hasattr(dst_node, '_cuda_stream'):
@@ -905,7 +945,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, self._cpu_codegen._packed_types))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             dims = len(copy_shape)
 
             dtype = dst_node.desc(sdfg).dtype
@@ -1057,7 +1097,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, memlet, src_node, dst_node, self._cpu_codegen._packed_types))
+                    self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
 
                 dims = len(copy_shape)
 
@@ -1164,10 +1204,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Free pooled memory that needs to be released here
             to_remove = set()
-            backend = Config.get('compiler', 'cuda', 'backend')
+            backend = self.backend
             for (sd, name), (pstate, terminators) in self.pool_release.items():
                 if sd is not sdfg or state is not pstate:
-                    continue              
+                    continue
 
                 desc = sd.arrays[name]
                 ptrname = cpp.ptr(name, desc, sd, self._frame)
@@ -1605,27 +1645,28 @@ void  *{kname}_args[] = {{ {kargs} }};
         return res
 
     def get_kernel_dimensions(self, dfg_scope):
-        """ Determines a GPU kernel's grid/block dimensions from map
-            scopes.
+        """
+        Determines a GPU kernel's grid/block dimensions from map scopes.
 
-            Ruleset for kernel dimensions:
-                1. If only one map (device-level) exists, of an integer set S,
-                   the block size is 32x1x1 and grid size is ceil(|S|/32) in
-                   1st dimension.
-                2. If nested thread-block maps exist (T_1,...,T_n), grid
-                   size is |S| and block size is max(|T_1|,...,|T_n|) with
-                   block specialization.
-                3. If block size can be overapproximated, it is (for
-                   dynamically-sized blocks that are bounded by a
-                   predefined size).
-                4. If nested device maps exist, they generate extra grid dimensions (block size 1)
-                   as the sum of all their sizes (|T_1| + ... + |T_n|)
+        Ruleset for kernel dimensions:
 
-            :note: Kernel dimensions are separate from the map
-                   variables, and they should be treated as such.
-            :note: To make use of the grid/block 3D registers, we use multi-
-                   dimensional kernels up to 3 dimensions, and flatten the
-                   rest into the third dimension.
+            1. If only one map (device-level) exists, of an integer set ``S``,
+                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
+                1st dimension.
+            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
+                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
+                block specialization.
+            3. If block size can be overapproximated, it is (for
+                dynamically-sized blocks that are bounded by a
+                predefined size).
+            4. If nested device maps exist, they generate extra grid dimensions (block size 1)
+                as the sum of all their sizes ``(|T_1| + ... + |T_n|)``
+
+        :note: Kernel dimensions are separate from the map
+                variables, and they should be treated as such.
+        :note: To make use of the grid/block 3D registers, we use multi-
+                dimensional kernels up to 3 dimensions, and flatten the
+                rest into the third dimension.
         """
 
         kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
@@ -1798,14 +1839,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
 
+                # If we defaulted to a fixed number of threads per block, offset by thread ID
+                block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                if not has_tbmap or has_dtbmap:
+                    block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+
                 # Delinearize third dimension if necessary
                 if i == 2 and len(krange) > 3:
-                    block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
-                else:
-                    block_expr = 'blockIdx.%s' % _named_idx(i)
-                    # If we defaulted to 32 threads per block, offset by thread ID
-                    if not has_tbmap or has_dtbmap:
-                        block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+                    block_expr = f'({block_expr} / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
@@ -1816,8 +1857,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             if len(krange) > 3:
                 for i in range(3, len(krange)):
                     varname = kernel_map.params[-i - 1]
+
+                    block_expr = 'blockIdx.z'
+                    if not has_tbmap or has_dtbmap:
+                        block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
+
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                    block_expr = '(%s / (%s)) %% (%s)' % (
+                        block_expr,
                         _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
                     )
