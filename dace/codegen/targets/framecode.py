@@ -77,7 +77,7 @@ class DaCeCodeGenerator(object):
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
-        return self._symbols_and_constants[sdfg.sdfg]
+        return self._symbols_and_constants[sdfg]
 
     def free_symbols(self, obj: Any):
         k = id(obj)
