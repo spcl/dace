@@ -477,6 +477,159 @@ def test_internal_symbol_used_outside(overwrite):
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
+def test_shared_local_transient_single_state():
+    """
+    Array A has one element per iteration and can be allocated outside the for-loop/Map.
+    """
+
+    sdfg = dace.SDFG('shared_local_transient_single_state')
+    begin = sdfg.add_state('begin', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('body')
+    end = sdfg.add_state('end')
+
+    sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i < 10', assignments={'j': 'i+1'}))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    sdfg.add_array('A', (10,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
+
+    t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
+    anode = body.add_access('A')
+    t2 = body.add_tasklet('t2', {'__inp'}, {'__out'}, '__out = __inp * 2')
+    bnode = body.add_access('__return')
+    body.add_edge(t1, '__out', anode, None, dace.Memlet(data='A', subset='i'))
+    body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
+    body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    assert 'A' in sdfg.arrays
+
+    ref = (np.arange(10, dtype=np.int32) + 6) * 2
+    val = sdfg()
+    assert np.allclose(ref, val)
+
+
+def test_thread_local_transient_single_state():
+    """
+    The shape of array A depends on the iteration variable and, therefore, it is thread-local.
+    """
+
+    sdfg = dace.SDFG('thread_local_transient_single_state')
+    begin = sdfg.add_state('begin', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body = sdfg.add_state('body')
+    end = sdfg.add_state('end')
+
+    sdfg.add_symbol('i', dace.int32)
+    i = dace.symbol('i', dace.int32)
+
+    sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i < 10', assignments={'j': 'i+1'}))
+    sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    sdfg.add_array('A', (i+1,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
+
+    t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
+    anode = body.add_access('A')
+    t2 = body.add_tasklet('t2', {'__inp'}, {'__out'}, '__out = __inp * 2')
+    bnode = body.add_access('__return')
+    body.add_edge(t1, '__out', anode, None, dace.Memlet(data='A', subset='i'))
+    body.add_edge(anode, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
+    body.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    assert not ('A' in sdfg.arrays)
+
+    ref = (np.arange(10, dtype=np.int32) + 6) * 2
+    val = sdfg()
+    assert np.allclose(ref, val)
+
+
+def test_shared_local_transient_multi_state():
+    """
+    Array A has one element per iteration and can be allocated outside the for-loop/Map.
+    """
+
+    sdfg = dace.SDFG('shared_local_transient_multi_state')
+    begin = sdfg.add_state('begin', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body0 = sdfg.add_state('body0')
+    body1 = sdfg.add_state('body1')
+    end = sdfg.add_state('end')
+
+    sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body0, dace.InterstateEdge(condition='i < 10'))
+    sdfg.add_edge(body0, body1, dace.InterstateEdge())
+    sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    sdfg.add_array('A', (10,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
+
+    t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
+    anode0 = body0.add_access('A')
+    anode1 = body1.add_access('A')
+    t2 = body1.add_tasklet('t2', {'__inp'}, {'__out'}, '__out = __inp * 2')
+    bnode = body1.add_access('__return')
+    body0.add_edge(t1, '__out', anode0, None, dace.Memlet(data='A', subset='i'))
+    body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
+    body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    assert 'A' in sdfg.arrays
+
+    ref = (np.arange(10, dtype=np.int32) + 6) * 2
+    val = sdfg()
+    assert np.allclose(ref, val)
+
+
+def test_thread_local_transient_multi_state():
+    """
+    The shape of array A depends on the iteration variable and, therefore, it is thread-local.
+    """
+
+    sdfg = dace.SDFG('thread_local_transient_multi_state')
+    begin = sdfg.add_state('begin', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body0 = sdfg.add_state('body0')
+    body1 = sdfg.add_state('body1')
+    end = sdfg.add_state('end')
+
+    sdfg.add_symbol('i', dace.int32)
+    i = dace.symbol('i', dace.int32)
+
+    sdfg.add_edge(begin, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, body0, dace.InterstateEdge(condition='i < 10'))
+    sdfg.add_edge(body0, body1, dace.InterstateEdge())
+    sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    sdfg.add_array('A', (i+1,), dace.int32, transient=True)
+    sdfg.add_array('__return', (10,), dace.int32)
+
+    t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
+    anode0 = body0.add_access('A')
+    anode1 = body1.add_access('A')
+    t2 = body1.add_tasklet('t2', {'__inp'}, {'__out'}, '__out = __inp * 2')
+    bnode = body1.add_access('__return')
+    body0.add_edge(t1, '__out', anode0, None, dace.Memlet(data='A', subset='i'))
+    body1.add_edge(anode1, None, t2, '__inp', dace.Memlet(data='A', subset='i'))
+    body1.add_edge(t2, '__out', bnode, None, dace.Memlet(data='__return', subset='i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    assert not ('A' in sdfg.arrays)
+
+    ref = (np.arange(10, dtype=np.int32) + 6) * 2
+    val = sdfg()
+    assert np.allclose(ref, val)
+
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -506,3 +659,7 @@ if __name__ == "__main__":
     test_symbol_array_mix_2(True)
     test_internal_symbol_used_outside(False)
     test_internal_symbol_used_outside(True)
+    test_shared_local_transient_single_state()
+    test_thread_local_transient_single_state()
+    test_shared_local_transient_multi_state()
+    test_thread_local_transient_multi_state()

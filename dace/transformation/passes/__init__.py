@@ -1,4 +1,4 @@
-from .analysis import StateReachability, AccessSets, FindAccessNodes
+from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation

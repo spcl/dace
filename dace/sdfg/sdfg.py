@@ -1444,28 +1444,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return dtypes.deduplicate(shared)
 
-    def input_arrays(self):
-        """ Returns a list of input arrays that need to be fed into the SDFG.
-        """
-        result = []
-        for state in self.nodes():
-            for node in state.source_nodes():
-                if isinstance(node, nd.AccessNode):
-                    if node not in result:
-                        result.append(node)
-        return result
-
-    def output_arrays(self):
-        """ Returns a list of output arrays that need to be returned from the
-            SDFG. """
-        result = []
-        for state in self.nodes():
-            for node in state.sink_nodes():
-                if isinstance(node, nd.AccessNode):
-                    if node not in result:
-                        result.append(node)
-        return result
-
     def save(self, filename: str, use_pickle=False, hash=None, exception=None, compress=False) -> Optional[str]:
         """ Save this SDFG to a file.
 
