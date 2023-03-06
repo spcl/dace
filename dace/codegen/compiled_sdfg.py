@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 import sympy as sp
 
-from dace import data as dt, dtypes, symbolic
+from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
 from dace.frontend import operations
@@ -169,11 +169,13 @@ class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
-        self._sdfg = sdfg
+        from dace.sdfg import SDFG
+        self._sdfg: SDFG = sdfg
         self._lib = lib
         self._initialized = False
         self._libhandle = ctypes.c_void_p(0)
         self._lastargs = ()
+        self.do_not_execute = False
 
         lib.load()  # Explicitly load the library
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
@@ -308,11 +310,10 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self._initialize(initargtuple)
-            # PROFILING
-            if Config.get_bool('profiling'):
-                operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc, self._libhandle, *argtuple)
-            else:
-                self._cfunc(self._libhandle, *argtuple)
+            
+            with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
+                if self.do_not_execute is False:
+                    self._cfunc(self._libhandle, *argtuple)
 
             return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):

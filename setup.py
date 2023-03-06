@@ -86,6 +86,6 @@ setup(name='dace',
               'dacelab = dace.cli.dacelab:main',
               'sdfv = dace.cli.sdfv:main',
               'sdfgcc = dace.cli.sdfgcc:main',
-              'sdprof = dace.cli.sdprof:main',
+              'daceprof = dace.cli.daceprof:main',
           ],
       })
