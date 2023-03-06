@@ -106,7 +106,6 @@ def test_scalar_fission():
     # Assert all accesses per scope are identical.
     assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])
-    print(results)
 
 if __name__ == '__main__':
     test_scalar_fission()
