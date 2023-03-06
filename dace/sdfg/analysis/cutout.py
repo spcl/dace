@@ -24,6 +24,7 @@ class SDFGCutout(SDFG):
 
     def __init__(self, original_sdfg: SDFG):
         super(SDFGCutout, self).__init__(original_sdfg.name + '_cutout', original_sdfg.constants_prop)
+        self.original_sdfg = original_sdfg
 
     @classmethod
     def singlestate_cutout(cls,

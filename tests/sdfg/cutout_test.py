@@ -217,12 +217,12 @@ def test_multistate_cutout_simple_expand():
     sdfg.add_edge(s7, s8, dace.InterstateEdge())
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
-    in_translation = dict()
-    ct: SDFGCutout = SDFGCutout.multistate_cutout(s6, s7, in_translation=in_translation)
-    assert len(ct.nodes()) == 3
-    assert (in_translation[s5] in ct.nodes())
-    assert (in_translation[s6] in ct.nodes())
-    assert (in_translation[s7] in ct.nodes())
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s6, s7)
+    state_names = [s.name for s in ct.states()]
+    assert len(state_names) == 3
+    assert ('s5' in state_names)
+    assert ('s6' in state_names)
+    assert ('s7' in state_names)
 
 
 def test_multistate_cutout_complex_expand():
@@ -248,16 +248,16 @@ def test_multistate_cutout_complex_expand():
     sdfg.add_edge(s7, s8, dace.InterstateEdge())
     sdfg.add_edge(s8, s9, dace.InterstateEdge())
 
-    in_translation = dict()
-    ct: SDFGCutout = SDFGCutout.multistate_cutout(s4, s5, s6, s7, in_translation=in_translation)
-    assert len(ct.nodes()) == 7
-    assert (in_translation[s1] in ct.nodes())
-    assert (in_translation[s2] in ct.nodes())
-    assert (in_translation[s3] in ct.nodes())
-    assert (in_translation[s4] in ct.nodes())
-    assert (in_translation[s5] in ct.nodes())
-    assert (in_translation[s6] in ct.nodes())
-    assert (in_translation[s7] in ct.nodes())
+    ct: SDFGCutout = SDFGCutout.multistate_cutout(s4, s5, s6, s7)
+    state_names = [s.name for s in ct.states()]
+    assert len(state_names) == 7
+    assert ('s1' in state_names)
+    assert ('s2' in state_names)
+    assert ('s3' in state_names)
+    assert ('s4' in state_names)
+    assert ('s5' in state_names)
+    assert ('s6' in state_names)
+    assert ('s7' in state_names)
 
 
 def test_input_output_configuration():
