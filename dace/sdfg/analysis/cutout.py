@@ -18,7 +18,7 @@ from dace.properties import make_properties, SDFGReferenceProperty, SetProperty
 @make_properties
 class SDFGCutout(SDFG):
 
-    original_sdfg = SDFGReferenceProperty(desc='The original SDFG the cutout was created from.')
+    original_sdfg = SDFGReferenceProperty(desc='The original SDFG the cutout was created from.', allow_none=True)
     input_config = SetProperty(element_type=str, desc='The input configuration of the cutout.')
     output_config = SetProperty(element_type=str, desc='The output configuration of the cutout.')
 
