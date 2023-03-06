@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 import time
-from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 import numpy as np
 import sympy as sp
@@ -41,6 +41,10 @@ from typing import BinaryIO
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+
+if TYPE_CHECKING:
+    from dace.codegen.instrumentation.report import InstrumentationReport
+    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
 
 def _arrays_to_json(arrays):
@@ -211,7 +215,6 @@ class InterstateEdge(object):
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
         return self.read_symbols() - set(self.assignments.keys())
-
 
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
@@ -517,7 +520,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         """
-
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -831,7 +833,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         except StopIteration:
             return False
 
-    def get_instrumentation_reports(self) -> List['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_instrumentation_reports(self) -> List['InstrumentationReport']:
         """
         Returns a list of instrumentation reports from previous runs of
         this SDFG.
@@ -857,28 +859,37 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> Optional['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_latest_report_path(self) -> Optional[str]:
         """
-        Returns an instrumentation report from the latest run of this SDFG, or
+        Returns an instrumentation report file path from the latest run of this SDFG, or
         None if the file does not exist.
 
-        :return: A timestamped InstrumentationReport object, or None if does
-                 not exist.
+        :return: A path to the latest instrumentation report, or None if one does not exist.
         """
         path = os.path.join(self.build_folder, 'perf')
         files = [f for f in os.listdir(path) if f.startswith('report-')]
         if len(files) == 0:
             return None
 
+        return os.path.join(path, sorted(files, reverse=True)[0])
+
+    def get_latest_report(self) -> Optional['InstrumentationReport']:
+        """
+        Returns an instrumentation report from the latest run of this SDFG, or
+        None if the file does not exist.
+
+        :return: A timestamped InstrumentationReport object, or None if does not exist.
+        """
         # Avoid import loops
         from dace.codegen.instrumentation import InstrumentationReport
 
-        return InstrumentationReport(os.path.join(path, sorted(files, reverse=True)[0]))
+        path = self.get_latest_report_path()
+        if path is None:
+            return None
 
-    def get_instrumented_data(
-        self,
-        timestamp: Optional[int] = None
-    ) -> Optional['dace.codegen.instrumentation.data.data_report.InstrumentedDataReport']:
+        return InstrumentationReport(path)
+
+    def get_instrumented_data(self, timestamp: Optional[int] = None) -> Optional['InstrumentedDataReport']:
         """
         Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
         None if no reports exist.
@@ -1597,12 +1608,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
-        
+
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
                  | self._rdistrarrays.keys())
-        return dt.find_new_name(name,names)
-                 
-        
+        return dt.find_new_name(name, names)
+
     def find_new_constant(self, name: str):
         """
         Tries to find a new constant name by adding an underscore and a number.
@@ -1924,8 +1934,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists '
-                                "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -2202,7 +2211,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 index += 1
             if self.name != sdfg.name:
                 warnings.warn('SDFG "%s" is already loaded by another object, '
-                            'recompiling under a different name.' % self.name)
+                              'recompiling under a different name.' % self.name)
 
             try:
                 # Fill in scope entry/exit connectors

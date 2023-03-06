@@ -4,17 +4,20 @@ A command-line tool that provides performance measurements and analysis on
 Python scripts, modules, or existing instrumentation report files.
 """
 import argparse
+from contextlib import contextmanager
 import runpy
 import sys
 import os
 import shutil
 from typing import Callable, List, Optional, Tuple, Union
+import warnings
 
 import dace
 from dace.codegen.instrumentation.report import InstrumentationReport
 from dace import dtypes
 
 ExitCode = Union[int, str]
+DEFAULT_REPETITIONS = 100
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -53,7 +56,7 @@ or to print an existing report:
                        '-r',
                        help='Runs each profiled program for the specified number of repetitions',
                        type=int,
-                       default=100)
+                       default=DEFAULT_REPETITIONS)
     group.add_argument('--warmup',
                        '-w',
                        help='Number of additional repetitions to run without measurement',
@@ -67,6 +70,10 @@ or to print an existing report:
             e.name for e in dtypes.InstrumentationType
             if e not in [dtypes.InstrumentationType.No_Instrumentation, dtypes.InstrumentationType.Undefined]
         ])
+    group.add_argument('--instrument',
+                       help='Which elements to instrument. Can be a comma-separated list of element '
+                       'types from the following: map, tasklet, state, sdfg',
+                       default='map')
     group.add_argument('--sequential', help='Disable CPU multi-threading in code generation', action='store_true')
 
     # Data instrumentation
@@ -108,7 +115,10 @@ or to print an existing report:
     # Remainder of arguments
     parser.add_argument('args', nargs=argparse.REMAINDER, help='Script arguments')
 
-    return parser, parser.parse_args()
+    args = parser.parse_args()
+    args.instrument = args.instrument.split(',')
+
+    return parser, args
 
 
 def validate_arguments(args: argparse.Namespace) -> Optional[str]:
@@ -122,8 +132,19 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
         return 'Cannot load and save a report at the same time.'
     if args.save_data and args.restore_data:
         return 'Choose either saving data or restoring it.'
+    if args.type and (args.warmup or args.repetitions != DEFAULT_REPETITIONS):
+        warnings.warn('Instrumentation mode is enabled, repetitions and warmup will be ignored.')
+    for inst in args.instrument:
+        if inst not in ('map', 'tasklet', 'state', 'sdfg'):
+            return (f'Instrumentation element "{inst}" is not valid, please use a comma-separated list composed of '
+                    '{map, tasklet, state, sdfg}')
 
     return None
+
+
+@contextmanager
+def _nop(*args, **kwargs):
+    yield
 
 
 def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[InstrumentationReport], Optional[str], ExitCode]:
@@ -142,30 +163,46 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
 
     # Run script or module
     retval = None
-    reportfile = None
     errcode = 0
-    with dace.profile(repetitions=args.repetitions, warmup=args.warmup) as profiler:
-        try:
-            if args.module:
-                runpy.run_module(file, run_name='__main__')
-            else:
-                runpy.run_path(file, run_name='__main__')
-        except SystemExit as ex:
-            # Skip internal exits
-            if ex.code is not None and ex.code != 0:
-                print('daceprof: Application returned error code', ex.code)
-                errcode = ex.code
+    # Use built-in context managers for two hooks: profiling and data instrumentation
+    if args.type:
+        profile_ctx = dace.instrument(filter=args.filter,
+                                      itype=dtypes.InstrumentationType[args.type],
+                                      annotate_maps='map' in args.instrument,
+                                      annotate_tasklets='tasklet' in args.instrument,
+                                      annotate_states='state' in args.instrument,
+                                      annotate_sdfgs='sdfg' in args.instrument)
+    else:
+        # Profile full application
+        profile_ctx = dace.profile(repetitions=args.repetitions, warmup=args.warmup)
+
+    with profile_ctx as profiler:
+            try:
+                if args.module:
+                    runpy.run_module(file, run_name='__main__')
+                else:
+                    runpy.run_path(file, run_name='__main__')
+            except SystemExit as ex:
+                # Skip internal exits
+                if ex.code is not None and ex.code != 0:
+                    print('daceprof: Application returned error code', ex.code)
+                    errcode = ex.code
 
     # Unregister hooks
     for hook in hooks:
         dace.hooks.unregister_sdfg_call_hook(hook)
 
+    # Warn if multiple reports were created
+    if args.type and len(profiler.reports) > 1:
+        print('daceprof: Multiple report files created, showing last')
+    if not args.type and len(profiler.times) > 1:
+        print('daceprof: Multiple report files created, showing combined report')
+
     # Get instrumentation report file, if filled
     if profiler.report.events:
         retval = profiler.report
-        reportfile = profiler.filename
 
-    return retval, reportfile, errcode
+    return retval, errcode
 
 
 def enable_hooks(args: argparse.Namespace) -> List[int]:
@@ -242,16 +279,16 @@ def main():
 
     # Execute program or module
     if not args.input:
-        report, reportfile, errcode = run_script_or_module(args)
+        report, errcode = run_script_or_module(args)
 
         if report is None:
             print('daceprof: No DaCe program calls detected or no report file generated.')
         else:
             if args.output:  # Save report
-                shutil.copyfile(reportfile, args.output)
+                shutil.copyfile(report.filepath, args.output)
             else:  # Print report
-                if reportfile:
-                    print('daceprof: Report file saved at', os.path.abspath(reportfile))
+                if report:
+                    print('daceprof: Report file saved at', os.path.abspath(report.filepath))
                 print_report(args, report)
 
         # Forward error code from internal application

@@ -60,12 +60,12 @@ def profile(repetitions: int = 100, warmup: int = 0):
 
     if len(profiler.times) > 1:
         # More than one profile saves locally to the cwd
-        profiler.filename = f'report-{profiler.report.name}.json'
+        filename = f'report-{profiler.report.name}.json'
     else:
-        profiler.filename = os.path.join(profiler.times[0][0].build_folder, 'perf',
-                                         f'report-{profiler.report.name}.json')
+        filename = os.path.join(profiler.times[0][0].build_folder, 'perf', f'report-{profiler.report.name}.json')
 
-    profiler.report.save(profiler.filename)
+    profiler.report.filepath = filename
+    profiler.report.save(filename)
 
 
 @contextmanager
@@ -142,11 +142,14 @@ def instrument(itype: 'InstrumentationType',
                 if should_try and filter_func(n):
                     n.instrument = itype
 
+            lastpath = sdfg.get_latest_report_path()
+
             # Execute
             yield sdfg
 
-            # After execution, do nothing
-
+            # After execution, save report if new one was generated
+            if lastpath != sdfg.get_latest_report_path():
+                self.reports.append(sdfg.get_latest_report())
 
     profiler = Instrumenter()
     with on_call(context_manager=profiler):
