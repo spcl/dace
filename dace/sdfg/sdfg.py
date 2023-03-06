@@ -931,9 +931,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for report in reports:
             shutil.rmtree(os.path.join(path, report))
 
-    def call_with_instrumented_data(self,
-                                    dreport: 'dace.codegen.instrumentation.data.data_report.InstrumentedDataReport',
-                                    *args, **kwargs):
+    def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
         Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.

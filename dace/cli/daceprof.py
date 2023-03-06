@@ -89,10 +89,6 @@ or to print an existing report:
 
     # Filtering arguments
     group = parser.add_argument_group('filtering arguments')
-    # group.add_argument('--interactive',
-    #                    '-I',
-    #                    help='Shows interactive prompts about which parts of the program to profile',
-    #                    action='store_true')
     group.add_argument('--filter',
                        '-f',
                        help='Filter profiled elements with wildcards (e.g., *_map, assign_??). '
@@ -131,7 +127,7 @@ def validate_arguments(args: argparse.Namespace) -> Optional[str]:
     if args.input and args.output and not args.csv:
         return 'Cannot load and save a report at the same time.'
     if args.save_data and args.restore_data:
-        return 'Choose either saving data or restoring it.'
+        return 'Choose either saving data containers or restoring them.'
     if args.type and (args.warmup or args.repetitions != DEFAULT_REPETITIONS):
         warnings.warn('Instrumentation mode is enabled, repetitions and warmup will be ignored.')
     for inst in args.instrument:
@@ -172,11 +168,22 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
                                       annotate_tasklets='tasklet' in args.instrument,
                                       annotate_states='state' in args.instrument,
                                       annotate_sdfgs='sdfg' in args.instrument)
+    elif args.save_data or args.restore_data:
+        # Data instrumentation will run once
+        profile_ctx = _nop()
     else:
         # Profile full application
         profile_ctx = dace.profile(repetitions=args.repetitions, warmup=args.warmup)
 
-    with profile_ctx as profiler:
+    # Data instrumentation
+    if args.save_data or args.restore_data:
+        ditype = (dtypes.DataInstrumentationType.Save if args.save_data else dtypes.DataInstrumentationType.Restore)
+        data_instrumenter = dace.instrument_data(filter=args.filter_data, ditype=ditype, verbose=True)
+    else:
+        data_instrumenter = _nop()
+
+    with data_instrumenter:
+        with profile_ctx as profiler:
             try:
                 if args.module:
                     runpy.run_module(file, run_name='__main__')
@@ -193,14 +200,15 @@ def run_script_or_module(args: argparse.Namespace) -> Tuple[Optional[Instrumenta
         dace.hooks.unregister_sdfg_call_hook(hook)
 
     # Warn if multiple reports were created
-    if args.type and len(profiler.reports) > 1:
-        print('daceprof: Multiple report files created, showing last')
-    if not args.type and len(profiler.times) > 1:
-        print('daceprof: Multiple report files created, showing combined report')
+    if profiler:
+        if args.type and len(profiler.reports) > 1:
+            print('daceprof: Multiple report files created, showing last')
+        if not args.type and len(profiler.times) > 1:
+            print('daceprof: Multiple report files created, showing combined report')
 
-    # Get instrumentation report file, if filled
-    if profiler.report.events:
-        retval = profiler.report
+        # Get instrumentation report file, if filled
+        if profiler.report.events:
+            retval = profiler.report
 
     return retval, errcode
 
@@ -286,7 +294,8 @@ def main():
         report, errcode = run_script_or_module(args)
 
         if report is None:
-            print('daceprof: No DaCe program calls detected or no report file generated.')
+            if not args.save_data and not args.restore_data:
+                print('daceprof: No DaCe program calls detected or no report file generated.')
         else:
             if args.output:  # Save report
                 if args.csv:
