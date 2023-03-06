@@ -84,7 +84,7 @@ or to print an existing report:
                        action='store_true')
     group.add_argument('--restore-data',
                        '-dr',
-                       help='Reproducibly run code by restoreing all (or filtered) arrays',
+                       help='Reproducibly run code by restoring all (or filtered) arrays',
                        action='store_true')
 
     # Filtering arguments
