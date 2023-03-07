@@ -4,6 +4,8 @@ from dace import SDFG, nodes, dtypes
 from dace.frontend.fortran import fortran_parser
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes import ScalarFission, ScalarToSymbolPromotion
 from fparser.common.readfortran import FortranFileReader
 from fparser.two.parser import ParserFactory
 from fparser.two.symbol_table import SymbolTable
@@ -57,7 +59,6 @@ if __name__ == "__main__":
 
     sdfg.validate()
     sdfg.save(os.path.join(folder, f'{testname}_initial.sdfg'))
-    from dace.transformation.passes import ScalarToSymbolPromotion
     for sd in sdfg.all_sdfgs_recursive():
         promoted = ScalarToSymbolPromotion().apply_pass(sd, {})
         print(f"Promoted the following scalars: {promoted}")
@@ -67,6 +68,11 @@ if __name__ == "__main__":
     sdfg.save(os.path.join(folder, f'{testname}_normalized.sdfg'))
     sdfg.simplify(verbose=True)
     sdfg.save(os.path.join(folder, f'{testname}_simplified.sdfg'))
+    pipeline = Pipeline([ScalarFission()])
+    for sd in sdfg.all_sdfgs_recursive():
+        results = pipeline.apply_pass(sd, {})[ScalarFission.__name__]
+    print(len(results), "scalar fissions applied")
+    sdfg.save(os.path.join(folder, f'{testname}_scalar_fissioned.sdfg'))
     from dace.transformation.auto import auto_optimize as aopt
     aopt.auto_optimize(sdfg, dtypes.DeviceType.Generic)
     sdfg.save(os.path.join(folder, f'{testname}_optimized.sdfg'))

@@ -1,4 +1,4 @@
-from .analysis import StateReachability, AccessSets, FindAccessNodes
+from .analysis import StateReachability, AccessSets, FindAccessStates
 from .array_elimination import ArrayElimination
 from .consolidate_edges import ConsolidateEdges
 from .constant_propagation import ConstantPropagation
@@ -8,6 +8,7 @@ from .fusion_inline import FuseStates, InlineSDFGs
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
+from .scalar_fission import ScalarFission
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .transient_reuse import TransientReuse

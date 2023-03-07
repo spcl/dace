@@ -266,6 +266,8 @@ class AST_translator:
         outputnodefinder = ast_transforms.FindOutputs()
         outputnodefinder.visit(node)
         output_vars = outputnodefinder.nodes
+        write_names = list(dict.fromkeys([i.name for i in output_vars]))
+        read_names = list(dict.fromkeys([i.name for i in input_vars]))
 
         parameters = node.args.copy()
 
@@ -280,13 +282,14 @@ class AST_translator:
                 (len(variables_in_call) == len(parameters) + 1
                  and not isinstance(node.result_type, ast_internal_classes.Void))):
             for i in variables_in_call:
-                print("VAR CALL: ", i)
+                print("VAR CALL: ", i.name)
             for j in parameters:
-                print("LOCAL TO UPDATE: ", j)
+                print("LOCAL TO UPDATE: ", j.name)
             raise ValueError("number of parameters does not match the function signature")
 
         # creating new arrays for nested sdfg
-        inouts_in_new_sdfg = []
+        ins_in_new_sdfg = []
+        outs_in_new_sdfg = []
 
         views = []
         ind_count = 0
@@ -352,8 +355,10 @@ class AST_translator:
                     local_name = parameters[variables_in_call.index(variable_in_call)]
                     self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
                     self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
-
-                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                    if local_name.name in read_names:
+                        ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                    if local_name.name in write_names:
+                        outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
 
                     indices = 0
                     index_list = []
@@ -404,12 +409,17 @@ class AST_translator:
 
                             memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
                             memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
-                            r = substate.add_read(array_name)
-                            wv = substate.add_write(viewname)
-                            rv = substate.add_read(viewname)
-                            w = substate.add_write(array_name)
-                            substate.add_edge(r, None, wv, 'views', dpcp(memlet))
-                            substate.add_edge(rv, 'views2', w, None, dpcp(memlet2))
+                            wv = None
+                            rv = None
+                            if local_name.name in read_names:
+                                r = substate.add_read(array_name)
+                                wv = substate.add_write(viewname)
+                                substate.add_edge(r, None, wv, 'views', dpcp(memlet))
+                            if local_name.name in write_names:
+                                rv = substate.add_read(viewname)
+                                w = substate.add_write(array_name)
+                                substate.add_edge(rv, 'views2', w, None, dpcp(memlet2))
+
                             self.views = self.views + 1
                             views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
 
@@ -425,8 +435,11 @@ class AST_translator:
                         local_name = parameters[variables_in_call.index(variable_in_call)]
                         self.name_mapping[new_sdfg][local_name.name] = new_sdfg._find_new_name(local_name.name)
                         self.all_array_names.append(self.name_mapping[new_sdfg][local_name.name])
-
-                        inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                        if local_name.name in read_names:
+                            ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                        if local_name.name in write_names:
+                            outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                        #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
 
                         indices = 0
                         if isinstance(variable_in_call, ast_internal_classes.Array_Subscript_Node):
@@ -450,8 +463,6 @@ class AST_translator:
         for i in sdfg.symbols:
             sym_dict[i] = i
 
-        write_names = list(dict.fromkeys([i.name for i in output_vars]))
-        read_names = list(dict.fromkeys([i.name for i in input_vars]))
         not_found_write_names = []
         not_found_read_names = []
         for i in write_names:
@@ -464,7 +475,12 @@ class AST_translator:
         for i in self.libstates:
             self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
             self.all_array_names.append(self.name_mapping[new_sdfg][i])
-            inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+            if i in read_names:
+                ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+            if i in write_names:
+                outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+            #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+            #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
             new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], dtypes.int32, transient=False)
         addedmemlets = []
         globalmemlets = []
@@ -474,7 +490,10 @@ class AST_translator:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     addedmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
-                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in read_names:
+                        ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in write_names:
+                        outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -490,7 +509,11 @@ class AST_translator:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
-                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in read_names:
+                        ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in write_names:
+                        outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     array_in_global = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -510,7 +533,11 @@ class AST_translator:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     addedmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
-                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in read_names:
+                        ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in write_names:
+                        outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     array = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -526,7 +553,11 @@ class AST_translator:
                     self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
-                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in read_names:
+                        ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    if i in write_names:
+                        outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     array = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -541,16 +572,18 @@ class AST_translator:
 
         internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                  sdfg,
-                                                 inouts_in_new_sdfg,
-                                                 inouts_in_new_sdfg,
+                                                 ins_in_new_sdfg,
+                                                 outs_in_new_sdfg,
                                                  symbol_mapping=sym_dict)
         #if sdfg is not self.globalsdfg:
         for i in self.libstates:
             memlet = "0"
-            fcdc_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                        self.name_mapping[new_sdfg][i], memlet)
-            fcdc_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                       self.name_mapping[new_sdfg][i], memlet)
+            if i in write_names:
+                fcdc_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
+                                            self.name_mapping[new_sdfg][i], memlet)
+            if i in read_names:
+                fcdc_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
+                                           self.name_mapping[new_sdfg][i], memlet)
 
         for i in variables_in_call:
 
@@ -580,36 +613,46 @@ class AST_translator:
             for elem in views:
                 if mapped_name == elem[0] and elem[3] == variables_in_call.index(i):
                     found = True
-                    memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
-                    substate.add_memlet_path(internal_sdfg,
-                                             elem[2],
-                                             src_conn=self.name_mapping[new_sdfg][local_name.name],
-                                             memlet=Memlet(expr=elem[1].label, subset=memlet))
-                    substate.add_memlet_path(elem[1],
-                                             internal_sdfg,
-                                             dst_conn=self.name_mapping[new_sdfg][local_name.name],
-                                             memlet=Memlet(expr=elem[1].label, subset=memlet))
+
+                    if local_name.name in write_names:
+                        memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
+                        substate.add_memlet_path(internal_sdfg,
+                                                 elem[2],
+                                                 src_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                 memlet=Memlet(expr=elem[2].label, subset=memlet))
+                    if local_name.name in read_names:
+                        memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
+                        substate.add_memlet_path(elem[1],
+                                                 internal_sdfg,
+                                                 dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                 memlet=Memlet(expr=elem[1].label, subset=memlet))
 
             if not found:
-                fcdc_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                            self.name_mapping[new_sdfg][local_name.name], memlet)
-                fcdc_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                           self.name_mapping[new_sdfg][local_name.name], memlet)
+                if local_name.name in write_names:
+                    fcdc_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
+                                                self.name_mapping[new_sdfg][local_name.name], memlet)
+                if local_name.name in read_names:
+                    fcdc_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
+                                               self.name_mapping[new_sdfg][local_name.name], memlet)
 
         for i in addedmemlets:
 
             memlet = fcdc_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
-            fcdc_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                        self.name_mapping[new_sdfg][i], memlet)
-            fcdc_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                       self.name_mapping[new_sdfg][i], memlet)
+            if local_name.name in write_names:
+                fcdc_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
+                                            self.name_mapping[new_sdfg][i], memlet)
+            if local_name.name in read_names:
+                fcdc_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
+                                           self.name_mapping[new_sdfg][i], memlet)
         for i in globalmemlets:
 
             memlet = fcdc_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
-            fcdc_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                        self.name_mapping[new_sdfg][i], memlet)
-            fcdc_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                       self.name_mapping[new_sdfg][i], memlet)
+            if local_name.name in write_names:
+                fcdc_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
+                                            self.name_mapping[new_sdfg][i], memlet)
+            if local_name.name in read_names:
+                fcdc_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
+                                           self.name_mapping[new_sdfg][i], memlet)
 
         # make_nested_sdfg_with_context_change(sdfg, new_sdfg, node.name, used_vars, self)
 
@@ -638,7 +681,7 @@ class AST_translator:
         calls.visit(node)
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
-            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh", "__dace_epsilon"]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg)
