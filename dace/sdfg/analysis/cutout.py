@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.e., memory preserving) for localized
 testing or optimization.
@@ -11,6 +11,10 @@ from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateE
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView, SubgraphView
+from dace.transformation.transformation import (MultiStateTransformation,
+                                                PatternTransformation,
+                                                SubgraphTransformation,
+                                                SingleStateTransformation)
 from dace.transformation.passes.analysis import StateReachability
 from dace.properties import make_properties, SDFGReferenceProperty, SetProperty
 
@@ -25,6 +29,68 @@ class SDFGCutout(SDFG):
     def __init__(self, original_sdfg: SDFG):
         super(SDFGCutout, self).__init__(original_sdfg.name + '_cutout', original_sdfg.constants_prop)
         self.original_sdfg = original_sdfg
+
+        self._in_translation = dict()
+        self._out_translation = dict()
+
+    def translate_transformation_into(self, transformation: Union[PatternTransformation, SubgraphTransformation]):
+        if isinstance(transformation, SingleStateTransformation):
+            old_state = self.original_sdfg.node(transformation.state_id)
+            transformation.state_id = self.node_id(self.start_state)
+            transformation._sdfg = self
+            transformation.sdfg_id = 0
+            for k in transformation.subgraph.keys():
+                old_node = old_state.node(transformation.subgraph[k])
+                try:
+                    transformation.subgraph[k] = self.start_state.node_id(self._in_translation[old_node])
+                except KeyError:
+                    # Ignore.
+                    pass
+        elif isinstance(transformation, MultiStateTransformation):
+            transformation._sdfg = self
+            transformation.sdfg_id = 0
+            for k in transformation.subgraph.kes():
+                old_state = self.original_sdfg.node(transformation.subgraph[k])
+                try:
+                    transformation.subgraph[k] = self.node_id(self._in_translation[old_state])
+                except KeyError:
+                    # Ignore.
+                    pass
+        else:
+            old_state = self.original_sdfg.node(transformation.state_id)
+            transformation.state_id = self.node_id(self.start_state)
+            new_subgraph = set()
+            for k in transformation.subgraph:
+                old_node = old_state.node(k)
+                try:
+                    new_subgraph.add(self.start_state.node_id(self._in_translation[old_node]))
+                except KeyError:
+                    # Ignore.
+                    pass
+            transformation.subgraph = new_subgraph
+
+    @classmethod
+    def from_transformation(
+        cls, sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation]
+    ) -> Union['SDFGCutout', SDFG]:
+        affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
+
+        target_sdfg = sdfg
+        if isinstance(transformation, (SubgraphTransformation, PatternTransformation)):
+            if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
+                target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+
+        if isinstance(transformation, (SubgraphTransformation, SingleStateTransformation)):
+            state = target_sdfg.node(transformation.state_id)
+            cutout = cls.singlestate_cutout(state, *affected_nodes)
+            cutout.translate_transformation_into(transformation)
+            return cutout
+        elif isinstance(transformation, MultiStateTransformation):
+            first_state: SDFGState = affected_nodes[0]
+            cutout = cls.multistate_cutout(first_state.parent, *affected_nodes)
+            cutout.translate_transformation_into(transformation)
+            return cutout
+        raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
 
     @classmethod
     def singlestate_cutout(cls,
@@ -150,6 +216,9 @@ class SDFGCutout(SDFG):
             )
             for d_name in cutout.input_config.union(cutout.output_config):
                 cutout.arrays[d_name].transient = False
+
+        cutout._in_translation = in_translation
+        cutout._out_translation = out_translation
 
         return cutout
 
@@ -288,8 +357,81 @@ class SDFGCutout(SDFG):
             for d_name in cutout.input_config.union(cutout.output_config):
                 cutout.arrays[d_name].transient = False
 
+        cutout._in_translation = in_translation
+        cutout._out_translation = out_translation
+
         return cutout
 
+    '''
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None}
+        _type = json_obj['_type']
+        if _type != cls.__name__:
+            '''
+
+
+def _transformation_determine_affected_nodes(
+        sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation], strict: bool = False
+) -> Set[Union[nd.Node, SDFGState]]:
+    """
+    For a given SDFG and transformation, determine the set of nodes that are affected by the transformation.
+
+    :param sdfg: The SDFG the transformation applies to.
+    :param p: The transformation.
+    :param strict: If True, include only nodes directly affected by the transformation. If False (default), ensure that
+                   if scope nodes are affected, their entire scope and corresponding entry/exit nodes are part of the
+                   returned set.
+    :return: A set of nodes affected by the transformation.
+
+    .. warning::
+        The set of affected nodes is not guaranteed to be complete. While the set of affected nodes should by design
+        always equate to the set of nodes a transformation's subgraph or pattern matches to, there is no mechanism
+        preventing a transformation from affecting nodes that are not part of the pattern or subgraph they match to.
+    """
+    target_sdfg = sdfg
+    affected_nodes = set()
+
+    if isinstance(transformation, PatternTransformation):
+        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
+            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+
+        for k, _ in transformation._get_pattern_nodes().items():
+            try:
+                affected_nodes.add(getattr(transformation, k))
+            except KeyError:
+                # Ignored.
+                pass
+    else:
+        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
+            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+
+        subgraph = transformation.get_subgraph(target_sdfg)
+        for n in subgraph.nodes():
+            affected_nodes.add(n)
+
+    if strict:
+        return affected_nodes
+
+    # If strict is not set and a scope node is affected, expand the returned set to include all nodes in that scope.
+    if hasattr(transformation, 'state_id') and transformation.state_id >= 0:
+        state = target_sdfg.node(transformation.state_id)
+        expanded = set()
+        for node in affected_nodes:
+            expanded.add(node)
+            scope_entry = None
+            if isinstance(node, nd.MapEntry):
+                scope_entry = node
+            elif isinstance(node, nd.MapExit):
+                scope_entry = state.entry_node(node)
+
+            if scope_entry is not None:
+                scope = state.scope_subgraph(scope_entry, include_entry=True, include_exit=True)
+                for n in scope.nodes():
+                    expanded.add(n)
+        return expanded
+
+    return affected_nodes
 
 def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:
     """
