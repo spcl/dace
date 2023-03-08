@@ -581,6 +581,7 @@ def auto_optimize(sdfg: SDFG,
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
         sdfg.apply_gpu_transformations_cloudsc()
+        sdfg.simplify()
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations

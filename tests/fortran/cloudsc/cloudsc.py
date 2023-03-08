@@ -94,20 +94,36 @@ data = {
     'RALSDCP': (0,),
     'RALVDCP': (0,),
     'RAMIN': (0,),
+    'RCOVPMIN': (0,),
+    'RCLDTOPCF': (0,),
+    'RD': (0,),
+    'RDEPLIQREFDEPTH': (0,),
+    'RDEPLIQREFRATE': (0,),
+    'RG': (0,),
+    'RICEINIT': (0,),
     'RKOOP1': (0,),
     'RKOOP2': (0,),
     'RKOOPTAU': (0,),
     'RLMIN': (0,),
     'RLSTT': (0,),
     'RLVTT': (0,),
+    'RPECONS': (0,),
+    'RPRECRHMAX': (0,),
+    'RTAUMEL': (0,),
     'RTHOMO': (0,),
     'RTT': (0,),
+    'RV': (0,),
+    'RVRFACTOR': (0,),
     'ZEPSEC': (0,),
     'ZEPSILON': (0,),
     'ZRG_R': (0,),
+    'ZRLDCP': (0,),
     'ZQTMST': (0,),
+    'ZVPICE': (0,),
+    'ZVPLIQ': (0,),
     'IPHASE': (parameters['NCLV'],),
     'PAPH': (parameters['KLON'], parameters['KLEV']+1),
+    'PAP': (parameters['KLON'], parameters['KLEV']),
     'PCOVPTOT': (parameters['KLON'], parameters['KLEV']),
     'PFCQLNG': (parameters['KLON'], parameters['KLEV']+1),
     'PFCQNNG': (parameters['KLON'], parameters['KLEV']+1),
@@ -131,31 +147,60 @@ data = {
     'tendency_loc_cld': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'tendency_loc_q': (parameters['KLON'], parameters['KLEV']),
     'tendency_loc_T': (parameters['KLON'], parameters['KLEV']),
+    'tendency_tmp_t': (parameters['KLON'], parameters['KLEV']),
+    'tendency_tmp_q': (parameters['KLON'], parameters['KLEV']),
+    'tendency_tmp_a': (parameters['KLON'], parameters['KLEV']),
+    'tendency_tmp_cld': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZA': (parameters['KLON'], parameters['KLEV']),
+    'ZAORIG': (parameters['KLON'], parameters['KLEV']),
+    'ZCLDTOPDIST': (parameters['KLON'],),
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
     'ZCONVSRCE': (parameters['KLON'], parameters['NCLV']),
     'ZCORQSICE': (parameters['KLON']),
+    'ZCORQSLIQ': (parameters['KLON']),
     'ZCOVPTOT': (parameters['KLON'],),
     'ZDA': (parameters['KLON']),
+    'ZCOVPCLR': (parameters['KLON'],),
+    'ZCOVPMAX': (parameters['KLON'],),
+    'ZDTGDP': (parameters['KLON'],),
+    'ZICENUCLEI': (parameters['KLON'],),
+    'ZRAINCLD': (parameters['KLON'],),
+    'ZSNOWCLD': (parameters['KLON'],),
+    'ZDA': (parameters['KLON'],),
+    'ZDP': (parameters['KLON'],),
+    'ZRHO': (parameters['KLON'],),
     'ZFALLSINK': (parameters['KLON'], parameters['NCLV']),
     'ZFALLSRCE': (parameters['KLON'], parameters['NCLV']),
+    'ZFOKOOP': (parameters['KLON'],),
     'ZFLUXQ': (parameters['KLON'], parameters['NCLV']),
     'ZFOEALFA': (parameters['KLON'], parameters['KLEV']+1),
+    'ZICECLD': (parameters['KLON'],),
     'ZICEFRAC': (parameters['KLON'], parameters['KLEV']),
+    'ZICETOT': (parameters['KLON'],),
     'ZLI': (parameters['KLON'], parameters['KLEV']),
     'ZLIQFRAC': (parameters['KLON'], parameters['KLEV']),
     'ZLNEG': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZPFPLSX': (parameters['KLON'], parameters['KLEV']+1, parameters['NCLV']),
     'ZPSUPSATSRCE': (parameters['KLON'], parameters['NCLV']),
     'ZSOLQA': (parameters['KLON'], parameters['NCLV'], parameters['NCLV']),
+    'ZMELTMAX': (parameters['KLON'],),
+    'ZQPRETOT': (parameters['KLON'],),
+    'ZQSLIQ': (parameters['KLON'], parameters['KLEV']),
     'ZQSICE': (parameters['KLON'], parameters['KLEV']),
     'ZQX': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQXFG': (parameters['KLON'], parameters['NCLV']),
     'ZQXN': (parameters['KLON'], parameters['NCLV']),
     'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'ZSOLAC': (parameters['KLON'],),
+    'ZSUPSAT': (parameters['KLON'],),
     'ZTP1': (parameters['KLON'], parameters['KLEV']),
+    'PT': (parameters['KLON'], parameters['KLEV']),
+    'PQ': (parameters['KLON'], parameters['KLEV']),
+    'PA': (parameters['KLON'], parameters['KLEV']),
+    'PCLV': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
 }
+
 
 
 programs = {
@@ -166,6 +211,16 @@ programs = {
     'cloudsc_8a': 'copy_precipitation_arrays',
     'cloudsc_8b': 'fluxes',
     'cloudsc_8c': 'enthalpy_flux_due_to_precipitation',
+    'cloudsc_class1_658': 'non_clv_init',
+    'cloudsc_class1_670': 'clv_init',
+    'cloudsc_class1_2783': 'copy_precipitation_flux',
+    'cloudsc_class1_2857': 'enthalpy_flux_due_to_precipitation',
+    'cloudsc_class2_1762': 'precipitation_cover_overlap',
+    'cloudsc_class2_1516': 'ice_growth_vapour_deposition',
+    'cloudsc_class3_691': 'tidy_up_cloud_cover',
+    'cloudsc_class3_965': 'evaporate_small_liquid_ice',
+    'cloudsc_class3_1985': 'melting_snow_ice',
+    'cloudsc_class3_2120': 'rain_evaporation',
 }
 
 
@@ -176,7 +231,17 @@ program_parameters = {
     'cloudsc_8': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
     'cloudsc_8a': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
     'cloudsc_8b': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDQL', 'NCLDQI', 'NCLDQR', 'NCLDQS'),
-    'cloudsc_8c': ('KLON', 'KLEV', 'KIDIA', 'KFDIA')
+    'cloudsc_8c': ('KLON', 'KLEV', 'KIDIA', 'KFDIA'),
+    'cloudsc_class1_658': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV'),
+    'cloudsc_class1_670': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA'),
+    'cloudsc_class1_2783': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQR', 'NCLDQS', 'NCLDQL', 'NCLDQI'),
+    'cloudsc_class1_2857': ('KLON', 'KLEV', 'KIDIA', 'KFDIA'),
+    'cloudsc_class2_1762': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDTOP', 'NCLDQS', 'NCLDQR'),
+    'cloudsc_class2_1516': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDTOP', 'NCLDQL', 'NCLDQI'),
+    'cloudsc_class3_691': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL'),
+    'cloudsc_class3_965': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL', 'NCLDTOP'),
+    'cloudsc_class3_1985': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQS','NCLDQI', 'NCLDQL', 'NCLDTOP'),
+    'cloudsc_class3_2120': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQR', 'NCLDTOP'),
 }
 
 
@@ -190,7 +255,21 @@ program_inputs = {
                   'PAPH', 'ZFOEALFA', 'PVFL', 'PVFI', 'PLUDE', 'ZQX0', 'ZLNEG', 'ZQXN2D', 'ZRG_R', 'ZQTMST', 'PTSPHY'),
     'cloudsc_8a': ('ZPFPLSX',),
     'cloudsc_8b': ('PAPH', 'ZFOEALFA', 'PVFL', 'PVFI', 'PLUDE', 'ZQX0', 'ZLNEG', 'ZQXN2D', 'ZRG_R', 'ZQTMST', 'PTSPHY'),
-    'cloudsc_8c': ('RLSTT', 'RLVTT', 'PFPLSL', 'PFPLSN')
+    'cloudsc_8c': ('RLSTT', 'RLVTT', 'PFPLSL', 'PFPLSN'),
+    'cloudsc_class1_658': ('PTSPHY', 'tendency_tmp_t', 'tendency_tmp_q', 'tendency_tmp_a', 'PT', 'PQ', 'PA'),
+    'cloudsc_class1_670': ('PCLV', 'PTSPHY', 'tendency_tmp_cld'),
+    'cloudsc_class1_2783': ('ZPFPLSX',),
+    'cloudsc_class1_2857': ('RLVTT', 'RLSTT', 'PFPLSL', 'PFPLSN'),
+    'cloudsc_class2_1762': ('RCOVPMIN', 'ZEPSEC', 'ZQXFG', 'ZA', 'ZQPRETOT'),
+    'cloudsc_class2_1516': ('RTT', 'R2ES', 'R3IES', 'R4IES', 'RLMIN', 'RV', 'RD', 'RG', 'RLSTT', 'RDEPLIQREFRATE',
+        'RDEPLIQREFDEPTH', 'RCLDTOPCF', 'PTSPHY', 'RICEINIT', 'ZA', 'ZCLDTOPDIST', 'ZDP', 'ZRHO', 'ZTP1', 'ZFOKOOP', 'PAP',
+        'ZICECLD'),
+    'cloudsc_class3_691': ('RLMIN', 'RAMIN', 'ZQTMST', 'RALVDCP', 'RALSDCP', 'ZA'),
+    'cloudsc_class3_965': ('RLMIN', 'ZQX'),
+    'cloudsc_class3_1985': ('ZEPSEC', 'RTT', 'PTSPHY', 'ZRLDCP', 'RTAUMEL', 'ZQSICE', 'ZQXFG', 'ZTP1', 'PAP', 'ZQX'),
+    'cloudsc_class3_2120': ('RPRECRHMAX', 'ZCOVPMAX', 'ZEPSEC', 'ZEPSILON', 'RVRFACTOR', 'RG', 'RPECONS', 'PTSPHY',
+                            'ZRG_R', 'RCOVPMIN', 'ZA', 'ZQX', 'ZQSLIQ', 'ZCOVPCLR', 'ZDTGDP', 'PAP', 'PAPH',
+                            'ZCORQSLIQ', 'ZDP'),
 }
 
 
@@ -202,7 +281,17 @@ program_outputs = {
                   'PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
     'cloudsc_8a': ('PFPLSL', 'PFPLSN'),
     'cloudsc_8b': ('PFSQLF', 'PFSQIF', 'PFCQNNG', 'PFCQLNG', 'PFSQRF', 'PFSQSF', 'PFCQRNG', 'PFCQSNG', 'PFSQLTUR', 'PFSQITUR'),
-    'cloudsc_8c': ('PFHPSL', 'PFHPSN')
+    'cloudsc_8c': ('PFHPSL', 'PFHPSN'),
+    'cloudsc_class1_658': ('ZTP1', 'ZQX', 'ZQX0', 'ZA', 'ZAORIG'),
+    'cloudsc_class1_670': ('ZQX', 'ZQX0'),
+    'cloudsc_class1_2783': ('PFPLSL', 'PFPLSN'),
+    'cloudsc_class1_2857': ('PFHPSL', 'PFHPSN'),
+    'cloudsc_class2_1762': ('ZCOVPTOT', 'ZCOVPCLR', 'ZCOVPMAX', 'ZRAINCLD', 'ZSNOWCLD'),
+    'cloudsc_class2_1516': ('ZCOVPTOT', 'ZICENUCLEI', 'ZSOLQA', 'ZQXFG'),
+    'cloudsc_class3_691': ('ZQX', 'ZLNEG', 'tendency_loc_q', 'tendency_loc_T'),
+    'cloudsc_class3_965': ('ZSOLQA',),
+    'cloudsc_class3_1985': ('ZICETOT', 'ZMELTMAX'),
+    'cloudsc_class3_2120': ('ZSOLQA', 'ZCOVPTOT', 'ZQXFG'),
 }
 
 
@@ -259,6 +348,47 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_8', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    # does currently not work, due to errors/problems when simplifying the SDFG
+    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
+    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
+    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, True),
+    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_2857', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_2857', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class1_2857', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_2857', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class2_1762', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class2_1762', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class2_1762', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class2_1762', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class2_1516', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class2_1516', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class2_1516', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class2_1516', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_691', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class3_691', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class3_691', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_691', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_965', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class3_965', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class3_965', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_965', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_1985', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class3_1985', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class3_1985', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_1985', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_2120', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class3_2120', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class3_2120', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class3_2120', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
 ])
 def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
 
@@ -299,3 +429,24 @@ if __name__ == "__main__":
     test_program('cloudsc_8c', dace.DeviceType.CPU, True)
     test_program('cloudsc_8', dace.DeviceType.CPU, False)
     test_program('cloudsc_8', dace.DeviceType.CPU, True)
+    # does currently not work, due to errors/problems when simplifying the SDFG
+    # test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
+    # test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_670', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_670', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_2783', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_2783', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_2857', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_2857', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class2_1762', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class2_1762', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class2_1516', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class2_1516', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_691', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_691', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_965', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_965', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_1985', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_2120', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_2120', dace.DeviceType.CPU, True)
