@@ -64,20 +64,5 @@
         "cloudsc_class3_1985": ["ZICETOT", "ZMELTMAX"],
         "cloudsc_class3_2120": ["ZSOLQA", "ZCOVPTOT", "ZQXFG"],
         "mwe_test": ["ZFOKOOP", "ZSUPSAT"]
-    },
-    "parameters": {
-        "KLON": 10,
-        "KLEV": 10,
-        "KIDIA": 2,
-        "KFDIA": 8,
-        "NCLV": 10,
-        "NCLDQI": 3,
-        "NCLDQL": 4,
-        "NCLDQR": 5,
-        "NCLDQS": 6,
-        "NCLDQV": 7,
-        "NCLDTOP": 1,
-        "NSSOPT": 1
     }
-
 }
