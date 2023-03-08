@@ -49,7 +49,7 @@ class SDFGCutout(SDFG):
         elif isinstance(transformation, MultiStateTransformation):
             transformation._sdfg = self
             transformation.sdfg_id = 0
-            for k in transformation.subgraph.kes():
+            for k in transformation.subgraph.keys():
                 old_state = self.original_sdfg.node(transformation.subgraph[k])
                 try:
                     transformation.subgraph[k] = self.node_id(self._in_translation[old_state])
@@ -76,9 +76,8 @@ class SDFGCutout(SDFG):
         affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
 
         target_sdfg = sdfg
-        if isinstance(transformation, (SubgraphTransformation, PatternTransformation)):
-            if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
-                target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
+            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
 
         if isinstance(transformation, (SubgraphTransformation, SingleStateTransformation)):
             state = target_sdfg.node(transformation.state_id)
@@ -86,8 +85,7 @@ class SDFGCutout(SDFG):
             cutout.translate_transformation_into(transformation)
             return cutout
         elif isinstance(transformation, MultiStateTransformation):
-            first_state: SDFGState = affected_nodes[0]
-            cutout = cls.multistate_cutout(first_state.parent, *affected_nodes)
+            cutout = cls.multistate_cutout(*affected_nodes)
             cutout.translate_transformation_into(transformation)
             return cutout
         raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
@@ -578,7 +576,7 @@ def _determine_cutout_reachability(
              set contains the states that can be reached from the cutout.
     """
     if state_reach is None:
-        original_sdfg_id = out_translation[sdfg.sdfg_id]
+        original_sdfg_id = out_translation[ct.sdfg_id]
         state_reachability_dict = StateReachability().apply_pass(sdfg.sdfg_list[original_sdfg_id], None)
         state_reach = state_reachability_dict[original_sdfg_id]
     inverse_cutout_reach: Set[SDFGState] = set()
@@ -676,6 +674,7 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
     system_state = set()
     check_for_read_after = set()
     cutout_states = set(ct.states())
+    border_out_edges: Set[InterstateEdge] = set()
 
     for state in cutout_states:
         for dn in state.data_nodes():
@@ -688,6 +687,9 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                 check_for_read_after.add(dn.data)
 
         original_state: SDFGState = out_translation[state]
+        for edge in original_state.parent.out_edges(original_state):
+            if edge.dst in cutout_reach:
+                border_out_edges.add(edge.data)
 
         # If the cutout consists of only one state, we need to check inside the same state of the original SDFG as well.
         if len(cutout_states) == 1:
