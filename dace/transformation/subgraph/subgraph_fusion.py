@@ -1186,6 +1186,20 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         in_subset = subsets.union(in_subset, ie.data.dst_subset)
                     else:
                         in_subset = ie.data.dst_subset
+                
+                can_proceed = True
+                for oe in graph.out_edges(node):
+                    if not in_subset.covers(oe.data.src_subset):
+                        try:
+                            intersects = in_subset.intersects(oe.data.src_subset)
+                        except TypeError:
+                            intersects = False
+                        if intersects:
+                            can_proceed = False
+                            break
+                
+                if not can_proceed:
+                    continue
 
                 # Create transient data corresponding to the union of the incoming subsets.
                 desc = sdfg.arrays[node.data]
