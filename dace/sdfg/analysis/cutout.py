@@ -22,20 +22,20 @@ from dace.properties import make_properties, SDFGReferenceProperty, SetProperty
 @make_properties
 class SDFGCutout(SDFG):
 
-    original_sdfg = SDFGReferenceProperty(desc='The original SDFG the cutout was created from.', allow_none=True)
+    _base_sdfg = SDFGReferenceProperty(desc='The base SDFG the cutout was created from.', allow_none=True)
     input_config = SetProperty(element_type=str, desc='The input configuration of the cutout.')
     output_config = SetProperty(element_type=str, desc='The output configuration of the cutout.')
 
-    def __init__(self, original_sdfg: SDFG):
-        super(SDFGCutout, self).__init__(original_sdfg.name + '_cutout', original_sdfg.constants_prop)
-        self.original_sdfg = original_sdfg
+    def __init__(self, base_sdfg: SDFG):
+        super(SDFGCutout, self).__init__(base_sdfg.name + '_cutout', base_sdfg.constants_prop)
+        self._base_sdfg = base_sdfg
 
         self._in_translation = dict()
         self._out_translation = dict()
 
     def translate_transformation_into(self, transformation: Union[PatternTransformation, SubgraphTransformation]):
         if isinstance(transformation, SingleStateTransformation):
-            old_state = self.original_sdfg.node(transformation.state_id)
+            old_state = self._base_sdfg.node(transformation.state_id)
             transformation.state_id = self.node_id(self.start_state)
             transformation._sdfg = self
             transformation.sdfg_id = 0
@@ -50,14 +50,14 @@ class SDFGCutout(SDFG):
             transformation._sdfg = self
             transformation.sdfg_id = 0
             for k in transformation.subgraph.keys():
-                old_state = self.original_sdfg.node(transformation.subgraph[k])
+                old_state = self._base_sdfg.node(transformation.subgraph[k])
                 try:
                     transformation.subgraph[k] = self.node_id(self._in_translation[old_state])
                 except KeyError:
                     # Ignore.
                     pass
         else:
-            old_state = self.original_sdfg.node(transformation.state_id)
+            old_state = self._base_sdfg.node(transformation.state_id)
             transformation.state_id = self.node_id(self.start_state)
             new_subgraph = set()
             for k in transformation.subgraph:
@@ -359,14 +359,6 @@ class SDFGCutout(SDFG):
         cutout._out_translation = out_translation
 
         return cutout
-
-    '''
-    @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
-        _type = json_obj['_type']
-        if _type != cls.__name__:
-            '''
 
 
 def _transformation_determine_affected_nodes(
