@@ -118,7 +118,8 @@ public:
         ofs << symbol_value;
     }
 
-    int restore_symbol(const std::string &symbol_name, const std::string &filename) {
+    template <typename T>
+    T restore_symbol(const std::string &symbol_name, const std::string &filename, T symbol_oldval) {
         std::lock_guard<std::mutex> guard(this->_mutex);
 
         // Update version
@@ -134,8 +135,8 @@ public:
         ss << this->folder << "/" << symbol_name << "/" << filename << "_" << version;
         std::ifstream ifs(ss.str(), std::ios::in);
 
-        // Read contents
-        int val;
+        // Read the symbol back
+        T val;
         ifs >> val;
         return val;
     }
