@@ -4,8 +4,9 @@ Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.
 testing or optimization.
 """
 from collections import deque
+import json
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union, Optional
+from typing import Deque, Dict, List, Set, Tuple, Union, Optional, BinaryIO
 from dace import data
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
@@ -69,6 +70,21 @@ class SDFGCutout(SDFG):
                     pass
             transformation.subgraph = new_subgraph
 
+    @staticmethod
+    def _from_file(fp: BinaryIO) -> 'SDFGCutout':
+        cutout_json = json.load(fp)
+        cutout = SDFGCutout.from_json(cutout_json)
+        return cutout
+
+    @staticmethod
+    def from_file(filename: str) -> 'SDFGCutout':
+        with open(filename, 'rb') as fp:
+            return SDFGCutout._from_file(fp)
+
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        return super(SDFGCutout, cls).from_json(json_obj, context_info)
+
     @classmethod
     def from_transformation(
         cls, sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation]
@@ -86,7 +102,9 @@ class SDFGCutout(SDFG):
             return cutout
         elif isinstance(transformation, MultiStateTransformation):
             cutout = cls.multistate_cutout(*affected_nodes)
-            cutout.translate_transformation_into(transformation)
+            # If the cutout is an SDFG, there's no need to translate the transformation.
+            if isinstance(cutout, SDFGCutout):
+                cutout.translate_transformation_into(transformation)
             return cutout
         raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
 
