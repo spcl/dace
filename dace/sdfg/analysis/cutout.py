@@ -7,7 +7,7 @@ from collections import deque
 import json
 import copy
 from typing import Deque, Dict, List, Set, Tuple, Union, Optional, BinaryIO
-from dace import data
+from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
 from dace.sdfg.graph import Edge, MultiConnectorEdge
@@ -33,6 +33,35 @@ class SDFGCutout(SDFG):
 
         self._in_translation = dict()
         self._out_translation = dict()
+
+    def _instrument_base_sdfg(self) -> None:
+        # Instrument symbol dumping in the base SDFG.
+        base_sdfg_start_state: SDFGState = self._out_translation[self.start_state]
+        base_sdfg_start_state.symbol_instrument = DataInstrumentationType.Save
+
+        # Instrument all data containers in the base SDFG that belong to the cutout's input configuration to be dumped.
+        for state in self.states():
+            for dn in state.data_nodes():
+                if dn.data in self.input_config:
+                    base_sdfg_dn: nd.AccessNode = self._out_translation[dn]
+                    base_sdfg_dn.instrument = DataInstrumentationType.Save
+
+    def _dry_run_base_sdfg(self, *args, **kwargs) -> None:
+        self._instrument_base_sdfg()
+        self._base_sdfg(*args, **kwargs)
+
+    def find_inputs(self, *args, **kwargs) -> Dict[str, Union[data.ArrayLike, data.Number]]:
+        self._dry_run_base_sdfg(*args, **kwargs)
+
+        drep = self._base_sdfg.get_instrumented_data()
+        if drep:
+            vals: Dict[str, Union[data.ArrayLike, data.Number]] = dict()
+            for ip in self.input_config.union(set(self.symbols)):
+                val = drep.get_first_version(ip)
+                vals[ip] = val
+            return vals
+        else:
+            raise RuntimeError('No data report found for the base SDFG.')
 
     def translate_transformation_into(self, transformation: Union[PatternTransformation, SubgraphTransformation]):
         if isinstance(transformation, SingleStateTransformation):
@@ -198,9 +227,11 @@ class SDFGCutout(SDFG):
                         prune = True
                         for e in state.in_edges(orig_node):
                             if e.dst_conn and e.dst_conn == conn:
-                                _create_alibi_access_node_for_edge(
+                                _, n_access = _create_alibi_access_node_for_edge(
                                     cutout, new_state, sdfg, e, None, None, new_node, conn
                                 )
+                                in_translation[e.src] = n_access
+                                out_translation[n_access] = e.src
                                 prune = False
                                 break
                         if prune:
@@ -210,9 +241,11 @@ class SDFGCutout(SDFG):
                         prune = True
                         for e in state.out_edges(orig_node):
                             if e.src_conn and e.src_conn == conn:
-                                _create_alibi_access_node_for_edge(
+                                _, n_access = _create_alibi_access_node_for_edge(
                                     cutout, new_state, sdfg, e, new_node, conn, None, None
                                 )
+                                in_translation[e.dst] = n_access
+                                out_translation[n_access] = e.dst
                                 prune = False
                                 break
                         if prune:
@@ -468,7 +501,7 @@ def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGStat
 def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGState, original_sdfg: SDFG,
                                        original_edge: MultiConnectorEdge[Memlet], from_node: Union[nd.Node, None],
                                        from_connector: Union[str, None], to_node: Union[nd.Node, None],
-                                       to_connector: Union[str, None]) -> data.Data:
+                                       to_connector: Union[str, None]) -> Tuple[data.Data, nd.AccessNode]:
     """
     Add an alibi data container and access node to a dangling connector inside of scopes.
     Alibi nodes are never transient because they always represent a 'border' of the cutout and will consequently
@@ -502,7 +535,7 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
         target_state.add_edge(alibi_access_node, None, to_node, to_connector, Memlet(memlet_str))
     else:
         target_state.add_edge(from_node, from_connector, alibi_access_node, None, Memlet(memlet_str))
-    return target_sdfg.arrays[container_name]
+    return target_sdfg.arrays[container_name], alibi_access_node
 
 
 def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:

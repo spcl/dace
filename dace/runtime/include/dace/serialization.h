@@ -96,11 +96,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(symbol_name) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[symbol_name] + 1;
+        this->version[symbol_name] = version;
 
         std::stringstream ss;
         ss << this->folder << "/" << symbol_name;
@@ -124,11 +124,11 @@ public:
 
         // Update version
         int version;
-        if (this->version.find(filename) == this->version.end())
+        if (this->version.find(symbol_name) == this->version.end())
             version = 0;
         else
-            version = this->version[filename] + 1;
-        this->version[filename] = version;
+            version = this->version[symbol_name] + 1;
+        this->version[symbol_name] = version;
 
         // Read contents from file
         std::stringstream ss;
