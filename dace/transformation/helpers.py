@@ -303,8 +303,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             if fexit is None:
                 raise ValueError("Cannot find for-scope's exit state.")
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     raise NotImplementedError
@@ -316,6 +314,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[fexit]]
                 del visited[fexit]
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
 
             # Need init state so that ForScope is still recognized as as such after nesting
             if isinstance(child, cf.ForScope):
@@ -348,8 +348,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
-
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     guard = sdfg.add_state_after(guard, f"new_{guard.label}")
@@ -362,6 +360,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[ifexit]]
                 del visited[ifexit]
+            
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
 
             components[guard] = (states, child)
             visited.update({s: guard for s in states})
