@@ -55,16 +55,20 @@ class DaCeCodeGenerator(object):
         # first handle root
         self._symbols_and_constants[sdfg] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
         # then recurse
-        for nested, state in sdfg.all_nodes_recursive():
-            if isinstance(nested, nodes.NestedSDFG):
-                state: SDFGState
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            if nsdfg is not sdfg:
+                nested: nodes.NestedSDFG = nsdfg.parent_nsdfg_node
+                state: SDFGState = nsdfg.parent
 
                 nsdfg = nested.sdfg
 
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
-                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg]
+                # TODO: This should be needed! Temporary fix until the issue investigated.
+                if nsdfg.parent_sdfg is not state.parent:
+                    nsdfg._parent_sdfg = state.parent
+                parent_constants = self._symbols_and_constants[nsdfg.parent_sdfg]
                 result |= parent_constants
 
                 # check for constant inputs
