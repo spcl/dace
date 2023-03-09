@@ -134,6 +134,23 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             sdfg.add_edge(e.src, new_state, e.data)
         for e in sdfg.out_edges(sink_node):
             sdfg.add_edge(new_state, e.dst, e.data)
+        
+        # TODO: How safe is this?
+        # Record symbols defined in the subgraph's border edges
+        border_mapping = dict()
+        border_arrays = set()
+        for state in states:
+            for e in sdfg.in_edges(state):
+                if e in subgraph.edges():
+                    continue
+                border_mapping.update(e.data.assignments)
+                border_arrays.update(m.data for m in e.data.get_read_memlets(sdfg.arrays))
+                e.data.assignments = dict()
+        init_state = nsdfg.start_state
+        pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+        edge = nsdfg.edges_between(pre_init_state, init_state)[0]
+        edge.data.assignments.update({k: v for k, v in border_mapping.items()})
+        read_set.update(border_arrays)
 
         sdfg.remove_nodes_from(states)
 
