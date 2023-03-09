@@ -102,6 +102,9 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             sdfg.append_exit_code('delete __state->serializer;\n')
 
     def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream, global_stream: CodeIOStream):
+        if state.symbol_instrument == dtypes.DataInstrumentationType.No_Instrumentation:
+            return
+
         condition_preamble, condition_postamble = '', ''
         condition: Optional[CodeBlock] = state.symbol_instrument_condition
         if condition is not None and not condition.as_string == '1':
