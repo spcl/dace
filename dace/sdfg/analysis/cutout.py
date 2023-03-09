@@ -4,9 +4,8 @@ Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.
 testing or optimization.
 """
 from collections import deque
-import json
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union, Optional, BinaryIO
+from typing import Deque, Dict, List, Set, Tuple, Union, Optional, Any
 from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
 from dace.memlet import Memlet
@@ -17,20 +16,21 @@ from dace.transformation.transformation import (MultiStateTransformation,
                                                 SubgraphTransformation,
                                                 SingleStateTransformation)
 from dace.transformation.passes.analysis import StateReachability
-from dace.properties import make_properties, SDFGReferenceProperty, SetProperty
 
 
-@make_properties
 class SDFGCutout(SDFG):
 
-    _base_sdfg = SDFGReferenceProperty(desc='The base SDFG the cutout was created from.', allow_none=True)
-    input_config = SetProperty(element_type=str, desc='The input configuration of the cutout.')
-    output_config = SetProperty(element_type=str, desc='The output configuration of the cutout.')
+    # The base SDFG the cutout was created from.
+    _base_sdfg: Optional[SDFG] = None
+    # The input / output configurations of the cutout.
+    input_config: Set[str] = set()
+    output_config: Set[str] = set()
 
-    def __init__(self, base_sdfg: SDFG):
-        super(SDFGCutout, self).__init__(base_sdfg.name + '_cutout', base_sdfg.constants_prop)
-        self._base_sdfg = base_sdfg
-
+    def __init__(self, name: str, constants_prop: Optional[Dict[str, Tuple[data.Data, Any]]] = None):
+        super(SDFGCutout, self).__init__(name + '_cutout', constants_prop)
+        self._base_sdfg = None
+        self.input_config = set()
+        self.output_config = set()
         self._in_translation = dict()
         self._out_translation = dict()
 
@@ -99,16 +99,10 @@ class SDFGCutout(SDFG):
                     pass
             transformation.subgraph = new_subgraph
 
-    @staticmethod
-    def _from_file(fp: BinaryIO) -> 'SDFGCutout':
-        cutout_json = json.load(fp)
-        cutout = SDFGCutout.from_json(cutout_json)
-        return cutout
-
-    @staticmethod
-    def from_file(filename: str) -> 'SDFGCutout':
-        with open(filename, 'rb') as fp:
-            return SDFGCutout._from_file(fp)
+    def to_json(self, hash=False):
+        cutout_json = super().to_json(hash)
+        cutout_json['type'] = SDFG.__name__
+        return cutout_json
 
     @classmethod
     def from_json(cls, json_obj, context_info=None):
@@ -116,7 +110,8 @@ class SDFGCutout(SDFG):
 
     @classmethod
     def from_transformation(
-        cls, sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation]
+        cls, sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation],
+        make_side_effects_global = True, use_alibi_nodes: bool = True
     ) -> Union['SDFGCutout', SDFG]:
         affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
 
@@ -126,11 +121,12 @@ class SDFGCutout(SDFG):
 
         if isinstance(transformation, (SubgraphTransformation, SingleStateTransformation)):
             state = target_sdfg.node(transformation.state_id)
-            cutout = cls.singlestate_cutout(state, *affected_nodes)
+            cutout = cls.singlestate_cutout(state, *affected_nodes, make_side_effects_global=make_side_effects_global,
+                                            use_alibi_nodes=use_alibi_nodes)
             cutout.translate_transformation_into(transformation)
             return cutout
         elif isinstance(transformation, MultiStateTransformation):
-            cutout = cls.multistate_cutout(*affected_nodes)
+            cutout = cls.multistate_cutout(*affected_nodes, make_side_effects_global=make_side_effects_global)
             # If the cutout is an SDFG, there's no need to translate the transformation.
             if isinstance(cutout, SDFGCutout):
                 cutout.translate_transformation_into(transformation)
@@ -142,7 +138,8 @@ class SDFGCutout(SDFG):
                            state: SDFGState,
                            *nodes: nd.Node,
                            make_copy: bool = True,
-                           make_side_effects_global: bool = True) -> 'SDFGCutout':
+                           make_side_effects_global: bool = True,
+                           use_alibi_nodes: bool = True) -> 'SDFGCutout':
         """
         Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
         The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -156,15 +153,18 @@ class SDFGCutout(SDFG):
         :param make_side_effects_global: If True, all transient data containers which are read inside the cutout but may
                                          be written to _before_ the cutout, or any data containers which are written to
                                          inside the cutout but may be read _after_ the cutout, are made global.
+        :param use_alibi_nodes: If True, do not extend the cutout with access nodes that span outside of a scope, but
+                                introduce alibi nodes instead that represent only the accesses subset.
         :return: The created SDFGCutout.
         """
         create_element = copy.deepcopy if make_copy else (lambda x: x)
         sdfg = state.parent
         subgraph: StateSubgraphView = StateSubgraphView(state, nodes)
-        subgraph = _extend_subgraph_with_access_nodes(state, subgraph)
+        subgraph = _extend_subgraph_with_access_nodes(state, subgraph, use_alibi_nodes)
 
         # Make a new SDFG with the included constants, used symbols, and data containers.
-        cutout = SDFGCutout(sdfg)
+        cutout = SDFGCutout(sdfg.name + '_cutout', sdfg.constants_prop)
+        cutout._base_sdfg = sdfg
         defined_syms = subgraph.defined_symbols()
         freesyms = subgraph.free_symbols
         for sym in freesyms:
@@ -211,6 +211,7 @@ class SDFGCutout(SDFG):
 
         # Remove remaining dangling connectors from scope nodes and add new data containers corresponding to accesses
         # for dangling connectors on other nodes.
+        translation_add_pairs: Set[Tuple[nd.AccessNode, nd.AccessNode]] = set()
         for orig_node in in_translation.keys():
             new_node = in_translation[orig_node]
             if isinstance(new_node, nd.Node):
@@ -230,8 +231,8 @@ class SDFGCutout(SDFG):
                                 _, n_access = _create_alibi_access_node_for_edge(
                                     cutout, new_state, sdfg, e, None, None, new_node, conn
                                 )
-                                in_translation[e.src] = n_access
-                                out_translation[n_access] = e.src
+                                e_path = state.memlet_path(e)
+                                translation_add_pairs.add((e_path[0].src, n_access))
                                 prune = False
                                 break
                         if prune:
@@ -244,12 +245,15 @@ class SDFGCutout(SDFG):
                                 _, n_access = _create_alibi_access_node_for_edge(
                                     cutout, new_state, sdfg, e, new_node, conn, None, None
                                 )
-                                in_translation[e.dst] = n_access
-                                out_translation[n_access] = e.dst
+                                e_path = state.memlet_path(e)
+                                translation_add_pairs.add((e_path[-1].dst, n_access))
                                 prune = False
                                 break
                         if prune:
                             new_node.remove_out_connector(conn)
+        for (outer, inner) in translation_add_pairs:
+            in_translation[outer] = inner
+            out_translation[inner] = outer
 
         in_translation[state] = new_state
         out_translation[new_state] = state
@@ -337,7 +341,8 @@ class SDFGCutout(SDFG):
         subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
 
         # Make a new SDFG with the included constants, used symbols, and data containers.
-        cutout = SDFGCutout(sdfg)
+        cutout = SDFGCutout(sdfg.name + '_cutout', sdfg.constants_prop)
+        cutout._base_sdfg = sdfg
         defined_symbols: Dict[str, data.Data] = dict()
         free_symbols: Set[str] = set()
         for state in cutout_states:
@@ -538,7 +543,8 @@ def _create_alibi_access_node_for_edge(target_sdfg: SDFG, target_state: SDFGStat
     return target_sdfg.arrays[container_name], alibi_access_node
 
 
-def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:
+def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView,
+                                       use_alibi_nodes: bool) -> StateSubgraphView:
     """ Expands a subgraph view to include necessary input/output access nodes, using memlet paths. """
     sdfg = state.parent
     result: List[nd.Node] = copy.copy(subgraph.nodes())
@@ -560,8 +566,9 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
             # We don't want to extend access nodes over scope entry nodes, but rather we want to introduce alibi data
             # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
-            if isinstance(e.src, nd.EntryNode) and e.src not in result and state.exit_node(e.src) not in result:
-                continue
+            if use_alibi_nodes:
+                if isinstance(e.src, nd.EntryNode) and e.src not in result and state.exit_node(e.src) not in result:
+                    continue
 
             mpath = state.memlet_path(e)
             new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
@@ -576,8 +583,9 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
             # We don't want to extend access nodes over scope exit nodes, but rather we want to introduce alibi data
             # containers for the correct subset instead. Handled separately in _create_alibi_access_node_for_edge.
-            if isinstance(e.dst, nd.ExitNode) and e.dst not in result and state.entry_node(e.dst) not in result:
-                continue
+            if use_alibi_nodes:
+                if isinstance(e.dst, nd.ExitNode) and e.dst not in result and state.entry_node(e.dst) not in result:
+                    continue
 
             mpath = state.memlet_path(e)
             new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]

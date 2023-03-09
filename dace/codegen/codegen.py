@@ -166,9 +166,9 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
         import shutil
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sdfg.save(f'{tmp_dir}/test.sdfg')
+            sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
-            sdfg2.save(f'{tmp_dir}/test2.sdfg')
+            sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
             print('Testing SDFG serialization...')
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
