@@ -213,6 +213,26 @@ def test_dinstr_symbolic():
     assert np.allclose(dreport['tmp'], A + 1)
 
 
+def test_dinstr_hooks():
+    @dace
+    def sample(a: dace.float64, b: dace.float64):
+        arr = a + b
+        return arr + 1
+
+    with dace.instrument_data(dace.DataInstrumentationType.Save, filter='a??'):
+        result_ab = sample(0.0, 1.0)
+
+    # Optionally, get the serialized data containers
+    dreport = sample.to_sdfg().get_instrumented_data()
+    assert dreport.keys() == {'arr'}  # dreport['arr'] is now the internal ``arr``
+
+    # Reload latest instrumented data (can be customized if ``restore_from`` is given)
+    with dace.instrument_data(dace.DataInstrumentationType.Restore, filter='a??'):
+        result_cd = sample(2.0, 3.0)  # where ``c, d`` are different from ``a, b``
+
+    assert np.allclose(result_ab, result_cd)
+
+
 def test_dinstr_in_loop_conditional_cpp():
     @dace.program
     def dinstr(A: dace.float64[20]):
@@ -280,5 +300,6 @@ if __name__ == '__main__':
     test_dinstr_in_loop()
     test_dinstr_strided()
     test_dinstr_symbolic()
+    test_dinstr_hooks()
     test_dinstr_in_loop_conditional_cpp()
     test_dinstr_in_loop_conditional_python()
