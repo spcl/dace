@@ -119,7 +119,7 @@ public:
     }
 
     template <typename T>
-    T restore_symbol(const std::string &symbol_name, const std::string &filename, T symbol_oldval) {
+    T restore_symbol(const std::string &symbol_name, const std::string &filename) {
         std::lock_guard<std::mutex> guard(this->_mutex);
 
         // Update version

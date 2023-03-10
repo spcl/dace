@@ -239,8 +239,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         defined_symbols = state.defined_symbols()
         for sym, sym_type in defined_symbols.items():
             local_stream.write(
-                f'{cpp.sym2cpp(sym)} = ' +
-                f'__state->serializer->restore_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n',
+                f'{cpp.sym2cpp(sym)} = __state->serializer->restore_symbol<{sym_type.ctype}>("{sym}", "{state_id}");\n',
                 sdfg, state_id
             )
         local_stream.write(condition_postamble, sdfg, state_id)

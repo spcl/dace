@@ -134,6 +134,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
                         frame.targets.add(tgt)
 
         # Instrumentation-related query
+        if hasattr(node, 'symbol_instrument'):
+            disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
         if hasattr(node, 'instrument'):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):

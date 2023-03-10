@@ -610,8 +610,8 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 def _determine_cutout_reachability(
         ct: SDFG,
         sdfg: SDFG,
-        in_translation: dict,
-        out_translation: dict,
+        in_translation: Dict[Any, Any],
+        out_translation: Dict[Any, Any],
         state_reach: Dict[SDFGState, Set[SDFGState]] = None) -> Tuple[Set[SDFGState], Set[SDFGState]]:
     """
     For a given cutout and its original SDFG, determine what parts of the SDFG (set of states) can reach the cutout,
@@ -645,8 +645,8 @@ def _determine_cutout_reachability(
     return (inverse_cutout_reach, cutout_reach)
 
 
-def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: dict,
-                                   out_translation: dict) -> Set[str]:
+def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any],
+                                   out_translation: Dict[Any, Any]) -> Set[str]:
     """
     Determines the input configuration for a given cutout SDFG.
     The input configuration is the set of data descriptors that are read inside the cutout, but may be written to
@@ -708,8 +708,8 @@ def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState
     return input_configuration
 
 
-def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState], in_translation: dict,
-                                           out_translation: dict) -> Set[str]:
+def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState], in_translation: Dict[Any, Any],
+                                           out_translation: Dict[Any, Any]) -> Set[str]:
     """
     Determines the output configuration for a given cutout SDFG.
     The output configuration is the set of data descriptors that are written inside the cutout, but may be read from
