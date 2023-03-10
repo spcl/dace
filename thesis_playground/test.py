@@ -1,118 +1,22 @@
 import numpy as np
-from numpy import f2py
 from numbers import Number
-from typing import Dict, Union, List
+from typing import Dict, List, Optional
 import copy
-from importlib import import_module
-import os
-import sys
-import tempfile
 from tabulate import tabulate
 from argparse import ArgumentParser
 import json
 
 import dace
-from dace.frontend.fortran import fortran_parser
-from dace.sdfg import utils
 from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
-from data import parameters, data
-
-with open('thesis_playground/programs.json') as file:
-    programs_data = json.load(file)
-    programs = programs_data['programs']
-    program_parameters = programs_data['program_parameters']
-    program_inputs = programs_data['program_inputs']
-    program_outputs = programs_data['program_outputs']
-
-not_working = ['cloudsc_class1_670', 'cloudsc_class2_1001']
-
-# Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
-def read_source(filename: str, extension: str = 'f90') -> str:
-    source = None
-    with open(os.path.join(os.path.dirname(__file__), f'{filename}.{extension}'), 'r') as file:
-        source = file.read()
-    assert source
-    return source
+from utils import read_source, get_fortran, get_sdfg, get_inputs, get_outputs, get_programs_data
 
 
-def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_extension: str = '.f90'):
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        cwd = os.getcwd()
-        os.chdir(tmp_dir)
-        # Can set verbose to true to get more output when compiling
-        f2py.compile(source, modulename=program_name, verbose=False, extension=fortran_extension)
-        sys.path.append(tmp_dir)
-        module = import_module(program_name)
-        function = getattr(module, subroutine_name)
-        os.chdir(cwd)
-        return function
-
-
-def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) -> dace.SDFG:
-
-    intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
-    
-    # Find first NestedSDFG
-    sdfg = None
-    for state in intial_sdfg.states():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.NestedSDFG):
-                sdfg = node.sdfg
-                break
-    if not sdfg:
-        raise ValueError("SDFG not found.")
-
-    sdfg.parent = None
-    sdfg.parent_sdfg = None
-    sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()
-
-    if normalize_offsets:
-        my_simplify = Pipeline([RemoveUnusedSymbols(), ScalarToSymbolPromotion()])
-    else:
-        my_simplify = Pipeline([RemoveUnusedSymbols()])
-    my_simplify.apply_pass(sdfg, {})
-
-    if normalize_offsets:
-        utils.normalize_offsets(sdfg)
-
-    return sdfg
-
-
-# Copied from tests/fortran/cloudsc.py
-def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
-    inp_data = dict()
-    for p in program_parameters[program]:
-        inp_data[p] = parameters[p]
-    for inp in program_inputs[program]:
-        shape = data[inp]
-        if shape == (0,):  # Scalar
-            inp_data[inp] = rng.random()
-        else:
-            inp_data[inp] = np.asfortranarray(rng.random(shape))
-    return inp_data
-
-
-# Copied from tests/fortran/cloudsc.py
-# TODO: Init to 0?
-def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
-    out_data = dict()
-    for out in program_outputs[program]:
-        shape = data[out]
-        if shape == (0,):  # Scalar
-            raise NotImplementedError
-        else:
-            out_data[out] = np.asfortranarray(rng.random(shape))
-    return out_data
-
-
-# Copied from tests/fortran/cloudsc.py
+# Copied and adapted from tests/fortran/cloudsc.py
 def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
 
+    programs_data = get_programs_data()
     fsource = read_source(program)
-    program_name = programs[program]
+    program_name = programs_data['programs'][program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
@@ -129,7 +33,6 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     sdfg(**inputs, **outputs_d)
 
-
     print(f"{program} ({program_name}) on {device} with{' ' if normalize_memlets else 'out '}normalize memlets")
     for k in outputs_f.keys():
         farr = outputs_f[k]
@@ -145,16 +48,18 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
 
 def get_stats(array: List):
-    return [max(array), min(array), np.average(array), np.median(array)]
+    return {'max': min(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
 
 
 def print_stats(array: List):
     print(f"max: {max(array)}, min: {min(array)}, avg: {np.average(array)}, median: {np.median(array)}")
 
 
-def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10,
-        print_results=False) -> Dict[str, List[Number]]:
+def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10)\
+        -> Dict[str, List[Number]]:
 
+    programs = get_programs_data()['programs']
+    print(f"{program}({programs[program]}) rep={repetitions}")
     results = {}
     fsource = read_source(program)
     program_name = programs[program]
@@ -166,71 +71,69 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     inputs = get_inputs(program, rng)
     outputs = get_outputs(program, rng)
 
-    for node, parent in sdfg.all_nodes_recursive():
-        if type(node) == dace.sdfg.nodes.MapEntry:
-            id = parent.node_id(node)
-            node.instrument = dace.InstrumentationType.GPU_Events
-            print(f"Instrumented map with id {id} with {node.instrument}")
+    # for node, parent in sdfg.all_nodes_recursive():
+    #     if type(node) == dace.sdfg.nodes.MapEntry:
+    #         id = parent.node_id(node)
+    #         node.instrument = dace.InstrumentationType.GPU_Events
+    #         print(f"Instrumented map with id {id} with {node.instrument}")
+
+    # sdfg.clear_instrumentation_reports()
+    # for i in range(repetitions):
+    #     sdfg(**inputs, **outputs)
+    # reports = sdfg.get_instrumentation_reports()
+    # runtimes_gpu = []
+    # keys_gpu = set()
+    # for report in reports:
+    #     key = list(report.durations.keys())[0]
+    #     keys_gpu.add(key)
+    #     state_key = list(report.durations[key])[0]
+    #     if (len(list(report.durations.keys())) > 1 or len(list(report.durations[key])) > 1):
+    #         print("*** WARNING: more than one keys found, but only using one")
+    #     runtimes_gpu.append(report.durations[key][state_key][13533068620211794961][0])
+
+    # results["GPU time [ms]"] = get_stats(runtimes_gpu)
+    # results["GPU time [ms]"]["data"] = [float(i) for i in runtimes_gpu]
+    # results["GPU keys"] = list(keys_gpu)
+
+    sdfg.instrument = dace.InstrumentationType.Timer
+    # for node, parent in sdfg.all_nodes_recursive():
+    #     if type(node) == dace.sdfg.nodes.MapEntry:
+    #         id = parent.node_id(node)
+    #         node.instrument = dace.InstrumentationType.LIKWID_GPU
+    #         print(f"Instrumented map with id {id} with {node.instrument}")
 
     sdfg.clear_instrumentation_reports()
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
     reports = sdfg.get_instrumentation_reports()
-    runtimes_gpu = []
+    total_times = []
+    # runtimes = []
+    # adds, muls, fmas = [], [], []
+    # keys_likwid = set()
     for report in reports:
-        key = list(report.durations.keys())[0]
-        state_key = list(report.durations[key])[0]
-        if (len(list(report.durations.keys())) > 1 or len(list(report.durations[key])) > 1):
-            print("*** WARNING: more than one keys found, but only using one")
-        runtimes_gpu.append(report.durations[key][state_key][13533068620211794961][0])
+        # keys = list(report.durations.keys())
+        # keys = [k for k in keys if k[1] != -1]
+        # key = keys[0]
+        # keys_likwid.add(key)
+        # if (len(keys) > 1 or len(list(report.durations[key])) > 1):
+        #     print("*** WARNING: more than one keys found, but only using one")
+        # runtimes.append(report.durations[key]['Timer'][0][0])
+        total_times.append(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][13533068620211794961][0])
 
-    results["GPU time [ms]"] = get_stats(runtimes_gpu)
+    # results["LIKWID time [ms]"] = get_stats(runtimes)
+    # results["LIKWID time [ms]"]["data"] = [float(r) for r in runtimes]
+    # results["LIKWID keys"] = list(keys_likwid)
+    results["Total time [ms]"] = get_stats(total_times)
+    results["Total time [ms]"]["data"] = [float(r) for r in total_times]
 
-    for node, parent in sdfg.all_nodes_recursive():
-        if type(node) == dace.sdfg.nodes.MapEntry:
-            id = parent.node_id(node)
-            node.instrument = dace.InstrumentationType.LIKWID_GPU
-            print(f"Instrumented map with id {id} with {node.instrument}")
-
-    sdfg.clear_instrumentation_reports()
-    for i in range(repetitions):
-        sdfg(**inputs, **outputs)
-    reports = sdfg.get_instrumentation_reports()
-    runtimes = []
-    adds, muls, fmas = [], [], []
-    for report in reports:
-        key = list(report.durations.keys())[0]
-        scope_key = list(report.counters[key].keys())[0]
-        if (len(list(report.durations.keys())) > 1 or len(list(report.durations[key])) > 1):
-            print("*** WARNING: more than one keys found, but only using one")
-        runtimes.append(report.durations[key]['Timer'][0][0])
-        adds.append(report.counters[key][scope_key]['SMSP_SASS_THREAD_INST_EXECUTED_OP_FADD_PRED_ON_SUM'][0])
-        muls.append(report.counters[key][scope_key]['SMSP_SASS_THREAD_INST_EXECUTED_OP_FMUL_PRED_ON_SUM'][0])
-        fmas.append(report.counters[key][scope_key]['SMSP_SASS_THREAD_INST_EXECUTED_OP_FFMA_PRED_ON_SUM'][0])
-
-    results["LIKWID time [ms]"] = get_stats(runtimes)
-    results["LIKWID adds"] = get_stats(adds)
-    results["LIKWID muls"] = get_stats(muls)
-    results["LIKWID fmas"] = get_stats(fmas)
-    if print_results:
-        print(f"{program}({programs[program]} rep={repetitions}")
-        print("GPU Time [ms]:     ", end="")
-        print_stats(runtimes_gpu)
-        print("LIKWID Time [ms]: ", end="")
-        print_stats(runtimes)
-        print("LIKWID adds:      ", end="")
-        print_stats(adds)
-        print("LIKWID muls:      ", end="")
-        print_stats(muls)
-        print("LIKWID fmas:      ", end="")
-        print_stats(fmas)
     return results
 
 
-def run_program(program: str, repetitions: int=1, device=dace.DeviceType.GPU, normalize_memlets=False):
+def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
+    programs = get_programs_data()['programs']
+    print(f"Run {program} ({programs[program]}) for {repetitions} time on device {device}")
     fsource = read_source(program)
     program_name = programs[program]
-    routine_name = f'{program_name}_routine'
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
     auto_optimize(sdfg, device)
 
@@ -243,26 +146,34 @@ def run_program(program: str, repetitions: int=1, device=dace.DeviceType.GPU, no
 
 def test_programs(programs: List[str], repetitions: int, device: dace.DeviceType):
     for program in programs:
-        if program not in not_working:
-            try:
-                test_program(program, dace.DeviceType.CPU, False)
-                test_program(program, dace.DeviceType.CPU, True)
-                test_program(program, dace.DeviceType.GPU, False)
-                test_program(program, dace.DeviceType.GPU, True)
-            except AttributeError:
-                print(f"ERROR: could not run {program} due to an AttributeError")
+        try:
+            test_program(program, dace.DeviceType.CPU, False)
+            test_program(program, dace.DeviceType.CPU, True)
+            test_program(program, dace.DeviceType.GPU, False)
+            test_program(program, dace.DeviceType.GPU, True)
+        except AttributeError:
+            print(f"ERROR: could not run {program} due to an AttributeError")
 
 
-def profile_programs(programs: List[str], repetitions: int, device: dace.DeviceType):
-    results = []
+def profile_programs(programs: List[str], repetitions: int, device: dace.DeviceType,
+                     output_file: Optional[str] = None):
+    results_flat = []
+    results_dict = {}
     headers = ['Program', 'measurement', 'max', 'min', 'avg', 'median']
     for program in programs:
-        if program not in not_working:
-            result = profile_program(program, repetitions=repetitions, device=device)
-            for key in result:
-                results.append([program, key, *result[key]])
+        result = profile_program(program, repetitions=repetitions, device=device)
+        results_dict[program] = result
+        for key in result:
+            if key not in ['LIKWID keys', 'GPU keys']:
+                results_flat.append([program, key])
+                for name in headers[2:]:
+                    results_flat[-1].append(result[key][name])
 
-    print(tabulate(results, headers=headers))
+    if output_file is None:
+        print(tabulate(results_flat, headers=headers))
+    else:
+        with open(output_file, mode='w') as file:
+            json.dump(results_dict, file)
 
 
 def run_programs(programs: List[str], repetitions: int, device: dace.DeviceType):
@@ -272,15 +183,16 @@ def run_programs(programs: List[str], repetitions: int, device: dace.DeviceType)
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('action',
+    parser.add_argument(
+            'action',
             type=str,
             choices=['test', 'profile', 'run'],
             help='The action to perform, test will ignore device and repetitions flags.')
     parser.add_argument(
-        '-c', '--classes',
+        '-p', '--programs',
         type=str,
         nargs='+',
-        help='Names of the loop classes/programs to use. Can be several separated by space')
+        help='Names of the programs to use. Can be several separated by space')
     parser.add_argument(
             '-r', '--repetitions',
             type=int,
@@ -292,25 +204,32 @@ def main():
             default='GPU',
             choices=['GPU', 'CPU'],
             help="The device to run the code on")
+    parser.add_argument(
+            '-o', '--output',
+            type=str,
+            default=None,
+            help="Writes the output to the given file in json format, only works for profile")
+    parser.add_argument(
+            '-c', '--class',
+            type=int,
+            choices=[1, 2, 3],
+            default=None,
+            dest='kernel_class',
+            help="Run all programs of a given class")
 
     args = parser.parse_args()
 
-    print(args)
+    programs = get_programs_data()['programs']
     devices = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
-    selected_programs = programs if args.classes is None else args.classes
+    selected_programs = programs if args.programs is None else args.programs
+    if args.kernel_class is not None:
+        selected_programs = [p for p in programs if p.startswith(f"cloudsc_class{args.kernel_class}")]
     action_functions = {'test': test_programs, 'profile': profile_programs, 'run': run_programs}
-    action_functions[args.action](selected_programs, args.repetitions, devices[args.device])
+    function_args = [selected_programs, args.repetitions, devices[args.device]]
+    if args.action == 'profile':
+        function_args.append(args.output)
+    action_functions[args.action](*function_args)
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
-    # test_program('cloudsc_class2_1516', dace.DeviceType.GPU, False)
-    # test_program('cloudsc_class1_658', dace.DeviceType.GPU, False)
-    # test_program('cloudsc_class1_2783', dace.DeviceType.GPU, False)
-    # profile_program('cloudsc_class1_658', print_results=True, repetitions=20)
-    # profile_program('cloudsc_class1_2783', print_results=True, repetitions=20)
-    # test_program('cloudsc_class2_1001', dace.DeviceType.GPU, False)
-    # test_program('cloudsc_class1_670', dace.DeviceType.GPU, False)
-    # test_program('mwe_test', dace.DeviceType.GPU, False)
-    # test_programs()
-    # profile_programs()
