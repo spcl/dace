@@ -9,7 +9,7 @@ from dace.codegen import control_flow as cf
 from dace.sdfg.scope import ScopeTree
 from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
-from dace.sdfg import nodes, propagation, utils as sdutil
+from dace.sdfg import graph, nodes, propagation, utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from sympy import diff
@@ -433,6 +433,173 @@ class MoveMapIntoLoop(transformation.SingleStateTransformation):
         else:
             nsdfg.add_symbol(itervar, dace.int32)
             nsdfg.parent_nsdfg_node.symbol_mapping[itervar] = dace.symbol(itervar, dace.int32)
+
+        from dace.transformation.interstate import RefineNestedAccess
+        propagation.propagate_states(new_nsdfg.sdfg)
+        propagation.propagate_memlets_state(new_nsdfg.sdfg, nsdfg.parent)
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        propagation.propagate_memlets_state(sdfg, graph)
+
+
+class MoveMapIntoIf(transformation.SingleStateTransformation):
+    """
+    Moves a Map around an IfScope into the IfScope.
+    """
+
+    map_entry = transformation.PatternNode(nodes.EntryNode)
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+    map_exit = transformation.PatternNode(nodes.ExitNode)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg, cls.map_exit)]
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+
+        # Is the body an IfScope?
+        nsdfg = self.nested_sdfg.sdfg
+        components = helpers.find_sdfg_control_flow(nsdfg)
+        # Body must contain a single control-flow component
+        if len(components) != 1:
+            return False
+        cf_node: cf.ControlFlow
+        _, cf_node = list(components.values())[0]
+        # Component must be IfScope
+        if not isinstance(cf_node, cf.IfScope):
+            return False
+
+        mparams = set(self.map_entry.map.params)
+
+        # Check basic structure of the IfScope.
+        # The guard state must be empty
+        if_guard: dace.SDFGState = cf_node.branch_state
+        if len(if_guard.nodes()) != 0:
+            return False
+        # There must be a single sink state, the if-exit state.
+        sink_states = nsdfg.sink_nodes()
+        if len(sink_states) != 1:
+            return False
+        # The exit state must be empty.
+        if_exit: dace.SDFGState = sink_states[0]
+        if len(if_exit.nodes()) != 0:
+            return False
+        # We do not handle "orelse" yet.
+        if cf_node.orelse is not None:
+            return False
+        # The condition must not depend on the Map parameters.
+        condition = cf_node.condition
+        symbols_to_check = set(mparams)
+        for k, v in self.nested_sdfg.symbol_mapping.items():
+            try:
+                if symbolic.issymbolic(v):
+                    fsymbols = v.free_symbols
+                else:
+                    fsymbols = symbolic.pystr_to_symbolic(v).free_symbols
+            except AttributeError:
+                fsymbols = set()
+            if any(str(f) in symbols_to_check for f in fsymbols):
+                symbols_to_check.add(k)
+        if any(str(s) in symbols_to_check for s in condition.get_free_symbols()):
+            return False
+
+        # Collect read and writes from states
+        read_set: Set[str] = set()
+        write_set: Set[str] = set()
+        for state in nsdfg.states():
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+
+        # Check for map parameters in data descriptors
+        for arr in (read_set | write_set):
+            if any(p in set(map(str, nsdfg.arrays[arr].free_symbols)) for p in mparams):
+                return False
+
+        def test_subset_dependency(subset: sbs.Subset) -> Tuple[bool, List[int]]:
+            dims = []
+            for i, r in enumerate(subset):
+                if not isinstance(r, (list, tuple)):
+                    r = [r]
+                fsymbols = set()
+                for token in r:
+                    if symbolic.issymbolic(token):
+                        fsymbols = fsymbols.union({str(s) for s in token.free_symbols})
+                # NOTE: IfScopes don't have an iteration variable. Does this mean that we can ignore everything below?
+                # if itervar in fsymbols:
+                #     if fsymbols.intersection(mparams):
+                #         return (False, [])
+                #     else:
+                #         # Strong checks
+                #         if not permissive:
+                #             # Only indices allowed
+                #             if len(r) > 1 and r[0] != r[1]:
+                #                 return (False, [])
+                #             derivative = diff(r[0])
+                #             # Index function must be injective
+                #             if not (((derivative > 0) == True) or ((derivative < 0) == True)):
+                #                 return (False, [])
+                #         dims.append(i)
+            return (True, dims)
+
+        # Check that NestedSDFG memlets depend on map params in a consistent manner
+        # a. A container must either not depend at all on itervar, or depend on it always in the same dimensions.
+        # b. Abort when a dimension depends on both the itervar and a Map parameter.
+        data_dependency = dict()
+        for state in nsdfg.states():
+            for e in state.edges():
+                if any(p in e.data.free_symbols for p in mparams):
+                    e.data.try_initialize(nsdfg, state, e)
+                    for i, subset in enumerate((e.data.src_subset, e.data.dst_subset)):
+                        if subset:
+                            if i == 0:
+                                access = state.memlet_path(e)[0].src
+                            else:
+                                access = state.memlet_path(e)[-1].dst
+                            passed, dims = test_subset_dependency(subset)
+                            if not passed:
+                                return False
+                            if dims:
+                                if access.data in data_dependency:
+                                    if data_dependency[access.data] != dims:
+                                        return False
+                                else:
+                                    data_dependency[access.data] = dims
+
+        return True
+
+    def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
+
+        nsdfg = self.nested_sdfg.sdfg
+        components = helpers.find_sdfg_control_flow(nsdfg)
+        cf_node: cf.ControlFlow
+        _, cf_node = list(components.values())[0]
+        mparams = set(self.map_entry.map.params)
+
+        if_guard: dace.SDFGState = cf_node.branch_state
+        sink_states = nsdfg.sink_nodes()
+        if_exit: dace.SDFGState = sink_states[0]
+        condition = cf_node.condition
+        inv_condition = nsdfg.in_edges(if_exit)[0].data.condition
+
+        # remove IfScope.
+        nsdfg.remove_nodes_from([if_guard, if_exit])
+
+        # nest map's content in sdfg
+        map_subgraph = graph.scope_subgraph(self.map_entry, include_entry=True, include_exit=True)
+        new_nsdfg = helpers.nest_state_subgraph(sdfg, graph, map_subgraph, full_data=True)
+
+        # replicate IfScope in nested sdfg
+
+        body = new_nsdfg.sdfg.nodes()[0]
+        if_guard = new_nsdfg.sdfg.add_state('if_guard')
+        if_exit = new_nsdfg.sdfg.add_state('if_exit')
+        new_nsdfg.sdfg.add_edge(if_guard, body, dace.InterstateEdge(condition=condition))
+        new_nsdfg.sdfg.add_edge(if_guard, if_exit, dace.InterstateEdge(condition=inv_condition))
+        new_nsdfg.sdfg.add_edge(body, if_exit, dace.InterstateEdge())
 
         from dace.transformation.interstate import RefineNestedAccess
         propagation.propagate_states(new_nsdfg.sdfg)
