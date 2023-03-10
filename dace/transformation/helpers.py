@@ -134,6 +134,23 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             sdfg.add_edge(e.src, new_state, e.data)
         for e in sdfg.out_edges(sink_node):
             sdfg.add_edge(new_state, e.dst, e.data)
+        
+        # TODO: How safe is this?
+        # Record symbols defined in the subgraph's border edges
+        border_mapping = dict()
+        border_arrays = set()
+        for state in states:
+            for e in sdfg.in_edges(state):
+                if e in subgraph.edges():
+                    continue
+                border_mapping.update(e.data.assignments)
+                border_arrays.update(m.data for m in e.data.get_read_memlets(sdfg.arrays))
+                e.data.assignments = dict()
+        init_state = nsdfg.start_state
+        pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+        edge = nsdfg.edges_between(pre_init_state, init_state)[0]
+        edge.data.assignments.update({k: v for k, v in border_mapping.items()})
+        read_set.update(border_arrays)
 
         sdfg.remove_nodes_from(states)
 
@@ -303,8 +320,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             if fexit is None:
                 raise ValueError("Cannot find for-scope's exit state.")
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     raise NotImplementedError
@@ -316,6 +331,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[fexit]]
                 del visited[fexit]
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
 
             # Need init state so that ForScope is still recognized as as such after nesting
             if isinstance(child, cf.ForScope):
@@ -348,8 +365,6 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
-
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     guard = sdfg.add_state_after(guard, f"new_{guard.label}")
@@ -362,6 +377,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[ifexit]]
                 del visited[ifexit]
+            
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
 
             components[guard] = (states, child)
             visited.update({s: guard for s in states})

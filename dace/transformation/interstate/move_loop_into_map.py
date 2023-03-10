@@ -304,8 +304,16 @@ class MoveMapIntoLoop(transformation.SingleStateTransformation):
         if not loop_info:
             return False
         itervar, (start, end, step), (_, body_end) = loop_info
+        dependent_symbols = set(mparams)
+        for k, v in self.nested_sdfg.symbol_mapping.items():
+            try:
+                fsymbols = v.free_symbols
+            except AttributeError:
+                fsymbols = set()
+            if any(str(f) in dependent_symbols for f in fsymbols):
+                dependent_symbols.add(k)
         for s in (start, end, step):
-            if any(p in s.free_symbols for p in mparams):
+            if any(str(s) in dependent_symbols for s in s.free_symbols):
                 return False
 
         # Collect read and writes from states

@@ -222,6 +222,26 @@ class MapFission(transformation.SingleStateTransformation):
                     del nsdfg_node.symbol_mapping[str(name)]
                 if str(name) in nsdfg_node.sdfg.symbols:
                     del nsdfg_node.sdfg.symbols[str(name)]
+            
+            # Clean-up symbols depending on the map parameters
+            to_remove = dict()
+            for symname, symexpr in nsdfg_node.symbol_mapping.items():
+                try:
+                    fsymbols = symexpr.free_symbols
+                except AttributeError:
+                    fsymbols = set()
+                if any(str(s) in outer_map.params for s in fsymbols):
+                    to_remove[symname] = symexpr
+            if to_remove:
+                for symname in to_remove:
+                    print(f"Removing symbol {symname} from nested SDFG {nsdfg_node.label}")
+                    del nsdfg_node.symbol_mapping[symname]
+                    if symname in nsdfg_node.sdfg.symbols:
+                        del nsdfg_node.sdfg.symbols[symname]
+                init_state = nsdfg_node.sdfg.start_state
+                pre_init_state = nsdfg_node.sdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+                edge = nsdfg_node.sdfg.edges_between(pre_init_state, init_state)[0]
+                edge.data.assignments.update({str(k): str(v) for k, v in to_remove.items()})
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
