@@ -57,28 +57,11 @@ required:
                     preference only applies to symbolic ranges or ranges over
                     the autotile_size parameter.
 
-            transform_on_call:
-                type: bool
-                default: false
-                title: Transform SDFGs on Invocation
-                description: >
-                    Automatically calls sdfg.optimize() every time a DaCe
-                    program or SDFG is invoked.
-
-            interface:
-                type: str
-                default: dace.transformation.optimizer.SDFGOptimizer
-                title: SDFG Optimizer
-                description: >
-                    SDFG optimization class to import and call on
-                    sdfg.optimize(). Defaults to the transformation CLI,
-                    empty string or an invalid class name skips optimization.
-
             visualize_sdfv:
                 type: bool
                 default: false
                 title: Visualize SDFG
-                description: Open a SDFV in browser every transformation.
+                description: Open an SDFG in browser every transformation.
 
             save_intermediate:
                 type: bool
@@ -869,6 +852,24 @@ required:
         default: 100
         title: Profiling Repetitions
         description: Number of times to run program for profiling.
+
+    call_hooks:
+        type: str
+        default: ""
+        title: Hooks before/after every DaCe program call
+        description: >
+            A comma-separated list of functions (or Context Manager classes) that will
+            be called before every DaCe program (SDFG) is compiled and run. Used for
+            functionality such as automatic tuning or instrumentation.
+
+    compiled_sdfg_call_hooks:
+        type: str
+        default: ""
+        title: Hooks before/after every compiled SDFG call
+        description: >
+            A comma-separated list of functions (or Context Manager classes) that will
+            be called before every compiled SDFG's generated code is invoked. Used
+            for functionality such as low-level profiling.
 
     #############################################
     # Experimental features

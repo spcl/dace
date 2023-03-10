@@ -15,14 +15,14 @@ import re
 import shutil
 import sys
 import time
-from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
 import numpy as np
 import sympy as sp
 
 import dace
 import dace.serialize
-from dace import (data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
+from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
@@ -41,6 +41,10 @@ from typing import BinaryIO
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+
+if TYPE_CHECKING:
+    from dace.codegen.instrumentation.report import InstrumentationReport
+    from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
 
 def _arrays_to_json(arrays):
@@ -516,7 +520,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         """
-
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -840,7 +843,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         except StopIteration:
             return False
 
-    def get_instrumentation_reports(self) -> List['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_instrumentation_reports(self) -> List['InstrumentationReport']:
         """
         Returns a list of instrumentation reports from previous runs of
         this SDFG.
@@ -866,28 +869,37 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> Optional['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_latest_report_path(self) -> Optional[str]:
         """
-        Returns an instrumentation report from the latest run of this SDFG, or
+        Returns an instrumentation report file path from the latest run of this SDFG, or
         None if the file does not exist.
 
-        :return: A timestamped InstrumentationReport object, or None if does
-                 not exist.
+        :return: A path to the latest instrumentation report, or None if one does not exist.
         """
         path = os.path.join(self.build_folder, 'perf')
         files = [f for f in os.listdir(path) if f.startswith('report-')]
         if len(files) == 0:
             return None
 
+        return os.path.join(path, sorted(files, reverse=True)[0])
+
+    def get_latest_report(self) -> Optional['InstrumentationReport']:
+        """
+        Returns an instrumentation report from the latest run of this SDFG, or
+        None if the file does not exist.
+
+        :return: A timestamped InstrumentationReport object, or None if does not exist.
+        """
         # Avoid import loops
         from dace.codegen.instrumentation import InstrumentationReport
 
-        return InstrumentationReport(os.path.join(path, sorted(files, reverse=True)[0]))
+        path = self.get_latest_report_path()
+        if path is None:
+            return None
 
-    def get_instrumented_data(
-        self,
-        timestamp: Optional[int] = None
-    ) -> Optional['dace.codegen.instrumentation.data.data_report.InstrumentedDataReport']:
+        return InstrumentationReport(path)
+
+    def get_instrumented_data(self, timestamp: Optional[int] = None) -> Optional['InstrumentedDataReport']:
         """
         Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
         None if no reports exist.
@@ -929,9 +941,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for report in reports:
             shutil.rmtree(os.path.join(path, report))
 
-    def call_with_instrumented_data(self,
-                                    dreport: 'dace.codegen.instrumentation.data.data_report.InstrumentedDataReport',
-                                    *args, **kwargs):
+    def call_with_instrumented_data(self, dreport: 'InstrumentedDataReport', *args, **kwargs):
         """
         Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
@@ -1584,12 +1594,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
-        
+
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
                  | self._rdistrarrays.keys())
-        return dt.find_new_name(name,names)
-                 
-        
+        return dt.find_new_name(name, names)
+
     def find_new_constant(self, name: str):
         """
         Tries to find a new constant name by adding an underscore and a number.
@@ -1911,8 +1920,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists '
-                                "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -2137,32 +2145,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for k, v in syms.items():
             self.add_constant(str(k), v)
 
-    def optimize(self, optimizer=None) -> 'SDFG':
-        """
-        Optimize an SDFG using the CLI or external hooks.
-
-        :param optimizer: If defines a valid class name, it will be called
-                          during compilation to transform the SDFG as
-                          necessary. If None, uses configuration setting.
-        :return: An SDFG (returns self if optimizer is in place)
-        """
-        # Fill in scope entry/exit connectors
-        self.fill_scope_connectors()
-
-        optclass = _get_optimizer_class(optimizer)
-        if optclass is not None:
-            # Propagate memlets in the graph
-            if self._propagate:
-                propagate_memlets_sdfg(self)
-
-            opt = optclass(self)
-            sdfg = opt.optimize()
-        else:
-            sdfg = self
-
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-        return sdfg
-
     def is_loaded(self) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current
@@ -2309,17 +2291,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def __call__(self, *args, **kwargs):
         """ Invokes an SDFG, generating and compiling code if necessary. """
-        if Config.get_bool('optimizer', 'transform_on_call'):
-            sdfg = self.optimize()
-        else:
-            sdfg = self
+        with hooks.invoke_sdfg_call_hooks(self) as sdfg:
+            binaryobj = sdfg.compile()
 
-        binaryobj = sdfg.compile()
+            # Verify passed arguments (if enabled)
+            if Config.get_bool('frontend', 'check_args'):
+                sdfg.argument_typecheck(args, kwargs)
 
-        # Verify passed arguments (if enabled)
-        if Config.get_bool('frontend', 'check_args'):
-            sdfg.argument_typecheck(args, kwargs)
-        return binaryobj(*args, **kwargs)
+            return binaryobj(*args, **kwargs)
 
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
@@ -2666,25 +2645,3 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
-
-
-def _get_optimizer_class(class_override):
-    """ Imports and returns a class string defined in the configuration
-        (under "optimizer.interface") or overridden in the input
-        class_override argument. Empty string, False, or failure to find the
-        class skips the process.
-
-        :note: This method uses pydoc to locate the class.
-    """
-    clazz = class_override
-    if class_override is None:
-        clazz = Config.get("optimizer", "interface")
-
-    if clazz == "" or clazz is False or str(clazz).strip() == "":
-        return None
-
-    result = locate(clazz)
-    if result is None:
-        warnings.warn('Optimizer interface class "%s" not found' % clazz)
-
-    return result
