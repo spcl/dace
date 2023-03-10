@@ -13,6 +13,17 @@ from utils import read_source, get_fortran, get_sdfg, get_inputs, get_outputs, g
 
 # Copied and adapted from tests/fortran/cloudsc.py
 def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
+    """
+    Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
+    fortran
+
+    :param program: The program name
+    :type program: str
+    :param device: The deive
+    :type device: dace.DeviceType
+    :param normalize_memlets: If memlets should be normalized
+    :type normalize_memlets: bool
+    """
 
     programs_data = get_programs_data()
     fsource = read_source(program)
@@ -48,24 +59,33 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
 
 def get_stats(array: List):
-    return {'max': min(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
+    return {'max': max(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
 
 
 def print_stats(array: List):
     print(f"max: {max(array)}, min: {min(array)}, avg: {np.average(array)}, median: {np.median(array)}")
 
 
+def compile_for_profile(program: str, device: dace.DeviceType, normalize_memlets: bool) -> dace.SDFG:
+    programs = get_programs_data()['programs']
+    fsource = read_source(program)
+    program_name = programs[program]
+    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
+    auto_optimize(sdfg, device)
+    sdfg.instrument = dace.InstrumentationType.Timer
+    sdfg.compile()
+    return sdfg
+
+
 def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10)\
         -> Dict[str, List[Number]]:
 
     programs = get_programs_data()['programs']
-    print(f"{program}({programs[program]}) rep={repetitions}")
+    print(f"Profile {program}({programs[program]}) rep={repetitions}")
+    routine_name = f"{programs[program]}_routine"
     results = {}
-    fsource = read_source(program)
-    program_name = programs[program]
-    routine_name = f'{program_name}_routine'
-    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    auto_optimize(sdfg, device)
+
+    sdfg = compile_for_profile(program, device, normalize_memlets)
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
@@ -95,7 +115,7 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     # results["GPU time [ms]"]["data"] = [float(i) for i in runtimes_gpu]
     # results["GPU keys"] = list(keys_gpu)
 
-    sdfg.instrument = dace.InstrumentationType.Timer
+    # sdfg.instrument = dace.InstrumentationType.Timer
     # for node, parent in sdfg.all_nodes_recursive():
     #     if type(node) == dace.sdfg.nodes.MapEntry:
     #         id = parent.node_id(node)

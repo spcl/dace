@@ -2,11 +2,9 @@ import json
 from argparse import ArgumentParser
 from tabulate import tabulate
 import re
-from typing import List
-import numpy as np
 
-def get_stats(array: List):
-    return {'max': min(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
+from test import get_stats
+
 
 def main():
     parser = ArgumentParser()
@@ -27,7 +25,7 @@ def main():
     key_map = {}
     with open(args.dace_file) as file:
         data = json.load(file)
-        
+
         for program in data:
             for measurement in data[program]:
                 if measurement not in ['LIKWID keys', 'GPU keys']:
@@ -42,7 +40,7 @@ def main():
         for kernel_name in data:
             match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", kernel_name)
             id_triplet = tuple([int(id) for id in match.group(1).split('_')])
-            program =  key_map[id_triplet]
+            program = key_map[id_triplet]
             for measurement in ['durations', 'cycles']:
                 stats = get_stats(data[kernel_name][measurement])
                 unit = data[kernel_name][f"{measurement}_unit"]

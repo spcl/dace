@@ -7,6 +7,7 @@ from importlib import import_module
 import sys
 import tempfile
 import json
+from tabulate import tabulate
 
 import dace
 from dace.frontend.fortran import fortran_parser
@@ -118,3 +119,25 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
         for dict_key in programs_data:
             del programs_data[dict_key][program]
     return programs_data
+
+
+def print_results_v2(program_results: Dict):
+    headers = ["program", "measurement", "min", "max", "avg", "median"]
+    flat_data = []
+    for program in program_results:
+        for measurement in program_results[program]:
+            flat_data.append([program, measurement])
+            for key in headers[2:]:
+                flat_data[-1].append(program_results[program][measurement][key])
+
+    print(tabulate(flat_data, headers=headers))
+
+
+def get_results_dir() -> str:
+    """
+    Returns path to the directory where the results are stored
+
+    :return: Path to the directory
+    :rtype: str
+    """
+    return os.path.join(os.path.dirname(__file__), 'results')

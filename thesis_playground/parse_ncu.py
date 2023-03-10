@@ -5,6 +5,7 @@ from argparse import ArgumentParser
 from typing import List, Dict, Callable, Any, Optional
 import json
 
+
 class Data:
     kernel_name: str = None
     process_id: int = None
@@ -46,7 +47,7 @@ class Data:
             if row[header['Metric Name']] == 'Elapsed Cycles':
                 self._add_value(row, header, 'cycles', lambda x: int(x.replace(',', '')))
             if row[header['Metric Name']] == 'Duration':
-                self._add_value(row, header, 'durations', lambda x: float(x.replace(',','')))
+                self._add_value(row, header, 'durations', lambda x: float(x.replace(',', '')))
         return True
 
     def _add_value(self, row: List[str], header: Dict[str, int], value_name: str, parse: Callable[[str], Any]):
@@ -70,7 +71,6 @@ class Data:
             return False
         getattr(self, value_name).append(parse(row[header['Metric Value']]))
 
-    
     def get_stat(self) -> str:
         return f"duration [{self.durations_unit}](#={len(self.durations)}): min: {min(self.durations)}, max: {max(self.durations)}, " \
                f"avg: {np.average(self.durations)}, median: {np.median(self.durations)}\n"\
@@ -78,7 +78,7 @@ class Data:
                f"avg: {np.average(self.cycles)}, median: {np.median(self.cycles)}"
 
 
-def read_csv(in_stream, out_file: Optional[str]=None):
+def read_csv(in_stream, out_file: Optional[str] = None) -> List[Data]:
     reader = csv.reader(in_stream)
     data = [Data()]
     # create dict where key is header name and value the index/column of it
@@ -92,7 +92,10 @@ def read_csv(in_stream, out_file: Optional[str]=None):
             if not data[-1].add_row(row, header):
                 data.append(Data())
             assert data[-1].add_row(row, header)
+    return data
 
+
+def print_write_data(data: List[Data], out_file: Optional[str] = None):
     if out_file is not None:
         print(f"Write output into {out_file}")
         all_data = {}
@@ -104,8 +107,6 @@ def read_csv(in_stream, out_file: Optional[str]=None):
         for d in data:
             print(d.kernel_name)
             print(d.get_stat())
-    
-
 
 
 def main():
@@ -121,13 +122,11 @@ def main():
 
     args = parser.parse_args()
 
-    
     if args.file is None:
         read_csv(sys.stdin, args.output)
     else:
-        # TODO: Read from stdin via sys.stdin
         with open(args.file) as csvfile:
-            read_csv(csvfile, args.output)
+            print_write_data(read_csv(csvfile), args.output)
 
 
 if __name__ == '__main__':

@@ -16,11 +16,11 @@ parameters = {
 }
 
 custom_parameters = {
-    # 'cloudsc_class1_670': {
-    #     'KLON': 1000,
-    #     'KLEV': 10,
-    #     'KFDIA': 998,
-    #     },
+    'cloudsc_class1_670': {
+        'KLON': 100,
+        'KLEV': 100,
+        'KFDIA': 98,
+        },
 }
 
 
