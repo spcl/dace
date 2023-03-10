@@ -194,7 +194,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         # Add NestedSDFG node
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols - strictly_defined_symbols)
-        mapping = {s: s for s in fsymbols}
+        if sdfg.parent_nsdfg_node is None:
+            symbol_mapping = {}
+        else:
+            symbol_mapping = sdfg.parent_nsdfg_node.symbol_mapping
+        mapping = {s: symbol_mapping[str(s)] if str(s) in symbol_mapping else s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
@@ -325,6 +329,9 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[guard]]
                 del visited[guard]
+            
+            if len(fexit.nodes()) > 0:
+                fexit = sdfg.add_state_before(fexit, f"new_{fexit.label}")
 
             if fexit in visited:
                 if not isinstance(components[visited[fexit]][1], cf.SingleState):
@@ -348,6 +355,10 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                         break
                 if init is None:
                     raise ValueError("Cannot find for-scope's init state.")
+                
+                if len(init.nodes()) > 0:
+                    init = sdfg.add_state_after(init, f"new_{init.label}")
+                    del init_edge.data.assignments[child.itervar]
 
                 if init in visited:
                     if not isinstance(components[visited[init]][1], cf.SingleState):
@@ -365,12 +376,18 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
+            if len(guard.nodes()) > 0:
+                guard = sdfg.add_state_after(guard, f"new_{guard.label}")
+
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     guard = sdfg.add_state_after(guard, f"new_{guard.label}")
                 else:
                     del components[visited[guard]]
                     del visited[guard]
+            
+            if len(ifexit.nodes()) > 0:
+                ifexit = sdfg.add_state_before(ifexit, f"new_{ifexit.label}")
 
             if ifexit in visited:
                 if not isinstance(components[visited[ifexit]][1], cf.SingleState):
