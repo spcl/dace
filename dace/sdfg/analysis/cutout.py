@@ -5,6 +5,7 @@ testing or optimization.
 """
 from collections import deque
 import copy
+import networkx as nx
 from typing import Deque, Dict, List, Set, Tuple, Union, Optional, Any
 from dace import data, DataInstrumentationType
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
@@ -15,6 +16,7 @@ from dace.transformation.transformation import (MultiStateTransformation,
                                                 PatternTransformation,
                                                 SubgraphTransformation,
                                                 SingleStateTransformation)
+from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -302,20 +304,49 @@ class SDFGCutout(SDFG):
         if any(i.parent != sdfg for i in states):
             raise Exception('Not all cutout states reside in the same SDFG')
 
+        state_reachability_dict = StateReachability().apply_pass(sdfg, None)
+        state_reach = state_reachability_dict[sdfg.sdfg_id]
+
         cutout_states: Set[SDFGState] = set(states)
 
         # Determine the start state and ensure there IS a unique start state. If there is no unique start state, keep
         # adding states from the predecessor frontier in the state machine until a unique start state can be determined.
         start_state: Optional[SDFGState] = None
+        all_in_edges = set()
         for state in cutout_states:
             if state == sdfg.start_state:
                 start_state = state
                 break
+            for e in sdfg.in_edges(state):
+                all_in_edges.add(e)
+        idoms = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+        inverted_idoms = {}
+        for k, v in idoms.items():
+            if v not in inverted_idoms:
+                inverted_idoms[v] = set([k])
+            else:
+                inverted_idoms[v].add(k)
+        if start_state is None:
+            start_edge_candidates = set()
+            for e in all_in_edges:
+                if e.src not in cutout_states:
+                    # If the source can be reached by the cutout, it is not a
+                    # candidate.
+                    reachable = False
+                    for s in cutout_states:
+                        if e.src in state_reach[s]:
+                            reachable = True
+                            break
+                    if not reachable:
+                        start_edge_candidates.add(e)
+            if len(start_edge_candidates) == 1:
+                start_state = list(start_edge_candidates)[0].dst
 
         if start_state is None:
             bfs_queue: Deque[Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]] = deque()
             bfs_queue.append(_stateset_predecessor_frontier(cutout_states))
 
+            ignored = set()
             while len(bfs_queue) > 0:
                 frontier, frontier_edges = bfs_queue.popleft()
                 if len(frontier_edges) == 0:
@@ -334,9 +365,22 @@ class SDFGCutout(SDFG):
                         start_state = list(frontier)[0]
                         cutout_states.add(start_state)
                     else:
+                        # From the frontier, add everything that comes before the cutout (i.e., dominators) and ignore
+                        # everything that comes after the cutout.
                         for s in frontier:
-                            cutout_states.add(s)
-                        bfs_queue.append(_stateset_predecessor_frontier(cutout_states))
+                            preceeding = False
+                            if s in inverted_idoms:
+                                for sdominated in inverted_idoms[s]:
+                                    if sdominated in cutout_states:
+                                        preceeding = True
+                                        break
+                            if preceeding:
+                                cutout_states.add(s)
+                                for sbetween in sdfg.all_nodes_between(s, inverted_idoms[s]):
+                                    cutout_states.add(sbetween)
+                            else:
+                                ignored.add(s)
+                        bfs_queue.append(_stateset_predecessor_frontier(cutout_states, ignored))
 
         subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
 
@@ -346,12 +390,26 @@ class SDFGCutout(SDFG):
         defined_symbols: Dict[str, data.Data] = dict()
         free_symbols: Set[str] = set()
         for state in cutout_states:
-            free_symbols |= state.free_symbols
+            free_symbols = free_symbols.union(state.free_symbols)
             state_defined_symbols = state.defined_symbols()
             for sym in state_defined_symbols:
                 defined_symbols[sym] = state_defined_symbols[sym]
+            for edge in sdfg.in_edges(state):
+                if edge.src in cutout_states:
+                    for sym in edge.data.free_symbols:
+                        free_symbols.add(sym)
+            for edge in sdfg.out_edges(state):
+                if edge.dst in cutout_states:
+                    for sym in edge.data.free_symbols:
+                        free_symbols.add(sym)
         for sym in free_symbols:
-            cutout.add_symbol(sym, defined_symbols[sym])
+            if sym in defined_symbols:
+                cutout.add_symbol(sym, defined_symbols[sym])
+            elif sym in sdfg.arrays:
+                new_desc = sdfg.arrays[sym].clone()
+                cutout.add_datadesc(sym, new_desc)
+            else:
+                raise KeyError(f'Symbol {sym} is not defined in the SDFG')
 
         for state in cutout_states:
             for dnode in state.data_nodes():
@@ -403,7 +461,9 @@ class SDFGCutout(SDFG):
 
         # Determine what counts as inputs / outputs to the cutout and make those data containers global / non-transient.
         if make_side_effects_global:
-            in_reach, out_reach = _determine_cutout_reachability(cutout, sdfg, in_translation, out_translation)
+            in_reach, out_reach = _determine_cutout_reachability(
+                cutout, sdfg, in_translation, out_translation, state_reach=state_reach
+            )
             cutout.input_config = _cutout_determine_input_config(cutout, in_reach, in_translation, out_translation)
             cutout.output_config = _cutout_determine_output_configuration(
                 cutout, out_reach, in_translation, out_translation
@@ -442,12 +502,27 @@ def _transformation_determine_affected_nodes(
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
 
-        for k, _ in transformation._get_pattern_nodes().items():
-            try:
-                affected_nodes.add(getattr(transformation, k))
-            except KeyError:
-                # Ignored.
-                pass
+        if isinstance(transformation, DetectLoop):
+            # Find all loop-body states
+            to_visit = [transformation.loop_begin]
+            while to_visit:
+                state = to_visit.pop(0)
+                for _, dst, _ in state.parent.out_edges(state):
+                    if dst not in affected_nodes and dst is not transformation.exit_state:
+                        to_visit.append(dst)
+                affected_nodes.add(state)
+
+            affected_nodes.add(transformation.exit_state)
+            affected_nodes.add(transformation.loop_guard)
+            for iedge in transformation.loop_begin.parent.in_edges(transformation.loop_guard):
+                affected_nodes.add(iedge.src)
+        else:
+            for k, _ in transformation._get_pattern_nodes().items():
+                try:
+                    affected_nodes.add(getattr(transformation, k))
+                except KeyError:
+                    # Ignored.
+                    pass
     else:
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
@@ -479,7 +554,9 @@ def _transformation_determine_affected_nodes(
 
     return affected_nodes
 
-def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:
+def _stateset_predecessor_frontier(
+        states: Set[SDFGState], ignored: Optional[Set[SDFGState]] = None
+) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:
     """
     For a set of states, return their predecessor frontier.
     The predecessor frontier refers to the predecessor states leading into any of the states in the given set.
@@ -489,16 +566,19 @@ def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGStat
     {A, B} and edges {(A, C), (B, C), (B, D)}.
 
     :param states: The set of states to find the predecessor frontier of.
+    :param ignored: A set of states to ignore when determining the predecessor frontier.
     :return: A tuple of the predecessor frontier states and the predecessor frontier edges.
     """
+    if ignored is None:
+        ignored = set()
     pred_frontier = set()
     pred_frontier_edges = set()
     for state in states:
         for iedge in state.parent.in_edges(state):
             if iedge.src not in states:
-                if iedge.src not in pred_frontier:
+                if iedge.src not in pred_frontier and iedge.src not in ignored:
                     pred_frontier.add(iedge.src)
-                if iedge not in pred_frontier_edges:
+                if iedge not in pred_frontier_edges and iedge.src not in ignored:
                     pred_frontier_edges.add(iedge)
     return pred_frontier, pred_frontier_edges
 
@@ -750,6 +830,12 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                     if any([o.dst not in in_translation for o in oedges]):
                         if dn.data in check_for_read_after:
                             system_state.add(dn.data)
+            # Check for reads on interstate edges.
+            for edge in original_state.parent.out_edges(original_state):
+                memlets = edge.data.get_read_memlets(original_state.parent.arrays)
+                for memlet in memlets:
+                    if memlet.data in check_for_read_after:
+                        system_state.add(memlet.data)
 
     for state in cutout_reach:
         for dn in state.data_nodes():
@@ -758,5 +844,16 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                 # part of the system state.
                 if dn.data in check_for_read_after:
                     system_state.add(dn.data)
+        # Check for reads on interstate edges.
+        for edge in original_state.parent.in_edges(state):
+            memlets = edge.data.get_read_memlets(state.parent.arrays)
+            for memlet in memlets:
+                if memlet.data in check_for_read_after:
+                    system_state.add(memlet.data)
+        for edge in original_state.parent.out_edges(state):
+            memlets = edge.data.get_read_memlets(state.parent.arrays)
+            for memlet in memlets:
+                if memlet.data in check_for_read_after:
+                    system_state.add(memlet.data)
 
     return system_state
