@@ -89,6 +89,58 @@ public:
         this->folder = folder;
     }
 
+    template <typename T>
+    void save_symbol(const std::string &symbol_name, const std::string &filename, const T symbol_value) {
+        if (!this->enable) return;
+        std::lock_guard<std::mutex> guard(this->_mutex);
+
+        // Update version
+        int version;
+        if (this->version.find(symbol_name) == this->version.end())
+            version = 0;
+        else
+            version = this->version[symbol_name] + 1;
+        this->version[symbol_name] = version;
+
+        std::stringstream ss;
+        ss << this->folder << "/" << symbol_name;
+
+        // Try to create directory for symbol versions
+        if (!create_directory(ss.str().c_str())) {
+            if (version == 0)  // Only print the first time
+                printf("WARNING: Could not create directory '%s' for data instrumentation.\n", ss.str().c_str());
+            return;
+        }
+
+        // Write contents to file
+        ss << "/" << filename << "_" << version;
+        std::ofstream ofs(ss.str(), std::ios::out);
+        ofs << symbol_value;
+    }
+
+    template <typename T>
+    T restore_symbol(const std::string &symbol_name, const std::string &filename) {
+        std::lock_guard<std::mutex> guard(this->_mutex);
+
+        // Update version
+        int version;
+        if (this->version.find(symbol_name) == this->version.end())
+            version = 0;
+        else
+            version = this->version[symbol_name] + 1;
+        this->version[symbol_name] = version;
+
+        // Read contents from file
+        std::stringstream ss;
+        ss << this->folder << "/" << symbol_name << "/" << filename << "_" << version;
+        std::ifstream ifs(ss.str(), std::ios::in);
+
+        // Read the symbol back
+        T val;
+        ifs >> val;
+        return val;
+    }
+
     template <typename T, typename... Args>
     void save(const T *buffer, size_t size, const std::string &arrayname, const std::string &filename, Args... shape_stride) {
         // NOTE: The "shape_stride" parameter is two concatenated tuples of shape, strides

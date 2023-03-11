@@ -7,6 +7,8 @@ import sys
 import argparse
 import shutil
 
+from dace.transformation.optimizer import SDFGOptimizer
+
 
 def main():
     # Command line options parser
@@ -43,7 +45,7 @@ def main():
     sdfg = dace.SDFG.from_file(filepath)
 
     if args.optimize:
-        sdfg.optimize()
+        sdfg = SDFGOptimizer(sdfg).optimize()
 
     # Compile SDFG
     sdfg.compile(outpath)

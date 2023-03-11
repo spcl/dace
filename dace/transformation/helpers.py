@@ -173,7 +173,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             w = new_state.add_write(name)
             new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
 
-        # Part (2) 
+        # Part (2)
         if out_state is not None:
             extra_state = sdfg.add_state('symbolic_output')
             for e in sdfg.out_edges(new_state):
@@ -707,28 +707,30 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
                      preserve_minima: bool = False,
                      use_src_subset: bool = False,
-                     use_dst_subset: bool = False) -> Memlet:
+                     use_dst_subset: bool = False,
+                     internal_offset: Tuple[int] = None,
+                     external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
-
-        :param internal_memlet: The internal memlet (inside nested SDFG)
-                                before modification.
+        :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
-        :param use_src_subset: If both sides of the memlet refer to same array,
-                               prefer source subset.
-        :param use_dst_subset: If both sides of the memlet refer to same array,
-                               prefer destination subset.
+        :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
+        :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
+        :param internal_offset: The internal memlet's data descriptor offset.
+        :param external_offset: The external memlet's data descriptor offset.
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    internal_offset = internal_offset or [0] * len(internal_subset)
+    external_offset = external_offset or [0] * len(external_memlet.subset)
+    internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
     result.subset = internal_subset
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
-
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
@@ -738,39 +740,56 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         else:
             to_unsqueeze = ones
 
+        # NOTE: There can be an issue where a unitary dimension wasn't squeezed, e.g., when using the dataflow syntax.
+        # In such cases, more ones than necessary will be detected.
+        # TODO: Find a better solution
+        if len(internal_subset) + len(to_unsqueeze) > len(external_memlet.subset):
+            external_subset = external_memlet.subset.offset_new(external_offset, False)
+            to_unsqueeze = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
+        if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
+            raise NotImplementedError
+
         result.subset.unsqueeze(to_unsqueeze)
+        internal_offset = list(internal_offset)
+        for axis in sorted(to_unsqueeze):
+            internal_offset.insert(axis, external_offset[axis])
     elif len(internal_subset) > len(external_memlet.subset):
         # Try to squeeze internal memlet
-        result.subset.squeeze()
+        remaining = result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Unexpected extra dimensions in internal memlet '
                              'while un-squeezing memlet.\nExternal memlet: %s\n'
                              'Internal memlet: %s' % (external_memlet, internal_memlet))
+        internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
-    result.subset.offset(external_memlet.subset, False)
+    external_subset = external_memlet.subset.offset_new(external_offset, False)
+    result.subset.offset(external_subset, False)
+    result.subset.offset(external_offset, True)
 
     if preserve_minima:
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
                              'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
             rb, re, rs = result.subset.ranges[i]
             result.subset.ranges[i] = (original_minima[i], re, rs)
-
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
         raise NotImplementedError
 
     # Actual result preserves 'other subset' and placement of subsets in memlet
     actual_result = Memlet.from_memlet(internal_memlet)
-    if actual_result.subset != internal_subset and actual_result.other_subset:
-        actual_result.other_subset = result.subset
+    actual_result.data = external_memlet.data
+    if actual_result.other_subset:
+        if internal_memlet.data == external_memlet.data:
+            actual_result.subset = result.subset
+        else:
+            actual_result.other_subset = actual_result.subset
+            actual_result.subset = result.subset
+            actual_result._is_data_src = not actual_result._is_data_src
     else:
-        actual_result.data = external_memlet.data
         actual_result.subset = result.subset
-    actual_result._is_data_src = internal_memlet._is_data_src
 
     return actual_result
 
@@ -1286,3 +1305,37 @@ def redirect_edge(state: SDFGState,
     new_edge = state.add_edge(new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn
                               or edge.dst_conn, memlet)
     return new_edge
+
+
+def can_run_state_on_fpga(state: SDFGState):
+    """
+    Checks if state can be executed on FPGA. Used by FPGATransformState 
+    and HbmTransform.
+    """
+    for node, graph in state.all_nodes_recursive():
+        # Consume scopes are currently unsupported
+        if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
+            return False
+
+        # Streams have strict conditions due to code generator limitations
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
+            nodedesc = graph.parent.arrays[node.data]
+            sdict = graph.scope_dict()
+            if nodedesc.storage in [
+                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
+            ]:
+                return False
+
+            # Cannot allocate FIFO from CPU code
+            if sdict[node] is None:
+                return False
+
+            # Arrays of streams cannot have symbolic size on FPGA
+            if symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
+                return False
+
+            # Streams cannot be unbounded on FPGA
+            if nodedesc.buffer_size < 1:
+                return False
+
+    return True
