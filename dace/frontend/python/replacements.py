@@ -1910,7 +1910,7 @@ _pyop2symtype = {
     "<=": sp.LessThan,
     ">": sp.StrictGreaterThan,
     "<": sp.StrictLessThan,
-    # Boolean ops
+    # Binary ops
     "//": symbolic.int_floor,
 }
 

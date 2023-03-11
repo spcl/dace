@@ -287,8 +287,7 @@ class Ger(LibraryNode):
                 desc_y = sdfg.arrays[memlet.data]
 
         if size_a is None or size_x is None:
-            raise ValueError("Expected at least two inputs to Ger "
-                             "(matrix A and vector x)")
+            raise ValueError("Expected at least two inputs to Ger (matrix A and vector x)")
 
         if size_y is None:
             raise ValueError("Expected exactly one output from Ger (vector y).")

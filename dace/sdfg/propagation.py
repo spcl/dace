@@ -979,8 +979,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
 
                     if inside_memlet.wcr is not None:
                         if (memlet.wcr is not None and memlet.wcr != inside_memlet.wcr):
-                            warnings.warn('Memlet appears with more than one'
-                                          ' type of write-conflict resolution.')
+                            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
                         memlet.wcr = inside_memlet.wcr
 
                     if memlet.dynamic and memlet.volume == 0:
@@ -1023,8 +1022,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                     # union of the ranges to merge the subsets.
                     if memlet.subset is not None:
                         if memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges '
-                                             'of unequal dimension!')
+                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
                         else:
                             memlet.subset = subsets.union(memlet.subset, subset)
                             if memlet.subset is None:
@@ -1325,8 +1323,7 @@ def propagate_memlet(dfg_state,
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined '
-                           'in SDFG.' % memlet.data)
+            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
 
         # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
         #        so this test cannot be used

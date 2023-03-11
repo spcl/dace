@@ -616,8 +616,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer '
-                            'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
