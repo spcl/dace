@@ -2991,7 +2991,8 @@ class ProgramVisitor(ExtNodeVisitor):
         new_memlet = None
         if has_indirection:
             new_memlet = dace.Memlet.from_array(parent_name, parent_array)
-            new_memlet.volume = rng.num_elements()
+            volume = rng.num_elements()
+            new_memlet.volume = volume if not symbolic.issymbolic(volume) else -1
         else:
             new_memlet = dace.Memlet.simple(parent_name, rng)
 
