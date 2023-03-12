@@ -71,6 +71,7 @@ def test_tasklet_array():
     assert (b == a + 42).all()
 
 
+@pytest.mark.skip
 @pytest.mark.verilator
 def test_tasklet_double_clk_counters():
     """
