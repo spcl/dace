@@ -33,7 +33,7 @@ jobs:
       run: |
         export DACE_cache=unique
         . /opt/setupenv
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi"
+        pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument"
 
     - name: Run MPI tests
       run: |
