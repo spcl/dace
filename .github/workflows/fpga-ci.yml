@@ -32,8 +32,9 @@ jobs:
         faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         coverage report
         coverage xml
-        ping -W 2 -c 1 codecov.io
-        if [ $? -eq 0 ]; then
+        reachable=0
+        ping -W 2 -c 1 codecov.io || reachable=$?
+        if [ $reachable -eq 0 ]; then
           codecov
         else
           echo "Codecov.io is unreachable"
