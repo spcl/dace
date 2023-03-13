@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python
 
 import sys
@@ -39,7 +38,6 @@ class Loop(Node):
 class Map(Node):
     schedule: dace.dtypes.ScheduleType = field(default_factory=lambda : ScheduleType.Default)
     execution_count: sympy.core.add.Add = field(default_factory=lambda : sympy.core.add.Add())
-    exec: sympy.dataclass_json
 
 @dataclass_json
 @dataclass
@@ -218,16 +216,6 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent_name: Optio
             subg.node_attr.update(style='filled', color='white')
             subg.attr(label=serialized.name)
 
-            #print(f'Add graph {subg.name}')
-
-            #size = 5
-            #for pos in range(0, len(serialized.children), size):
-
-            #    dummy_node_name = f"{serialized.name}_dummy_{pos}"
-            #    dummy_node = subg.node(dummy_node_name, style='invis')
-            #    subg.edge(serialized.name, dummy_node_name)
-            #    for child in serialized.children[pos:pos + size]:
-            #        visualize_sdfg(child, subg, dummy_node_name)
             for child in serialized.children:
                 visualize_sdfg(child, subg, serialized.name)
 
@@ -264,10 +252,11 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent_name: Optio
 if __name__ == "__main__":
 
     import sys
-    sdfg = dace.SDFG.from_file('generation_full/test.sdfg')
+    sdfg = dace.SDFG.from_file(sys.argv[1])
 
     result = analyze_sdfg(sdfg)
 
     import graphviz
-    g = graphviz.Digraph('test')
+    g = graphviz.Digraph(sys.argv[2])
     visualize_sdfg(result, g)
+    g.render()
