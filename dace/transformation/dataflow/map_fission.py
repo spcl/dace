@@ -521,9 +521,9 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.num_accesses = edge.data.subset.num_elements()
 
                 # Find matching edge inside map
-                inner_edge = next(e for e in graph.out_edges(map_entry)
-                                  if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
-                graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
+                # inner_edge = next(e for e in graph.out_edges(map_entry) if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
+                for inner_edge in graph.out_edges_by_connector(map_entry, f"OUT_{edge.dst_conn[3:]}"):
+                    graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
 
             for edge in graph.out_edges(map_exit):
                 # Modify edge coming out of nested SDFG to include entire array
@@ -531,8 +531,9 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.subset = subsets.Range.from_array(desc)
 
                 # Find matching edge inside map
-                inner_edge = next(e for e in graph.in_edges(map_exit) if e.dst_conn[3:] == edge.src_conn[4:])
-                graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
+                # inner_edge = next(e for e in graph.in_edges(map_exit) if e.dst_conn[3:] == edge.src_conn[4:])
+                for inner_edge in graph.in_edges_by_connector(map_exit, f"IN_{edge.src_conn[4:]}"):
+                    graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
