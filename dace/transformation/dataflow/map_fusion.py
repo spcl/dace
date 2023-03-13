@@ -96,6 +96,10 @@ class MapFusion(transformation.SingleStateTransformation):
                     if _out_e.data.data == _in_e.data.data:
                         # wcr is on a node that is used in the second map, quit
                         return False
+        
+        # Collect output access nodes (for in/out intermediates that can be safely removed)
+        second_outputs = set(e.data.data for e in graph.out_edges(second_map_exit))
+    
         # Check whether there is a pattern map -> access -> map.
         intermediate_nodes = set()
         intermediate_data = set()
@@ -107,6 +111,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 # If array is used anywhere else in this state.
                 num_occurrences = len([
                     n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                    and n.data not in second_outputs
                 ])
                 if num_occurrences > 1:
                     return False
@@ -135,12 +140,15 @@ class MapFusion(transformation.SingleStateTransformation):
 
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
-        for second_edge in graph.out_edges(second_map_entry):
+        for second_edge in graph.out_edges(second_map_entry) + graph.in_edges(second_map_exit):
             # NOTE: We ignore edges that do not carry data (e.g., connecting a tasklet with no inputs to the MapEntry)
             if second_edge.data.is_empty():
                 continue
             # Memlets that do not come from one of the intermediate arrays
             if second_edge.data.data not in intermediate_data:
+                if second_edge.dst is second_map_exit:
+                    # This is an inout memlet, we only care about intermediates in this case
+                    continue
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:
@@ -280,6 +288,8 @@ class MapFusion(transformation.SingleStateTransformation):
         second_entry = self.second_map_entry
         second_exit = graph.exit_node(second_entry)
 
+        second_outputs = set(e.data.data for e in graph.out_edges(second_exit))
+
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):
             intermediate_nodes.add(dst)
@@ -289,7 +299,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # is used at another location (cannot erase)
         do_not_erase = set()
         for node in intermediate_nodes:
-            if sdfg.arrays[node.data].transient is False:
+            if sdfg.arrays[node.data].transient is False and node.data not in second_outputs:
                 do_not_erase.add(node)
             else:
                 for edge in graph.in_edges(node):
