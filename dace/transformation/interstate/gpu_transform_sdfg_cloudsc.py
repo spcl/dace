@@ -544,7 +544,8 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                     # array cloned here
                     else:
                         desc = sdfg.arrays[nname]
-                        hostname = nname
+                        #hostname = nname
+                        hostname = cloned_arrays[nname]['cpu']
                         devicename = cloned_arrays[nname]['gpu']
 
                     src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
