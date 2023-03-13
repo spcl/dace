@@ -1608,3 +1608,53 @@ class RemoveSliceView(pm.SingleStateTransformation):
             new_subset[adim] = (rb, re, rs)
 
         return subsets.Range(new_subset)
+
+
+class RemoveIntermediateWrite(pm.SingleStateTransformation):
+    """ Moves intermediate writes insde a Map's subgraph outside the Map.
+    
+    Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
+    """
+
+    write = pm.PatternNode(nodes.AccessNode)
+    map_exit = pm.PatternNode(nodes.MapExit)
+
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.write, cls.map_exit)]
+
+    def can_be_applied(self, state: SDFGState, _: int, sdfg: SDFG, permissive=False):
+
+        # The output edges must have empty Memlets
+        edges = state.edges_between(self.write, self.map_exit)
+        if any(not e.data.is_empty() for e in edges):
+            return False
+        
+        # The input edges must either depend on all the Map parameters or have WCR.
+        for edge in state.in_edges(self.write):
+            if edge.data.wcr:
+                continue
+            fsymbols = [str(s) for s in edge.data.free_symbols]
+            if any(p not in fsymbols for p in self.map_exit.map.params):
+                return False
+
+        return True
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+
+        entry_node = state.entry_node(self.map_exit)
+        scope_dict = state.scope_dict()
+        
+        outer_write = state.add_access(self.write.data)
+        for edge in state.in_edges(self.write):
+            state.add_memlet_path(edge.src, self.map_exit, outer_write, memlet=edge.data, src_conn=edge.src_conn)
+        state.remove_node(self.write)
+
+        if scope_dict[entry_node] is not None:
+            exit_node = state.exit_node(scope_dict[entry_node])
+            state.add_nedge(outer_write, exit_node, mm.Memlet())
+            # Clean-up edges with empty Memlets since they are not needed anymore.
+            for edge in state.edges_between(self.map_exit, exit_node):
+                if edge.data.is_empty():
+                    state.remove_edge(edge)
