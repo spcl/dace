@@ -124,8 +124,11 @@ class MapFission(transformation.SingleStateTransformation):
             # Get NestedSDFG control flow components
             cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
             if len(cf_comp) == 1:
-                return False
-            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+                cf_item = list(cf_comp.values())[0][1]
+                if not isinstance(cf_item, cf.SingleState):
+                    return False
+            else:
+                helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
