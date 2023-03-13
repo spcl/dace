@@ -105,11 +105,17 @@ def analyze_map(map_node: dace.nodes.MapEntry, parent: Node):
 
     # skip duplicated names
     if map_node.label.startswith('outer_fused'):
-        if map_node.label not in map_name_mapping:
-            map_name_mapping[map_node.label] = f"{map_node.label}_{len(map_name_mapping) + 1}"
-        map_entry.name = map_name_mapping[map_node.label]
+        map_name = f"{map_node.label}_{len(map_name_mapping) + 1}"
     else:
-        map_entry.name = map_node.label
+        map_name = map_node.label
+
+    if map_name not in map_name_mapping:
+        map_name_mapping[map_name] = 1
+    else:
+        map_name_mapping[map_name] += 1
+        map_name = f"{map_name}_{map_name_mapping[map_name]}"
+
+    map_entry.name = map_name
 
     return map_entry
 
@@ -187,7 +193,7 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
 
     return cur_node
 
-def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent: Optional[Node] = None):
+def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent_name: Optional[str] = None):
 
     if isinstance(serialized, SDFG):
 
@@ -197,13 +203,23 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent: Optional[N
             subg.attr(label=serialized.name)
 
             #print(f'Add graph {subg.name}')
+
+            #size = 5
+            #for pos in range(0, len(serialized.children), size):
+
+            #    dummy_node_name = f"{serialized.name}_dummy_{pos}"
+            #    dummy_node = subg.node(dummy_node_name, style='invis')
+            #    subg.edge(serialized.name, dummy_node_name)
+            #    for child in serialized.children[pos:pos + size]:
+            #        visualize_sdfg(child, subg, dummy_node_name)
             for child in serialized.children:
-                visualize_sdfg(child, subg, serialized)
+                visualize_sdfg(child, subg, serialized.name)
 
     elif isinstance(serialized, Map):
 
         # FIXME: find parent
-        graph.edge(parent.name, serialized.name)
+        print(parent_name, serialized.name)
+        graph.edge(parent_name, serialized.name)
 
         label = f"""<<B>Map</B>: {serialized.name} <BR/>
         <B>Schedule:</B> {serialized.schedule}>"""
@@ -214,27 +230,25 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent: Optional[N
             graph.node(serialized.name, shape='parallelogram', fillcolor='white', color='black', label=label)
 
         for child in serialized.children:
-            visualize_sdfg(child, graph, serialized)
+            visualize_sdfg(child, graph, serialized.name)
 
     elif isinstance(serialized, Loop):
 
-        graph.edge(parent.name, serialized.name)
+        graph.edge(parent_name, serialized.name)
 
         label = f"""<<B>Loop</B>: {serialized.name}>"""
 
         graph.node(serialized.name, shape='ellipse', fillcolor='lightblue', color='black', label=label)
 
         for child in serialized.children:
-            visualize_sdfg(child, graph, serialized)
+            visualize_sdfg(child, graph, serialized.name)
 
 if __name__ == "__main__":
 
     import sys
-    #sdfg = dace.SDFG.from_file(sys.argv[1])
     sdfg = dace.SDFG.from_file('generation_full/test.sdfg')
 
     result = analyze_sdfg(sdfg)
-    #print(sdfg.label)
 
     import graphviz
     g = graphviz.Digraph('test')
