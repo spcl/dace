@@ -1,4 +1,6 @@
 
+#!/usr/bin/env python
+
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, NewType, Optional, Tuple
@@ -10,6 +12,8 @@ from dace.codegen import control_flow
 from dace.dtypes import ScheduleType
 from dace.transformation import helpers
 from dace.sdfg import utils as sdutil
+
+import sympy
 
 import graphviz
 
@@ -26,6 +30,7 @@ class Node:
 @dataclass_json
 @dataclass
 class Loop(Node):
+    execution_count: sympy.core.add.Add = field(default_factory=lambda : sympy.core.add.Add())
     def __hash__(self):
         return hash(self.name)
 
@@ -33,6 +38,8 @@ class Loop(Node):
 @dataclass
 class Map(Node):
     schedule: dace.dtypes.ScheduleType = field(default_factory=lambda : ScheduleType.Default)
+    execution_count: sympy.core.add.Add = field(default_factory=lambda : sympy.core.add.Add())
+    exec: sympy.dataclass_json
 
 @dataclass_json
 @dataclass
@@ -40,7 +47,7 @@ class SDFG(Node):
     pass
 
 LoopMappingType = NewType('LoopMappingType', Dict[dace.SDFGState, control_flow.ForScope])
-LoopsType = NewType('LoopMappingType', Dict[str, Optional[Loop]])
+LoopsType = NewType('LoopMappingType', Dict[str, Tuple[control_flow.ForScope, Optional[Loop]]])
 
 def analyze_loops(sdfg: dace.SDFG, serialized: Node) -> Tuple[LoopMappingType, LoopsType]:
 
@@ -69,7 +76,7 @@ def analyze_loops(sdfg: dace.SDFG, serialized: Node) -> Tuple[LoopMappingType, L
 
         nonlocal loops, loop_nesting
 
-        loops[scope.guard.label] = None
+        loops[scope.guard.label] = (loop, None)
         if scope != loop:
             loop_nesting[scope.guard.label] = loop.guard.label
         for body_state in scope.body.elements:
@@ -102,6 +109,11 @@ def analyze_map(map_node: dace.nodes.MapEntry, parent: Node):
     map_entry = Map()
     map_entry.schedule = map_node.schedule
     parent.children.append(map_entry)
+
+    expr = map_node.map.range.ranges[0][1] - map_node.map.range.ranges[0][0]
+    from sympy import symbols
+    x = symbols('NCLV')
+    map_entry.execution_count = expr.subs(x, 5)
 
     # skip duplicated names
     if map_node.label.startswith('outer_fused'):
@@ -143,14 +155,23 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
 
     for loop in loops.keys():
         loop_node = Loop(name=loop)
-        loops[loop] = loop_node
+        loop_sdfg = loops[loop][0]
+
+        from sympy import symbols
+        x = symbols('NCLV')
+        loop_node.execution_count = loop_sdfg.guard.executions.subs(x, 5)
+
+        loops[loop] = (loop_sdfg, loop_node)
 
     loops_without_parents = set()
 
-    for loop, loop_node in loops.items():
+    for loop, v in loops.items():
+
+        loop_sdfg, loop_node = v
+
         if loop in loop_nesting:
             parent_loop = loop_nesting[loop]
-            loops[parent_loop].children.append(loop_node)
+            loops[parent_loop][1].children.append(loop_node)
         else:
             loops_without_parents.add(loop_node)
             #cur_node.children.append(loop_node)
@@ -160,7 +181,7 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
         parent = cur_node
         # check if the state is inside a loop
         if state in loop_mapping:
-            parent = loops[loop_mapping[state].guard.label]
+            parent = loops[loop_mapping[state].guard.label][1]
 
         maps = {}
         # first, find all maps - we need to create nodes and then explore map bodies.
@@ -182,11 +203,6 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
                         analyze_sdfg(node.sdfg, maps[node])
                     else:
                         analyze_sdfg(node.sdfg, parent)
-
-                #case dace.nodes.MapEntry:
-
-                #    print("Map", node.label)
-                #    print(state.scope_children()[node])
 
     for loop in loops_without_parents:
         cur_node.children.append(loop)
@@ -217,12 +233,12 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent_name: Optio
 
     elif isinstance(serialized, Map):
 
-        # FIXME: find parent
-        print(parent_name, serialized.name)
         graph.edge(parent_name, serialized.name)
 
-        label = f"""<<B>Map</B>: {serialized.name} <BR/>
-        <B>Schedule:</B> {serialized.schedule}>"""
+        label = f"""<
+        <B>Map</B>: {serialized.name} <BR/>
+        <B>Schedule:</B> {serialized.schedule} <BR/>
+        <B>Executions:</B> {serialized.execution_count}>"""
 
         if serialized.schedule == ScheduleType.GPU_Device:
             graph.node(serialized.name, shape='parallelogram', fillcolor='green', color='black', label=label)
@@ -236,7 +252,9 @@ def visualize_sdfg(serialized: Node, graph: graphviz.Digraph, parent_name: Optio
 
         graph.edge(parent_name, serialized.name)
 
-        label = f"""<<B>Loop</B>: {serialized.name}>"""
+        label = f"""<
+        <B>Loop</B>: {serialized.name} <BR/>
+        <B>Executions:</B> {serialized.execution_count}>"""
 
         graph.node(serialized.name, shape='ellipse', fillcolor='lightblue', color='black', label=label)
 
