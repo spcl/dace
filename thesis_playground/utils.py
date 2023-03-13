@@ -112,7 +112,8 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     :return: Dictionary with information about programs
     :rtype: Dict[str, Dict]
     """
-    with open('thesis_playground/programs.json') as file:
+    programs_file = os.path.join(os.path.dirname(__file__), 'programs.json')
+    with open(programs_file) as file:
         programs_data = json.load(file)
 
     for program in not_working:

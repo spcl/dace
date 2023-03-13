@@ -59,7 +59,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
 
 def get_stats(array: List):
-    return {'max': max(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
+    return {'max': min(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
 
 
 def print_stats(array: List):
