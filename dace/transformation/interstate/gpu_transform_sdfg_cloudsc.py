@@ -8,7 +8,9 @@ from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
+from enum import Enum
+from dataclasses import dataclass
 
 from dace.transformation.pass_pipeline import Pipeline
 
@@ -73,6 +75,108 @@ def _recursive_in_check(node, state, gpu_scalars):
 
 def _codenode_condition(node):
     return isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.schedule == dtypes.ScheduleType.GPU_Default
+
+class ArrayStatus(Enum):
+    """
+        At the moment, we ignore a scenario where we work on a nested SDFG,
+        and the array has a CPU copy in the outer SDFG.
+    """
+    CPU_ONLY = 0
+    GPU_ONLY = 1
+    CPU_AND_GPU_OUTER_SDFG = 2
+    CPU_AND_GPU_THIS_SDFG = 3
+
+@dataclass
+class ArrayType:
+    cpu: Optional[str]
+    gpu: Optional[str]
+    status: ArrayStatus
+
+class SDFGArrays:
+
+    def __init__(self, sdfg: sd.SDFG):
+        self._arrays = {}
+        self._sdfg = sdfg
+
+    def move_to_gpu(self, name: str) -> str:
+        desc = self._sdfg.arrays[name]
+        desc.storage = dtypes.StorageType.GPU_Global
+        if name in self._arrays:
+            self._arrays[name].status = ArrayStatus.GPU_ONLY
+        else:
+            array_obj = ArrayType(None, name, ArrayStatus.GPU_ONLY)
+            self._arrays[name] = array_obj
+
+    def clone_to_gpu(self, name: str, desc: data.Data) -> str:
+
+        if name in self._arrays and self._arrays[name].status in (ArrayStatus.GPU_ONLY, ArrayStatus.CPU_AND_GPU_THIS_SDFG):
+            return self._arrays[name].gpu
+
+        newdesc = desc.clone()
+        newdesc.storage = dtypes.StorageType.GPU_Global
+        newdesc.transient = True
+        new_data_name = self._sdfg.add_datadesc('gpu_' + name, newdesc, find_new_name=True)
+
+        if name in self._arrays:
+            self._arrays[name].gpu = new_data_name
+            self._arrays[name].status = ArrayStatus.CPU_AND_GPU_THIS_SDFG
+        else:
+            array_obj = ArrayType(None, new_data_name, ArrayStatus.GPU_ONLY)
+            self._arrays[name] = array_obj
+
+        return new_data_name
+
+    def clone_to_cpu(self, name: str, desc: data.Data) -> str:
+
+        if name in self._arrays and self._arrays[name].status in (ArrayStatus.CPU_ONLY, ArrayStatus.CPU_AND_GPU_THIS_SDFG):
+            return self._arrays[name].cpu
+
+        new_data_desc = desc.clone()
+        new_data_desc.transient = True
+        new_data_desc.storage = dtypes.StorageType.CPU_Heap
+        new_data_name = 'cpu_' + name
+
+        # Verify that we do not have a name collision
+        if new_data_name not in self._sdfg.arrays:
+            self._sdfg.add_datadesc(new_data_name, new_data_desc)
+
+        if name in self._arrays:
+            self._arrays[name].cpu = new_data_name
+            self._arrays[name].status = ArrayStatus.CPU_AND_GPU_THIS_SDFG
+        else:
+            array_obj = ArrayType(new_data_name, None, ArrayStatus.CPU_ONLY)
+            self._arrays[name] = array_obj
+
+        return new_data_name
+
+    def on_gpu(self, name: str) -> bool:
+        return name in self._arrays and self._arrays[name].status in (ArrayStatus.GPU_ONLY, ArrayStatus.CPU_AND_GPU_THIS_SDFG)
+
+    def on_cpu(self, name: str) -> bool:
+        return name in self._arrays and self._arrays[name].status in (ArrayStatus.CPU_ONLY, ArrayStatus.CPU_AND_GPU_THIS_SDFG)
+
+    def gpu_array(self, name: str) -> str:
+        return self._arrays[name].gpu
+
+    def cpu_array(self, name: str) -> str:
+        return self._arrays[name].cpu
+
+    def arrays(self) -> Set[str]:
+        return set(self._arrays.keys())
+
+    @staticmethod
+    def from_sdfg(sdfg: sd.SDFG) -> "SDFGArrays":
+
+        arrays = SDFGArrays(sdfg)
+
+        for n, d in sdfg.arrays.items():
+            if d.storage in gpu_storage:
+
+                array_obj = ArrayType(None, n, ArrayStatus.CPU_AND_GPU_OUTER_SDFG)
+                arrays._arrays[n] = array_obj
+
+        return arrays
+
 
 
 @make_properties
@@ -152,9 +256,11 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
-        cloned_arrays = {}
-        previously_cloned_arrays = dc(self.cloned_arrays)
-        already_cloned_arrays = {n: None for n, d in sdfg.arrays.items() if d.storage in gpu_storage}
+        arrays = SDFGArrays.from_sdfg(sdfg)
+
+        #cloned_arrays = {}
+        #previously_cloned_arrays = dc(self.cloned_arrays)
+        #already_cloned_arrays = {n: None for n, d in sdfg.arrays.items() if d.storage in gpu_storage}
 
         for state in sdfg.nodes():
             sdict = state.scope_dict()
@@ -190,34 +296,26 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                 continue
             if inode.storage == dtypes.StorageType.GPU_Global:
                 continue
-            newdesc = inode.clone()
-            newdesc.storage = dtypes.StorageType.GPU_Global
-            newdesc.transient = True
-            name = sdfg.add_datadesc('gpu_' + inodename, newdesc, find_new_name=True)
-            cloned_arrays[inodename] = {'cpu': None, 'gpu': name}
+            arrays.clone_to_gpu(inodename, inode)
 
         for onodename, onode in set(output_nodes):
-            if onodename in cloned_arrays:
+            if arrays.on_gpu(onodename):
                 continue
             if onode.storage == dtypes.StorageType.GPU_Global:
                 continue
-            newdesc = onode.clone()
-            newdesc.storage = dtypes.StorageType.GPU_Global
-            newdesc.transient = True
-            name = sdfg.add_datadesc('gpu_' + onodename, newdesc, find_new_name=True)
-            cloned_arrays[onodename] = {'cpu': None, 'gpu': name}
+            arrays.clone_to_gpu(onodename, onode)
 
         # Replace nodes
         for state in sdfg.nodes():
             for node in state.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.data in cloned_arrays):
-                    node.data = cloned_arrays[node.data]['gpu']
+                if (isinstance(node, nodes.AccessNode) and arrays.on_gpu(node.data)):
+                    node.data = arrays.gpu_array(node.data)
 
         # Replace memlets
         for state in sdfg.nodes():
             for edge in state.edges():
-                if edge.data.data in cloned_arrays:
-                    edge.data.data = cloned_arrays[edge.data.data]['gpu']
+                if arrays.on_gpu(edge.data.data):
+                    edge.data.data = arrays.gpu_array(edge.data.data)
 
         #######################################################
         # Step 2: Create copy-in state
@@ -227,11 +325,11 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
         sdfg.add_edge(copyin_state, start_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(input_nodes):
-            if nname in excluded_copyin or nname not in cloned_arrays:
+            if nname in excluded_copyin or not arrays.on_gpu(nname):
                 continue
 
             src_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
-            dst_array = nodes.AccessNode(cloned_arrays[nname]['gpu'], debuginfo=desc.debuginfo)
+            dst_array = nodes.AccessNode(arrays.gpu_array(nname), debuginfo=desc.debuginfo)
             copyin_state.add_node(src_array)
             copyin_state.add_node(dst_array)
             copyin_state.add_nedge(src_array, dst_array, memlet.Memlet.from_array(src_array.data, src_array.desc(sdfg)))
@@ -245,9 +343,9 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
             sdfg.add_edge(state, copyout_state, sd.InterstateEdge())
 
         for nname, desc in dtypes.deduplicate(output_nodes):
-            if nname in excluded_copyout or nname not in cloned_arrays:
+            if nname in excluded_copyout or not arrays.on_gpu(nname):
                 continue
-            src_array = nodes.AccessNode(cloned_arrays[nname]['gpu'], debuginfo=desc.debuginfo)
+            src_array = nodes.AccessNode(arrays.gpu_array(nname), debuginfo=desc.debuginfo)
             dst_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
             copyout_state.add_node(src_array)
             copyout_state.add_node(dst_array)
@@ -276,14 +374,12 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                 for e in state.out_edges(node):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                        arrays.move_to_gpu(dst.data)
             if isinstance(node, nodes.EntryNode):
                 for e in state.out_edges(state.exit_node(node)):
                     dst = state.memlet_path(e)[-1].dst
                     if isinstance(dst, nodes.AccessNode):
-                        desc = sdfg.arrays[dst.data]
-                        desc.storage = dtypes.StorageType.GPU_Global
+                        arrays.move_to_gpu(dst.data)
 
         gpu_scalars = {}
         nsdfgs = []
@@ -337,8 +433,7 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
             node.sdfg.apply_transformations(
                 GPUTransformSDFGCloudSC, {
                     'exclude_copyin': ','.join([str(n) for n in excl_copyin]),
-                    'exclude_copyout': ','.join([str(n) for n in excl_copyout]),
-                    'cloned_arrays': cloned_arrays | self.cloned_arrays
+                    'exclude_copyout': ','.join([str(n) for n in excl_copyout])
                 })
 
         #######################################################
@@ -365,7 +460,7 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                             continue
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
-                        nodedesc.storage = dtypes.StorageType.GPU_Global
+                        arrays.move_to_gpu(node.data)
 
                         # Try to move allocation/deallocation out of loops
                         dsyms = set(map(str, nodedesc.free_symbols))
@@ -393,27 +488,20 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
 
                                     # Is there already a CPU array for this? If yes, we want to use it.
                                     array_name = outgoing_edge.dst.data
+
                                     # FIXME: avoid a redundant allocation - if the array is already allocated, we should use it
                                     # None indicates there was a clone before
-                                    if array_name in cloned_arrays and cloned_arrays[array_name]['cpu'] is not None:
+                                    if arrays.on_cpu(array_name):
 
-                                        new_data_name = cloned_arrays[array_name]['cpu']
+                                        new_data_name = arrays.cpu_array(array_name)
                                         cpu_acc_node = nodes.AccessNode(new_data_name)
 
                                     # There's only a transient GPU array, we need to create a CPU array
                                     else:
-                                        new_data_desc = data_desc.clone()
+
                                         # We allocate it locally only for the purpose of touching some data on the CPU
-                                        new_data_desc.transient = True
-                                        new_data_desc.storage = dtypes.StorageType.CPU_Heap
-
-                                        new_data_name = 'cpu_' + array_name
+                                        new_data_name = arrays.clone_to_cpu(array_name, data_desc)
                                         cpu_acc_node = nodes.AccessNode(new_data_name)
-
-                                        if new_data_name not in sdfg.arrays:
-                                            sdfg.add_datadesc(new_data_name, new_data_desc)
-
-                                            cloned_arrays[array_name] = {'cpu': new_data_name, 'gpu': array_name}
 
                                     gpu_acc_node = outgoing_edge.dst
 
@@ -440,25 +528,17 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     array_name = incoming_edge.src.data
                                     # FIXME: avoid a redundant allocation - if the array is already allocated, we should use it
                                     # None indicates there was a clone before
-                                    if array_name in cloned_arrays and cloned_arrays[array_name]['cpu'] is not None:
+                                    if arrays.on_cpu(array_name):
 
-                                        new_data_name = cloned_arrays[array_name]['cpu']
+                                        new_data_name = arrays.cpu_array(array_name)
                                         cpu_acc_node = nodes.AccessNode(new_data_name)
 
                                     # There's only a transient GPU array, we need to create a CPU array
                                     else:
-                                        new_data_desc = data_desc.clone()
+
                                         # We allocate it locally only for the purpose of touching some data on the CPU
-                                        new_data_desc.transient = True
-                                        new_data_desc.storage = dtypes.StorageType.CPU_Heap
-
-                                        new_data_name = 'cpu_' + array_name
+                                        new_data_name = arrays.clone_to_cpu(array_name, data_desc)
                                         cpu_acc_node = nodes.AccessNode(new_data_name)
-
-                                        if new_data_name not in sdfg.arrays:
-                                            sdfg.add_datadesc(new_data_name, new_data_desc)
-
-                                            cloned_arrays[array_name] = {'cpu': new_data_name, 'gpu': array_name}
 
                                     gpu_acc_node = incoming_edge.src
 
@@ -473,19 +553,16 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                                     state.add_edge(cpu_acc_node, None, node, incoming_conn, memlet.Memlet(expr=None, data=new_data_name, subset=incoming_edge.data.subset))
 
         # FIXME: if we should avoid a copy when this is truly a symbol - just a single copy?
-        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(already_cloned_arrays.keys())
-        notcloned_gpu_data = {n for n, d in sdfg.arrays.items() if d.storage in gpu_storage} - cloned_data
+        cloned_data = arrays.arrays().union(gpu_scalars.keys())
 
         for state in list(sdfg.nodes()):
             arrays_used = set()
-            notcloned_arrays_used = set()
             for e in sdfg.out_edges(state):
                 # Used arrays = intersection between symbols and cloned data
                 arrays_used.update(set(e.data.free_symbols) & cloned_data)
-                notcloned_arrays_used.update(set(e.data.free_symbols) & notcloned_gpu_data)
 
             # Create a state and copy out used arrays
-            if len(arrays_used) > 0 or len(notcloned_arrays_used) > 0:
+            if len(arrays_used) > 0:
 
                 co_state = sdfg.add_state(state.label + '_icopyout')
 
@@ -496,7 +573,7 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                 sdfg.add_edge(state, co_state, sd.InterstateEdge())
 
                 # Add copy-out nodes
-                for nname in arrays_used.union(notcloned_arrays_used):
+                for nname in arrays_used:
 
                     # Handle GPU scalars
                     if nname in gpu_scalars:
@@ -510,43 +587,17 @@ class GPUTransformSDFGCloudSC(transformation.MultiStateTransformation):
                         else:
                             desc = sdfg.arrays[hostname]
                         devicename = nname
-                    # cloned array previously - in an outer SDFG
-                    elif nname in already_cloned_arrays:
+                    elif arrays.on_cpu(nname):
 
-                        if cloned_arrays[nname]['cpu'] is None:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('cpu_' + nname, desc, find_new_name=True)
-                            already_cloned_arrays[nname] = {'cpu': hostname, 'gpu': nname}
-                        else:
-                            desc = sdfg.arrays[nname]
-                            hostname = cloned_arrays[nname]['cpu']
-
-                        devicename = nname
-
-                    # array not cloned yet
-                    # FIXME: merge with handling of GPU arrays with no CPU copy
-                    elif nname in notcloned_gpu_data:
-
-                        # we might have already created a copy in the previous step
-                        if nname in cloned_arrays:
-                            hostname = cloned_arrays[nname]['cpu']
-                        else:
-                            desc = sdfg.arrays[nname].clone()
-                            desc.storage = dtypes.StorageType.CPU_Heap
-                            desc.transient = True
-                            hostname = sdfg.add_datadesc('cpu_' + nname, desc, find_new_name=True)
-                            cloned_arrays[nname] = {'cpu': hostname, 'gpu': nname}
-
-                        devicename = nname
-
-                    # array cloned here
-                    else:
+                        hostname = arrays.cpu_array(nname)
+                        devicename = arrays.gpu_array(nname)
                         desc = sdfg.arrays[nname]
-                        #hostname = nname
-                        hostname = cloned_arrays[nname]['cpu']
-                        devicename = cloned_arrays[nname]['gpu']
+
+                    else:
+
+                        hostname = arrays.clone_to_cpu(nname, sdfg.arrays[nname])
+                        devicename = arrays.gpu_array(nname)
+                        desc = sdfg.arrays[nname]
 
                     src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
                     dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)
