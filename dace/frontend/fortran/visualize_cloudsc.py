@@ -9,8 +9,9 @@ from dataclasses_json import dataclass_json
 import dace
 from dace.codegen import control_flow
 from dace.dtypes import ScheduleType
-from dace.transformation import helpers
-from dace.sdfg import utils as sdutil
+from dace.transformation.passes import Loops, LoopInfo
+#from dace.transformation import helpers
+#from dace.sdfg import utils as sdutil
 
 import sympy
 
@@ -47,59 +48,6 @@ class SDFG(Node):
 LoopMappingType = NewType('LoopMappingType', Dict[dace.SDFGState, control_flow.ForScope])
 LoopsType = NewType('LoopMappingType', Dict[str, Tuple[control_flow.ForScope, Optional[Loop]]])
 
-def analyze_loops(sdfg: dace.SDFG, serialized: Node) -> Tuple[LoopMappingType, LoopsType]:
-
-    loop_mapping = {}
-    loop_nesting = {}
-    loops = {}
-
-    def add_state(state: dace.SDFGState, scope):
-
-        nonlocal loop_mapping
-        # We might have to support While/Do loops at some point
-        assert isinstance(scope, control_flow.ForScope)
-
-        if state not in loop_mapping:
-            loop_mapping[state] = scope
-        else:
-            assert loop_mapping[state] == scope
-
-    def process_if(scope: control_flow.IfScope, loop: control_flow.ForScope):
-
-        add_state(scope.branch_state, loop)
-        for state in scope.body.elements:
-            process_scope(state, loop)
-
-    def process_for_loop(scope: control_flow.ForScope, loop: control_flow.ForScope):
-
-        nonlocal loops, loop_nesting
-
-        loops[scope.guard.label] = (loop, None)
-        if scope != loop:
-            loop_nesting[scope.guard.label] = loop.guard.label
-        for body_state in scope.body.elements:
-            process_scope(body_state, scope)
-
-    def process_scope(scope, loop: control_flow.ForScope):
-
-        match type(scope):
-            case control_flow.ForScope:
-                process_for_loop(scope, loop)
-            case control_flow.IfScope:
-                process_if(scope, loop)
-            case control_flow.SingleState:
-                add_state(scope.state, loop)
-
-    result = helpers.find_sdfg_control_flow(sdfg)
-    for k, v in result.items():
-
-        scope = v[1]
-        states = v[0]
-        if isinstance(scope, control_flow.ForScope):
-            process_scope(scope, scope)
-
-    return loop_mapping, loop_nesting, loops
-
 map_name_mapping = {}
 
 def analyze_map(map_node: dace.nodes.MapEntry, parent: Node):
@@ -110,8 +58,7 @@ def analyze_map(map_node: dace.nodes.MapEntry, parent: Node):
 
     expr = map_node.map.range.ranges[0][1] - map_node.map.range.ranges[0][0]
     from sympy import symbols
-    x = symbols('NCLV')
-    map_entry.execution_count = expr.subs(x, 5)
+    x = symbols('NCLV') map_entry.execution_count = expr.subs(x, 5)
 
     # skip duplicated names
     if map_node.label.startswith('outer_fused'):
@@ -134,7 +81,9 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
     if cur_node is None:
         cur_node = SDFG(name=sdfg.label)
 
-    loop_mapping, loop_nesting, loops = analyze_loops(sdfg, cur_node)
+    #loop_mapping, loop_nesting, loops = analyze_loops(sdfg, cur_node)
+    loops = Loops.from_sdfg(sdfg)
+    loop_nodes = {}
 
     """
         Mapping algorithm works as follows:
@@ -150,36 +99,32 @@ def analyze_sdfg(sdfg: dace.SDFG, cur_node: Optional[Node] = None):
 
         Missing currently: nested maps.
     """
+    for loop in loops.loops:
 
-    for loop in loops.keys():
-        loop_node = Loop(name=loop)
-        loop_sdfg = loops[loop][0]
+        loop_node = Loop(name=loop.name)
 
         from sympy import symbols
         x = symbols('NCLV')
-        loop_node.execution_count = loop_sdfg.guard.executions.subs(x, 5)
+        loop_node.execution_count = loop.guard.executions.subs(x, 5)
 
-        loops[loop] = (loop_sdfg, loop_node)
+        loop_nodes[loop] = loop_node
 
     loops_without_parents = set()
 
-    for loop, v in loops.items():
+    for loop, loop_node in loop_nodes.items():
 
-        loop_sdfg, loop_node = v
-
-        if loop in loop_nesting:
-            parent_loop = loop_nesting[loop]
-            loops[parent_loop][1].children.append(loop_node)
-        else:
+        if not loop.is_nested:
             loops_without_parents.add(loop_node)
-            #cur_node.children.append(loop_node)
+        else:
+            loop_nodes[loop.parent_loop].children.append(loop_node)
 
     for state in sdfg.states():
 
         parent = cur_node
         # check if the state is inside a loop
-        if state in loop_mapping:
-            parent = loops[loop_mapping[state].guard.label][1]
+        state_loop = loops.state_inside_loop(state)
+        if state_loop is not None:
+            parent = loop_nodes[state_loop]
 
         maps = {}
         # first, find all maps - we need to create nodes and then explore map bodies.
