@@ -12,5 +12,6 @@ from .scalar_fission import ScalarFission
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .transient_reuse import TransientReuse
+from .loop_info import LoopInfo, Loops
 
 from .util import available_passes
