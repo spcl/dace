@@ -8,7 +8,8 @@ import json
 from datetime import datetime
 
 import dace
-from dace.transformation.auto.auto_optimize import auto_optimize
+# from dace.transformation.auto.auto_optimize import auto_optimize
+from my_auto_opt import auto_optimize
 from utils import read_source, get_fortran, get_sdfg, get_inputs, get_outputs, get_programs_data
 
 

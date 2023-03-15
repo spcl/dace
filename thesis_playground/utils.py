@@ -8,10 +8,11 @@ import sys
 import tempfile
 import json
 from tabulate import tabulate
+from glob import glob
 
 import dace
 from dace.frontend.fortran import fortran_parser
-from dace.sdfg import utils
+from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from data import get_program_parameters_data, get_testing_parameters_data
@@ -170,3 +171,20 @@ def get_results_dir() -> str:
     :rtype: str
     """
     return os.path.join(os.path.dirname(__file__), 'results')
+
+
+counter = 0
+graphs_dir = os.path.join(os.path.dirname(__file__), 'sdfg_graphs')
+
+
+def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
+    global counter
+    filename = os.path.join(graphs_dir, f"{prefix}{program}_{counter}_{name}.sdfg")
+    sdfg.save(filename)
+    print(f"Saved graph to {filename}")
+    counter = counter + 1
+
+
+def reset_graph_files(program: str):
+    for file in glob(os.path.join(graphs_dir, f"*{program}_*.sdfg")):
+        os.remove(file)
