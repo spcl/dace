@@ -134,6 +134,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
                         frame.targets.add(tgt)
 
         # Instrumentation-related query
+        if hasattr(node, 'symbol_instrument'):
+            disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
         if hasattr(node, 'instrument'):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
         elif hasattr(node, 'consume'):
@@ -166,9 +168,9 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
         import shutil
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sdfg.save(f'{tmp_dir}/test.sdfg')
+            sdfg.save(f'{tmp_dir}/test.sdfg', hash=False)
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
-            sdfg2.save(f'{tmp_dir}/test2.sdfg')
+            sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
             print('Testing SDFG serialization...')
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")

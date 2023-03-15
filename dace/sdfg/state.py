@@ -17,7 +17,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             make_properties)
+                             CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView
 from dace.sdfg.propagation import propagate_memlet
@@ -722,6 +722,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+
+    symbol_instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                                     desc="Instrument symbol values when this state is executed",
+                                     default=dtypes.DataInstrumentationType.No_Instrumentation)
+    symbol_instrument_condition = CodeProperty(desc="Condition under which to trigger the symbol instrumentation",
+                                               default=CodeBlock("1", language=dtypes.Language.CPP))
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
