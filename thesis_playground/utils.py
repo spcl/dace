@@ -14,7 +14,7 @@ from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
-from data import get_program_parameters_data
+from data import get_program_parameters_data, get_testing_parameters_data
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -71,8 +71,21 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
 
 
 # Copied from tests/fortran/cloudsc.py
-def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
-    params_data = get_program_parameters_data(program)
+def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
+        -> Dict[str, Union[Number, np.ndarray]]:
+    """
+    Returns dict with the input data for the requested program
+
+    :param program: The program for which to get the input data
+    :type program: str
+    :param rng: The random number generator to use
+    :type rng: np.random.Generator
+    :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
+    :type testing_dataset: bool, optional
+    :return: Dictionary with the input data
+    :rtype: Dict[str, Union[Number, np.ndarray]]
+    """
+    params_data = get_testing_parameters_data() if testing_dataset else get_program_parameters_data(program)
     programs_data = get_programs_data()
     inp_data = dict()
     for p in programs_data['program_parameters'][program]:
@@ -88,8 +101,21 @@ def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number
 
 # Copied from tests/fortran/cloudsc.py
 # TODO: Init to 0?
-def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
-    params_data = get_program_parameters_data(program)
+def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
+        -> Dict[str, Union[Number, np.ndarray]]:
+    """
+    Returns dict with the output data for the requested program
+
+    :param program: The program for which to get the output data
+    :type program: str
+    :param rng: The random number generator to use
+    :type rng: np.random.Generator
+    :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
+    :type testing_dataset: bool, optional
+    :return: Dictionary with the output data
+    :rtype: Dict[str, Union[Number, np.ndarray]]
+    """
+    params_data = get_testing_parameters_data() if testing_dataset else get_program_parameters_data(program)
     programs_data = get_programs_data()
     out_data = dict()
     for out in programs_data['program_outputs'][program]:
@@ -124,12 +150,14 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
 
 def print_results_v2(program_results: Dict):
     headers = ["program", "measurement", "min", "max", "avg", "median"]
+    excluded_measurements = ['parameters']
     flat_data = []
     for program in program_results:
         for measurement in program_results[program]:
-            flat_data.append([program, measurement])
-            for key in headers[2:]:
-                flat_data[-1].append(program_results[program][measurement][key])
+            if measurement not in excluded_measurements:
+                flat_data.append([program, measurement])
+                for key in headers[2:]:
+                    flat_data[-1].append(program_results[program][measurement][key])
 
     print(tabulate(flat_data, headers=headers))
 

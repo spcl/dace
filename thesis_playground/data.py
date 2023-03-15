@@ -15,12 +15,20 @@ parameters = {
     'NSSOPT': 1
 }
 
+# changes from the parameters dict for certrain programs
 custom_parameters = {
     'cloudsc_class1_670': {
-        'KLON': 100,
-        'KLEV': 100,
-        'KFDIA': 98,
+        'KLON': 1000,
+        'KLEV': 1000,
+        'KFDIA': 998,
         },
+}
+
+# changes from the parameters dict for testing
+testing_parameters = {
+    'KLON': 10,
+    'KLEV': 10,
+    'KFDIA': 8
 }
 
 
@@ -169,3 +177,19 @@ def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, 
     params_data['data'] = get_data(params_data['parameters'])
     return params_data
 
+
+def get_testing_parameters_data() -> Dict[str, Dict[str, Union[int, Tuple]]]:
+    """
+    Gets the parameters and data used for testing. Does not take custom_parameters into account.
+
+    :return: Dict with two entries: 'parameters' and 'data'. Each containing a dict with the parameters/data
+    :rtype: Dict[str, Dict[str, Union[int, Tuple]]]
+    """
+    params_data = {}
+    params_data['parameters'] = parameters
+
+    for parameter in testing_parameters:
+        params_data['parameters'][parameter] = testing_parameters[parameter]
+
+    params_data['data'] = get_data(params_data['parameters'])
+    return params_data

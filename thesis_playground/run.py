@@ -6,13 +6,14 @@ import json
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2
+from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data
 from test import test_program, profile_program, get_stats
 from parse_ncu import read_csv
 
 
 def main():
-    parser = ArgumentParser()
+    parser = ArgumentParser(
+            description='Test and profiles the given profiles. Results are saved into the results folder')
     parser.add_argument(
         '-p', '--programs',
         type=str,
@@ -82,6 +83,7 @@ def main():
 
         test_program(program, dace.DeviceType.GPU, False)
         results = profile_program(program, repetitions=args.repetitions)
+        results["parameters"] = get_program_parameters_data(program)['parameters']
         command_ncu = ['ncu', '--force-overwrite', '--export', '/tmp/profile',]
         command_program = ['python3', test_program_path, 'run', '--repetitions', '1', '--program', program]
 

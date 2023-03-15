@@ -5,6 +5,7 @@ import copy
 from tabulate import tabulate
 from argparse import ArgumentParser
 import json
+from datetime import datetime
 
 import dace
 from dace.transformation.auto.auto_optimize import auto_optimize
@@ -35,8 +36,8 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
         auto_optimize(sdfg, device)
 
     rng = np.random.default_rng(42)
-    inputs = get_inputs(program, rng)
-    outputs_f = get_outputs(program, rng)
+    inputs = get_inputs(program, rng, testing_dataset=True)
+    outputs_f = get_outputs(program, rng, testing_dataset=True)
     outputs_d = copy.deepcopy(outputs_f)
     sdfg.validate()
     sdfg.simplify(validate_all=True)
@@ -44,7 +45,8 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     sdfg(**inputs, **outputs_d)
 
-    print(f"{program} ({program_name}) on {device} with{' ' if normalize_memlets else 'out '}normalize memlets")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {program} ({program_name}) on {device} with"
+          f"{' ' if normalize_memlets else 'out '}normalize memlets")
     for k in outputs_f.keys():
         farr = outputs_f[k]
         darr = outputs_f[k]
@@ -55,7 +57,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
         print(f"median: {np.median(farr):.2e}", end=", ")
         print(f"nnz: {np.count_nonzero(farr)}", end=", ")
         print(f"#: {np.prod(farr.shape)}")
-    print("Success")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Success")
 
 
 def get_stats(array: List):
