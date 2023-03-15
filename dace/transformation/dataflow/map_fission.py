@@ -226,30 +226,32 @@ class MapFission(transformation.SingleStateTransformation):
                 if str(name) in nsdfg_node.sdfg.symbols:
                     del nsdfg_node.sdfg.symbols[str(name)]
             
-            # Clean-up symbols depending on the map parameters
-            to_remove = dict()
-            to_add = dict()
-            for symname, symexpr in nsdfg_node.symbol_mapping.items():
-                try:
-                    fsymbols = symbolic.pystr_to_symbolic(symexpr).free_symbols
-                except AttributeError:
-                    fsymbols = set()
-                if any(str(s) in outer_map.params for s in fsymbols):
-                    to_remove[symname] = symexpr
-                    for s in fsymbols:
-                        if str(s) not in outer_map.params and str(s) not in nsdfg_node.sdfg.symbols:
-                            to_add[str(s)] = sdfg.symbols[(str(s))]
-            if to_remove:
-                for symname in to_remove:
-                    print(f"Removing symbol {symname} from nested SDFG {nsdfg_node.label}")
-                    del nsdfg_node.symbol_mapping[symname]
-                    if symname in nsdfg_node.sdfg.symbols:
-                        del nsdfg_node.sdfg.symbols[symname]
-                nsdfg_node.sdfg.symbols.update(to_add)
-                init_state = nsdfg_node.sdfg.start_state
-                pre_init_state = nsdfg_node.sdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
-                edge = nsdfg_node.sdfg.edges_between(pre_init_state, init_state)[0]
-                edge.data.assignments.update({str(k): str(v) for k, v in to_remove.items()})
+            # TODO: This was an attempt to fix an issue with MapFission and symbols in the NestedSDFG's symbol mapping
+            # depending on other symbols and the Map's parameters. Disabled for now until the issue is clarified.
+            # # Clean-up symbols depending on the map parameters
+            # to_remove = dict()
+            # to_add = dict()
+            # for symname, symexpr in nsdfg_node.symbol_mapping.items():
+            #     try:
+            #         fsymbols = symbolic.pystr_to_symbolic(symexpr).free_symbols
+            #     except AttributeError:
+            #         fsymbols = set()
+            #     if any(str(s) in outer_map.params for s in fsymbols):
+            #         to_remove[symname] = symexpr
+            #         for s in fsymbols:
+            #             if str(s) not in outer_map.params and str(s) not in nsdfg_node.sdfg.symbols:
+            #                 to_add[str(s)] = sdfg.symbols[(str(s))]
+            # if to_remove:
+            #     for symname in to_remove:
+            #         print(f"Removing symbol {symname} from nested SDFG {nsdfg_node.label}")
+            #         del nsdfg_node.symbol_mapping[symname]
+            #         if symname in nsdfg_node.sdfg.symbols:
+            #             del nsdfg_node.sdfg.symbols[symname]
+            #     nsdfg_node.sdfg.symbols.update(to_add)
+            #     init_state = nsdfg_node.sdfg.start_state
+            #     pre_init_state = nsdfg_node.sdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+            #     edge = nsdfg_node.sdfg.edges_between(pre_init_state, init_state)[0]
+            #     edge.data.assignments.update({str(k): str(v) for k, v in to_remove.items()})
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
@@ -521,7 +523,6 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.num_accesses = edge.data.subset.num_elements()
 
                 # Find matching edge inside map
-                # inner_edge = next(e for e in graph.out_edges(map_entry) if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
                 for inner_edge in graph.out_edges_by_connector(map_entry, f"OUT_{edge.dst_conn[3:]}"):
                     graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
 
@@ -531,7 +532,6 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.subset = subsets.Range.from_array(desc)
 
                 # Find matching edge inside map
-                # inner_edge = next(e for e in graph.in_edges(map_exit) if e.dst_conn[3:] == edge.src_conn[4:])
                 for inner_edge in graph.in_edges_by_connector(map_exit, f"IN_{edge.src_conn[4:]}"):
                     graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
 

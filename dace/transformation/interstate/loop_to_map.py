@@ -145,7 +145,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 assigned_symbols = set()
                 for k, v in e.data.assignments.items():
                     try:
-                        fsyms = v.free_symbols
+                        fsyms = symbolic.pystr_to_symbolic(v).free_symbols
                     except AttributeError:
                         fsyms = set()
                     if not k in fsyms:
