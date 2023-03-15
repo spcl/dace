@@ -39,6 +39,7 @@ class DetectLoop(transformation.PatternTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         guard = self.loop_guard
         begin = self.loop_begin
+        print(f"[DetectLoop::can_be_applied] graph: {sdfg.hash_sdfg()[:5]} guard: {guard.name} begin: {begin.name}")
 
         # A for-loop guard only has two incoming edges (init and increment)
         guard_inedges = graph.in_edges(guard)

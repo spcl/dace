@@ -187,7 +187,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     print(f'Last correct SDFG: {sdfg_name}')
                     raise e
         else:
+            tsdfg.save(f"{tsdfg.hash_sdfg()[:5]}.sdfg")
             applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+            tsdfg.save(f"{tsdfg.hash_sdfg()[:5]}.sdfg")
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),

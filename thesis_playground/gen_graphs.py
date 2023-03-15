@@ -1,4 +1,6 @@
 from argparse import ArgumentParser
+import os
+from glob import glob
 from os import path
 from typing import Dict
 import sympy
@@ -23,12 +25,12 @@ from utils import get_programs_data
 
 
 counter = 0
+graphs_dir = path.join(path.dirname(__file__), 'sdfg_graphs')
 
 
 def save_graph(sdfg: SDFG, program: str, name: str):
     global counter
-    graphs_dir = path.join(path.dirname(__file__), 'sdfg_graphs')
-    sdfg.save(path.join(graphs_dir, f"{counter}_{program}_{name}.sdfg"))
+    sdfg.save(path.join(graphs_dir, f"{program}_{counter}_{name}.sdfg"))
     counter = counter + 1
 
 
@@ -70,11 +72,13 @@ def auto_optimize(sdfg: SDFG,
     save_graph(sdfg, program, "after_trivial_map_elimination")
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
+        save_graph(sdfg, program, "after_simplify")
         for s in sdfg.sdfg_list:
             xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
+        sdfg.save(f"{sdfg.hash_sdfg()[:5]}.sdfg")
         print(f"Performed {l2ms} transformations")
         transformed = l2ms > 0
 
@@ -207,14 +211,20 @@ def main():
             'program',
             type=str,
             help='Name of the program to generate the SDFGs of')
-
     parser.add_argument(
             '--normalize-memlets',
             action='store_true',
             default=False)
+    parser.add_argument(
+            '--only-graph',
+            action='store_true',
+            help='Does not compile the SDFGs into C++ code, only creates the SDFGs and runs the transformations')
 
     device = dace.DeviceType.GPU
     args = parser.parse_args()
+
+    for file in glob(os.path.join(graphs_dir, f"{args.program}_*.sdfg")):
+        os.remove(file)
 
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)
@@ -224,7 +234,8 @@ def main():
     auto_optimize(sdfg, device, args.program)
     save_graph(sdfg, args.program, "after_auto_opt")
     sdfg.instrument = dace.InstrumentationType.Timer
-    sdfg.compile()
+    if not args.only_graph:
+        sdfg.compile()
     return sdfg
 
 
