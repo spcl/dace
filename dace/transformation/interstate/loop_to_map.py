@@ -97,7 +97,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         guard = self.loop_guard
         begin = self.loop_begin
-        print(f"[LoopToMap::can_be_applied] graph: {sdfg.hash_sdfg()[:5]} guard: {guard.name} begin: {begin.name}")
+        # print(f"[LoopToMap::can_be_applied] graph: {sdfg.hash_sdfg()[:5]} guard: {guard.name} begin: {begin.name}")
 
         # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
@@ -106,26 +106,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # If loop cannot be detected, fail
         found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
-            print("[LoopToMap::can_be_applied] loop not detected")
+            # print("[LoopToMap::can_be_applied] loop not detected")
             return False
-
-        # A very hacky way to check if the current node is the outermost, relies on the assumption that the name of the
-        # nodes includes an index which is incrementing
-        min_for_loop_index = None
-        for node in sdfg.nodes():
-            match = regex.match(r'[A-z]*_l_([0-9]*)_c_([0-9]*)', node.name)
-            if match is not None:
-                index = match.groups()[0]
-                if min_for_loop_index is not None:
-                    min_for_loop_index = min(min_for_loop_index, index)
-                else:
-                    min_for_loop_index = index
-
-        match = regex.match(r'[A-z]*_l_([0-9]*)_c_([0-9]*)', guard.name)
-        if match is not None:
-            index = match.groups()[0]
-            if index > min_for_loop_index:
-                return False
 
         itervar, (start, end, step), (_, body_end) = found
 
@@ -133,7 +115,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # scalar
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
-                print("[LoopToMap::can_be_applied] Symbol read from container which are not scalar")
+                # print("[LoopToMap::can_be_applied] Symbol read from container which are not scalar")
                 return False
 
         in_order_states = list(cfg.stateorder_topological_sort(sdfg))
@@ -141,7 +123,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         loop_end_idx = in_order_states.index(body_end)
 
         if loop_end_idx < loop_begin_idx:  # Malformed loop
-            print("[LoopToMap::can_be_applied] malformed loop")
+            # print("[LoopToMap::can_be_applied] malformed loop")
             return False
 
         # Find all loop-body states
@@ -174,7 +156,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     if not k in fsyms:
                         assigned_symbols.add(k)
                 if assigned_symbols & used_before_assignment:
-                    print("[LoopToMap::can_be_applied] symbol read before it is assigned")
+                    # print("[LoopToMap::can_be_applied] symbol read before it is assigned")
                     return False
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
@@ -204,7 +186,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
-                            print("[LoopToMap::can_be_applied] Pointers are involved")
+                            # print("[LoopToMap::can_be_applied] Pointers are involved")
                             return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
@@ -213,7 +195,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
-                                print("[LoopToMap::can_be_applied] ?? with write")
+                                # print("[LoopToMap::can_be_applied] ?? with write")
                                 return False
                         # End of check
 
@@ -232,7 +214,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
                                                      e.data, src_subset):
-                            print("[LoopToMap::can_be_applied] data races")
+                            # print("[LoopToMap::can_be_applied] data races")
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -244,7 +226,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
-                    print("[LoopToMap::can_be_applied] reads in inter-state edges")
+                    # print("[LoopToMap::can_be_applied] reads in inter-state edges")
                     return False
 
         # Check that the iteration variable and other symbols are not used on other edges or states
@@ -258,14 +240,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Check state contents
             if symbols_that_may_be_used & state.free_symbols:
-                print("[LoopToMap::can_be_applied] state contents")
+                # print("[LoopToMap::can_be_applied] state contents")
                 return False
 
             # Check inter-state edges
             reassigned_symbols: Set[str] = None
             for e in sdfg.out_edges(state):
                 if symbols_that_may_be_used & e.data.read_symbols():
-                    print("[LoopToMap::can_be_applied] inter-state edges")
+                    # print("[LoopToMap::can_be_applied] inter-state edges")
                     return False
 
                 # Check for symbols that are set by all outgoing edges

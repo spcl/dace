@@ -2,16 +2,18 @@ from argparse import ArgumentParser
 import os
 from glob import glob
 from os import path
-from typing import Dict
+from typing import Dict, List
 import sympy
 
 import dace
 from dace.sdfg import infer_types
+from dace.sdfg import utils as sdutil
 from dace import config, dtypes
 from dace.frontend.fortran import fortran_parser
-from dace.sdfg import utils, SDFG, nodes
+from dace.sdfg import utils, SDFG, nodes, SDFGState
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
+from dace.transformation.optimizer import Optimizer
 
 from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_fast_implementations, move_small_arrays_to_stack, make_transients_persistent
 
@@ -28,9 +30,11 @@ counter = 0
 graphs_dir = path.join(path.dirname(__file__), 'sdfg_graphs')
 
 
-def save_graph(sdfg: SDFG, program: str, name: str):
+def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
     global counter
-    sdfg.save(path.join(graphs_dir, f"{program}_{counter}_{name}.sdfg"))
+    filename = path.join(graphs_dir, f"{prefix}{program}_{counter}_{name}.sdfg")
+    sdfg.save(filename)
+    print(f"Saved graph to {filename}")
     counter = counter + 1
 
 
@@ -70,6 +74,8 @@ def auto_optimize(sdfg: SDFG,
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     save_graph(sdfg, program, "after_trivial_map_elimination")
+    if device == dace.DeviceType.GPU:
+        loop_to_map_outside_first(sdfg, program, validate, validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         save_graph(sdfg, program, "after_simplify")
@@ -205,6 +211,46 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     return sdfg
 
 
+def loop_to_map_outside_first(
+        sdfg: SDFG,
+        program: str,
+        validate: bool = True,
+        validate_all: bool = False) -> SDFG:
+    sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+    sdfg.apply_transformations(LoopToMap)
+    save_graph(sdfg, program, "after_trivial_map_elimination", prefix="my_optimize_")
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    save_graph(sdfg, program, "after_simplify", prefix="my_optimize_")
+
+    number_of_transformations_performed = 1
+    while number_of_transformations_performed > 0:
+        outside_loop_transformations = []
+        transformations = [xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])]
+        for xform in transformations:
+            print(f"[gen_graphs::my_optimize] Consider transformation with guard: {xform.loop_guard}")
+            is_outside_loop = True
+            sdfg.all_sdfgs_recursive()
+            for other_form in transformations:
+                if other_form != xform:
+                    other_states: List[SDFGState] = list(sdutil.dfs_conditional(
+                        sdfg.sdfg_list[xform.sdfg_id], [other_form.loop_begin], lambda _, c: c is not other_form.loop_guard))
+                    if xform.loop_guard in other_states:
+                        is_outside_loop = False
+            if is_outside_loop:
+                outside_loop_transformations.append(xform)
+                print(f"[gen_graphs::my_optimize] add transformation with guard {xform.loop_guard} to list")
+
+        print(f"[gen_graphs::my_optimize] # of outer loops: {len(outside_loop_transformations)}")
+        number_of_transformations_performed = len(outside_loop_transformations)
+        for xform in outside_loop_transformations:
+            # Don't know what to pass as the 1st argument
+            print(f"[gen_graphs::my_optimize] Apply with guard {xform.loop_guard}")
+            xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
+            save_graph(sdfg, program, "after_loop_to_map", prefix="my_optimize_")
+
+    return sdfg
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument(
@@ -223,7 +269,7 @@ def main():
     device = dace.DeviceType.GPU
     args = parser.parse_args()
 
-    for file in glob(os.path.join(graphs_dir, f"{args.program}_*.sdfg")):
+    for file in glob(os.path.join(graphs_dir, f"*{args.program}_*.sdfg")):
         os.remove(file)
 
     programs = get_programs_data()['programs']
