@@ -56,6 +56,7 @@ def auto_optimize(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
     if device == dace.DeviceType.GPU:
+        print("[my_auto_opt::auto_opt] call loop_to_map_outside_first")
         loop_to_map_outside_first(sdfg, program, validate, validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
@@ -174,12 +175,15 @@ def loop_to_map_outside_first(
         validate: bool = True,
         validate_all: bool = False) -> SDFG:
 
+    sdfg.simplify(validate=False, validate_all=validate_all)
     number_of_transformations_performed = 1
     while number_of_transformations_performed > 0:
         outside_loop_transformations = []
-        transformations = [xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])]
+        transformations = []
+        transformations.extend([xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])])
+
         for xform in transformations:
-            print(f"[gen_graphs::my_optimize] Consider transformation with guard: {xform.loop_guard}")
+            print(f"[my_auto_opt::loop_to_map_outside_first] Consider transformation with guard: {xform.loop_guard}")
             is_outside_loop = True
             sdfg.all_sdfgs_recursive()
             for other_form in transformations:
@@ -190,13 +194,13 @@ def loop_to_map_outside_first(
                         is_outside_loop = False
             if is_outside_loop:
                 outside_loop_transformations.append(xform)
-                print(f"[gen_graphs::my_optimize] add transformation with guard {xform.loop_guard} to list")
+                print(f"[my_auto_opt::loop_to_map_outside_first] add transformation with guard {xform.loop_guard} to list")
 
-        print(f"[gen_graphs::my_optimize] # of outer loops: {len(outside_loop_transformations)}")
+        print(f"[my_auto_opt::loop_to_map_outside_first] # of outer loops: {len(outside_loop_transformations)}")
         number_of_transformations_performed = len(outside_loop_transformations)
         for xform in outside_loop_transformations:
             # Don't know what to pass as the 1st argument
-            print(f"[gen_graphs::my_optimize] Apply with guard {xform.loop_guard}")
+            print(f"[my_auto_opt::loop_to_map_outside_first] Apply with guard {xform.loop_guard}")
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
             if program is not None:
                 save_graph(sdfg, program, "after_loop_to_map_in_loop_to_map_outside_first")

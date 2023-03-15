@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 import dace
 
 from test import read_source
-from utils import get_programs_data, save_graph, get_sdfg
+from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files
 from my_auto_opt import auto_optimize
 
 
@@ -24,6 +24,8 @@ def main():
 
     device = dace.DeviceType.GPU
     args = parser.parse_args()
+
+    reset_graph_files(args.program)
 
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)
