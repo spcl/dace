@@ -5,7 +5,7 @@ import enum
 import copy
 import itertools
 
-from typing import Generator, Optional, Tuple, Dict, List, Sequence, Set
+from typing import Any, Generator, Optional, Tuple, Dict, List, Sequence, Set
 
 from dace import data as dt, SDFG, dtypes
 from dace.optimization import cutout_tuner
@@ -97,6 +97,20 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
+    def optimize(
+        self,
+        group_by: TuningGroups = TuningGroups.Separate,
+        measurements: int = 30,
+        apply: bool = False,
+        **kwargs,
+    ) -> Dict[Any, Any]:
+        return super().optimize(
+            group_by=group_by,
+            measurements=measurements,
+            apply=apply,
+            **kwargs,
+        )
+
     def config_from_key(self, key: str, **kwargs) -> List[int]:
         # TODO
         raise NotImplementedError
@@ -141,6 +155,8 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         cutout._arrays = new_arrays
         for marray in modified_arrays:
             arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
+
+        print(f"[DataLayout Tuner] {modified_arrays}, {new_arrays}.")
 
         return self.measure(cutout, arguments, measurements)
 

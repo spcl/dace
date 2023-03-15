@@ -11,9 +11,10 @@ from typing import Dict
 
 from dace.codegen.instrumentation.data import data_report
 
-def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
+
+def measure(sdfg, dreport=None, repetitions=30, print_report: bool = False):
     arguments = {}
- 
+
     for cstate in sdfg.nodes():
         for dnode in cstate.data_nodes():
             array = sdfg.arrays[dnode.data]
@@ -30,8 +31,6 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
                     arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
             else:
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
-
-    
 
     try:
         with dace.config.set_temporary('debugprint', value=True):
@@ -52,6 +51,7 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
 
     durations = next(iter(next(iter(report.durations.values())).values()))
     return np.median(np.array(durations))
+
 
 def partition(it, size):
     it = iter(it)
@@ -80,6 +80,7 @@ def get_world_size():
     else:
         print('Cannot get world size, running in sequential mode')
         return 1
+
 
 import traceback
 
@@ -111,9 +112,10 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
 
     return runtime
 
+
 def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queue) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
-    
+
     arguments = {}
     # TODO: Store symbolic arguments in file
     for symbol in cutout.free_symbols:
@@ -123,7 +125,7 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
         for dnode in state.data_nodes():
             array = cutout.arrays[dnode.data]
             if array.transient:
-               continue
+                continue
 
             try:
                 data = dreport[dnode.data]
@@ -131,14 +133,12 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
             except KeyError:
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
 
-
     for name, array in list(cutout.arrays.items()):
         if array.transient:
             continue
 
         if not name in arguments:
             del cutout.arrays[name]
-
 
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
@@ -151,10 +151,13 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queu
                 csdfg.finalize()
 
     report = cutout.get_latest_report()
-    durations = next(iter(next(iter(report.durations.values())).values()))
+    assert len(report.durations.keys()) == 1
+    durations = list(next(iter(next(iter(report.durations.values())).values())).values())
     q.put(np.median(np.array(durations)))
 
+
 class MeasureProcess(mp.Process):
+
     def __init__(self, *args, **kwargs):
         mp.Process.__init__(self, *args, **kwargs)
         self._pconn, self._cconn = mp.Pipe()
@@ -174,4 +177,3 @@ class MeasureProcess(mp.Process):
         if self._pconn.poll():
             self._exception = self._pconn.recv()
         return self._exception
-

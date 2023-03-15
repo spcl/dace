@@ -26,7 +26,11 @@ except (ImportError, ModuleNotFoundError):
 
 class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(self,
+                 sdfg: SDFG,
+                 i,
+                 j,
+                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -81,7 +85,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             # Skip no-map-states
             return math.inf
 
-
         if config[0] == 0:
             # Baseline
             return self.measure(candidate, dreport, measurements)
@@ -101,7 +104,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             if fuse_counter == 0:
                 return math.inf
 
-        return self.measure(candidate, dreport,  measurements)
+        return self.measure(candidate, dreport, measurements)
 
     def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
@@ -236,7 +239,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             if base_runtime == math.inf:
                                 break
 
-
                         # Construct subgraph greedily
                         subgraph_maps = []
                         for desc in pattern:
@@ -252,7 +254,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
 
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
+                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg,
+                                                                         graph=experiment_state,
+                                                                         map_entries=experiment_maps)
 
                         map_fusion = sg.SubgraphOTFFusion()
                         map_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
@@ -285,7 +289,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             best_pattern = subgraph_maps
                             best_pattern_runtime = fused_runtime
 
-
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         map_fusion = sg.SubgraphOTFFusion()
@@ -298,10 +301,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     else:
                         break
 
-
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:
-        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet), map(lambda edge: edge.dst, state.out_edges(map_entry)))
+        tasklets = filter(lambda node: isinstance(node, dace.nodes.Tasklet),
+                          map(lambda edge: edge.dst, state.out_edges(map_entry)))
         tasklets = set(tasklets)
 
         desc = []
