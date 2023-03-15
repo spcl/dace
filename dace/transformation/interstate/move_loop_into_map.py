@@ -580,10 +580,10 @@ class MoveMapIntoIf(transformation.SingleStateTransformation):
         mparams = set(self.map_entry.map.params)
 
         if_guard: dace.SDFGState = cf_node.branch_state
-        sink_states = nsdfg.sink_nodes()
-        if_exit: dace.SDFGState = sink_states[0]
+        ipostdom = sdutil.postdominators(nsdfg)
+        if_exit: dace.SDFGState = ipostdom[if_guard]
         condition = cf_node.condition
-        inv_condition = nsdfg.in_edges(if_exit)[0].data.condition
+        inv_condition = nsdfg.edges_between(if_guard, if_exit)[0].data.condition
 
         # remove IfScope.
         nsdfg.remove_nodes_from([if_guard, if_exit])
