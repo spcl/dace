@@ -448,7 +448,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             if k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
-                setattr(result, k, None)
+                if id(getattr(self, k)) in memo:
+                    setattr(result, k, memo[id(getattr(self, k))])
+                else:
+                    setattr(result, k, None)
             else:
                 setattr(result, k, copy.deepcopy(v, memo))
         return result

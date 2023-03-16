@@ -125,9 +125,29 @@ def test_deepcopy_diff_sdfg_edge():
     assert copy_nsdfg.sdfg.parent_sdfg is sdfg_1
 
 
+def test_deepcopy_top_level():
+
+    sdfg = dace.SDFG('deepcopy_nested_sdfg')
+    state = sdfg.add_state('state')
+
+    nsdfg = dace.SDFG('nested')
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {})
+
+    copy_sdfg = copy.deepcopy(sdfg)
+    copy_state = copy_sdfg.states()[0]
+    copy_nsdfg_node = copy_state.nodes()[0]
+    for sd in copy_sdfg.all_sdfgs_recursive():
+        if sd is copy_sdfg:
+            continue
+        assert sd.parent_nsdfg_node is copy_nsdfg_node
+        assert sd.parent is copy_state
+        assert sd.parent_sdfg is copy_sdfg
+
+
 if __name__ == '__main__':
     test_deepcopy_same_state()
     test_deepcopy_same_state_edge()
     test_deepcopy_diff_state()
     test_deepcopy_diff_state_edge()
     test_deepcopy_diff_sdfg()
+    test_deepcopy_top_level()
