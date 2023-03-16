@@ -5,12 +5,11 @@ import copy
 from tabulate import tabulate
 from argparse import ArgumentParser
 import json
-from datetime import datetime
 
 import dace
-# from dace.transformation.auto.auto_optimize import auto_optimize
-from my_auto_opt import auto_optimize
-from utils import read_source, get_fortran, get_sdfg, get_inputs, get_outputs, get_programs_data
+from dace.transformation.auto.auto_optimize import auto_optimize
+# from my_auto_opt import auto_optimize
+from utils import read_source, get_fortran, get_sdfg, get_inputs, get_outputs, get_programs_data, print_with_time
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
@@ -46,8 +45,8 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     sdfg(**inputs, **outputs_d)
 
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {program} ({program_name}) on {device} with"
-          f"{' ' if normalize_memlets else 'out '}normalize memlets")
+    print_with_time(f"{program} ({program_name}) on {device} with"
+                    f"{' ' if normalize_memlets else 'out '}normalize memlets")
     for k in outputs_f.keys():
         farr = outputs_f[k]
         darr = outputs_f[k]
@@ -58,11 +57,11 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
         print(f"median: {np.median(farr):.2e}", end=", ")
         print(f"nnz: {np.count_nonzero(farr)}", end=", ")
         print(f"#: {np.prod(farr.shape)}")
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Success")
+    print_with_time('Success')
 
 
 def get_stats(array: List):
-    return {'max': min(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
+    return {'max': max(array), 'min': min(array), 'avg': np.average(array), 'median': np.median(array)}
 
 
 def print_stats(array: List):
@@ -84,7 +83,7 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
         -> Dict[str, List[Number]]:
 
     programs = get_programs_data()['programs']
-    print(f"Profile {program}({programs[program]}) rep={repetitions}")
+    print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
     routine_name = f"{programs[program]}_routine"
     results = {}
 
@@ -126,6 +125,7 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     #         print(f"Instrumented map with id {id} with {node.instrument}")
 
     sdfg.clear_instrumentation_reports()
+    print_with_time("Measure total runtime")
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
     reports = sdfg.get_instrumentation_reports()
@@ -247,7 +247,8 @@ def main():
     selected_programs = programs if args.programs is None else args.programs
     if args.kernel_class is not None:
         selected_programs = [p for p in programs if p.startswith(f"cloudsc_class{args.kernel_class}")]
-    action_functions = {'test': test_programs, 'profile': profile_programs, 'run': run_programs}
+    # action_functions = {'test': test_programs, 'profile': profile_programs, 'run': run_programs}
+    action_functions = {'test': test_programs, 'run': run_programs}
     function_args = [selected_programs, args.repetitions, devices[args.device]]
     if args.action == 'profile':
         function_args.append(args.output)

@@ -9,6 +9,7 @@ import tempfile
 import json
 from tabulate import tabulate
 from glob import glob
+from datetime import datetime
 
 import dace
 from dace.frontend.fortran import fortran_parser
@@ -188,3 +189,7 @@ def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
 def reset_graph_files(program: str):
     for file in glob(os.path.join(graphs_dir, f"*{program}_*.sdfg")):
         os.remove(file)
+
+
+def print_with_time(text: str):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {str}")

@@ -6,7 +6,7 @@ import json
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data
+from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data, print_with_time
 from test import test_program, profile_program, get_stats
 from parse_ncu import read_csv
 
@@ -88,6 +88,7 @@ def main():
         command_program = ['python3', test_program_path, 'run', '--repetitions', '1', '--program', program]
 
         if not args.no_ncu:
+            print_with_time("Measure kernel runtime")
             run([*command_ncu, *command_program], capture_output=True)
             csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
             ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
@@ -114,5 +115,8 @@ def main():
 
 
 if __name__ == '__main__':
-    # TODO: Why has the nsys report the kernel from non_clv_int/658?
     main()
+    # TODO:
+    # - make nicer report/results data, maybe use class
+    # - Check where # in ncu comes from
+    # - Put # and so on into own attribute and not measurement name
