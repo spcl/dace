@@ -178,8 +178,7 @@ def test_programs(programs: List[str], repetitions: int, device: dace.DeviceType
             print(f"ERROR: could not run {program} due to an AttributeError")
 
 
-def profile_programs(programs: List[str], repetitions: int, device: dace.DeviceType,
-                     output_file: Optional[str] = None):
+def profile_programs(programs: List[str], repetitions: int, device: dace.DeviceType, output_file: Optional[str] = None):
     results_flat = []
     results_dict = {}
     headers = ['Program', 'measurement', 'max', 'min', 'avg', 'median']
@@ -206,39 +205,34 @@ def run_programs(programs: List[str], repetitions: int, device: dace.DeviceType)
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
-            'action',
-            type=str,
-            choices=['test', 'profile', 'run'],
-            help='The action to perform, test will ignore device and repetitions flags.')
-    parser.add_argument(
-        '-p', '--programs',
-        type=str,
-        nargs='+',
-        help='Names of the programs to use. Can be several separated by space')
-    parser.add_argument(
-            '-r', '--repetitions',
-            type=int,
-            default=1,
-            help='Number of repetitions')
-    parser.add_argument(
-            '-d', '--device',
-            type=str,
-            default='GPU',
-            choices=['GPU', 'CPU'],
-            help="The device to run the code on")
-    parser.add_argument(
-            '-o', '--output',
-            type=str,
-            default=None,
-            help="Writes the output to the given file in json format, only works for profile")
-    parser.add_argument(
-            '-c', '--class',
-            type=int,
-            choices=[1, 2, 3],
-            default=None,
-            dest='kernel_class',
-            help="Run all programs of a given class")
+    parser.add_argument('action',
+                        type=str,
+                        choices=['test', 'profile', 'run'],
+                        help='The action to perform, test will ignore device and repetitions flags.')
+    parser.add_argument('-p',
+                        '--programs',
+                        type=str,
+                        nargs='+',
+                        help='Names of the programs to use. Can be several separated by space')
+    parser.add_argument('-r', '--repetitions', type=int, default=1, help='Number of repetitions')
+    parser.add_argument('-d',
+                        '--device',
+                        type=str,
+                        default='GPU',
+                        choices=['GPU', 'CPU'],
+                        help="The device to run the code on")
+    parser.add_argument('-o',
+                        '--output',
+                        type=str,
+                        default=None,
+                        help="Writes the output to the given file in json format, only works for profile")
+    parser.add_argument('-c',
+                        '--class',
+                        type=int,
+                        choices=[1, 2, 3],
+                        default=None,
+                        dest='kernel_class',
+                        help="Run all programs of a given class")
 
     args = parser.parse_args()
 

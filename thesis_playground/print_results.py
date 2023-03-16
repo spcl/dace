@@ -8,14 +8,8 @@ from test import get_stats
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
-            'dace_file',
-            type=str,
-            help='File with the results from DaCe instrumentation')
-    parser.add_argument(
-            'ncu_file',
-            type=str,
-            help='File with the results from NCU')
+    parser.add_argument('dace_file', type=str, help='File with the results from DaCe instrumentation')
+    parser.add_argument('ncu_file', type=str, help='File with the results from NCU')
 
     args = parser.parse_args()
 

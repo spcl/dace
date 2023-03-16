@@ -53,11 +53,8 @@ def auto_optimize(sdfg: SDFG,
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
-    if program is not None:
-        save_graph(sdfg, program, "after_trivial_map_elimination")
     if device == dace.DeviceType.GPU:
-        print("[my_auto_opt::auto_opt] call loop_to_map_outside_first")
-        loop_to_map_outside_first(sdfg, program, validate, validate_all)
+        loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         if program is not None:
@@ -169,40 +166,49 @@ def auto_optimize(sdfg: SDFG,
     return sdfg
 
 
-def loop_to_map_outside_first(
-        sdfg: SDFG,
-        program: str,
-        validate: bool = True,
-        validate_all: bool = False) -> SDFG:
+def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -> SDFG:
+    """
+    Performs LoopToMap transformation by applying it to the outer loop first
+
+    :param sdfg: The SDFG to work with
+    :type sdfg: SDFG
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to False
+    :type validate_all: bool, optional
+    :return: The optimised SDFG
+    :rtype: SDFG
+    :note: Works by applying LoopToMap to the outermost loop where the
+    transformation can be applied. Has not been thouroughly tested yet.
+    """
 
     sdfg.simplify(validate=False, validate_all=validate_all)
     number_of_transformations_performed = 1
     while number_of_transformations_performed > 0:
         outside_loop_transformations = []
-        transformations = []
-        transformations.extend([xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])])
+        # Get list of all possible transformations
+        transformations = [xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])]
 
+        # Find the transformation which as applied to the outermost loop
         for xform in transformations:
-            print(f"[my_auto_opt::loop_to_map_outside_first] Consider transformation with guard: {xform.loop_guard}")
             is_outside_loop = True
-            sdfg.all_sdfgs_recursive()
+            # Check if it is the outermoost loop by checking if the loop guard is in any of the loop states of the other
+            # found transformations. This could in theory find several outermost loops
             for other_form in transformations:
                 if other_form != xform:
-                    other_states: List[SDFGState] = list(sdutil.dfs_conditional(
-                        sdfg.sdfg_list[xform.sdfg_id], [other_form.loop_begin], lambda _, c: c is not other_form.loop_guard))
+                    other_states: List[SDFGState] = list(
+                        sdutil.dfs_conditional(sdfg.sdfg_list[xform.sdfg_id], [other_form.loop_begin],
+                                               lambda _, c: c is not other_form.loop_guard))
                     if xform.loop_guard in other_states:
                         is_outside_loop = False
             if is_outside_loop:
                 outside_loop_transformations.append(xform)
-                print(f"[my_auto_opt::loop_to_map_outside_first] add transformation with guard {xform.loop_guard} to list")
 
-        print(f"[my_auto_opt::loop_to_map_outside_first] # of outer loops: {len(outside_loop_transformations)}")
+        # Apply the found transformations
         number_of_transformations_performed = len(outside_loop_transformations)
         for xform in outside_loop_transformations:
-            # Don't know what to pass as the 1st argument
-            print(f"[my_auto_opt::loop_to_map_outside_first] Apply with guard {xform.loop_guard}")
+            # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
-            if program is not None:
-                save_graph(sdfg, program, "after_loop_to_map_in_loop_to_map_outside_first")
 
     return sdfg

@@ -13,44 +13,27 @@ from parse_ncu import read_csv
 
 def main():
     parser = ArgumentParser(
-            description='Test and profiles the given profiles. Results are saved into the results folder')
-    parser.add_argument(
-        '-p', '--programs',
-        type=str,
-        nargs='+',
-        help='Names of the programs to use. Can be several separated by space')
-    parser.add_argument(
-            '-c', '--class',
-            type=int,
-            choices=[1, 2, 3],
-            default=None,
-            dest='kernel_class',
-            help="Run all programs of a given class")
-    parser.add_argument(
-            '--cache',
-            default=False,
-            action='store_true',
-            help='Use the cache, does not regenerate and rebuild the code')
-    parser.add_argument(
-            '-r', '--repetitions',
-            type=int,
-            default=5,
-            help='Number of repetitions')
-    parser.add_argument(
-            '--nsys',
-            default=False,
-            action='store_true',
-            help='Also run nsys profile to generate a report')
-    parser.add_argument(
-            '--no-ncu',
-            default=False,
-            action='store_true',
-            help='Do not run ncu')
-    parser.add_argument(
-            '-o', '--output',
-            type=str,
-            default=None,
-            help='Also run nsys profile to generate a report')
+        description='Test and profiles the given profiles. Results are saved into the results folder')
+    parser.add_argument('-p',
+                        '--programs',
+                        type=str,
+                        nargs='+',
+                        help='Names of the programs to use. Can be several separated by space')
+    parser.add_argument('-c',
+                        '--class',
+                        type=int,
+                        choices=[1, 2, 3],
+                        default=None,
+                        dest='kernel_class',
+                        help="Run all programs of a given class")
+    parser.add_argument('--cache',
+                        default=False,
+                        action='store_true',
+                        help='Use the cache, does not regenerate and rebuild the code')
+    parser.add_argument('-r', '--repetitions', type=int, default=5, help='Number of repetitions')
+    parser.add_argument('--nsys', default=False, action='store_true', help='Also run nsys profile to generate a report')
+    parser.add_argument('--no-ncu', default=False, action='store_true', help='Do not run ncu')
+    parser.add_argument('-o', '--output', type=str, default=None, help='Also run nsys profile to generate a report')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'test.py')
@@ -74,7 +57,8 @@ def main():
         if args.cache:
             print("Build it without regenerating the code")
             parent_dir = os.path.split(os.path.abspath(os.path.dirname(__file__)))[0]
-            build = run(['make'], cwd=os.path.join(parent_dir, '.dacecache', f"{programs[program]}_routine", 'build'),
+            build = run(['make'],
+                        cwd=os.path.join(parent_dir, '.dacecache', f"{programs[program]}_routine", 'build'),
                         capture_output=True)
             if build.returncode != 0:
                 print("ERROR: Error encountered while building")
@@ -84,7 +68,12 @@ def main():
         test_program(program, dace.DeviceType.GPU, False)
         results = profile_program(program, repetitions=args.repetitions)
         results["parameters"] = get_program_parameters_data(program)['parameters']
-        command_ncu = ['ncu', '--force-overwrite', '--export', '/tmp/profile',]
+        command_ncu = [
+            'ncu',
+            '--force-overwrite',
+            '--export',
+            '/tmp/profile',
+        ]
         command_program = ['python3', test_program_path, 'run', '--repetitions', '1', '--program', program]
 
         if not args.no_ncu:
