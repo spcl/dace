@@ -556,7 +556,8 @@ class NestedSDFG(CodeNode):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             setattr(result, k, dcpy(v, memo))
-        result._sdfg.parent_nsdfg_node = result
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
         return result
 
     @staticmethod
