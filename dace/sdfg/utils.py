@@ -15,7 +15,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import nodes as nd, graph as gr
+from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
@@ -461,7 +461,7 @@ def merge_maps(
     inner_map_exit: nd.MapExit,
     param_merge: Callable[[ParamsType, ParamsType], ParamsType] = lambda p1, p2: p1 + p2,
     range_merge: Callable[[RangesType, RangesType], RangesType] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges)
-) -> (nd.MapEntry, nd.MapExit):
+) -> Tuple[nd.MapEntry, nd.MapExit]:
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """
 
@@ -1708,3 +1708,26 @@ def prune_symbols(sdfg: SDFG):
                     del node.sdfg.symbols[s]
                     if s in node.symbol_mapping:
                         del node.symbol_mapping[s]
+
+
+def make_dynamic_map_inputs_unique(sdfg: SDFG):
+    for sd in sdfg.all_sdfgs_recursive():
+        dynamic_map_inputs = set(sd.arrays.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                repl_dict = {}
+                if isinstance(node, nd.MapEntry):
+                    # Find all dynamic map inputs
+                    for e in state.in_edges(node):
+                        if not e.dst_conn.startswith('IN_'):
+                            if e.dst_conn in dynamic_map_inputs:
+                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                dynamic_map_inputs.add(new_name)
+                                repl_dict[e.dst_conn] = new_name
+                                e._dst_conn = new_name
+                            else:
+                                dynamic_map_inputs.add(e.dst_conn)
+                    if repl_dict:
+                        in_connectors = {repl_dict[n] if n in repl_dict else n: t for n, t in node.in_connectors.items()}
+                        node.in_connectors = in_connectors
+                        node.map.range.replace(repl_dict)
