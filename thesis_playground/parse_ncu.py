@@ -1,7 +1,7 @@
 import csv
 import sys
 import numpy as np
-from argparse import ArgumentParser
+# from argparse import ArgumentParser
 from typing import List, Dict, Callable, Any, Optional
 import json
 
@@ -95,33 +95,33 @@ def read_csv(in_stream, out_file: Optional[str] = None) -> List[Data]:
     return data
 
 
-def print_write_data(data: List[Data], out_file: Optional[str] = None):
-    if out_file is not None:
-        print(f"Write output into {out_file}")
-        all_data = {}
-        for d in data:
-            all_data[d.kernel_name] = d.__dict__
-        with open(out_file, mode='w') as file:
-            json.dump(all_data, file)
-    else:
-        for d in data:
-            print(d.kernel_name)
-            print(d.get_stat())
+# def print_write_data(data: List[Data], out_file: Optional[str] = None):
+#     if out_file is not None:
+#         print(f"Write output into {out_file}")
+#         all_data = {}
+#         for d in data:
+#             all_data[d.kernel_name] = d.__dict__
+#         with open(out_file, mode='w') as file:
+#             json.dump(all_data, file)
+#     else:
+#         for d in data:
+#             print(d.kernel_name)
+#             print(d.get_stat())
 
 
-def main():
-    parser = ArgumentParser()
-    parser.add_argument('-f', '--file', type=str, help='The csv file to read')
-    parser.add_argument('-o', '--output', type=str, help='The output file, format is json')
+# def main():
+#     parser = ArgumentParser()
+#     parser.add_argument('-f', '--file', type=str, help='The csv file to read')
+#     parser.add_argument('-o', '--output', type=str, help='The output file, format is json')
 
-    args = parser.parse_args()
+#     args = parser.parse_args()
 
-    if args.file is None:
-        read_csv(sys.stdin, args.output)
-    else:
-        with open(args.file) as csvfile:
-            print_write_data(read_csv(csvfile), args.output)
+#     if args.file is None:
+#         read_csv(sys.stdin, args.output)
+#     else:
+#         with open(args.file) as csvfile:
+#             print_write_data(read_csv(csvfile), args.output)
 
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()

@@ -18,6 +18,8 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from data import get_program_parameters_data, get_testing_parameters_data
 
+from measurement_data import ProgramMeasurement
+
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
 def read_source(filename: str, extension: str = 'f90') -> str:
@@ -150,16 +152,17 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-def print_results_v2(program_results: Dict):
+def print_results_v2(program_measurements: List[ProgramMeasurement]):
     headers = ["program", "measurement", "min", "max", "avg", "median"]
-    excluded_measurements = ['parameters']
     flat_data = []
-    for program in program_results:
-        for measurement in program_results[program]:
-            if measurement not in excluded_measurements:
-                flat_data.append([program, measurement])
-                for key in headers[2:]:
-                    flat_data[-1].append(program_results[program][measurement][key])
+    for program_measurement in program_measurements:
+        for measurement in program_measurement.measurements:
+            name = measurement.name
+            if measurement.kernel_name is not None:
+                name += f" of {measurement.kernel_name}"
+            name += f" [{measurement.unit}] (#={measurement.amount()})"
+            flat_data.append([program_measurement.program, name, measurement.min(), measurement.max(),
+                              measurement.average(), measurement.median()])
 
     print(tabulate(flat_data, headers=headers))
 

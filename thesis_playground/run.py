@@ -3,17 +3,70 @@ import os
 from subprocess import run
 import re
 import json
+import numpy as np
+from typing import List, Dict
+from numbers import Number
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data, print_with_time
-from test import test_program, profile_program, get_stats
-from parse_ncu import read_csv
+from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data, print_with_time,\
+                  get_inputs, get_outputs
+from test import test_program, get_stats, compile_for_profile
+from parse_ncu import read_csv, Data
+from measurement_data import ProgramMeasurement
+
+#### TOOD Next ####
+# - Adapt parse_ncu to use new data classes
+# - write code to read/write json with the new data classes
+# - plot etc.
+
+
+def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
+    for data in ncu_data:
+        match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
+        id_triplet = tuple([int(id) for id in match.group(1).split('_')])
+        program_measurement.add_measurement('Kernel Time',
+                                            data.durations_unit,
+                                            data=data.durations,
+                                            kernel_name=str(id_triplet))
+        program_measurement.add_measurement('Kernel Cycles',
+                                            data.cycles_unit,
+                                            data=data.cycles,
+                                            kernel_name=str(id_triplet))
+
+
+def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10) \
+        -> ProgramMeasurement:
+
+    results = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
+
+    programs = get_programs_data()['programs']
+    print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
+    routine_name = f"{programs[program]}_routine"
+
+    sdfg = compile_for_profile(program, device, normalize_memlets)
+
+    rng = np.random.default_rng(42)
+    inputs = get_inputs(program, rng)
+    outputs = get_outputs(program, rng)
+
+    sdfg.clear_instrumentation_reports()
+    print_with_time("Measure total runtime")
+    for i in range(repetitions):
+        sdfg(**inputs, **outputs)
+    reports = sdfg.get_instrumentation_reports()
+
+    # TOOD: Check if unit is always ms
+    results.add_measurement("Total time", "ms")
+    for report in reports:
+        results.add_value(float(report.durations[(0, -1, 1)][f"SDFG {routine_name}"][13533068620211794961][0]))
+
+    return results
 
 
 def main():
     parser = ArgumentParser(
-        description='Test and profiles the given profiles. Results are saved into the results folder')
+        description='Test and profiles the given programs. Results are saved into the results folder')
     parser.add_argument('-p',
                         '--programs',
                         type=str,
@@ -51,7 +104,7 @@ def main():
         os.environ['DACE_compiler_use_cache'] = '1'
         os.putenv('DACE_compiler_use_cache', '1')
 
-    program_results = {}
+    program_results = []
     for program in selected_programs:
         print(f"Run program {program}")
         if args.cache:
@@ -66,8 +119,7 @@ def main():
                 return 1
 
         test_program(program, dace.DeviceType.GPU, False)
-        results = profile_program(program, repetitions=args.repetitions)
-        results["parameters"] = get_program_parameters_data(program)['parameters']
+        program_results.append(profile_program(program, repetitions=args.repetitions))
         command_ncu = [
             'ncu',
             '--force-overwrite',
@@ -81,14 +133,7 @@ def main():
             run([*command_ncu, *command_program], capture_output=True)
             csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
             ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-            for data in ncu_data:
-                match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
-                id_triplet = tuple([int(id) for id in match.group(1).split('_')])
-                results[f"Kernel {id_triplet} time [{data.durations_unit}] (#={len(data.durations)})"] = \
-                    get_stats(data.durations)
-                results[f"Kernel {id_triplet} cycles (#={len(data.cycles)})"] = \
-                    get_stats(data.cycles)
-            program_results[program] = results
+            convert_ncu_data_into_program_measurement(ncu_data, program_results[-1])
 
         if args.nsys:
             report_name = f"report_{program}.nsys-rep"
@@ -98,7 +143,7 @@ def main():
 
     if args.output is not None:
         with open(os.path.join(get_results_dir(), args.output), 'w') as file:
-            json.dump(program_results, file)
+            json.dump(program_results, file, default=ProgramMeasurement.to_json)
 
     print_results_v2(program_results)
 
