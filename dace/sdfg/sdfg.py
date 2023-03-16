@@ -441,6 +441,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Counter to resolve name conflicts
         self._orig_name = name
         self._num = 0
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
+                setattr(result, k, None)
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+        return result
 
     @property
     def sdfg_id(self):
