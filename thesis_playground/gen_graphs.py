@@ -9,18 +9,12 @@ from my_auto_opt import auto_optimize
 
 def main():
     parser = ArgumentParser()
+    parser.add_argument('program', type=str, help='Name of the program to generate the SDFGs of')
+    parser.add_argument('--normalize-memlets', action='store_true', default=False)
     parser.add_argument(
-            'program',
-            type=str,
-            help='Name of the program to generate the SDFGs of')
-    parser.add_argument(
-            '--normalize-memlets',
-            action='store_true',
-            default=False)
-    parser.add_argument(
-            '--only-graph',
-            action='store_true',
-            help='Does not compile the SDFGs into C++ code, only creates the SDFGs and runs the transformations')
+        '--only-graph',
+        action='store_true',
+        help='Does not compile the SDFGs into C++ code, only creates the SDFGs and runs the transformations')
 
     device = dace.DeviceType.GPU
     args = parser.parse_args()

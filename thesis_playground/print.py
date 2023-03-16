@@ -7,10 +7,7 @@ from utils import print_results_v2, get_results_dir
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
-            'file',
-            type=str,
-            help="Path to the json files to read")
+    parser.add_argument('file', type=str, help="Path to the json files to read")
 
     args = parser.parse_args()
     with open(os.path.join(get_results_dir(), args.file)) as file:

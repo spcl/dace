@@ -94,7 +94,7 @@ def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = F
         inp_data[p] = params_data['parameters'][p]
     for inp in programs_data['program_inputs'][program]:
         shape = params_data['data'][inp]
-        if shape == (0,):  # Scalar
+        if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
             inp_data[inp] = np.asfortranarray(rng.random(shape))
@@ -122,7 +122,7 @@ def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = 
     out_data = dict()
     for out in programs_data['program_outputs'][program]:
         shape = params_data['data'][out]
-        if shape == (0,):  # Scalar
+        if shape == (0, ):  # Scalar
             raise NotImplementedError
         else:
             out_data[out] = np.asfortranarray(rng.random(shape))

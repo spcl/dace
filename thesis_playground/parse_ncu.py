@@ -111,14 +111,8 @@ def print_write_data(data: List[Data], out_file: Optional[str] = None):
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
-            '-f', '--file',
-            type=str,
-            help='The csv file to read')
-    parser.add_argument(
-            '-o', '--output',
-            type=str,
-            help='The output file, format is json')
+    parser.add_argument('-f', '--file', type=str, help='The csv file to read')
+    parser.add_argument('-o', '--output', type=str, help='The output file, format is json')
 
     args = parser.parse_args()
 

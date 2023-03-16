@@ -8,18 +8,18 @@ from test import compile_for_profile
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument(
-        '-p', '--programs',
-        type=str,
-        nargs='+',
-        help='Names of the programs to use. Can be several separated by space')
-    parser.add_argument(
-            '-c', '--class',
-            type=int,
-            choices=[1, 2, 3],
-            default=None,
-            dest='kernel_class',
-            help="Run all programs of a given class")
+    parser.add_argument('-p',
+                        '--programs',
+                        type=str,
+                        nargs='+',
+                        help='Names of the programs to use. Can be several separated by space')
+    parser.add_argument('-c',
+                        '--class',
+                        type=int,
+                        choices=[1, 2, 3],
+                        default=None,
+                        dest='kernel_class',
+                        help="Run all programs of a given class")
 
     args = parser.parse_args()
 

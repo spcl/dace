@@ -31,9 +31,10 @@ class PatternMatchAndApply(ppl.Pass):
                                               default=[],
                                               desc='The list of transformations to apply')
 
-    permissive = properties.Property(dtype=bool,
-                                     default=False,
-                                     desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
+    permissive = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
     validate = properties.Property(dtype=bool,
                                    default=True,
                                    desc='If True, validates the SDFG after all transformations have been applied.')
@@ -187,9 +188,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     print(f'Last correct SDFG: {sdfg_name}')
                     raise e
         else:
-            tsdfg.save(f"{tsdfg.hash_sdfg()[:5]}.sdfg")
             applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
-            tsdfg.save(f"{tsdfg.hash_sdfg()[:5]}.sdfg")
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
