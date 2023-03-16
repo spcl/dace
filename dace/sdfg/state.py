@@ -765,6 +765,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        for node in result.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                node.sdfg.parent = result
+        return result
 
     @property
     def parent(self):
