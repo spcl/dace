@@ -40,7 +40,7 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
 def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) -> dace.SDFG:
 
     intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
-    
+
     # Find first NestedSDFG
     sdfg = None
     for state in intial_sdfg.states():
@@ -81,6 +81,7 @@ parameters = {
     'NCLDQV': 7,
     'NCLDTOP': 1,
     'NSSOPT': 1,
+    'LAERICESED': 1
 }
 
 
@@ -199,6 +200,9 @@ data = {
     'PQ': (parameters['KLON'], parameters['KLEV']),
     'PA': (parameters['KLON'], parameters['KLEV']),
     'PCLV': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'LLFALL': (parameters['NCLV']),
+    'ZVQX': (parameters['NCLV']),
+    'PRE_ICE': (parameters['KLON'], parameters['KLEV'])
 }
 
 
@@ -215,6 +219,7 @@ programs = {
     'cloudsc_class1_670': 'clv_init',
     'cloudsc_class1_2783': 'copy_precipitation_flux',
     'cloudsc_class1_2857': 'enthalpy_flux_due_to_precipitation',
+    'cloudsc_class1_2809': 'sedimentation_falling_all',
     'cloudsc_class2_1762': 'precipitation_cover_overlap',
     'cloudsc_class2_1516': 'ice_growth_vapour_deposition',
     'cloudsc_class3_691': 'tidy_up_cloud_cover',
@@ -236,6 +241,7 @@ program_parameters = {
     'cloudsc_class1_670': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA'),
     'cloudsc_class1_2783': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQR', 'NCLDQS', 'NCLDQL', 'NCLDQI'),
     'cloudsc_class1_2857': ('KLON', 'KLEV', 'KIDIA', 'KFDIA'),
+    'cloudsc_class1_2809': ('NCLV', 'KLON', 'KLEV', 'NCLDQI', 'NCLDTOP', 'KIDIA', 'KFDIA', 'LAERICESED'),
     'cloudsc_class2_1762': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDTOP', 'NCLDQS', 'NCLDQR'),
     'cloudsc_class2_1516': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV', 'NCLDTOP', 'NCLDQL', 'NCLDQI'),
     'cloudsc_class3_691': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL'),
@@ -260,6 +266,9 @@ program_inputs = {
     'cloudsc_class1_670': ('PCLV', 'PTSPHY', 'tendency_tmp_cld'),
     'cloudsc_class1_2783': ('ZPFPLSX',),
     'cloudsc_class1_2857': ('RLVTT', 'RLSTT', 'PFPLSL', 'PFPLSN'),
+    #'cloudsc_class1_2809': ('LLFALL', 'ZFALLSRCE', 'ZPFPLSX', 'ZDTGDP', 'ZSOLQA',
+    #                        'ZQXFG', 'ZQPRETOT', 'ZVQX', 'ZRHO', 'PRE_ICE', 'ZFALLSINK'),
+    'cloudsc_class1_2809': ('LLFALL', 'ZPFPLSX', 'ZDTGDP', 'ZRHO', 'PRE_ICE'),
     'cloudsc_class2_1762': ('RCOVPMIN', 'ZEPSEC', 'ZQXFG', 'ZA', 'ZQPRETOT'),
     'cloudsc_class2_1516': ('RTT', 'R2ES', 'R3IES', 'R4IES', 'RLMIN', 'RV', 'RD', 'RG', 'RLSTT', 'RDEPLIQREFRATE',
         'RDEPLIQREFDEPTH', 'RCLDTOPCF', 'PTSPHY', 'RICEINIT', 'ZA', 'ZCLDTOPDIST', 'ZDP', 'ZRHO', 'ZTP1', 'ZFOKOOP', 'PAP',
@@ -286,6 +295,7 @@ program_outputs = {
     'cloudsc_class1_670': ('ZQX', 'ZQX0'),
     'cloudsc_class1_2783': ('PFPLSL', 'PFPLSN'),
     'cloudsc_class1_2857': ('PFHPSL', 'PFHPSN'),
+    'cloudsc_class1_2809': ('ZFALLSINK', 'ZVQX', 'ZQPRETOT', 'ZQXFG', 'ZSOLQA', 'ZFALLSRCE'),
     'cloudsc_class2_1762': ('ZCOVPTOT', 'ZCOVPCLR', 'ZCOVPMAX', 'ZRAINCLD', 'ZSNOWCLD'),
     'cloudsc_class2_1516': ('ZCOVPTOT', 'ZICENUCLEI', 'ZSOLQA', 'ZQXFG'),
     'cloudsc_class3_691': ('ZQX', 'ZLNEG', 'tendency_loc_q', 'tendency_loc_T'),
@@ -361,6 +371,8 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_2809', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_2809', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_2857', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_2857', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_2857', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
@@ -415,6 +427,8 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
 
 if __name__ == "__main__":
+    test_program('cloudsc_class1_2809', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_2809', dace.DeviceType.CPU, True)
     test_program('cloudsc_1f', dace.DeviceType.CPU, False)
     test_program('cloudsc_1f', dace.DeviceType.CPU, True)
     test_program('cloudsc_3p1', dace.DeviceType.CPU, False)
