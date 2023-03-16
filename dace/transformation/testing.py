@@ -119,6 +119,18 @@ class TransformationTester(Optimizer):
         return self.sdfg
 
 
+def test_transformations_hook(sdfg: 'SDFG'):
+    """
+    Calls a command-line interface for interactive SDFG transformations
+    on every DaCe program call.
+
+    :param sdfg: The current SDFG to optimize.
+    """
+
+    opt = TransformationTester(sdfg)
+    return opt.optimize()
+
+
 if __name__ == '__main__':
     import dace
 

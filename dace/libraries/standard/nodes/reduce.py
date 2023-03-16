@@ -1359,7 +1359,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             input_subset = input_subset[:-2]
             input_subset.append(f'0:{schedule.sequential[0]}')
             input_subset.append('_g * 32 + _b1')
-            inmm = dace.Memlet(f'_in[{",".join(input_subset)}]')
+            inmm = dace.Memlet(f'_in[{",".join(input_subset)}]', dynamic=True)
 
             if schedule.multi_axes:
                 # Add initialization

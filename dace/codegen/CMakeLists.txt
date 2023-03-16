@@ -144,6 +144,8 @@ if(DACE_ENABLE_HIP)
   # ...Then load again to get the macros
   find_package(HIP REQUIRED)
 
+  # Add libraries such as rocBLAS
+  link_directories(${HIP_PATH}/../lib)
 endif()
 
 # Function for performing deferred variable expansion
@@ -303,7 +305,7 @@ if(DACE_ENABLE_HIP)
 
   # Add flags to compile for local AMD architectures
   foreach(var ${LOCAL_HIP_ARCHITECTURES})
-    list(APPEND HIP_HIPCC_FLAGS --offload-arch=gfx${var})
+    list(APPEND HIP_HIPCC_FLAGS --offload-arch=${var})
   endforeach()
 
   # Add flags from dace config

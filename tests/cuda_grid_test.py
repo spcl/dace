@@ -4,7 +4,7 @@ import os
 
 import dace
 from dace.transformation.dataflow import GPUTransformMap, Vectorization
-from dace.codegen import compiled_sdfg
+from dace.codegen import compiled_sdfg, common
 import numpy as np
 import pytest
 import subprocess
@@ -69,7 +69,7 @@ def test_gpu_vec():
     _test(sdfg)
 
     # Skip if not CUDA
-    if dace.Config.get_bool('compiler', 'cuda', 'backend') == 'cuda':
+    if common.get_gpu_backend() == 'cuda':
         assert was_vectorized(sdfg)
 
 
