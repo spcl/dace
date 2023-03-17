@@ -639,9 +639,16 @@ class StateGraphView(object):
 
         # Add scalar arguments from free symbols
         defined_syms = defined_syms or self.defined_symbols()
+        # Fix for dynamic map inputs appearing in free symbols
+        from dace.sdfg.utils import dynamic_map_inputs
+        dynamic_inputs = set()
+        for node in self.nodes():
+            if isinstance(node, nd.MapEntry):
+                dynamic_inputs.update([e.dst_conn for e in dynamic_map_inputs(self.graph, node)])
+        free_symbols = self.free_symbols - dynamic_inputs
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants
+            for k in free_symbols if not k.startswith('__dace') and k not in sdfg.constants
         })
 
         # Add scalar arguments from free symbols of data descriptors
