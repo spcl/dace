@@ -52,6 +52,7 @@ class StructTransformer(ast.NodeTransformer):
     A Python AST transformer that replaces ``Call`` nodes to create structs with
     the custom ``StructInitializer`` AST node.
     """
+
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -193,6 +194,57 @@ class ConditionalCodeResolver(ast.NodeTransformer):
 
     def visit_IfExp(self, node: ast.IfExp) -> Any:
         return self.visit_If(node)
+
+
+class ConditionalOptionalArrayResolver(ast.NodeTransformer):
+    """ 
+    Replaces compare operator with trivial True/False
+    if we can infer than array is/isnot None using type hinting
+    (stored in data.Data.optional)
+    """
+
+    def __init__(self, argtypes: Dict[str, data.Data]):
+        super().__init__()
+        self.argtypes = copy.copy(argtypes)
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Store):
+            self.argtypes[node.id] = SyntaxError
+        return self.generic_visit(node)
+
+    def _resolve_array_optional(self, node: ast.Compare, is_none: bool):
+        # Is lhs or rhs None?
+        if isinstance(node.left, ast.Constant) and node.left is None:
+            cmp_to_test = node.comparators[0]
+        elif isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None:
+            cmp_to_test = node.left
+        else:
+            return self.generic_visit(node)
+
+        # Is the non-None cmp and array? Check it's optional status
+        try:
+            array = astutils.evalnode(cmp_to_test, self.argtypes)
+            if isinstance(array, data.Data) and array.optional is not None:
+                if array.optional == is_none:
+                    return ast.Constant(value=False)
+                else:
+                    return ast.Constant(value=True)
+            else:
+                return self.generic_visit(node)
+        except SyntaxError:
+            # Cannot evaluate if condition at compile time
+            pass
+
+    def visit_Compare(self, node: ast.Compare) -> Any:
+        node = self.generic_visit(node)
+        if len(node.comparators) != 1:
+            return self.generic_visit(node)
+
+        if isinstance(node.ops[0], (ast.Eq, ast.Is)):
+            return self._resolve_array_optional(node, True)  # arr is None
+        elif isinstance(node.ops[0], (ast.NotEq, ast.IsNot)):
+            return self._resolve_array_optional(node, False)  # arr is not None
+        return self.generic_visit(node)
 
 
 class _FindBreakContinueStmts(ast.NodeVisitor):
@@ -1527,6 +1579,7 @@ def preprocess_dace_program(f: Callable[..., Any],
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            src_ast = ConditionalOptionalArrayResolver(argtypes).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
             if Config.get_bool('frontend', 'verbose_errors'):
