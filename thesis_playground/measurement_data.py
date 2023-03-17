@@ -168,7 +168,7 @@ class MeasurementRun:
         :type description: str
         :param data: The data itself as a list of ProgramMeasurements, defaults to []
         :type data: List[ProgramMeasurement], optional
-        :param git_hash: The git hash, if not given, will be read automatically, defaults to ''
+        :param git_hash: The short git hash, if not given, will be read automatically, defaults to ''
         :type git_hash: str, optional
         :param date: The time the measurements were run, defaults to datetime.now()
         :type date: datetime, optional

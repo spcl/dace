@@ -1,3 +1,4 @@
+"""Program to plot results"""
 from argparse import ArgumentParser
 import json
 import os
@@ -40,8 +41,8 @@ def create_plot_grid(
 
     first_row_axes = []
     for row, (run_data, subfig) in enumerate(zip(runs_data, subfigs)):
-        subfig.suptitle(run_data.description)
-        # axes = subfig.subplots(nrows=1, ncols=len(run_data.data), sharey=True, sharex=False)
+        subfig.suptitle(f"{run_data.description} at {run_data.date.strftime('%Y-%m-%d %H:%H')} "
+                        f"and commit {run_data.git_hash}")
         for col, result in enumerate(run_data.data, start=1):
             if row == 0:
                 ax = subfig.add_subplot(1, len(run_data.data), col)
@@ -92,7 +93,7 @@ def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram
 
 
 def main():
-    parser = ArgumentParser()
+    parser = ArgumentParser(description="Plots the results it reads from the given paths")
     parser.add_argument(
             'file',
             type=str,
