@@ -466,6 +466,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hasattr(self, '_transformation_hist'):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
         result._sdfg_list = []
+        if self._parent_sdfg is None:
+            result._sdfg_list = result.reset_sdfg_list()
         return result
 
     @property
