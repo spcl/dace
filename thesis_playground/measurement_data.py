@@ -1,6 +1,7 @@
 from typing import List, Dict, Optional
-from number import Number
+from numbers import Number
 import numpy as np
+import json
 
 
 class Measurement:
@@ -57,7 +58,7 @@ class ProgramMeasurement:
     def __init__(self, program: str, parameters: Dict, measurements: Dict = None):
         self.program = program
         self.parameters = parameters
-        self.measurements = {} if measurements is not None else measurements
+        self.measurements = {} if measurements is None else measurements
 
     def add_measurement(self, name: str, unit: str, **kwargs):
         self.measurements[name] = Measurement(name, unit, **kwargs)
@@ -75,9 +76,12 @@ class ProgramMeasurement:
 
     @staticmethod
     def to_json(measurement: 'ProgramMeasurement') -> Dict:
+        msr_dict = {}
+        for msr in measurement.measurements.values():
+            msr_dict[msr.name] = Measurement.to_json(msr)
         return {
                 "__ProgramMeasurement__": True,
-                "measurements": Measurement.to_json(measurement),
+                "measurements": msr_dict,
                 "program": measurement.program,
                 "parameters": measurement.parameters,
                 }
@@ -86,4 +90,10 @@ class ProgramMeasurement:
     def from_json(dict: Dict) -> 'ProgramMeasurement':
         if '__ProgramMeasurement__' in dict:
             return ProgramMeasurement(dict['program'], dict['parameters'],
-                                      measurements=Measurement.from_json(dict['measurements']))
+                                      measurements=dict['measurements'])
+        elif '__Measurement__' in dict:
+            return Measurement.from_json(dict)
+        else:
+            return dict
+
+

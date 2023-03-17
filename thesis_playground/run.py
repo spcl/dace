@@ -11,13 +11,11 @@ import dace
 
 from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data, print_with_time,\
                   get_inputs, get_outputs
-from test import test_program, get_stats, compile_for_profile
+from test import test_program, compile_for_profile
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement
 
-#### TOOD Next ####
-# - Adapt parse_ncu to use new data classes
-# - write code to read/write json with the new data classes
+# --- TOOD Next ---
 # - plot etc.
 
 
@@ -59,7 +57,8 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     # TOOD: Check if unit is always ms
     results.add_measurement("Total time", "ms")
     for report in reports:
-        results.add_value(float(report.durations[(0, -1, 1)][f"SDFG {routine_name}"][13533068620211794961][0]))
+        results.add_value("Total time",
+                          float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][13533068620211794961][0]))
 
     return results
 
@@ -150,7 +149,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    # TODO:
-    # - make nicer report/results data, maybe use class
-    # - Check where # in ncu comes from
-    # - Put # and so on into own attribute and not measurement name

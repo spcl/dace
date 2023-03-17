@@ -66,7 +66,6 @@ def auto_optimize(sdfg: SDFG,
                                                    validate_all=validate_all)
         if program is not None:
             sdfg.save(f"{sdfg.hash_sdfg()[:5]}.sdfg")
-        print(f"Performed {l2ms} transformations")
         transformed = l2ms > 0
 
     if program is not None:

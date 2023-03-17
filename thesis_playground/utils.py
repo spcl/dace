@@ -156,7 +156,7 @@ def print_results_v2(program_measurements: List[ProgramMeasurement]):
     headers = ["program", "measurement", "min", "max", "avg", "median"]
     flat_data = []
     for program_measurement in program_measurements:
-        for measurement in program_measurement.measurements:
+        for measurement in program_measurement.measurements.values():
             name = measurement.name
             if measurement.kernel_name is not None:
                 name += f" of {measurement.kernel_name}"
@@ -195,4 +195,4 @@ def reset_graph_files(program: str):
 
 
 def print_with_time(text: str):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {str}")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
