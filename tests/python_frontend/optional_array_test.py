@@ -19,6 +19,7 @@ def test_type_hint():
 
 
 def test_optional_arg_hint():
+
     @dace.program
     def tester(a: Optional[dace.float64[1]], b: dace.float64[1]):
         transient = b + 1
@@ -76,7 +77,8 @@ def test_optional_dead_state(isnone):
     assert all('b' not in str(e.data.condition.as_string) for e in sdfg.edges())
 
 
-def test_optional_array_inference():
+def test_optional_array_inference_via_simplify():
+
     @dace.program
     def nested(b):
         if b is not None:
@@ -127,10 +129,41 @@ def test_optional_array_inference():
                 assert node.sdfg.arrays['tmp'].optional is False
 
 
+def test_optional_array_inference_via_parse():
+
+    @dace.program
+    def nested(b):
+        if b is not None:
+            tmp = np.zeros_like(b)
+            b[:] += 1 + tmp
+
+    @dace.program
+    def outer(yes: Optional[dace.float64[20]], no: dace.float64[20], unknown):
+        # Add loop to challenge unconditional traversal
+        for _ in range(10):
+            pass
+
+        nested(yes)
+        nested(no)
+        nested(unknown)
+
+    yes_arr = None
+    no_arr = np.zeros(3)
+    unknown_arr = np.zeros(3)
+
+    sdfg = outer.to_sdfg(yes_arr, no_arr, unknown_arr, simplify=False)
+    sdfg.validate()
+
+    assert sdfg.arrays['yes_arr'].optional is False
+    assert sdfg.arrays['no_arr'].optional is True
+    assert sdfg.arrays['unknown_arr'].optional is True
+
+
 if __name__ == '__main__':
     test_type_hint()
     test_optional_arg_hint()
     test_optional_argcheck()
     test_optional_dead_state(False)
     test_optional_dead_state(True)
-    test_optional_array_inference()
+    test_optional_array_inference_via_parse()
+    test_optional_array_inference_via_simplify()

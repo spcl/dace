@@ -564,6 +564,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 is_constant = False
                 is_optional = None
                 if not _is_empty(ann):
+                    is_optional = False
                     # If constant, use given argument
                     if ann is dtypes.compiletime:
                         curarg = None
@@ -662,8 +663,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 # Set type
                 types[aname] = create_datadescriptor(curarg)
-                if is_optional is True and isinstance(types[aname], data.Array):
-                    types[aname].optional = True
+                if is_optional is not None and isinstance(types[aname], data.Array):
+                    types[aname].optional = is_optional
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
@@ -892,6 +893,5 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set regenerate and recompile flags
             sdfg._regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
-
 
         return sdfg, cached
