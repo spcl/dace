@@ -109,7 +109,7 @@ class MeasurementRun:
                  description: str,
                  data: List[ProgramMeasurement] = [],
                  git_hash: str = '',
-                 datetime: datetime = datetime.now()):
+                 date: datetime = datetime.now()):
         self.description = description
         self.data = data
         self.git_hash = git_hash
@@ -118,7 +118,7 @@ class MeasurementRun:
                               cwd=path.split(path.dirname(__file__))[0],
                               capture_output=True)
             self.git_hash = hash_output.stdout.decode('UTF-8')
-        self.date = datetime
+        self.date = date
 
     def add_program_data(self, data: ProgramMeasurement):
         self.data.append(data)
