@@ -774,7 +774,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             setattr(result, k, copy.deepcopy(v, memo))
         for node in result.nodes():
             if isinstance(node, nd.NestedSDFG):
-                node.sdfg.parent = result
+                try:
+                    node.sdfg.parent = result
+                except AttributeError:
+                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
+                    # TODO: Investigate why this happens.
+                    pass
         return result
 
     @property
