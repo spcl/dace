@@ -1,7 +1,9 @@
 from typing import List, Dict, Optional
 from numbers import Number
 import numpy as np
-import json
+from subprocess import run
+from os import path
+from datetime import datetime
 
 
 class Measurement:
@@ -97,3 +99,51 @@ class ProgramMeasurement:
             return dict
 
 
+class MeasurementRun:
+    description: str
+    data: List[ProgramMeasurement]
+    git_hash: str
+    date: datetime
+
+    def __init__(self,
+                 description: str,
+                 data: List[ProgramMeasurement] = [],
+                 git_hash: str = '',
+                 datetime: datetime = datetime.now()):
+        self.description = description
+        self.data = data
+        self.git_hash = git_hash
+        if self.git_hash == '':
+            hash_output = run(['git', 'rev-parse', '--short', 'HEAD'],
+                              cwd=path.split(path.dirname(__file__))[0],
+                              capture_output=True)
+            self.git_hash = hash_output.stdout.decode('UTF-8')
+        self.datetime = datetime
+
+    def add_program_data(self, data: ProgramMeasurement):
+        self.data.append(data)
+
+    @staticmethod
+    def to_json(run: 'MeasurementRun') -> Dict:
+        data_list = []
+        for data in run.data:
+            data_list.append(ProgramMeasurement.to_json(data))
+        return {
+                '__MeasurementRun__': True,
+                'description': run.description,
+                'git_hash': run.git_hash,
+                'data': data_list,
+                'date': run.date
+                }
+
+    @staticmethod
+    def from_json(dict: Dict) -> 'MeasurementRun':
+        if '__MeasurementRun__' in dict:
+            return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'], date=dict['date'])
+        if '__ProgramMeasurement__' in dict:
+            return ProgramMeasurement(dict['program'], dict['parameters'],
+                                      measurements=dict['measurements'])
+        elif '__Measurement__' in dict:
+            return Measurement.from_json(dict)
+        else:
+            return dict

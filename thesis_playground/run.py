@@ -13,7 +13,7 @@ from utils import get_programs_data, get_results_dir, print_results_v2, get_prog
                   get_inputs, get_outputs
 from test import test_program, compile_for_profile
 from parse_ncu import read_csv, Data
-from measurement_data import ProgramMeasurement
+from measurement_data import ProgramMeasurement, MeasurementRun
 
 # --- TOOD Next ---
 # - plot etc.
@@ -86,6 +86,11 @@ def main():
     parser.add_argument('--nsys', default=False, action='store_true', help='Also run nsys profile to generate a report')
     parser.add_argument('--no-ncu', default=False, action='store_true', help='Do not run ncu')
     parser.add_argument('-o', '--output', type=str, default=None, help='Also run nsys profile to generate a report')
+    parser.add_argument('-d',
+                        '--description',
+                        type=str,
+                        default='Unknown',
+                        help='Description to be saved into the json file')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'test.py')
@@ -103,7 +108,7 @@ def main():
         os.environ['DACE_compiler_use_cache'] = '1'
         os.putenv('DACE_compiler_use_cache', '1')
 
-    program_results = []
+    run_data = MeasurementRun(args.description)
     for program in selected_programs:
         print(f"Run program {program}")
         if args.cache:
@@ -118,7 +123,7 @@ def main():
                 return 1
 
         test_program(program, dace.DeviceType.GPU, False)
-        program_results.append(profile_program(program, repetitions=args.repetitions))
+        program_data = profile_program(program, repetitions=args.repetitions)
         command_ncu = [
             'ncu',
             '--force-overwrite',
@@ -132,7 +137,7 @@ def main():
             run([*command_ncu, *command_program], capture_output=True)
             csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
             ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-            convert_ncu_data_into_program_measurement(ncu_data, program_results[-1])
+            convert_ncu_data_into_program_measurement(ncu_data, program_data)
 
         if args.nsys:
             report_name = f"report_{program}.nsys-rep"
@@ -140,11 +145,13 @@ def main():
             print(f"Save nsys report into {report_name}")
             run([*command_nsys, *command_program], capture_output=True)
 
+        run_data.add_program_data(program_data)
+
     if args.output is not None:
         with open(os.path.join(get_results_dir(), args.output), 'w') as file:
-            json.dump(program_results, file, default=ProgramMeasurement.to_json)
+            json.dump(program_data, file, default=MeasurementRun.to_json)
 
-    print_results_v2(program_results)
+    print_results_v2(program_data)
 
 
 if __name__ == '__main__':

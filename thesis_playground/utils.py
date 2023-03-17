@@ -18,7 +18,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from data import get_program_parameters_data, get_testing_parameters_data
 
-from measurement_data import ProgramMeasurement
+from measurement_data import ProgramMeasurement, MeasurementRun
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -152,10 +152,10 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-def print_results_v2(program_measurements: List[ProgramMeasurement]):
+def print_results_v2(run_data: MeasurementRun):
     headers = ["program", "measurement", "min", "max", "avg", "median"]
     flat_data = []
-    for program_measurement in program_measurements:
+    for program_measurement in run_data.data:
         for measurement in program_measurement.measurements.values():
             name = measurement.name
             if measurement.kernel_name is not None:

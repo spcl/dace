@@ -3,7 +3,7 @@ import json
 import os
 
 from utils import print_results_v2, get_results_dir
-from measurement_data import ProgramMeasurement
+from measurement_data import ProgramMeasurement, MeasurementRun
 
 
 def main():
@@ -12,8 +12,8 @@ def main():
 
     args = parser.parse_args()
     with open(os.path.join(get_results_dir(), args.file)) as file:
-        results = json.load(file, object_hook=ProgramMeasurement.from_json)
-        print_results_v2(results)
+        run_data = json.load(file, object_hook=MeasurementRun.from_json)
+        print_results_v2(run_data)
 
 
 if __name__ == '__main__':

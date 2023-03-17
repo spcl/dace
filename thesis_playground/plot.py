@@ -1,19 +1,18 @@
 from argparse import ArgumentParser
 import json
 import os
-from typing import Dict, List
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import numpy as np
 
 from utils import get_results_dir
-from measurement_data import ProgramMeasurement
+from measurement_data import ProgramMeasurement, MeasurementRun
 
 
-def create_qq_plot(results: Dict):
-    fig, axes = plt.subplots(1, len(results), sharey=True, sharex=False, tight_layout=True)
+def create_qq_plot(run_data: MeasurementRun):
+    fig, axes = plt.subplots(1, len(run_data.data), sharey=True, sharex=False, tight_layout=True)
     fig.suptitle('QQ Plots of total runtime')
-    for ax, result in zip(axes, results):
+    for ax, result in zip(axes, run_data.data):
         measurement = result.measurements['Total time']
         ax.set_title(f"{result.program} (#={measurement.amount()})")
         sm.qqplot(np.array(measurement.data), line='45', ax=ax)
@@ -21,10 +20,10 @@ def create_qq_plot(results: Dict):
     plt.savefig('qqplot.png')
 
 
-def create_histogram(results: List[ProgramMeasurement]):
-    fig, axes = plt.subplots(1, len(results), sharey=True, sharex=False, tight_layout=True)
+def create_histogram(run_data: MeasurementRun):
+    fig, axes = plt.subplots(1, len(run_data.data), sharey=True, sharex=False, tight_layout=True)
     fig.suptitle('Total runtime historgram')
-    for ax, result in zip(axes, results):
+    for ax, result in zip(axes, run_data.data):
         measurement = result.measurements['Total time']
         ax.set_title(f"{result.program} (#={measurement.amount()})")
         bins = np.linspace(measurement.min(), measurement.max(), num=20)
