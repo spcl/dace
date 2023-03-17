@@ -147,9 +147,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
                 border_arrays.update(m.data for m in e.data.get_read_memlets(sdfg.arrays))
                 e.data.assignments = dict()
         init_state = nsdfg.start_state
-        pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
-        edge = nsdfg.edges_between(pre_init_state, init_state)[0]
-        edge.data.assignments.update({k: v for k, v in border_mapping.items()})
+        # pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+        pre_init_state = nsdfg.add_state('clean_symbols', is_start_state=True)
+        nsdfg.add_edge(pre_init_state, init_state, InterstateEdge(assignments=border_mapping))
+        # edge = nsdfg.edges_between(pre_init_state, init_state)[0]
+        # edge.data.assignments.update({k: v for k, v in border_mapping.items()})
         read_set.update(border_arrays)
 
         sdfg.remove_nodes_from(states)
