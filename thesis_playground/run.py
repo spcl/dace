@@ -149,9 +149,9 @@ def main():
 
     if args.output is not None:
         with open(os.path.join(get_results_dir(), args.output), 'w') as file:
-            json.dump(program_data, file, default=MeasurementRun.to_json)
+            json.dump(run_data, file, default=MeasurementRun.to_json)
 
-    print_results_v2(program_data)
+    print_results_v2(run_data)
 
 
 if __name__ == '__main__':

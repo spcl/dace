@@ -118,7 +118,7 @@ class MeasurementRun:
                               cwd=path.split(path.dirname(__file__))[0],
                               capture_output=True)
             self.git_hash = hash_output.stdout.decode('UTF-8')
-        self.datetime = datetime
+        self.date = datetime
 
     def add_program_data(self, data: ProgramMeasurement):
         self.data.append(data)
@@ -133,13 +133,14 @@ class MeasurementRun:
                 'description': run.description,
                 'git_hash': run.git_hash,
                 'data': data_list,
-                'date': run.date
+                'date': run.date.isoformat()
                 }
 
     @staticmethod
     def from_json(dict: Dict) -> 'MeasurementRun':
         if '__MeasurementRun__' in dict:
-            return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'], date=dict['date'])
+            return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
+                                  date=datetime.fromisoformat(dict['date']))
         if '__ProgramMeasurement__' in dict:
             return ProgramMeasurement(dict['program'], dict['parameters'],
                                       measurements=dict['measurements'])
