@@ -348,15 +348,14 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_8', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
-    # does currently not work, due to errors/problems when simplifying the SDFG
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
-    # pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, True),
-    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
-    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
@@ -416,39 +415,37 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
 
 if __name__ == "__main__":
-    test_program('cloudsc_3p1', dace.DeviceType.GPU, True)
-    # test_program('cloudsc_1f', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_1f', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_3p1', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_3p1', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_6', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_6', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_8a', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_8a', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_8b', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_8b', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_8c', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_8c', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_8', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_8', dace.DeviceType.CPU, True)
-    # # does currently not work, due to errors/problems when simplifying the SDFG
-    # # test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
-    # # test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class1_670', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class1_670', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class1_2783', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class1_2783', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class1_2857', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class1_2857', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class2_1762', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class2_1762', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class2_1516', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class2_1516', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class3_691', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class3_691', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class3_965', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class3_965', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class3_1985', dace.DeviceType.CPU, True)
-    # test_program('cloudsc_class3_2120', dace.DeviceType.CPU, False)
-    # test_program('cloudsc_class3_2120', dace.DeviceType.CPU, True)
+    test_program('cloudsc_1f', dace.DeviceType.CPU, False)
+    test_program('cloudsc_1f', dace.DeviceType.CPU, True)
+    test_program('cloudsc_3p1', dace.DeviceType.CPU, False)
+    test_program('cloudsc_3p1', dace.DeviceType.CPU, True)
+    test_program('cloudsc_6', dace.DeviceType.CPU, False)
+    test_program('cloudsc_6', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8a', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8a', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8b', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8b', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8c', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8c', dace.DeviceType.CPU, True)
+    test_program('cloudsc_8', dace.DeviceType.CPU, False)
+    test_program('cloudsc_8', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_670', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_670', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_2783', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_2783', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class1_2857', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class1_2857', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class2_1762', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class2_1762', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class2_1516', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class2_1516', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_691', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_691', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_965', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_965', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_1985', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_1985', dace.DeviceType.CPU, True)
+    test_program('cloudsc_class3_2120', dace.DeviceType.CPU, False)
+    test_program('cloudsc_class3_2120', dace.DeviceType.CPU, True)
