@@ -1,3 +1,4 @@
+""" Collection of classes representing measurement data"""
 from typing import List, Dict, Optional
 from numbers import Number
 import numpy as np
@@ -7,18 +8,40 @@ from datetime import datetime
 
 
 class Measurement:
+    """
+    Represents a measurement. A measurement is always measuring the same and using the same unit but can have several
+    measurements for different repetitions
+    """
     unit: str
     name: str
     data: List[Number]
     kernel_name: Optional[str]
 
     def __init__(self, name: str, unit: str, data: Optional[List[Number]] = None, kernel_name: Optional[str] = None):
+        """
+        Constructs the class
+
+        :param name: The name of the measurement
+        :type name: str
+        :param unit: The unit of the measurement
+        :type unit: str
+        :param data: The data itself, defaults to None
+        :type data: Optional[List[Number]], optional
+        :param kernel_name: The name of the kernel measured if applicable, defaults to None
+        :type kernel_name: Optional[str], optional
+        """
         self.name = name
         self.unit = unit
         self.data = [] if data is None else data
         self.kernel_name = kernel_name
 
     def add_value(self, value: Number):
+        """
+        Adds a value to the measurement. The user must ensure that it is of the same unit and measures the same thing.
+
+        :param value: The value/measurement to add
+        :type value: Number
+        """
         self.data.append(value)
 
     def min(self):
@@ -53,16 +76,40 @@ class Measurement:
 
 
 class ProgramMeasurement:
+    """
+    Represents all measurements made with the same program. It consists of a list of measurements, the program name and
+    the parameters used to achieve these measurements.
+    """
     measurements: Dict[str, Measurement]
     program: str
     parameters: Dict[str, Number]
 
     def __init__(self, program: str, parameters: Dict, measurements: Dict = None):
+        """
+        Constructs the class.
+
+        :param program: The name of the program
+        :type program: str
+        :param parameters: The parameters used
+        :type parameters: Dict
+        :param measurements: The measurements. Key is the measurement name, value the Measurement object,
+                             defaults to None
+        :type measurements: Dict, optional
+        """
         self.program = program
         self.parameters = parameters
         self.measurements = {} if measurements is None else measurements
 
     def add_measurement(self, name: str, unit: str, **kwargs):
+        """
+        Adds a new measurement, specifing what it measures (the name) and unit. Takes also additional optional arguments
+        to be passed to the Measurement constructor (e.g. for the kernel name)
+
+        :param name: The name of the new measurement
+        :type name: str
+        :param unit: The unit of the new measurement
+        :type unit: str
+        """
         self.measurements[name] = Measurement(name, unit, **kwargs)
 
     def add_value(self, name: str, value: Number):
@@ -100,6 +147,10 @@ class ProgramMeasurement:
 
 
 class MeasurementRun:
+    """
+    Represents a measurement run which consits of a set of programs which are run with their data, the description of
+    the run, the time it was run and the git hash.
+    """
     description: str
     data: List[ProgramMeasurement]
     git_hash: str
@@ -110,6 +161,18 @@ class MeasurementRun:
                  data: List[ProgramMeasurement] = [],
                  git_hash: str = '',
                  date: datetime = datetime.now()):
+        """
+        Constructs the class
+
+        :param description: The description of this measurement run
+        :type description: str
+        :param data: The data itself as a list of ProgramMeasurements, defaults to []
+        :type data: List[ProgramMeasurement], optional
+        :param git_hash: The git hash, if not given, will be read automatically, defaults to ''
+        :type git_hash: str, optional
+        :param date: The time the measurements were run, defaults to datetime.now()
+        :type date: datetime, optional
+        """
         self.description = description
         self.data = data
         self.git_hash = git_hash
