@@ -466,6 +466,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hasattr(self, '_transformation_hist'):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
         result._sdfg_list = []
+        if self._parent_sdfg is None:
+            result._sdfg_list = result.reset_sdfg_list()
         return result
 
     @property
@@ -2654,13 +2656,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Import loop "fix"
         from dace.codegen import codegen
 
-        from dace.sdfg.utils import check_sdfg
-        check_sdfg(self)
-
         ################################
         # DaCe Code Generation Process #
         sdfg = copy.deepcopy(self)
-        check_sdfg(sdfg)
 
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
