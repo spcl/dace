@@ -1731,3 +1731,5 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                         in_connectors = {repl_dict[n] if n in repl_dict else n: t for n, t in node.in_connectors.items()}
                         node.in_connectors = in_connectors
                         node.map.range.replace(repl_dict)
+                        state.scope_subgraph(node).replace_dict(repl_dict)
+                        propagation.propagate_memlets_scope(sd, state, state.scope_tree()[node])
