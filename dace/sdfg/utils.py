@@ -1631,6 +1631,22 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
     return dimension_mapping, unsqueezed, squeezed
 
 
+def check_sdfg(sdfg: SDFG):
+    """ Checks that the parent attributes of an SDFG are correct.
+    
+    :param sdfg: The SDFG to check.
+    :raises AssertionError: If any of the parent attributes are incorrect.
+    """
+    for state in sdfg.nodes():
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.NestedSDFG):
+                assert node.sdfg.parent_nsdfg_node is node
+                assert node.sdfg.parent is state
+                assert node.sdfg.parent_sdfg is sdfg
+                assert node.sdfg.parent.parent is sdfg
+                check_sdfg(node.sdfg)
+
+
 def normalize_offsets(sdfg: SDFG):
     """
     Normalizes descriptor offsets to 0 and adjusts the Memlet subsets accordingly. This operation is done in-place.
