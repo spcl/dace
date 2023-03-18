@@ -606,7 +606,11 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # this cycle.
             increment_edge = None
             for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
+                try:
+                    fsymbols = set([str(s) for s in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols])
+                except AttributeError:
+                    fsymbols = set()
+                if itvarsym in fsymbols:
                     increment_edge = iedge
                     break
             if increment_edge is None:
