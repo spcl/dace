@@ -425,11 +425,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         if other_write is not None and other_write[1] is write_node and other_write[0] is write_state:
                             continue
                         if other_write is None or other_write[0] in dominators:
-                            if any([a_state in reach for a_state, _ in other_accesses]):
-                                other_accesses.update(accesses)
-                                other_accesses.add(write)
-                                to_remove.add(write)
-                                result[desc][write] = set()
+                            noa = len(other_accesses)
+                            if noa > 0 and (noa > 1 or list(other_accesses)[0] != other_write):
+                                if any([a_state in reach for a_state, _ in other_accesses]):
+                                    other_accesses.update(accesses)
+                                    other_accesses.add(write)
+                                    to_remove.add(write)
+                                    result[desc][write] = set()
                 for write in to_remove:
                     del result[desc][write]
             top_result[sdfg.sdfg_id] = result
