@@ -1,8 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutils
 from dace.transformation.dataflow import MapFission
+from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
 import unittest
@@ -441,6 +442,149 @@ class MapFissionTest(unittest.TestCase):
         B = np.empty((10,), dtype=np.int32)
         sdfg(inp=A, out=B)
         assert np.array_equal(A+1, B)
+    
+    def test_single_data_multiple_connectors(self):
+
+        outer_sdfg = dace.SDFG('single_data_multiple_connectors')
+        outer_sdfg.add_array('A', (2, 10), dtype=dace.int32)
+        outer_sdfg.add_array('B', (2, 10), dtype=dace.int32)
+
+        inner_sdfg = dace.SDFG('inner')
+        inner_sdfg.add_array('A0', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('A1', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('B0', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('B1', (10,), dtype=dace.int32)
+
+        inner_state = inner_sdfg.add_state('inner_state', is_start_state=True)
+
+        inner_state.add_mapped_tasklet(name='plus',
+                                       map_ranges={'j': '0:10'},
+                                       inputs={'__a0': dace.Memlet(data='A0', subset='j'),
+                                               '__a1': dace.Memlet(data='A1', subset='j')},
+                                       outputs={'__b0': dace.Memlet(data='B0', subset='j')},
+                                       code='__b0 = __a0 + __a1',
+                                       external_edges=True)
+        inner_state.add_mapped_tasklet(name='minus',
+                                       map_ranges={'j': '0:10'},
+                                       inputs={'__a0': dace.Memlet(data='A0', subset='j'),
+                                               '__a1': dace.Memlet(data='A1', subset='j')},
+                                       outputs={'__b1': dace.Memlet(data='B1', subset='j')},
+                                       code='__b1 = __a0 - __a1',
+                                    external_edges=True)
+
+        outer_state = outer_sdfg.add_state('outer_state', is_start_state=True)
+
+        a = outer_state.add_access('A')
+        b = outer_state.add_access('B')
+
+        me, mx = outer_state.add_map('map', {'i': '0:2'})
+        inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, None, {'A0', 'A1'}, {'B0', 'B1'})
+
+        outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='0, 0:10'), dst_conn='A0')
+        outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='1, 0:10'), dst_conn='A1')
+        outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='0, 0:10'), src_conn='B0')
+        outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='1, 0:10'), src_conn='B1')
+
+        sdutils.consolidate_edges(outer_sdfg)
+        
+        A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
+        ref = np.empty_like(A)
+        ref_sdfg = copy.deepcopy(outer_sdfg)
+        ref_sdfg.name = f"{ref_sdfg.name}_ref"
+        ref_sdfg(A=A, B=ref)
+
+        MapFission.apply_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+        val = np.empty_like(A)
+        outer_sdfg(A=A, B=val)
+
+        assert np.array_equal(val, ref)
+
+    def test_dependent_symbol(self):
+
+        outer_sdfg = dace.SDFG('map_fission_with_dependent_symbol')
+
+        outer_sdfg.add_symbol('fidx', dace.int32)
+        outer_sdfg.add_symbol('lidx', dace.int32)
+
+        outer_sdfg.add_array('A', (2, 10), dtype=dace.int32)
+        outer_sdfg.add_array('B', (2, 10), dtype=dace.int32)
+
+        inner_sdfg = dace.SDFG('inner')
+
+        inner_sdfg.add_symbol('first', dace.int32)
+        inner_sdfg.add_symbol('last', dace.int32)
+
+        inner_sdfg.add_array('A0', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('A1', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('B0', (10,), dtype=dace.int32)
+        inner_sdfg.add_array('B1', (10,), dtype=dace.int32)
+
+        inner_state = inner_sdfg.add_state('inner_state', is_start_state=True)
+
+        inner_state.add_mapped_tasklet(name='plus',
+                                       map_ranges={'j': 'first:last'},
+                                       inputs={'__a0': dace.Memlet(data='A0', subset='j'),
+                                               '__a1': dace.Memlet(data='A1', subset='j')},
+                                       outputs={'__b0': dace.Memlet(data='B0', subset='j')},
+                                       code='__b0 = __a0 + __a1',
+                                       external_edges=True)
+
+        inner_sdfg2 = dace.SDFG('inner2')
+
+        inner_sdfg2.add_symbol('first', dace.int32)
+        inner_sdfg2.add_symbol('last', dace.int32)
+
+        inner_sdfg2.add_array('A0', (10,), dtype=dace.int32)
+        inner_sdfg2.add_array('A1', (10,), dtype=dace.int32)
+        inner_sdfg2.add_array('B1', (10,), dtype=dace.int32)
+
+        inner_state2 = inner_sdfg2.add_state('inner_state2', is_start_state=True)
+
+        inner_state2.add_mapped_tasklet(name='minus',
+                                        map_ranges={'j': 'first:last'},
+                                        inputs={'__a0': dace.Memlet(data='A0', subset='j'),
+                                                '__a1': dace.Memlet(data='A1', subset='j')},
+                                        outputs={'__b1': dace.Memlet(data='B1', subset='j')},
+                                        code='__b1 = __a0 - __a1',
+                                        external_edges=True)
+        
+        nsdfg = inner_state.add_nested_sdfg(inner_sdfg2, None, {'A0', 'A1'}, {'B1'})
+        a0 = inner_state.add_access('A0')
+        a1 = inner_state.add_access('A1')
+        b1 = inner_state.add_access('B1')
+
+        inner_state.add_edge(a0, None, nsdfg, 'A0', dace.Memlet(data='A0', subset='0:10'))
+        inner_state.add_edge(a1, None, nsdfg, 'A1', dace.Memlet(data='A1', subset='0:10'))
+        inner_state.add_edge(nsdfg, 'B1', b1, None, dace.Memlet(data='B1', subset='0:10'))
+
+        outer_state = outer_sdfg.add_state('outer_state', is_start_state=True)
+
+        a = outer_state.add_access('A')
+        b = outer_state.add_access('B')
+
+        me, mx = outer_state.add_map('map', {'i': '0:2'})
+        inner_sdfg_node = outer_state.add_nested_sdfg(inner_sdfg, None, {'A0', 'A1'}, {'B0', 'B1'},
+                                                      symbol_mapping={'first': 'max(0, i - fidx)',
+                                                                      'last': 'min(10, i + lidx)'})
+
+        outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='0, 0:10'), dst_conn='A0')
+        outer_state.add_memlet_path(a, me, inner_sdfg_node, memlet=dace.Memlet(data='A', subset='1, 0:10'), dst_conn='A1')
+        outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='0, 0:10'), src_conn='B0')
+        outer_state.add_memlet_path(inner_sdfg_node, mx, b, memlet=dace.Memlet(data='B', subset='1, 0:10'), src_conn='B1')
+
+        sdutils.consolidate_edges(outer_sdfg)
+        A = np.arange(20, dtype=np.int32).reshape((2, 10)).copy()
+        ref = np.zeros_like(A)
+        ref_sdfg = copy.deepcopy(outer_sdfg)
+        ref_sdfg.name = f"{ref_sdfg.name}_ref"
+        ref_sdfg(A=A, B=ref, fidx=1, lidx=5)
+
+        MapFission.apply_to(outer_sdfg, expr_index=1, map_entry=me, nested_sdfg=inner_sdfg_node)
+        outer_sdfg.apply_transformations_repeated(InlineSDFG)
+        val = np.zeros_like(A)
+        outer_sdfg(A=A, B=val, fidx=1, lidx=5)
+
+        assert np.array_equal(val, ref)
 
 
 
