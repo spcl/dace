@@ -598,10 +598,16 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
     scope_nodes: Set[nd.Node] = set()
     if source == None:
         source = nd.Node()
-        scope_nodes = set(state.nodes())
+        scope_nodes = set(scope_children[None])
     else:
-        scope_nodes = transitive_scope_children[source]
+        scope_nodes = set(scope_children[source])
         scope_nodes.add(source)
+    expand_with = set()
+    for n in scope_nodes:
+        if isinstance(n, nd.EntryNode):
+            exit = state.exit_node(n)
+            expand_with.add(exit)
+    scope_nodes.update(expand_with)
     scope_subgraph = StateSubgraphView(state, scope_nodes)
 
     # Add the source and a proxy sink to the proxy graph.
@@ -616,11 +622,12 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
 
         vol = 0
         memlet: Memlet = edge.data
-        if memlet.data and memlet.data in state.parent.arrays:
+        if memlet.data:
             vol = memlet.volume
             if isinstance(vol, sp.Expr):
                 vol = vol.subs(symbols_map)
 
+        remain_free = False
         if edge.src in subgraph_nodes and edge.dst in subgraph_nodes:
             # Edge completely in subgraph, don't do anything. Unless the destination is an access node which is in the
             # state input configuration, in which case we add an edge from the source to the sink with that volume.
@@ -633,8 +640,15 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
                     proxy_graph.add_edge(source, sink, capacity=vol)
             continue
         elif edge.src in subgraph_nodes:
-            # Edge starts in subgraph, ends outside. It's source is the proxy sink.
-            proxy_edge_src = sink
+            # Edge starts in subgraph, ends outside.
+            # If there's no path back inside, it's source is the proxy sink. Otherwise, it's source is set to the proxy
+            # source and the volume is made 0, since the value will already be part of the cutout.
+            if any([n in nx.descendants(state.nx, proxy_edge_src) for n in subgraph_nodes]):
+                proxy_edge_src = source
+                vol = 0
+                remain_free = True
+            else:
+                proxy_edge_src = sink
         elif edge.dst in subgraph_nodes:
             # Edge starts outside, ends in the subgraph. It's destination thus is the proxy sink.
             proxy_edge_dst = sink
@@ -648,9 +662,12 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
                 proxy_graph.add_edge(source, proxy_edge_dst, capacity=vol)
             # The actual edge between src and dst is set to have infinite capacity.
             vol = float('inf')
-        elif isinstance(proxy_edge_src, nd.AccessNode):
+        elif isinstance(proxy_edge_src, nd.AccessNode) and not remain_free:
             # All outgoing edges from access nodes (with data) are set to have infinite capacity.
             vol = float('inf')
+
+        if isinstance(proxy_edge_src, nd.ExitNode):
+            proxy_edge_src = state.entry_node(proxy_edge_src)
 
         if proxy_graph.has_edge(proxy_edge_src, proxy_edge_dst):
             proxy_graph[proxy_edge_src][proxy_edge_dst]['capacity'] += vol
@@ -659,6 +676,14 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
             proxy_graph.add_node(proxy_edge_dst)
             proxy_graph.add_edge(proxy_edge_src, proxy_edge_dst, capacity=vol)
 
+    for node in scope_nodes:
+        if isinstance(node, nd.AccessNode) and node.data in state_input_configuration:
+            if not proxy_graph.has_edge(source, node) and node.data in state.parent.arrays:
+                vol = state.parent.arrays[node.data].total_size
+                if isinstance(vol, sp.Expr):
+                    vol = vol.subs(symbols_map)
+                proxy_graph.add_edge(source, node, capacity=vol)
+
     _, (_, non_reachable) = nx.minimum_cut(proxy_graph,
                                                  source,
                                                  sink,
@@ -666,7 +691,13 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
 
     non_reachable -= {sink}
     if len(non_reachable) > 0:
-        return subgraph_nodes.union(non_reachable)
+        subscope_expansions = set()
+        for n in non_reachable:
+            if isinstance(n, nd.EntryNode):
+                subscope_expansions.update(transitive_scope_children[n])
+            elif isinstance(n, nd.ExitNode):
+                subscope_expansions.update(transitive_scope_children[state.entry_node(n)])
+        return subgraph_nodes.union(non_reachable.union(subscope_expansions))
     return subgraph_nodes
 
 def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:

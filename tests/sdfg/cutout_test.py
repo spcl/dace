@@ -369,6 +369,49 @@ def test_minimum_cut_simple_no_further_input_config():
         assert cutout._out_translation[n] in o_nodes
 
 
+def test_minimum_cut_map_scopes():
+    sdfg = dace.SDFG('mincut')
+    sdfg.add_array('A', [10, 10], dace.float64)
+    sdfg.add_array('B', [10, 10], dace.float64)
+    sdfg.add_array('tmp_1', [10, 10], dace.float64, transient=True)
+    sdfg.add_array('tmp_2', [10, 10], dace.float64, transient=True)
+    sdfg.add_array('C', [10, 10], dace.float64)
+
+    state = sdfg.add_state('state')
+    t1 = state.add_tasklet('t1', {'in1', 'in2'}, {'out1'}, 'out1 = in1 + in2')
+    t2 = state.add_tasklet('t2', {'in1'}, {'out1'}, 'out1 = in1 * 2')
+    t3 = state.add_tasklet('t3', {'in1', 'in2'}, {'out1'}, 'out1 = in1 + in2')
+    m1_i, m1_o = state.add_map('m1', dict(i='0:10', j='0:10'))
+    m2_i, m2_o = state.add_map('m2', dict(i='0:10', j='0:10'))
+    m3_i, m3_o = state.add_map('m3', dict(i='0:10', j='0:10'))
+
+    a_access = state.add_access('A')
+    b_access = state.add_access('B')
+    c_access = state.add_access('C')
+    tmp1_access = state.add_access('tmp_1')
+    tmp2_access = state.add_access('tmp_2')
+
+    state.add_memlet_path(a_access, m1_i, t1, dst_conn='in1', memlet=dace.Memlet('A[i, j]'))
+    state.add_memlet_path(b_access, m1_i, t1, dst_conn='in2', memlet=dace.Memlet('B[i, j]'))
+    state.add_memlet_path(t1, m1_o, tmp1_access, src_conn='out1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(tmp1_access, m2_i, t2, dst_conn='in1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(t2, m2_o, tmp2_access, src_conn='out1', memlet=dace.Memlet('tmp_2[i, j]'))
+    state.add_memlet_path(tmp1_access, m3_i, t3, dst_conn='in1', memlet=dace.Memlet('tmp_1[i, j]'))
+    state.add_memlet_path(tmp2_access, m3_i, t3, dst_conn='in2', memlet=dace.Memlet('tmp_2[i, j]'))
+    state.add_memlet_path(t3, m3_o, c_access, src_conn='out1', memlet=dace.Memlet('C[i, j]'))
+
+    cutout = SDFGCutout.singlestate_cutout(state, t3, m3_i, m3_o, reduce_input_config=True)
+
+    c_state = cutout.nodes()[0]
+    c_nodes = set(c_state.nodes())
+    o_nodes = {t2, t3, tmp1_access, tmp2_access, c_access, m2_i, m2_o, m3_i, m3_o}
+    assert len(c_nodes) == 9
+    for n in o_nodes:
+        assert cutout._in_translation[n] in c_nodes
+    for n in c_nodes:
+        assert cutout._out_translation[n] in o_nodes
+
+
 if __name__ == '__main__':
     test_cutout_onenode()
     test_cutout_multinode()
@@ -380,3 +423,4 @@ if __name__ == '__main__':
     test_multistate_cutout_complex_expand()
     test_input_output_configuration()
     test_minimum_cut_simple_no_further_input_config()
+    test_minimum_cut_map_scopes()
