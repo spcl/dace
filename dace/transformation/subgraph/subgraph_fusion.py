@@ -10,7 +10,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import symstr, overapproximate
+from dace.symbolic import overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
