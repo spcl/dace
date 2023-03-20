@@ -1035,7 +1035,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         return (len(ic) + len(oc)) > 0
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        print(f"Apply refine nested access to graph {sdfg.hash_sdfg()[:5]}")
         nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
@@ -1083,7 +1082,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
         # Propagate the State Memlets
         propagation.propagate_memlets_state(sdfg, state)
-        print(f"Applied refine nested access to graph {sdfg.hash_sdfg()[:5]}")
 
 
 @make_properties

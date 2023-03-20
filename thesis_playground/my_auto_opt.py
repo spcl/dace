@@ -53,8 +53,10 @@ def auto_optimize(sdfg: SDFG,
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_trivial_map_elimination")
     if device == dace.DeviceType.GPU:
-        loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all)
+        loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         if program is not None:
@@ -64,8 +66,6 @@ def auto_optimize(sdfg: SDFG,
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
-        if program is not None:
-            sdfg.save(f"{sdfg.hash_sdfg()[:5]}.sdfg")
         transformed = l2ms > 0
 
     if program is not None:
@@ -165,7 +165,7 @@ def auto_optimize(sdfg: SDFG,
     return sdfg
 
 
-def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False) -> SDFG:
+def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False, program: str = None) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first
 
@@ -176,6 +176,9 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
     :type validate: bool, optional
     :param validate_all: If True, validates the SDFG after every step, defaults to False
     :type validate_all: bool, optional
+    :param program: The name of the program, used for debug saving graphs, is Optional. If not given will not save
+    graphs
+    :type program: str
     :return: The optimised SDFG
     :rtype: SDFG
     :note: Works by applying LoopToMap to the outermost loop where the
@@ -184,6 +187,8 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
 
     sdfg.simplify(validate=False, validate_all=validate_all)
     number_of_transformations_performed = 1
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
     while number_of_transformations_performed > 0:
         outside_loop_transformations = []
         # Get list of all possible transformations
@@ -209,5 +214,8 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
         for xform in outside_loop_transformations:
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
+
+        if program is not None:
+            save_graph(sdfg, program, "after_outer_loop_to_map")
 
     return sdfg
