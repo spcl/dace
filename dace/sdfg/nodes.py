@@ -549,6 +549,16 @@ class NestedSDFG(CodeNode):
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, dcpy(v, memo))
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
+        return result
 
     @staticmethod
     def from_json(json_obj, context=None):
