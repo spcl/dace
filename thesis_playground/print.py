@@ -3,7 +3,7 @@ import json
 import os
 
 from utils import print_results_v2, get_results_dir
-from measurement_data import ProgramMeasurement, MeasurementRun
+from measurement_data import MeasurementRun
 
 
 def main():

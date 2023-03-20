@@ -2,8 +2,7 @@ from argparse import ArgumentParser
 
 import dace
 
-from test import read_source
-from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files
+from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files, read_source
 from my_auto_opt import auto_optimize
 
 

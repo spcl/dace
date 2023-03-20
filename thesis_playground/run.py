@@ -3,15 +3,12 @@ import os
 from subprocess import run
 import re
 import json
-import numpy as np
-from typing import List, Dict
-from numbers import Number
+from typing import List
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2, get_program_parameters_data, print_with_time,\
-                  get_inputs, get_outputs
-from test import test_program, compile_for_profile
+from utils import get_programs_data, get_results_dir, print_results_v2, print_with_time, use_cache
+from execute_utils import test_program, profile_program
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
 
@@ -33,37 +30,8 @@ def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_meas
                                             kernel_name=str(id_triplet))
 
 
-def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10) \
-        -> ProgramMeasurement:
-
-    results = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
-
-    programs = get_programs_data()['programs']
-    print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
-    routine_name = f"{programs[program]}_routine"
-
-    sdfg = compile_for_profile(program, device, normalize_memlets)
-
-    rng = np.random.default_rng(42)
-    inputs = get_inputs(program, rng)
-    outputs = get_outputs(program, rng)
-
-    sdfg.clear_instrumentation_reports()
-    print_with_time("Measure total runtime")
-    for i in range(repetitions):
-        sdfg(**inputs, **outputs)
-    reports = sdfg.get_instrumentation_reports()
-
-    # TOOD: Check if unit is always ms
-    results.add_measurement("Total time", "ms")
-    for report in reports:
-        results.add_value("Total time",
-                          float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][13533068620211794961][0]))
-
-    return results
-
-
 def main():
+    normalize_memlets = True
     parser = ArgumentParser(
         description='Test and profiles the given programs. Results are saved into the results folder')
     parser.add_argument('-p',
@@ -93,7 +61,7 @@ def main():
                         help='Description to be saved into the json file')
 
     args = parser.parse_args()
-    test_program_path = os.path.join(os.path.dirname(__file__), 'test.py')
+    test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
 
     programs = get_programs_data()['programs']
     selected_programs = [] if args.programs is None else args.programs
@@ -104,33 +72,23 @@ def main():
         print("ERRROR: Need to specify programs either with --programs or --class")
         return 1
 
-    if args.cache:
-        os.environ['DACE_compiler_use_cache'] = '1'
-        os.putenv('DACE_compiler_use_cache', '1')
-
     run_data = MeasurementRun(args.description)
     for program in selected_programs:
         print(f"Run program {program}")
         if args.cache:
-            print("Build it without regenerating the code")
-            parent_dir = os.path.split(os.path.abspath(os.path.dirname(__file__)))[0]
-            build = run(['make'],
-                        cwd=os.path.join(parent_dir, '.dacecache', f"{programs[program]}_routine", 'build'),
-                        capture_output=True)
-            if build.returncode != 0:
-                print("ERROR: Error encountered while building")
-                print(build.stdout.decode('UTF-8'))
-                return 1
+            use_cache(program)
 
-        test_program(program, dace.DeviceType.GPU, False)
-        program_data = profile_program(program, repetitions=args.repetitions)
+        test_program(program, dace.DeviceType.GPU, normalize_memlets)
+        program_data = profile_program(program, repetitions=args.repetitions, normalize_memlets=normalize_memlets)
         command_ncu = [
             'ncu',
             '--force-overwrite',
             '--export',
             '/tmp/profile',
         ]
-        command_program = ['python3', test_program_path, 'run', '--repetitions', '1', '--program', program]
+        command_program = ['python3', test_program_path, program, '--repetitions', '1']
+        if normalize_memlets:
+            command_program.append('--normalize-memlets')
 
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")

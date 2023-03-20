@@ -10,6 +10,7 @@ import json
 from tabulate import tabulate
 from glob import glob
 from datetime import datetime
+from subprocess import run
 
 import dace
 from dace.frontend.fortran import fortran_parser
@@ -18,7 +19,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from data import get_program_parameters_data, get_testing_parameters_data
 
-from measurement_data import ProgramMeasurement, MeasurementRun
+from measurement_data import MeasurementRun
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -196,3 +197,23 @@ def reset_graph_files(program: str):
 
 def print_with_time(text: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
+
+
+def use_cache(program: str):
+    """
+    Puts the environment variables to tell dace to use the cached generated coded. Also builts the generated code
+
+    :param program: The name of the program, used for building the code
+    :type program: str
+    """
+    programs = get_programs_data()['programs']
+    os.environ['DACE_compiler_use_cache'] = '1'
+    os.putenv('DACE_compiler_use_cache', '1')
+    print("Build it without regenerating the code")
+    build = run(['make'],
+                cwd=os.path.join(os.getcwd(), '.dacecache', f"{programs[program]}_routine", 'build'),
+                capture_output=True)
+    if build.returncode != 0:
+        print("ERROR: Error encountered while building")
+        print(build.stderr.decode('UTF-8'))
+        return 1

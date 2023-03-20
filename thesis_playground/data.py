@@ -1,3 +1,4 @@
+import copy
 from typing import Dict, Union, Tuple
 
 parameters = {
@@ -163,8 +164,9 @@ def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, 
     :return: Dict with two entries: 'parameters' and 'data'. Each containing a dict with the parameters/data
     :rtype: Dict[str, Dict[str, Union[int, Tuple]]]
     """
+    global parameters, custom_parameters
     params_data = {}
-    params_data['parameters'] = parameters
+    params_data['parameters'] = copy.deepcopy(parameters)
 
     if program in custom_parameters:
         for parameter in custom_parameters[program]:
@@ -181,8 +183,9 @@ def get_testing_parameters_data() -> Dict[str, Dict[str, Union[int, Tuple]]]:
     :return: Dict with two entries: 'parameters' and 'data'. Each containing a dict with the parameters/data
     :rtype: Dict[str, Dict[str, Union[int, Tuple]]]
     """
+    global parameters
     params_data = {}
-    params_data['parameters'] = parameters
+    params_data['parameters'] = copy.deepcopy(parameters)
 
     for parameter in testing_parameters:
         params_data['parameters'][parameter] = testing_parameters[parameter]
