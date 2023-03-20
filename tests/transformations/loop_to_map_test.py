@@ -1,13 +1,15 @@
 # Copyright 2020-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
+import copy
 import os
 import tempfile
+from typing import Tuple
 
 import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
+from dace.sdfg import nodes, propagation
 from dace.transformation.interstate import LoopToMap
 
 
@@ -629,6 +631,57 @@ def test_thread_local_transient_multi_state():
     assert np.allclose(ref, val)
 
 
+def test_nested_loops():
+
+    @dace.program
+    def nested_loops(A: dace.int32[10, 10, 10], l: dace.int32):
+        for i in range(10):
+            for j in range(10):
+                for k in range(10):
+                    A[i, j, l] = A[i, j, k] + A[i, j, l]
+
+    ref = np.arange(1000, dtype=np.int32).reshape(10, 10, 10)
+    nested_loops.f(ref, 5)
+    
+    sdfg = nested_loops.to_sdfg()
+
+    def find_loop(sdfg: dace.SDFG, itervar: str) -> Tuple[dace.SDFGState, dace.SDFGState, dace.SDFGState]:
+
+        guard, begin, fexit = None, None, None
+        for e in sdfg.edges():
+            if itervar in e.data.assignments and e.data.assignments[itervar] == '0':
+                guard = e.dst
+            elif e.data.condition.as_string in (f'({itervar} >= 10)', f'(not ({itervar} < 10))'):
+                fexit = e.dst
+        assert all(s is not None for s in (guard, fexit))
+
+        begin = next((e for e in sdfg.out_edges(guard) if e.dst != fexit)).dst
+
+        return guard, begin, fexit
+
+    sdfg0 = copy.deepcopy(sdfg)
+    i_guard, i_begin, i_exit = find_loop(sdfg0, 'i')
+    LoopToMap.apply_to(sdfg0, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
+    nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
+    j_guard, j_begin, j_exit = find_loop(nsdfg, 'j')
+    LoopToMap.apply_to(nsdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+
+    val = np.arange(1000, dtype=np.int32).reshape(10, 10, 10).copy()
+    sdfg(A=val, l=5)
+
+    assert np.allclose(ref, val)
+
+    j_guard, j_begin, j_exit = find_loop(sdfg, 'j')
+    LoopToMap.apply_to(sdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    # NOTE: The following fails to apply because of subset A[0:i+1], which is overapproximated.
+    # i_guard, i_begin, i_exit = find_loop(sdfg, 'i')
+    # LoopToMap.apply_to(sdfg, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
+
+    val = np.arange(1000, dtype=np.int32).reshape(10, 10, 10).copy()
+    sdfg(A=val, l=5)
+
+    assert np.allclose(ref, val)
+
 
 if __name__ == "__main__":
 
@@ -663,3 +716,4 @@ if __name__ == "__main__":
     test_thread_local_transient_single_state()
     test_shared_local_transient_multi_state()
     test_thread_local_transient_multi_state()
+    test_nested_loops()
