@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.sdfg.analysis.cutout import SDFGCutout, _reduce_in_configuration
 import pytest
 
 
@@ -312,6 +312,63 @@ def test_input_output_configuration():
     assert len(ct.arrays) == 4
 
 
+def test_minimum_cut_simple_no_further_input_config():
+    sdfg = dace.SDFG('mincut')
+    N = dace.symbol('N')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    sdfg.add_array('C', [N, N], dace.float64)
+    sdfg.add_array('tmp1', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp2', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp3', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp4', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp5', [1], dace.float64, transient=True)
+    sdfg.add_array('tmp6', [1], dace.float64, transient=True)
+    state = sdfg.add_state('state')
+    mi, mo = state.add_map('map', dict(i='0:N', j='0:N'))
+    t1 = state.add_tasklet('t1', {'a', 'b'}, {'t'}, 't = a + b')
+    t2 = state.add_tasklet(
+        't2', {'tin'}, {'t1', 't2', 't3', 't4'}, 't1 = tin + 2\nt2 = tin * 2\nt3 = tin / 2\nt4 = tin + 1'
+    )
+    t3 = state.add_tasklet('t3', {'a', 'b'}, {'t'}, 't = a + b')
+    t4 = state.add_tasklet('t4', {'a', 'b', 'c'}, {'t'}, 't = (a - b) * c')
+    a_access = state.add_access('A')
+    b_access = state.add_access('B')
+    c_access = state.add_access('C')
+    tmp1_access = state.add_access('tmp1')
+    tmp2_access = state.add_access('tmp2')
+    tmp3_access = state.add_access('tmp3')
+    tmp4_access = state.add_access('tmp4')
+    tmp5_access = state.add_access('tmp5')
+    tmp6_access = state.add_access('tmp6')
+    state.add_memlet_path(a_access, mi, t1, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(b_access, mi, t1, dst_conn='b', memlet=dace.Memlet('B[j]'))
+    state.add_edge(t1, 't', tmp1_access, None, dace.Memlet('tmp1[0]'))
+    state.add_edge(tmp1_access, None, t2, 'tin', dace.Memlet('tmp1[0]'))
+    state.add_edge(t2, 't1', tmp2_access, None, dace.Memlet('tmp2[0]'))
+    state.add_edge(t2, 't2', tmp3_access, None, dace.Memlet('tmp3[0]'))
+    state.add_edge(t2, 't3', tmp4_access, None, dace.Memlet('tmp4[0]'))
+    state.add_edge(t2, 't4', tmp5_access, None, dace.Memlet('tmp5[0]'))
+    state.add_edge(tmp2_access, None, t3, 'a', dace.Memlet('tmp2[0]'))
+    state.add_edge(tmp3_access, None, t3, 'b', dace.Memlet('tmp3[0]'))
+    state.add_edge(tmp4_access, None, t4, 'a', dace.Memlet('tmp4[0]'))
+    state.add_edge(tmp5_access, None, t4, 'b', dace.Memlet('tmp5[0]'))
+    state.add_edge(t3, 't', tmp6_access, None, dace.Memlet('tmp6[0]'))
+    state.add_edge(tmp6_access, None, t4, 'c', dace.Memlet('tmp6[0]'))
+    state.add_memlet_path(t4, mo, c_access, src_conn='t', memlet=dace.Memlet('C[i, j]'))
+
+    cutout = SDFGCutout.singlestate_cutout(state, t3, t4, tmp6_access, reduce_input_config=True)
+
+    c_state = cutout.nodes()[0]
+    c_nodes = set(c_state.nodes())
+    o_nodes = {t2, t3, t4, tmp6_access, tmp4_access, tmp5_access, tmp2_access, tmp3_access, tmp1_access, c_access}
+    assert len(c_nodes) == 10
+    for n in o_nodes:
+        assert cutout._in_translation[n] in c_nodes
+    for n in c_nodes:
+        assert cutout._out_translation[n] in o_nodes
+
+
 if __name__ == '__main__':
     test_cutout_onenode()
     test_cutout_multinode()
@@ -322,3 +379,4 @@ if __name__ == '__main__':
     test_multistate_cutout_simple_expand()
     test_multistate_cutout_complex_expand()
     test_input_output_configuration()
+    test_minimum_cut_simple_no_further_input_config()
