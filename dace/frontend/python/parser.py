@@ -233,6 +233,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         :return: An SDFG object that can be transformed, saved, or called.
         """
 
+        if self.recreate_sdfg == False:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recreate_sdfg' to False. "
+                          "This may not what you want.")
+        if self.recompile == True:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recompile' to False. "
+                          "This may not what you want.")
+
         if use_cache:
             # Update global variables with current closure
             self.global_vars = _get_locals_and_globals(self.f)
