@@ -553,7 +553,12 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
 
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
-def _elementwise(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, func: Union[StringLiteral, str], in_array: str, out_array=None):
+def _elementwise(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 func: Union[StringLiteral, str],
+                 in_array: str,
+                 out_array=None):
     """
     Apply a lambda function to each element in the input.
     """
@@ -1904,7 +1909,9 @@ _pyop2symtype = {
     ">=": sp.GreaterThan,
     "<=": sp.LessThan,
     ">": sp.StrictGreaterThan,
-    "<": sp.StrictLessThan
+    "<": sp.StrictLessThan,
+    # Binary ops
+    "//": symbolic.int_floor,
 }
 
 
@@ -4612,10 +4619,13 @@ _boolop_to_method = {
     'GtE': '__ge__'
 }
 
+
 def _makeboolop(op: str, method: str):
+
     @oprepo.replaces_operator('StringLiteral', op, otherclass='StringLiteral')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: StringLiteral, op2: StringLiteral):
         return getattr(op1, method)(op2)
+
 
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)

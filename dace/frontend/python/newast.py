@@ -2988,16 +2988,24 @@ class ProgramVisitor(ExtNodeVisitor):
 
         state = self.last_state
 
+        new_memlet = None
+        if has_indirection:
+            new_memlet = dace.Memlet.from_array(parent_name, parent_array)
+            volume = rng.num_elements()
+            new_memlet.volume = volume if not symbolic.issymbolic(volume) else -1
+        else:
+            new_memlet = dace.Memlet.simple(parent_name, rng)
+
         if access_type == 'r':
             if has_indirection:
-                self.inputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.inputs[var_name] = (state, new_memlet, inner_indices)
             else:
-                self.inputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.inputs[var_name] = (state, new_memlet, inner_indices)
         else:
             if has_indirection:
-                self.outputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.outputs[var_name] = (state, new_memlet, inner_indices)
             else:
-                self.outputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
         return (var_name, squeezed_rng)

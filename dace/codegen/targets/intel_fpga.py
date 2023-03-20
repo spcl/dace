@@ -1476,12 +1476,11 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
 
                 try:
-                    unparsed = symbolic.pystr_to_symbolic(
-                        evalnode(node.right, {
-                            **self.constants,
-                            'dace': dace,
-                        }))
-                    evaluated = symbolic.symstr(evaluate(unparsed, self.constants))
+                    unparsed = symbolic.pystr_to_symbolic(evalnode(node.right, {
+                        **self.constants,
+                        'dace': dace,
+                    }))
+                    evaluated = symbolic.symstr(evaluate(unparsed, self.constants), cpp_mode=True)
                     infered_type = infer_expr_type(evaluated, self.dtypes)
                     right_value = evaluated
 
