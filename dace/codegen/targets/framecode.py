@@ -65,9 +65,6 @@ class DaCeCodeGenerator(object):
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
-                # TODO: This should be needed! Temporary fix until the issue investigated.
-                if nsdfg.parent_sdfg is not state.parent:
-                    nsdfg._parent_sdfg = state.parent
                 parent_constants = self._symbols_and_constants[nsdfg.parent_sdfg]
                 result |= parent_constants
 

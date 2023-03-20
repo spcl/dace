@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-
+from dace.frontend.operations import is_op_associative, is_op_commutative, detect_reduction_type
 
 def _test_type(wcr_str, red_type):
-    assert dace.detect_reduction_type('lambda a,b: %s' % wcr_str) == red_type
+    assert detect_reduction_type('lambda a,b: %s' % wcr_str) == red_type
 
 
 def _test_comm_assoc(wcr_str, comm, assoc):
-    assert dace.is_op_commutative('lambda a,b: %s' % wcr_str) == comm
-    assert dace.is_op_associative('lambda a,b: %s' % wcr_str) == assoc
+    assert is_op_commutative('lambda a,b: %s' % wcr_str) == comm
+    assert is_op_associative('lambda a,b: %s' % wcr_str) == assoc
 
 
 def test_expr_type():
@@ -42,4 +42,3 @@ def test_op_properties():
 if __name__ == '__main__':
     test_expr_type()
     test_op_properties()
-    print('PASSED')

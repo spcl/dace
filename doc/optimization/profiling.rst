@@ -10,15 +10,18 @@ Profiling and Instrumentation
 Simple profiling
 ----------------
 
-Full-program profiling of Python DaCe programs can be performed by using the :envvar:`profiling` configuration entry. 
-This simple profiling mode is performed within Python using timers, calling the same program for a configurable number (:envvar:`treps`)
+Full-program profiling of Python DaCe programs can be performed by using the :func:`~dace.builtin_hooks.profile` hook
+(or from the console via :ref:`daceprof`).
+This simple profiling mode is performed within Python using timers, calling the same program for a configurable number
 of times and printing the median execution time. It is not as accurate as the other profiling modes, but it is easy to
 use and does not require any additional tools.
 
+Every time an SDFG is invoked, a profiling report JSON file (see below) will be generated. You can also use the profiling
+results directly in Python with the ``as`` keyword. After the profiling section is complete, each SDFG and its timings will
+be stored in a list.
 
-The profiling configuration entry can be set globally through an environment variable or within code. Every time an SDFG
-is invoked, a profiling report CSV file will be generated in the following format: ``.dacecache/<program name>/profiling/results-<timestamp>.csv``.
-For example, the following code will print the execution time of the ``my_function`` function after running it 100 times:
+For example, the following code will print the execution time of the ``my_function`` function after running it 100 times,
+with 10 steps of warmup (where execution time is ignored):
 
 .. code-block:: python
 
@@ -31,15 +34,17 @@ For example, the following code will print the execution time of the ``my_functi
 
   A = np.random.rand(10000)
   
-  with dace.config.set_temporary('profiling', value=True):  # Enable profiling
-      with dace.config.set_temporary('treps', value=100):   # Run 100 times
-          my_function(A)
+  with dace.profile(repetitions=100, warmup=10) as prof:  # Enable profiling
+    my_function(A)
 
+  # Optionally, the following code will print each individual time of the first call
+  sdfg, timing = prof.times[0]
+  print(timing)
 
 .. note::
 
   This mode executes the same program multiple times. If the output would be affected by this (e.g., if an array is
-  incremented), either use :envvar:`treps` = 1 or use the :ref:`instrumentation` mode.
+  incremented), either use ``repetitions=1`` or use the :ref:`instrumentation` mode.
 
 .. _instrumentation:
 
@@ -127,7 +132,7 @@ format to store the collected metrics. You can view it in several ways:
   * In the Visual Studio Code extension, laid on top of a program (see :ref:`vscode_trace` for an example)
   * Separately, using `Speedscope <https://www.speedscope.app/>`_ (or, if you have Google Chrome, a viewer can also be
     accessed locally at  `<chrome://tracing>`_)
-  * Printed out in the console with :ref:`sdprof`
+  * Printed out in the console with :ref:`daceprof`
 
 
 

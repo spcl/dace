@@ -3,9 +3,10 @@
     (with local storage). """
 
 import copy
+import collections
 
 from dace import data, dtypes, registry, sdfg as sd, subsets as sbs, symbolic
-from dace.sdfg import nodes
+from dace.sdfg import nodes, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import Property, make_properties
@@ -131,7 +132,10 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         else:
             return str(self.map_entry)
 
-    def apply(self, graph, sdfg):
+    def apply(self, graph: SDFGState, sdfg):
+        # Avoid import loops
+        from dace.transformation.passes.array_elimination import ArrayElimination
+
         if self.expr_index == 0:
             cnode: nodes.MapEntry = self.map_entry
             # Change schedule
@@ -142,6 +146,23 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             # Change schedule
             cnode.schedule = dtypes.ScheduleType.GPU_Default
             exit_node = cnode
+
+        # First, merge access nodes around map
+        ae = ArrayElimination()
+        in_access_nodes = collections.defaultdict(list)
+        out_access_nodes = collections.defaultdict(list)
+        for n in graph.predecessors(cnode):
+            if isinstance(n, nodes.AccessNode):
+                in_access_nodes[n.data].append(n)
+        for n in graph.successors(exit_node):
+            if isinstance(n, nodes.AccessNode):
+                out_access_nodes[n.data].append(n)
+        ae.merge_access_nodes(graph, in_access_nodes, lambda n: graph.in_degree(n) == 0)
+        ae.merge_access_nodes(graph, out_access_nodes, lambda n: graph.out_degree(n) == 0)
+        if isinstance(cnode, nodes.EntryNode):
+            sdutil.consolidate_edges_scope(graph, cnode)
+            sdutil.consolidate_edges_scope(graph, exit_node)
+
 
         # If nested graph is designated as sequential, transform schedules and
         # storage from Default to Sequential/Register

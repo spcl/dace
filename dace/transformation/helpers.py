@@ -147,9 +147,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
                 border_arrays.update(m.data for m in e.data.get_read_memlets(sdfg.arrays))
                 e.data.assignments = dict()
         init_state = nsdfg.start_state
-        pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
-        edge = nsdfg.edges_between(pre_init_state, init_state)[0]
-        edge.data.assignments.update({k: v for k, v in border_mapping.items()})
+        # pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+        pre_init_state = nsdfg.add_state('clean_symbols', is_start_state=True)
+        nsdfg.add_edge(pre_init_state, init_state, InterstateEdge(assignments=border_mapping))
+        # edge = nsdfg.edges_between(pre_init_state, init_state)[0]
+        # edge.data.assignments.update({k: v for k, v in border_mapping.items()})
         read_set.update(border_arrays)
 
         sdfg.remove_nodes_from(states)
@@ -194,7 +196,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         # Add NestedSDFG node
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols - strictly_defined_symbols)
-        mapping = {s: s for s in fsymbols}
+        if sdfg.parent_nsdfg_node is None:
+            symbol_mapping = {}
+        else:
+            symbol_mapping = sdfg.parent_nsdfg_node.symbol_mapping
+        mapping = {s: symbol_mapping[str(s)] if str(s) in symbol_mapping else s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
@@ -307,8 +313,16 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
         if isinstance(child, cf.SingleState):
             if child.state in visited:
                 continue
-            components[child.state] = (set([child.state]), child)
-            visited[child.state] = child.state
+            in_edges = sdfg.in_edges(child.state)
+            if len(in_edges) == 1 and in_edges[0].data.assignments:
+                guard = sdfg.add_state_before(child.state, f"new_{child.state.label}")
+                edge = sdfg.edges_between(guard, child.state)[0]
+                edge.data.assignments = in_edges[0].data.assignments
+                in_edges[0].data.assignments = {}
+                components[guard] = (set([guard, child.state]), cf.MultiState(None, guard))
+            else:
+                components[child.state] = (set([child.state]), child)
+                visited[child.state] = child.state
         elif isinstance(child, (cf.ForScope, cf.WhileScope)):
             guard = child.guard
             fexit = None
@@ -325,6 +339,9 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                     raise NotImplementedError
                 del components[visited[guard]]
                 del visited[guard]
+            
+            if len(fexit.nodes()) > 0:
+                fexit = sdfg.add_state_before(fexit, f"new_{fexit.label}")
 
             if fexit in visited:
                 if not isinstance(components[visited[fexit]][1], cf.SingleState):
@@ -348,6 +365,10 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                         break
                 if init is None:
                     raise ValueError("Cannot find for-scope's init state.")
+                
+                if len(init.nodes()) > 0:
+                    init = sdfg.add_state_after(init, f"new_{init.label}")
+                    del init_edge.data.assignments[child.itervar]
 
                 if init in visited:
                     if not isinstance(components[visited[init]][1], cf.SingleState):
@@ -365,12 +386,18 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
+            if len(guard.nodes()) > 0:
+                guard = sdfg.add_state_after(guard, f"new_{guard.label}")
+
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     guard = sdfg.add_state_after(guard, f"new_{guard.label}")
                 else:
                     del components[visited[guard]]
                     del visited[guard]
+            
+            if len(ifexit.nodes()) > 0:
+                ifexit = sdfg.add_state_before(ifexit, f"new_{ifexit.label}")
 
             if ifexit in visited:
                 if not isinstance(components[visited[ifexit]][1], cf.SingleState):
@@ -384,18 +411,32 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             visited.update({s: guard for s in states})
         else:
             raise ValueError(f"Unsupported control flow class {type(child)}")
+    
+    def sgraph_free_symbols(sgraph: graph.SubgraphView) -> Set[str]:
+        free_symbols = set()
+        for state in sgraph:
+            free_symbols |= state.free_symbols
+        for edge in sgraph.edges():
+            free_symbols |= edge.data.free_symbols
+        return set([str(s) for s in free_symbols])
 
     # Second pass to create MultiStates
     result = OrderedDict()
     guard = None
     states = set(sdfg.states())
-    for k, v in components.items():
-        if isinstance(v[1], cf.SingleState):
+    subgraph_fsymbols = []
+    for _, v in components.items():
+        subgraph_fsymbols.append(sgraph_free_symbols(graph.SubgraphView(sdfg, v[0])))
+    for i, (k, v) in enumerate(components.items()):
+        if isinstance(v[1], (cf.SingleState, cf.MultiState)):
             has_assign = False
-            for e in sdfg.in_edges(k):
-                if e.data.assignments:
-                    has_assign = True
-                    break
+            for st in v[0]:
+                for e in sdfg.in_edges(k):
+                    if e.data.assignments:
+                        for j in range(i + 1, len(components)):
+                            if any(k in subgraph_fsymbols[j] for k in e.data.assignments.keys()):
+                                has_assign = True
+                                break
             if has_assign:
                 guard = k
                 break

@@ -32,10 +32,8 @@ jobs:
     - name: Run pytest GPU
       run: |
         export DACE_cache=single
-        export DACE_optimizer_interface=" "
         . /opt/setupenv
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
-        codecov
 
     - name: Run extra GPU tests
       run: |
@@ -51,4 +49,10 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         . /opt/setupenv
         coverage combine . */; coverage report; coverage xml
-        codecov
+        reachable=0
+        ping -W 2 -c 1 codecov.io || reachable=$?
+        if [ $reachable -eq 0 ]; then
+          codecov
+        else
+          echo "Codecov.io is unreachable"
+        fi

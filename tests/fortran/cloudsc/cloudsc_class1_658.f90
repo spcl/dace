@@ -32,7 +32,7 @@ END
 
 SUBROUTINE non_clv_init_routine( &
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQV, &
-    & PTSPHY, tendency_tmp_t, tendency_tmp_q, tendency_tmp_a, ZTP1, ZQX, ZQX0, ZA, ZAORIG, PT, PQ, PA)
+    & PTSPHY, tendency_tmp_t, tendency_tmp_q, tendency_tmp_a, PT, PQ, PA, ZTP1, ZQX, ZQX0, ZA, ZAORIG)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
