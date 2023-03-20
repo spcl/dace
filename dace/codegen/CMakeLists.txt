@@ -144,6 +144,8 @@ if(DACE_ENABLE_HIP)
   # ...Then load again to get the macros
   find_package(HIP REQUIRED)
 
+  # Add libraries such as rocBLAS
+  link_directories(${HIP_PATH}/../lib)
 endif()
 
 # Function for performing deferred variable expansion
