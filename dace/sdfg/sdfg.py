@@ -442,6 +442,34 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._orig_name = name
         self._num = 0
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            # Skip derivative attributes
+            if k in ('_cached_start_state', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
+                     '_sdfg_list', '_transformation_hist'):
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+        # Copy edges and nodes
+        result._edges = copy.deepcopy(self._edges, memo)
+        result._nodes = copy.deepcopy(self._nodes, memo)
+        result._cached_start_state = copy.deepcopy(self._cached_start_state, memo)
+        # Copy parent attributes
+        for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
+            if id(getattr(self, k)) in memo:
+                setattr(result, k, memo[id(getattr(self, k))])
+            else:
+                setattr(result, k, None)
+        # Copy SDFG list and transformation history
+        if hasattr(self, '_transformation_hist'):
+            setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
+        result._sdfg_list = []
+        if self._parent_sdfg is None:
+            result._sdfg_list = result.reset_sdfg_list()
+        return result
+
     @property
     def sdfg_id(self):
         """
@@ -520,6 +548,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         """
+
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1910,7 +1939,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
