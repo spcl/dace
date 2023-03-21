@@ -316,6 +316,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
 
 
 def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'ProgramVisitor') -> bool:
+    if subset is None:
+        return False
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
