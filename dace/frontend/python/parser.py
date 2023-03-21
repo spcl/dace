@@ -236,7 +236,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.recreate_sdfg == False:
             warnings.warn("You are calling to_sdfg() on a dace program that "
                           "has set 'recreate_sdfg' to False. "
-                          "This may not what you want.")
+                          "This may not be what you want.")
         if self.recompile == False:
             warnings.warn("You are calling to_sdfg() on a dace program that "
                           "has set 'recompile' to False. "
