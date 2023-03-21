@@ -155,26 +155,30 @@ class MeasurementRun:
     data: List[ProgramMeasurement]
     git_hash: str
     date: datetime
+    node: str
 
     def __init__(self,
                  description: str,
-                 data: List[ProgramMeasurement] = [],
+                 data: List[ProgramMeasurement] = None,
                  git_hash: str = '',
-                 date: datetime = datetime.now()):
+                 date: datetime = datetime.now(),
+                 node: str = ''):
         """
         Constructs the class
 
         :param description: The description of this measurement run
         :type description: str
-        :param data: The data itself as a list of ProgramMeasurements, defaults to []
+        :param data: The data itself as a list of ProgramMeasurements, defaults to None
         :type data: List[ProgramMeasurement], optional
         :param git_hash: The short git hash, if not given, will be read automatically, defaults to ''
         :type git_hash: str, optional
         :param date: The time the measurements were run, defaults to datetime.now()
         :type date: datetime, optional
+        :param node: The name of the node the measurements were take on, if not set, will get it automatically
+        :type str:
         """
         self.description = description
-        self.data = data
+        self.data = data if data is not None else []
         self.git_hash = git_hash
         if self.git_hash == '':
             hash_output = run(['git', 'rev-parse', '--short', 'HEAD'],
@@ -182,6 +186,10 @@ class MeasurementRun:
                               capture_output=True)
             self.git_hash = hash_output.stdout.decode('UTF-8')
         self.date = date
+        self.node = node
+        if self.node == '':
+            node_output = run(['uname', '-a'], capture_output=True)
+            self.node = node_output.stdout.decode('UTF-8').split(' ')[1].split('.')[0]
 
     def add_program_data(self, data: ProgramMeasurement):
         self.data.append(data)
@@ -196,14 +204,15 @@ class MeasurementRun:
                 'description': run.description,
                 'git_hash': run.git_hash,
                 'data': data_list,
-                'date': run.date.isoformat()
+                'date': run.date.isoformat(),
+                'node': run.node
                 }
 
     @staticmethod
     def from_json(dict: Dict) -> 'MeasurementRun':
         if '__MeasurementRun__' in dict:
             return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
-                                  date=datetime.fromisoformat(dict['date']))
+                                  date=datetime.fromisoformat(dict['date']), node=dict['node'])
         if '__ProgramMeasurement__' in dict:
             return ProgramMeasurement(dict['program'], dict['parameters'],
                                       measurements=dict['measurements'])

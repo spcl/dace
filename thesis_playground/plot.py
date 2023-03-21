@@ -42,7 +42,7 @@ def create_plot_grid(
     first_row_axes = []
     for row, (run_data, subfig) in enumerate(zip(runs_data, subfigs)):
         subfig.suptitle(f"{run_data.description} at {run_data.date.strftime('%Y-%m-%d %H:%H')} "
-                        f"and commit {run_data.git_hash}")
+                        f"and commit {run_data.git_hash} on {run_data.node}")
         for col, result in enumerate(run_data.data, start=1):
             if row == 0:
                 ax = subfig.add_subplot(1, len(run_data.data), col)

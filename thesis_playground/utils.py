@@ -165,6 +165,7 @@ def print_results_v2(run_data: MeasurementRun):
             flat_data.append([program_measurement.program, name, measurement.min(), measurement.max(),
                               measurement.average(), measurement.median()])
 
+    print(f"Node: {run_data.node}")
     print(tabulate(flat_data, headers=headers))
 
 
