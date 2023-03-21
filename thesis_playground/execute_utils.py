@@ -106,10 +106,13 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
         sdfg(**inputs, **outputs)
     reports = sdfg.get_instrumentation_reports()
 
-    # TOOD: Check if unit is always ms
     results.add_measurement("Total time", "ms")
     for report in reports:
+        keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
+        key = keys[0]
+        if len(keys) != 0:
+            print("WARNING: Report has more than one key, taking only the first one. keys: {keys}")
         results.add_value("Total time",
-                          float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][15727054579043748905][0]))
+                          float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0]))
 
     return results
