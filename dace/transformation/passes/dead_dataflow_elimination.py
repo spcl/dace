@@ -148,8 +148,9 @@ class DeadDataflowElimination(ppl.Pass):
                                     # Add definition
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
                                 elif leaf.src.code.language == dtypes.Language.Python:
-                                    leaf.src.code.code = ast.parse(
-                                        f'{leaf.src_conn}: dace.float64\n' + leaf.src.code.as_string).body
+                                    if leaf.src_conn is not None:
+                                        leaf.src.code.code = ast.parse(
+                                            f'{leaf.src_conn}: dace.float64\n' + leaf.src.code.as_string).body
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
