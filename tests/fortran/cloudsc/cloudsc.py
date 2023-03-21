@@ -410,7 +410,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
     for k in outputs_f.keys():
         farr = outputs_f[k]
-        darr = outputs_f[k]
+        darr = outputs_d[k]
         assert np.allclose(farr, darr)
 
 
