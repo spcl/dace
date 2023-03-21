@@ -111,7 +111,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                 if repldict:
                     sym_dim = sym_dim.subs(repldict)
 
-                equations.append(sym_dim - real_dim)
+                if symbolic.issymbolic(sym_dim - real_dim):
+                    equations.append(sym_dim - real_dim)
 
     if len(symbols) == 0:
         return {}
@@ -901,6 +902,5 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set regenerate and recompile flags
             sdfg._regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
-
 
         return sdfg, cached
