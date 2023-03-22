@@ -19,9 +19,14 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
     def __init__(self,
                  sdfg: dace.SDFG,
+                 tiling_search_space: List[Tuple[int, ...]] = [(8, 1, 1), (64, 8, 1)],
                  measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="MapTiling", sdfg=sdfg)
         self.instrument = measurement
+        self._choices = tiling_search_space
+        # Append a no tiling test
+        if None not in self._choices:
+            self._choices.append(None)
 
     def cutouts(self) -> Generator[Tuple[dace.SDFG, str], None, None]:
         for node, state in self._sdfg.all_nodes_recursive():
@@ -36,12 +41,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
-        choices = [
-            None,
-            (64, 8, 1),
-        ]
-
-        return choices
+        return self._choices
 
     def config_from_key(self, key: str, **kwargs) -> List[int]:
         if key == "None":
@@ -51,8 +51,10 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
     def apply(self, config: List[int], label: str, **kwargs) -> None:
         if config is None:
+            print(f"[MapTiling Tuner] No better configuration found.")
             return
 
+        print(f"[MapTiling Tuner] Applying {config}")
         state_id, node_id, _ = label.split(".")
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
         df.MapTiling.apply_to(self._sdfg, map_entry=map_entry, options={"tile_sizes": config})
@@ -81,7 +83,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
     def evaluate(self, config, cutout, map_entry_id: int, measurements: int, **kwargs) -> float:
         cutout_ = dace.SDFG.from_json(cutout)
         map_ = cutout_.start_state.node(map_entry_id)
-        if config == "None":
+        if config != None:
             df.MapTiling.apply_to(cutout_, map_entry=map_, options={"tile_sizes": config})
-
+        print(f"[MapTiling Tuner] Running {config}")
         return self.measure(cutout_, measurements)

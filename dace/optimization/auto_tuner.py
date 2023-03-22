@@ -8,6 +8,7 @@ class AutoTuner:
     General API for automatic SDFG tuners.
     Contains a single method: ``optimize``, which initiates the tuning process.
     """
+
     def __init__(self, sdfg: dace.SDFG) -> None:
         self._sdfg = sdfg
 
