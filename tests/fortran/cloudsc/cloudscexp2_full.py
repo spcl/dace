@@ -39,7 +39,8 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
 
 def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) -> dace.SDFG:
 
-    intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
+    source_fixed=source.replace("_JPRB","")
+    intial_sdfg = fortran_parser.create_sdfg_from_string(source_fixed, program_name)
     
     # Find first NestedSDFG
     sdfg = None
@@ -375,12 +376,12 @@ data = {
 
 
 programs = {
-    'cloudscexp2_full_20230320': ('CLOUDPROGRAM', 'CLOUDSCOUTER')
+    'cloudscexp2_full_20230322': ('CLOUDPROGRAM', 'CLOUDSCOUTER')
 }
 
 
 program_parameters = {
-    'cloudscexp2_full_20230320': (
+    'cloudscexp2_full_20230322': (
         'NBLOCKS', 'NGPBLKS', 'NUMOMP', 'NGPTOT', 'NGPTOTG', 'NPROMA',
         'KLON', 'KLEV', 'KFLDX', 'LDSLPHY',  'LDMAINCALL',
         'NCLV', 'NCLDQL','NCLDQI','NCLDQR','NCLDQS', 'NCLDQV',
@@ -392,7 +393,7 @@ program_parameters = {
 
 
 program_inputs = {
-    'cloudscexp2_full_20230320': (
+    'cloudscexp2_full_20230322': (
         'PTSPHY','PT', 'PQ',
         'tendency_cml_a', 'tendency_cml_cld', 'tendency_cml_o3', 'tendency_cml_q',
         'tendency_cml_T', 'tendency_cml_u', 'tendency_cml_v',
@@ -441,7 +442,7 @@ program_inputs = {
 
 
 program_outputs = {
-    'cloudscexp2_full_20230320': (
+    'cloudscexp2_full_20230322': (
         'PLUDE',
     #  !---diagnostic output
         'PCOVPTOT', 'PRAINFRAC_TOPRFZ',
@@ -541,4 +542,4 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
 
 if __name__ == "__main__":
-    test_program('cloudscexp2_full_20230320', dace.DeviceType.CPU, False)
+    test_program('cloudscexp2_full_20230322', dace.DeviceType.CPU, False)
