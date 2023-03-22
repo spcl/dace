@@ -1863,7 +1863,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                         block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
 
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(%s / (%s)) %% (%s)' % (
+                    block_expr = '((%s / (%s)) %% (%s))' % (
                         block_expr,
                         _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
