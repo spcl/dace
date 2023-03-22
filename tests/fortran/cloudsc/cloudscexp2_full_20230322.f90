@@ -1325,7 +1325,7 @@ DEBUG_EPSILON(1) = 100.*EPSILON(PLUDE(1, 1, 1))
 DEBUG_EPSILON(2) = 100.*EPSILON(PTSPHY)
 
   ! DO IBL=1,31
-  DO IBL=1,512
+  DO IBL=1,1
       !JKGLO=(IBL-1)*NPROMA+1
 
       
@@ -2090,6 +2090,19 @@ LOGICAL :: LLCLDBUDI     ! Cloud ice condensate budget
 !----------------------------------------------------------------------
 
 
+REAL(KIND=JPRB) :: FOEDELTA
+REAL(KIND=JPRB) :: PTARE
+REAL(KIND=JPRB) :: FOEEW,FOEDE,FOEDESU,FOELH,FOELDCP
+REAL(KIND=JPRB) :: FOEALFA
+REAL(KIND=JPRB) :: FOEEWM,FOEDEM,FOELDCPM,FOELHM,FOE_DEWM_DT
+REAL(KIND=JPRB) :: FOETB
+REAL(KIND=JPRB) :: FOEALFCU 
+REAL(KIND=JPRB) :: FOEEWMCU,FOEDEMCU,FOELDCPMCU,FOELHMCU
+REAL(KIND=JPRB) :: FOEEWMO, FOEELIQ, FOEEICE 
+REAL(KIND=JPRB) :: FOEEWM_V,FOEEWMCU_V,FOELES_V,FOEIES_V
+REAL(KIND=JPRB) :: EXP1,EXP2
+REAL(KIND=JPRB) :: FOKOOP 
+
 FOEDELTA (PTARE) = MAX (0.0,SIGN(1.0_JPRB,PTARE-RTT))
 
 !                  FOEDELTA = 1    water
@@ -2528,7 +2541,7 @@ ZCLDTOPDIST(:) = 0.0_JPRB
 !                       START OF VERTICAL LOOP
 !----------------------------------------------------------------------
 
-DO JK=NCLDTOP,KLEV
+DO JK=NCLDTOP,1
 
 !----------------------------------------------------------------------
 ! 3.0_JPRB INITIALIZE VARIABLES

@@ -17,7 +17,7 @@ from dace import DebugInfo as di
 from dace import Language as lang
 from dace.properties import CodeBlock
 from numpy import finfo as finf
-from numpy import float as fl
+from numpy import float64 as fl
 
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
