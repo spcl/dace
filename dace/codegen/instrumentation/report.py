@@ -194,7 +194,8 @@ class InstrumentationReport(object):
                              string,
                              row_format,
                              colw,
-                             with_element_heading=True):
+                             with_element_heading=True,
+                             title=''):
         indent = ''
         if len(runtimes) > 0:
             element_label = ''
@@ -208,7 +209,10 @@ class InstrumentationReport(object):
                     # No parent state row present yet, print it.
                     string += row_format.format('|-State (' + str(element[1]) + ')', '', '', '', '', width=colw)
                 state = element[1]
-                element_label = '| |-Node (' + str(element[2]) + ')'
+                if title:
+                    element_label = '| |-Node (' + str(element[2]) + ', ' + title + ')'
+                else:
+                    element_label = '| |-Node (' + str(element[2]) + ')'
                 indent = '| | |'
             elif element[0] > -1 and element[1] > -1:
                 # This element is a state.
@@ -350,7 +354,7 @@ class InstrumentationReport(object):
                             label = ""
 
                         string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
-                                                                        row_format, COLW, with_element_heading)
+                                                                        row_format, COLW, with_element_heading, event)
 
                         with_element_heading = False
 
