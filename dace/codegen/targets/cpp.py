@@ -641,7 +641,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+            if ((re - rb) >= m[a] * step) != False:
                 continue
 
             m = re.match(a * itersym + b)
