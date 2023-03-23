@@ -160,7 +160,6 @@ def test_optional_array_inference_via_parse():
     unknown_arr = np.zeros(3)
 
     sdfg = outer.to_sdfg(g_none_arr, g_arr, unknown_arr, simplify=False)
-    sdfg.save("debug.sdfg")
     sdfg.validate()
 
     # Check arrays are properly optional is properly handle
