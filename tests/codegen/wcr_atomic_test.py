@@ -15,7 +15,7 @@ def test_wcr_overlapping_atomic():
 
     sdfg = tester.to_sdfg()
     code: str = sdfg.generate_code()[0].code
-    assert code.count('atomic') == 1
+    assert code.count('atomic(') == 1
 
 
 def test_wcr_strided_atomic():
@@ -27,7 +27,7 @@ def test_wcr_strided_atomic():
 
     sdfg = tester.to_sdfg()
     code: str = sdfg.generate_code()[0].code
-    assert code.count('atomic') == 1
+    assert code.count('atomic(') == 1
 
 
 def test_wcr_strided_nonatomic():
@@ -39,7 +39,7 @@ def test_wcr_strided_nonatomic():
 
     sdfg = tester.to_sdfg()
     code: str = sdfg.generate_code()[0].code
-    assert code.count('atomic') == 0
+    assert code.count('atomic(') == 0
 
 
 def test_wcr_strided_nonatomic_offset():
@@ -51,7 +51,7 @@ def test_wcr_strided_nonatomic_offset():
 
     sdfg = tester.to_sdfg()
     code: str = sdfg.generate_code()[0].code
-    assert code.count('atomic') == 0
+    assert code.count('atomic(') == 0
 
 
 if __name__ == '__main__':
