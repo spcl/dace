@@ -332,7 +332,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         else:
             return {k: eval(v, self.global_vars) if isinstance(v, str) else v for k, v in reevaluate.items()}
 
-    def closure_resolver(self, constant_args, given_args, argtypes={}, parent_closure=None):
+    def closure_resolver(self, constant_args, given_args, argtypes=None, parent_closure=None):
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
@@ -365,7 +365,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Parse AST to create the SDFG
         _, closure = preprocessing.preprocess_dace_program(self.f,
-                                                           argtypes,
+                                                           argtypes or {},
                                                            global_vars,
                                                            modules,
                                                            resolve_functions=self.resolve_functions,
