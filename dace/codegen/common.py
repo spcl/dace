@@ -38,7 +38,7 @@ def find_outgoing_edges(node, dfg):
 
 @lru_cache(maxsize=16384)
 def _sym2cpp(s, arrayexprs):
-    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs))
+    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs, cpp_mode=True))
 
 
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
