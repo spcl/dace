@@ -1260,10 +1260,16 @@ class LoopUnroller(ast.NodeTransformer):
 
 class CallTreeResolver(ast.NodeVisitor):
 
-    def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        closure: SDFGClosure,
+        globals: Dict[str, Any],
+        caller_argtypes: Dict[str, data.Data],
+    ) -> None:
         self.closure = closure
         self.seen_calls: Set[str] = set()
         self.globals = globals
+        self.caller_argtypes = caller_argtypes
 
     def _eval_args(self, node: ast.Call) -> Dict[str, Any]:
         res = {}
@@ -1288,13 +1294,19 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
-    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
+    def _get_given_args(
+        self,
+        node: ast.Call,
+        function: 'DaceProgram',
+        caller_argtypes: Dict[str, data.Data],
+    ) -> Set[str]:
         """ Returns a set of names of the given arguments from the positional and keyword arguments """
         from dace.frontend.python.parser import DaceProgram  # Avoid import loop
 
         posargs = node.args
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
+        argtypes = {}
 
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
@@ -1325,6 +1337,7 @@ class CallTreeResolver(ast.NodeVisitor):
             # END OF VARIABLE-LENGTH ARGUMENTS
             elif sig_kind is inspect.Parameter.POSITIONAL_ONLY:
                 if arg_ind < nargs:
+                    argtypes[aname] = caller_argtypes[posargs[arg_ind].id]
                     result.add(aname)
                     arg_ind += 1
             elif sig_kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
@@ -1332,13 +1345,18 @@ class CallTreeResolver(ast.NodeVisitor):
                     if aname in kwargs:
                         result.add(aname)
                 else:
+                    argtypes[aname] = caller_argtypes[posargs[arg_ind].id]
                     result.add(aname)
                     arg_ind += 1
             elif sig_kind is inspect.Parameter.KEYWORD_ONLY:
                 if aname in kwargs:
                     result.add(aname)
 
-        return result
+        for kwarg in node.keywords:
+            if kwarg.value.id in caller_argtypes.keys():
+                argtypes[kwarg.arg] = caller_argtypes[kwarg.value.id]
+
+        return result, argtypes
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
@@ -1370,10 +1388,15 @@ class CallTreeResolver(ast.NodeVisitor):
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 # Get given arguments from signature and args/kwargs
-                given_args = self._get_given_args(node, value)
+                given_args, argtypes = self._get_given_args(node, value, self.caller_argtypes)
 
-                self.closure.nested_closures.append(
-                    (qualname, value.closure_resolver(constant_args, given_args, self.closure)))
+                self.closure.nested_closures.append((qualname,
+                                                     value.closure_resolver(
+                                                         constant_args,
+                                                         given_args,
+                                                         argtypes=argtypes,
+                                                         parent_closure=self.closure,
+                                                     )))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except DaceRecursionError:  # Parsing failed in a nested context, raise
@@ -1588,7 +1611,7 @@ def preprocess_dace_program(f: Callable[..., Any],
             raise
 
     try:
-        ctr = CallTreeResolver(closure_resolver.closure, resolved)
+        ctr = CallTreeResolver(closure_resolver.closure, resolved, argtypes)
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:

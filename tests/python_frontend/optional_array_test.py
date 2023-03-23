@@ -132,41 +132,66 @@ def test_optional_array_inference_via_simplify():
 def test_optional_array_inference_via_parse():
 
     @dace.program
-    def outer(yes: Optional[dace.float64[20]], no: dace.float64[20], unknown):
+    def nested(nested_none_arr: Optional[dace.float64[20]], nested_arr: dace.float64[20]):
+        if nested_none_arr is None:
+            nested_none_arr[:] = 10
+
+        if nested_arr is None:
+            nested_arr[:] = 10
+
+    @dace.program
+    def outer(none_arr: Optional[dace.float64[20]], arr: dace.float64[20], unknown):
         # Add loop to challenge unconditional traversal
         for _ in range(10):
             pass
 
-        if yes is None:
-            yes[:] = 10
-
-        if no is None:
-            no[:] = 10
-
-        if unknown is None:
+        if none_arr is None:
+            none_arr[:] = 10
+        else:
             unknown[:] = 10
 
-    yes_arr = None
-    no_arr = np.zeros(3)
+        if arr is None:
+            arr[:] = 10
+
+        nested(none_arr, nested_arr=arr)
+
+    g_none_arr = None
+    g_arr = np.zeros(3)
     unknown_arr = np.zeros(3)
 
-    sdfg = outer.to_sdfg(yes_arr, no_arr, unknown_arr, simplify=False)
+    sdfg = outer.to_sdfg(g_none_arr, g_arr, unknown_arr, simplify=False)
+    sdfg.save("debug.sdfg")
     sdfg.validate()
 
-    assert sdfg.arrays['yes'].optional is True
-    assert sdfg.arrays['no'].optional is False
+    # Check arrays are properly optional is properly handle
+    # with correct type hint
+    assert sdfg.arrays['none_arr'].optional is True
+    assert sdfg.arrays['arr'].optional is False
     assert sdfg.arrays['unknown'].optional is None
+    assert sdfg.sdfg_list[1].arrays['nested_none_arr'].optional is True
+    assert sdfg.sdfg_list[1].arrays['nested_arr'].optional is False
 
-    no_is_assigned = False
-    yes_is_assigned = False
-    for node, _state in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.AccessNode):
-            no_is_assigned |= node.data == 'no'
-        if isinstance(node, dace.nodes.AccessNode):
-            yes_is_assigned |= node.data == 'yes'
+    # Check that the ConditionalOptionalArrayResolver pass in preprocess
+    # combined with ConditionalCodeResolver and DeadCodeEliminator lead
+    # to the branch elimination of None array
+    arr_is_assigned = False
+    none_arr_is_assigned = False
+    unknown_is_assigned = False
+    nested_arr_is_assigned = False
+    nested_none_arr_is_assigned = False
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.AccessNode) and node.has_writes(state):
+            arr_is_assigned |= (node.data == 'arr')
+            none_arr_is_assigned |= (node.data == 'none_arr')
+            unknown_is_assigned |= (node.data == 'unknown')
+            nested_arr_is_assigned |= (node.data == 'nested_arr')
+            nested_none_arr_is_assigned |= (node.data == 'nested_none_arr')
 
-    assert no_is_assigned
-    assert not yes_is_assigned
+    assert arr_is_assigned
+    assert not none_arr_is_assigned
+    assert unknown_is_assigned
+    assert nested_arr_is_assigned
+    assert not nested_none_arr_is_assigned
 
 
 if __name__ == '__main__':
