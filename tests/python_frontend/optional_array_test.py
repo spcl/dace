@@ -195,10 +195,10 @@ def test_optional_array_inference_via_parse():
 
 
 if __name__ == '__main__':
-    # test_type_hint()
-    # test_optional_arg_hint()
-    # test_optional_argcheck()
-    # test_optional_dead_state(False)
-    # test_optional_dead_state(True)
+    test_type_hint()
+    test_optional_arg_hint()
+    test_optional_argcheck()
+    test_optional_dead_state(False)
+    test_optional_dead_state(True)
     test_optional_array_inference_via_parse()
-    # test_optional_array_inference_via_simplify()
+    test_optional_array_inference_via_simplify()
