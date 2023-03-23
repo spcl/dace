@@ -58,6 +58,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
     assert np.array_equal(out, np.array([0, 10] * 5, dtype=np.int32))
 
 
+@pytest.mark.gpu
 def test_write_subset():
 
     @dace.program
@@ -77,7 +78,6 @@ def test_write_subset():
     assert np.array_equal(ref, val)
 
 
-@pytest.mark.gpu
 def test_write_full():
 
     M, N = dace.symbol('M'), dace.symbol('N')
