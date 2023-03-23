@@ -3,7 +3,6 @@ import copy
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic

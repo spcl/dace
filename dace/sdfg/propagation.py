@@ -26,6 +26,7 @@ class MemletPattern(object):
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
+
     def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
         raise NotImplementedError
 
@@ -37,6 +38,7 @@ class MemletPattern(object):
 class SeparableMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
+
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
         raise NotImplementedError
 
@@ -47,6 +49,7 @@ class SeparableMemletPattern(object):
 @registry.autoregister
 class SeparableMemlet(MemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
+
     def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
         # Assuming correct dimensionality in each of the expressions
         data_dims = len(expressions[0])
@@ -111,6 +114,7 @@ class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
     """
+
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
@@ -300,6 +304,7 @@ class ModuloSMemlet(SeparableMemletPattern):
 
         Acts as a meta-pattern: Finds the underlying pattern for `f(x)`.
     """
+
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions
         if len(dim_exprs) > 1: return False
@@ -351,6 +356,7 @@ class ConstantSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
+
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
         # Pattern does not support unions of expressions. TODO: Support
         if len(dim_exprs) > 1: return False
@@ -394,6 +400,7 @@ class ConstantSMemlet(SeparableMemletPattern):
 class GenericSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that detects any expression, and propagates 
         interval bounds. Used as a last resort. """
+
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
         dims = []
         for dim in dim_exprs:
@@ -446,8 +453,9 @@ class GenericSMemlet(SeparableMemletPattern):
             if node_rs != 1:
                 pos_lastindex = symbolic.pystr_to_symbolic(
                     '%s + int_floor(%s - %s, %s) * %s' %
-                    (symbolic.symstr(node_rb), symbolic.symstr(node_re), symbolic.symstr(node_rb),
-                     symbolic.symstr(node_rs), symbolic.symstr(node_rs)))
+                    (symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(node_re, cpp_mode=False),
+                     symbolic.symstr(node_rb, cpp_mode=False), symbolic.symstr(
+                         node_rs, cpp_mode=False), symbolic.symstr(node_rs, cpp_mode=False)))
                 neg_firstindex = pos_lastindex
 
             if isinstance(dim_exprs, list):
@@ -515,6 +523,7 @@ def _subexpr(dexpr, repldict):
 class ConstantRangeMemlet(MemletPattern):
     """ Memlet pattern that matches arbitrary expressions with constant range.
     """
+
     def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
         constant_range = True
         for dim in node_range:
@@ -970,7 +979,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
 
                     if inside_memlet.wcr is not None:
                         if (memlet.wcr is not None and memlet.wcr != inside_memlet.wcr):
-                            warnings.warn('Memlet appears with more than one' ' type of write-conflict resolution.')
+                            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
                         memlet.wcr = inside_memlet.wcr
 
                     if memlet.dynamic and memlet.volume == 0:
@@ -1013,7 +1022,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                     # union of the ranges to merge the subsets.
                     if memlet.subset is not None:
                         if memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges ' 'of unequal dimension!')
+                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
                         else:
                             memlet.subset = subsets.union(memlet.subset, subset)
                             if memlet.subset is None:
@@ -1314,7 +1323,7 @@ def propagate_memlet(dfg_state,
 
     if arr is None:
         if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined ' 'in SDFG.' % memlet.data)
+            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
 
         # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
         #        so this test cannot be used
