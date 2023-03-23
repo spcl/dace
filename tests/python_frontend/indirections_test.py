@@ -60,6 +60,23 @@ def test_indirection_scalar_nsdfg():
 
 
 @dc.program
+def indirection_scalar2_nsdfg(A: dc.float64[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    for i in dc.map[0:A.shape[0]]:
+        a = x[i]
+        B[i] = A[a]
+        B[i] = A[a]
+    return B
+
+
+def test_indirection_scalar2_nsdfg():
+    A = np.random.randn(10).astype(np.float64)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    res = indirection_scalar2_nsdfg(A, x)
+    assert (np.allclose(res, A[x]))
+
+
+@dc.program
 def indirection_scalar_assign_nsdfg(A: dc.float64[10], x: dc.int32[10]):
     B = np.empty_like(A)
     # TODO: This doesn't work with 0:A.shape[0]
@@ -169,6 +186,7 @@ def test_indirection_scalar_range():
 
 
 def test_indirection_scalar_range_nsdfg():
+
     @dc.program
     def indirection_scalar_range_nsdfg(A: dc.float64[10], x: dc.int32[11]):
         B = np.empty_like(A)
@@ -374,6 +392,7 @@ if __name__ == "__main__":
     test_indirection_scalar_assign()
     test_indirection_scalar_augassign()
     test_indirection_scalar_nsdfg()
+    test_indirection_scalar2_nsdfg()
     test_indirection_scalar_assign_nsdfg()
     test_indirection_scalar_augassign_nsdfg()
     test_indirection_scalar_multi()

@@ -3020,22 +3020,24 @@ class ProgramVisitor(ExtNodeVisitor):
                          arr_type: data.Data = None):
         if name in self.sdfg.arrays:
             return (name, None)
-        elif (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')][0], rng
-        elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')][0], rng
         elif name in self.variables:
             return (self.variables[name], None)
+
+        if (name, rng, 'w') in self.accesses:
+            new_name, new_rng = self.accesses[(name, rng, 'w')]
+        elif (name, rng, 'r') in self.accesses:
+            new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
-            full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
-            if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
-                new_name, new_rng = self.make_slice(new_name, rng)
-            elif full_rng != new_rng:
-                new_name, new_rng = self.make_slice(new_name, new_rng)
-            return (new_name, new_rng)
         else:
             raise NotImplementedError
+
+        full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
+        if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
+            new_name, new_rng = self.make_slice(new_name, rng)
+        elif full_rng != new_rng:
+            new_name, new_rng = self.make_slice(new_name, new_rng)
+        return (new_name, new_rng)
 
     def _add_write_access(self,
                           name: str,
@@ -3047,7 +3049,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.arrays:
             return (name, None)
         if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')][0], rng
+            return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
             return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
