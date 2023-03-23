@@ -58,6 +58,26 @@ def test_scalar_to_symbol_in_nested_sdfg():
     assert np.array_equal(out, np.array([0, 10] * 5, dtype=np.int32))
 
 
+def test_write_subset():
+
+    @dace.program
+    def write_subset(A: dace.int32[20, 20]):
+        for i, j in dace.map[2:18, 2:18]:
+            A[i, j] = i + j
+    
+    sdfg = write_subset.to_sdfg(simplify=True)
+    sdfg.apply_transformations(GPUTransformSDFG)
+
+    ref = np.ones((20, 20), dtype=np.int32)
+    val = np.copy(ref)
+
+    write_subset.f(ref)
+    sdfg(A=val)
+
+    assert np.array_equal(ref, val)
+
+
 if __name__ == '__main__':
     test_toplevel_transient_lifetime()
     test_scalar_to_symbol_in_nested_sdfg()
+    test_write_subset()
