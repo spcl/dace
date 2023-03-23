@@ -3021,9 +3021,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.arrays:
             return (name, None)
         elif (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
+            return self.accesses[(name, rng, 'w')][0], rng
         elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')]
+            return self.accesses[(name, rng, 'r')][0], rng
         elif name in self.variables:
             return (self.variables[name], None)
         elif name in self.scope_vars:
@@ -3047,7 +3047,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.arrays:
             return (name, None)
         if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
+            return self.accesses[(name, rng, 'w')][0], rng
         elif name in self.variables:
             return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
