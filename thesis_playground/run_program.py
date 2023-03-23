@@ -18,7 +18,8 @@ def main():
     args = parser.parse_args()
 
     if args.cache:
-        use_cache(args.program)
+        if not use_cache(args.program):
+            return 1
 
     run_program(args.program, repetitions=args.repetitions, device=dace.DeviceType.GPU,
                 normalize_memlets=args.normalize_memlets)

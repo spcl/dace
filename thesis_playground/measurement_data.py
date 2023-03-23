@@ -74,13 +74,16 @@ class Measurement:
         if '__Measurement__' in dict:
             return Measurement(dict['name'], dict['unit'], data=dict['data'], kernel_name=dict['kernel_name'])
 
+    def __repr__(self) -> str:
+        return f"Measurement of {self.name} [{self.unit}] kernel {self.kernel_name} and {len(self.data)} data points"
+
 
 class ProgramMeasurement:
     """
     Represents all measurements made with the same program. It consists of a list of measurements, the program name and
     the parameters used to achieve these measurements.
     """
-    measurements: Dict[str, Measurement]
+    measurements: Dict[str, List[Measurement]]
     program: str
     parameters: Dict[str, Number]
 
@@ -110,18 +113,20 @@ class ProgramMeasurement:
         :param unit: The unit of the new measurement
         :type unit: str
         """
-        self.measurements[name] = Measurement(name, unit, **kwargs)
+        if name not in self.measurements:
+            self.measurements[name] = []
+        self.measurements[name].append(Measurement(name, unit, **kwargs))
 
     def add_value(self, name: str, value: Number):
         """
-        Adds a value to a measurement identified by the name
+        Adds a value to a measurement identified by the name. Adds if to the first one with the same name
 
         :param name: The name of the measurement
         :type name: str
         :param value: The value to add
         :type value: Number
         """
-        self.measurements[name].add_value(value)
+        self.measurements[name][0].add_value(value)
 
     @staticmethod
     def to_json(measurement: 'ProgramMeasurement') -> Dict:

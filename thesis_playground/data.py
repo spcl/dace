@@ -1,5 +1,5 @@
 import copy
-from typing import Dict, Union, Tuple
+from typing import Dict, Union, Tuple, List
 
 parameters = {
     'KLON': 10000,
@@ -23,6 +23,18 @@ custom_parameters = {
         'KLEV': 1000,
         'KFDIA': 998,
     },
+    'cloudsc_class2_781': {
+        'KLON': 5000,
+        'KLEV': 5000,
+        'KFDIA': 4998
+        },
+    'cloudsc_class2_1762': {
+        'KLEV': 10,
+        # 'KLON': 100000000,
+        # 'KFDIA': 99999998,
+        'KLON': 1000,
+        'KFDIA': 998,
+        }
 }
 
 # changes from the parameters dict for testing
@@ -153,6 +165,59 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'PA': (params['KLON'], params['KLEV']),
         'PCLV': (params['KLON'], params['KLEV'], params['NCLV']),
     }
+
+
+def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
+    """
+    Returns the iteration ranges for the returned variables given the program
+
+    :param params: The parameters used
+    :type params: Dict[str, int]
+    :param program: The program name
+    :type program: str
+    :return: List of dictionaries. Each dictionary has an entry 'variables' listing all variable names which have the
+    given ranges, an entry 'start' and 'stop' which are tuples with the start and stop indices (0-based) for the range
+    to check/compare.
+    :rtype: List[Dict]
+    """
+    # This ranges have inclusive starts and exclusive ends. Remember that for fortran loops start and end are inclusive
+    # and that fortran arrays are 1-based but python are 0-based -> shift starting positions by -1
+    ranges = {
+            'cloudsc_class1_658': [
+                {
+                    'variables': ['ZTP1', 'ZA', 'ZAORIG'],
+                    'start': (params['KIDIA']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'])
+                },
+                {
+                    'variables': ['ZQX', 'ZQX0'],
+                    'start': (params['KIDIA']-1, 0, params['NCLDQV']-1),
+                    'end': (params['KFDIA'], params['KLEV'], params['NCLDQV'])
+                }
+            ],
+            'cloudsc_class1_670': [
+                {
+                    'variables': ['ZQX', 'ZQX0'],
+                    'start': (params['KIDIA']-1, 0, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NCLV']-1)
+                }
+            ],
+            'cloudsc_class1_2857': [
+                {
+                    'variables': ['PFHPSL', 'PFHPSN'],
+                    'start': (params['KIDIA']-1, 0, 0),
+                    'end': (params['KFDIA'], params['KLEV']+1)
+                }
+            ],
+            'cloudsc_class1_2783': [
+                {
+                    'variables': ['PFPLSL', 'PFPLSN'],
+                    'start': (params['KIDIA']-1, 0, 0),
+                    'end': (params['KFDIA'], params['KLEV']+1)
+                }
+            ]
+    }
+    return ranges[program]
 
 
 def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, Tuple]]]:

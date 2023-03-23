@@ -7,7 +7,8 @@ from typing import List
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2, print_with_time, use_cache
+from utils import get_programs_data, get_results_dir, print_results_v2, print_with_time, use_cache, \
+                  get_program_parameters_data
 from execute_utils import test_program, profile_program
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
@@ -20,6 +21,7 @@ def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_meas
     for data in ncu_data:
         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
         id_triplet = tuple([int(id) for id in match.group(1).split('_')])
+        print(f"Kernel {id_triplet}")
         program_measurement.add_measurement('Kernel Time',
                                             data.durations_unit,
                                             data=data.durations,
@@ -59,6 +61,8 @@ def main():
                         type=str,
                         default='Unknown',
                         help='Description to be saved into the json file')
+    parser.add_argument('--no-total', default=False, action='store_true',
+                        help='Do not run measurement of total runtime')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -76,10 +80,15 @@ def main():
     for program in selected_programs:
         print(f"Run program {program}")
         if args.cache:
-            use_cache(program)
+            if not use_cache(program):
+                return 1
 
-        test_program(program, dace.DeviceType.GPU, normalize_memlets)
-        program_data = profile_program(program, repetitions=args.repetitions, normalize_memlets=normalize_memlets)
+        if not test_program(program, dace.DeviceType.GPU, normalize_memlets):
+            continue
+        if not args.no_total:
+            program_data = profile_program(program, repetitions=args.repetitions, normalize_memlets=normalize_memlets)
+        else:
+            program_data = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
         command_ncu = [
             'ncu',
             '--force-overwrite',

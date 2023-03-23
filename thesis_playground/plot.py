@@ -65,7 +65,7 @@ def create_qq_plot(runs_data: List[MeasurementRun], filename: str = "qqplot.png"
     """
 
     def subfigure_plot_function(ax, result):
-        measurement = result.measurements['Total time']
+        measurement = result.measurements['Total time'][0]
         ax.set_title(f"{result.program} (#={measurement.amount()})")
         sm.qqplot(np.array(measurement.data), line='45', ax=ax)
 
@@ -83,7 +83,7 @@ def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram
     """
 
     def subfigure_plot_function(ax, result):
-        measurement = result.measurements['Total time']
+        measurement = result.measurements['Total time'][0]
         ax.set_title(f"{result.program} (#={measurement.amount()})")
         bins = np.linspace(measurement.min(), measurement.max(), num=20)
         ax.hist(measurement.data, bins=bins)

@@ -7,12 +7,15 @@ import dace
 from my_auto_opt import auto_optimize
 
 from data import get_program_parameters_data
-from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time
+from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
+                  compare_output
 from measurement_data import ProgramMeasurement
+
+RNG_SEED = 42
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
+def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -23,6 +26,8 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     :type device: dace.DeviceType
     :param normalize_memlets: If memlets should be normalized
     :type normalize_memlets: bool
+    :return: True if test passes, False otherwise
+    :rtype: bool
     """
 
     programs_data = get_programs_data()
@@ -34,7 +39,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, testing_dataset=True)
     outputs_f = get_outputs(program, rng, testing_dataset=True)
     outputs_d = copy.deepcopy(outputs_f)
@@ -46,17 +51,12 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
     print_with_time(f"{program} ({program_name}) on {device} with"
                     f"{' ' if normalize_memlets else 'out '}normalize memlets")
-    for k in outputs_f.keys():
-        farr = outputs_f[k]
-        darr = outputs_f[k]
-        assert np.allclose(farr, darr)
-        print(f"variable {k:20} ", end="")
-        print(f"Sum: {farr.sum():.2e}", end=", ")
-        print(f"avg: {np.average(farr):.2e}", end=", ")
-        print(f"median: {np.median(farr):.2e}", end=", ")
-        print(f"nnz: {np.count_nonzero(farr)}", end=", ")
-        print(f"#: {np.prod(farr.shape)}")
-    print_with_time('Success')
+    passes_test = compare_output(outputs_f, outputs_d, program)
+
+    if passes_test:
+        print_with_time('Success')
+    else:
+        print_with_time('!!!TEST NOT PASSED!!!')
 
 
 def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
@@ -67,9 +67,10 @@ def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, 
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
     auto_optimize(sdfg, device)
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)
     outputs = get_outputs(program, rng)
+
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
 
@@ -96,7 +97,7 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
 
     sdfg = compile_for_profile(program, device, normalize_memlets)
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)
     outputs = get_outputs(program, rng)
 
@@ -110,8 +111,8 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     for report in reports:
         keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
         key = keys[0]
-        if len(keys) != 0:
-            print("WARNING: Report has more than one key, taking only the first one. keys: {keys}")
+        if len(keys) > 1:
+            print(f"WARNING: Report has more than one key, taking only the first one. keys: {keys}")
         results.add_value("Total time",
                           float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0]))
 

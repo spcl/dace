@@ -69,7 +69,8 @@ class Data:
             setattr(self, f"{value_name}_unit", unit)
         elif unit != getattr(self, f"{value_name}_unit", None):
             return False
-        getattr(self, value_name).append(parse(row[header['Metric Value']]))
+        if row[header['Metric Value']] != 'nan':
+            getattr(self, value_name).append(parse(row[header['Metric Value']]))
 
     def get_stat(self) -> str:
         return f"duration [{self.durations_unit}](#={len(self.durations)}): min: {min(self.durations)}, max: {max(self.durations)}, " \

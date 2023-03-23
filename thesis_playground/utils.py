@@ -17,7 +17,7 @@ from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
-from data import get_program_parameters_data, get_testing_parameters_data
+from data import get_program_parameters_data, get_testing_parameters_data, get_iteration_ranges
 
 from measurement_data import MeasurementRun
 
@@ -154,16 +154,17 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
 
 
 def print_results_v2(run_data: MeasurementRun):
-    headers = ["program", "measurement", "min", "max", "avg", "median"]
+    headers = ["program", "measurement", "avg", "median", "min", "max"]
     flat_data = []
     for program_measurement in run_data.data:
-        for measurement in program_measurement.measurements.values():
-            name = measurement.name
-            if measurement.kernel_name is not None:
-                name += f" of {measurement.kernel_name}"
-            name += f" [{measurement.unit}] (#={measurement.amount()})"
-            flat_data.append([program_measurement.program, name, measurement.min(), measurement.max(),
-                              measurement.average(), measurement.median()])
+        for measurement_list in program_measurement.measurements.values():
+            for measurement in measurement_list:
+                name = measurement.name
+                if measurement.kernel_name is not None:
+                    name += f" of {measurement.kernel_name}"
+                name += f" [{measurement.unit}] (#={measurement.amount()})"
+                flat_data.append([program_measurement.program, name, measurement.min(), measurement.max(),
+                                  measurement.average(), measurement.median()])
 
     print(f"Node: {run_data.node}")
     print(tabulate(flat_data, headers=headers))
@@ -200,12 +201,14 @@ def print_with_time(text: str):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
 
 
-def use_cache(program: str):
+def use_cache(program: str) -> bool:
     """
     Puts the environment variables to tell dace to use the cached generated coded. Also builts the generated code
 
     :param program: The name of the program, used for building the code
     :type program: str
+    :return: True if building was successful, false otherwise
+    :rtype: bool
     """
     programs = get_programs_data()['programs']
     os.environ['DACE_compiler_use_cache'] = '1'
@@ -217,4 +220,52 @@ def use_cache(program: str):
     if build.returncode != 0:
         print("ERROR: Error encountered while building")
         print(build.stderr.decode('UTF-8'))
-        return 1
+        return False
+    return True
+
+
+def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
+    """
+    Compares two outputs. Outputs are dictionaries where key is the variable name and value a n-dimensional matrix. They
+    are compared based on the ranges given by get_iteration_ranges for the given program
+
+    :param output_a: First output
+    :type output_a: Dict
+    :param output_b: Second output
+    :type output_b: Dict
+    :param program: The program name
+    :type program: str
+    :return: True if the outputs are equal, false otherwise
+    :rtype: bool
+    """
+    params = get_testing_parameters_data()['parameters']
+    ranges = get_iteration_ranges(params, program)
+    same = True
+    range_keys = []
+    for range in ranges:
+        range_keys.extend(range['variables'])
+        for key in range['variables']:
+            if key not in output_a or key not in output_b:
+                print(f"WARNING: {key} given in range for {program} but not found in its outputs: "
+                      f"{list(output_a.keys())} and {list(output_b.keys())}")
+            selection = []
+            for start, stop in zip(range['start'], range['end']):
+                selection.append(slice(start, stop))
+            selection = tuple(selection)
+            this_same = np.allclose(
+                    output_a[key][selection],
+                    output_b[key][selection])
+            if not this_same:
+                print(f"{key} is not the same for range {selection}")
+                # print(output_a[key][selection][0], output_b[key][selection][0])
+                print(np.isclose(output_a[key][selection], output_b[key][selection]))
+            same = same and this_same
+    set_range_keys = set(range_keys)
+    set_a_keys = set(output_a.keys())
+    set_b_keys = set(output_b.keys())
+    if set_range_keys != set_a_keys:
+        print(f"WARNING: Keys don't match. Range: {set_range_keys}, output_a: {set_a_keys}")
+    if set_range_keys != set_b_keys:
+        print(f"WARNING: Keys don't match. Range: {set_range_keys}, output_b: {set_b_keys}")
+
+    return same

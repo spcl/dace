@@ -12,7 +12,8 @@
         "cloudsc_class3_965": "evaporate_small_liquid_ice",
         "cloudsc_class3_1985": "melting_snow_ice",
         "cloudsc_class3_2120": "rain_evaporation",
-        "mwe_test": "mwe_test"
+        "mwe_test": "mwe_test",
+        "my_test": "my_test"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -28,7 +29,8 @@
         "cloudsc_class3_965": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQI", "NCLDQL", "NCLDTOP"],
         "cloudsc_class3_1985": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQS","NCLDQI", "NCLDQL", "NCLDTOP"],
         "cloudsc_class3_2120": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQR", "NCLDTOP"],
-        "mwe_test": ["KLON", "KLEV", "KIDIA", "KFDIA", "NCLV", "NCLDQV"]
+        "mwe_test": ["KLON", "KLEV", "KIDIA", "KFDIA", "NCLV", "NCLDQV"],
+        "my_test": ["KLON"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -48,7 +50,8 @@
         "cloudsc_class3_2120": ["RPRECRHMAX", "ZCOVPMAX", "ZEPSEC", "ZEPSILON", "RVRFACTOR", "RG", "RPECONS", "PTSPHY",
                                 "ZRG_R", "RCOVPMIN", "ZA", "ZQX", "ZQSLIQ", "ZCOVPCLR", "ZDTGDP", "PAP", "PAPH",
                                 "ZCORQSLIQ", "ZDP"],
-        "mwe_test":  ["ZQX"]
+        "mwe_test":  ["ZQX"],
+        "my_test": []
     },
     "program_outputs": {
         "cloudsc_class1_658": ["ZTP1", "ZQX", "ZQX0", "ZA", "ZAORIG"],
@@ -63,6 +66,7 @@
         "cloudsc_class3_965": ["ZSOLQA"],
         "cloudsc_class3_1985": ["ZICETOT", "ZMELTMAX"],
         "cloudsc_class3_2120": ["ZSOLQA", "ZCOVPTOT", "ZQXFG"],
-        "mwe_test": ["ZFOKOOP", "ZSUPSAT"]
+        "mwe_test": ["ZFOKOOP", "ZSUPSAT"],
+        "my_test": ["ZFOKOOP"]
     }
 }
