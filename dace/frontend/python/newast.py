@@ -316,6 +316,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
 
 
 def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'ProgramVisitor') -> bool:
+    if subset is None:
+        return False
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
@@ -2988,16 +2990,24 @@ class ProgramVisitor(ExtNodeVisitor):
 
         state = self.last_state
 
+        new_memlet = None
+        if has_indirection:
+            new_memlet = dace.Memlet.from_array(parent_name, parent_array)
+            volume = rng.num_elements()
+            new_memlet.volume = volume if not symbolic.issymbolic(volume) else -1
+        else:
+            new_memlet = dace.Memlet.simple(parent_name, rng)
+
         if access_type == 'r':
             if has_indirection:
-                self.inputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.inputs[var_name] = (state, new_memlet, inner_indices)
             else:
-                self.inputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.inputs[var_name] = (state, new_memlet, inner_indices)
         else:
             if has_indirection:
-                self.outputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.outputs[var_name] = (state, new_memlet, inner_indices)
             else:
-                self.outputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.outputs[var_name] = (state, new_memlet, inner_indices)
 
         self.variables[var_name] = var_name
         return (var_name, squeezed_rng)
@@ -3010,22 +3020,24 @@ class ProgramVisitor(ExtNodeVisitor):
                          arr_type: data.Data = None):
         if name in self.sdfg.arrays:
             return (name, None)
-        elif (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
-        elif (name, rng, 'r') in self.accesses:
-            return self.accesses[(name, rng, 'r')]
         elif name in self.variables:
             return (self.variables[name], None)
+
+        if (name, rng, 'w') in self.accesses:
+            new_name, new_rng = self.accesses[(name, rng, 'w')]
+        elif (name, rng, 'r') in self.accesses:
+            new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
-            full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
-            if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
-                new_name, new_rng = self.make_slice(new_name, rng)
-            elif full_rng != new_rng:
-                new_name, new_rng = self.make_slice(new_name, new_rng)
-            return (new_name, new_rng)
         else:
             raise NotImplementedError
+
+        full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
+        if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
+            new_name, new_rng = self.make_slice(new_name, rng)
+        elif full_rng != new_rng:
+            new_name, new_rng = self.make_slice(new_name, new_rng)
+        return (new_name, new_rng)
 
     def _add_write_access(self,
                           name: str,

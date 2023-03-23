@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
 from typing import Any, Dict, Optional
@@ -88,6 +88,75 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        cdesc: dt.Array = sdfg.arrays[state.out_edges(node)[0].data.data]
+        check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
+        dtype = cdesc.dtype.base_type
+        func = to_blastype(dtype.type).lower() + 'gemm'
+        if dtype == dace.float32:
+            alpha = "1.0f"
+            beta = "0.0f"
+            prefix = "s"
+        elif dtype == dace.float64:
+            alpha = "1.0"
+            beta = "0.0"
+            prefix = "d"
+        elif dtype == dace.complex64:
+            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex64Zero()"
+            prefix = "c"
+        elif dtype == dace.complex128:
+            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
+            prefix = "z"
+        else:
+            raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
+
+        opt['prefix'] = prefix
+        opt['dtype'] = cdesc.dtype.ctype
+
+        code = '''
+        const MKL_INT group_count = 1;
+        MKL_INT group_sizes[group_count] = {{ {BATCH} }};
+        MKL_INT m_array[group_count] = {{ {M} }};
+        MKL_INT n_array[group_count] = {{ {N} }};
+        MKL_INT k_array[group_count] = {{ {K} }};
+        char transa[group_count] = {{ '{ta}' }};
+        char transb[group_count] = {{ '{tb}' }};
+        {dtype} alpha_array[group_count] = {{ {alpha} }};
+        {dtype} beta_array[group_count] = {{ {beta} }};
+        MKL_INT lda_array[group_count] = {{ {lda} }};
+        MKL_INT ldb_array[group_count] = {{ {ldb} }};
+        MKL_INT ldc_array[group_count] = {{ {ldc} }};
+
+        const {dtype}** A = new const {dtype}*[{BATCH}];
+        const {dtype}** B = new const {dtype}*[{BATCH}];
+        {dtype}** C = new {dtype}*[{BATCH}];
+        for (int __ib = 0; __ib < {BATCH}; __ib++) {{
+            A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
+            B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
+            C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
+        }}
+
+        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);'''.format_map(
+            opt)
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.expansion
+class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
+    environments = [environments.openblas.OpenBLAS]
+
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
+        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
@@ -127,15 +196,6 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         return tasklet
-
-
-@dace.library.expansion
-class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
-    environments = [environments.openblas.OpenBLAS]
-
-    @staticmethod
-    def expansion(*args, **kwargs):
-        return ExpandBatchedMatMulMKL.expansion(*args, **kwargs)
 
 
 @dace.library.expansion
@@ -368,7 +428,8 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                 size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError("Expected exactly one output from " "batched matrix-matrix product")
+            raise ValueError("Expected exactly one output from "
+                             "batched matrix-matrix product")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) not in [2, 3]:
@@ -376,7 +437,8 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         if len(size1) != 3:
             raise ValueError("Batched matrix-matrix product only supported on matrices")
         if size0[-1] != size1[-2]:
-            raise ValueError("Inputs to matrix-matrix product " "must agree in the k-dimension")
+            raise ValueError("Inputs to matrix-matrix product "
+                             "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size2 = out_subset.size()

@@ -111,7 +111,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                 if repldict:
                     sym_dim = sym_dim.subs(repldict)
 
-                equations.append(sym_dim - real_dim)
+                if symbolic.issymbolic(sym_dim - real_dim):
+                    equations.append(sym_dim - real_dim)
 
     if len(symbols) == 0:
         return {}
@@ -232,6 +233,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param use_cache: If True, tries to find an already parsed SDFG in the local cache. Otherwise, re-parses SDFG.
         :return: An SDFG object that can be transformed, saved, or called.
         """
+
+        if self.recreate_sdfg == False:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recreate_sdfg' to False. "
+                          "This may not be what you want.")
+        if self.recompile == False:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recompile' to False. "
+                          "This may not be what you want.")
 
         if use_cache:
             # Update global variables with current closure
