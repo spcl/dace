@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic
+from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
@@ -162,6 +162,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
+        propagate_memlets_sdfg(sdfg)
+
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -214,6 +216,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             newdesc.transient = True
             name = sdfg.add_datadesc('gpu_' + onodename, newdesc, find_new_name=True)
             cloned_arrays[onodename] = name
+
+            if (onodename, onode) not in input_nodes:
+                found_full_write = False
+                full_subset = sbs.Range.from_array(onode)
+                try:
+                    for state in sdfg.nodes():
+                        for node in state.nodes():
+                            if (isinstance(node, nodes.AccessNode) and node.data == onodename):
+                                for e in state.in_edges(node):
+                                    if e.data.get_dst_subset(e, state) == full_subset:
+                                        found_full_write = True
+                                        raise StopIteration
+                except StopIteration:
+                    assert found_full_write
+                if not found_full_write:
+                    input_nodes.append((onodename, onode))
 
         # Replace nodes
         for state in sdfg.nodes():

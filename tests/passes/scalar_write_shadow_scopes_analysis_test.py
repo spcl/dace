@@ -94,12 +94,16 @@ def test_scalar_write_shadow_split():
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
-    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == set([(loop_1_2, loop1_read_tmp)])
-    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == set([(loop_2_2, loop2_read_tmp)])
-    assert results[0]['A'][None] == set([(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
-                                         (loop_2_2, loop2_read_a)])
-    assert results[0]['B'][None] == set([(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
-                                         (loop_2_2, loop2_read_b)])
+    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp)}
+    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp)}
+    assert results[0]['A'][None] == {
+        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
+        (loop_2_2, loop2_write_a), (loop_1_2, loop1_write_a)
+    }
+    assert results[0]['B'][None] == {
+        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
+        (loop_2_2, loop2_write_b), (loop_1_2, loop1_write_b)
+    }
 
 
 def test_scalar_write_shadow_fused():
@@ -176,10 +180,10 @@ def test_scalar_write_shadow_fused():
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
-    assert results[0]['tmp'][(loop_1, tmp1_read_write)] == set([(loop_1, tmp1_read_write)])
-    assert results[0]['tmp'][(loop_2, tmp2_read_write)] == set([(loop_2, tmp2_read_write)])
-    assert results[0]['A'][None] == set([(loop_1, a1_read), (loop_2, a2_read)])
-    assert results[0]['B'][None] == set([(loop_1, b1_read), (loop_2, b2_read)])
+    assert results[0]['tmp'][(loop_1, tmp1_read_write)] == {(loop_1, tmp1_read_write)}
+    assert results[0]['tmp'][(loop_2, tmp2_read_write)] == {(loop_2, tmp2_read_write)}
+    assert results[0]['A'][None] == {(loop_1, a1_read), (loop_2, a2_read), (loop_1, a1_write), (loop_2, a2_write)}
+    assert results[0]['B'][None] == {(loop_1, b1_read), (loop_2, b2_read), (loop_1, b1_write), (loop_2, b2_write)}
 
 
 def test_scalar_write_shadow_interstate_self():
@@ -270,12 +274,16 @@ def test_scalar_write_shadow_interstate_self():
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
-    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == set([(loop_1_2, loop1_read_tmp), (loop_1_1, tmp1_edge)])
-    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == set([(loop_2_2, loop2_read_tmp), (loop_2_1, tmp2_edge)])
-    assert results[0]['A'][None] == set([(loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read),
-                                         (loop_2_2, loop2_read_a)])
-    assert results[0]['B'][None] == set([(loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read),
-                                         (loop_2_2, loop2_read_b)])
+    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_2, loop1_read_tmp), (loop_1_1, tmp1_edge)}
+    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_2, loop2_read_tmp), (loop_2_1, tmp2_edge)}
+    assert results[0]['A'][None] == {
+        (loop_1_1, a1_read), (loop_1_2, loop1_read_a), (loop_2_1, a2_read), (loop_2_2, loop2_read_a),
+        (loop_1_2, loop1_write_a), (loop_2_2, loop2_write_a)
+    }
+    assert results[0]['B'][None] == {
+        (loop_1_1, b1_read), (loop_1_2, loop1_read_b), (loop_2_1, b2_read), (loop_2_2, loop2_read_b),
+        (loop_1_2, loop1_write_b), (loop_2_2, loop2_write_b)
+    }
 
 
 def test_scalar_write_shadow_interstate_pred():
@@ -370,12 +378,191 @@ def test_scalar_write_shadow_interstate_pred():
     pipeline = Pipeline([ScalarWriteShadowScopes()])
     results = pipeline.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
 
-    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == set([(loop_1_3, loop1_read_tmp), (loop_1_2, tmp1_edge)])
-    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == set([(loop_2_3, loop2_read_tmp), (loop_2_2, tmp2_edge)])
-    assert results[0]['A'][None] == set([(loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read),
-                                         (loop_2_3, loop2_read_a)])
-    assert results[0]['B'][None] == set([(loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read),
-                                         (loop_2_3, loop2_read_b)])
+    assert results[0]['tmp'][(loop_1_1, tmp1_write)] == {(loop_1_3, loop1_read_tmp), (loop_1_2, tmp1_edge)}
+    assert results[0]['tmp'][(loop_2_1, tmp2_write)] == {(loop_2_3, loop2_read_tmp), (loop_2_2, tmp2_edge)}
+    assert results[0]['A'][None] == {
+        (loop_1_1, a1_read), (loop_1_3, loop1_read_a), (loop_2_1, a2_read), (loop_2_3, loop2_read_a),
+        (loop_1_3, loop1_write_a), (loop_2_3, loop2_write_a)
+    }
+    assert results[0]['B'][None] == {
+        (loop_1_1, b1_read), (loop_1_3, loop1_read_b), (loop_2_1, b2_read), (loop_2_3, loop2_read_b),
+        (loop_1_3, loop1_write_b), (loop_2_3, loop2_write_b)
+    }
+
+
+def test_loop_fake_shadow():
+    sdfg = dace.SDFG('loop_fake_shadow')
+    sdfg.add_array('A', [1], dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    loop = sdfg.add_state('loop')
+    loop2 = sdfg.add_state('loop2')
+    end = sdfg.add_state('end')
+
+    init_access = init.add_access('A')
+    init_tasklet = init.add_tasklet('init', {}, {'a'}, 'a = 0')
+    init.add_edge(init_tasklet, 'a', init_access, None, dace.Memlet('A[0]'))
+
+    loop_access = loop.add_access('A')
+    loop_access_b = loop.add_access('B')
+    loop_tasklet_1 = loop.add_tasklet('loop_1', {}, {'a'}, 'a = 1')
+    loop_tasklet_2 = loop.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop.add_edge(loop_tasklet_1, 'a', loop_access, None, dace.Memlet('A[0]'))
+    loop.add_edge(loop_access, None, loop_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop.add_edge(loop_tasklet_2, 'b', loop_access_b, None, dace.Memlet('B[0]'))
+
+    loop2_access = loop2.add_access('A')
+    loop2_access_b = loop2.add_access('B')
+    loop2_tasklet_1 = loop2.add_tasklet('loop_1', {}, {'a'}, 'a = 2')
+    loop2_tasklet_2 = loop2.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop2.add_edge(loop2_tasklet_1, 'a', loop2_access, None, dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_access, None, loop2_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_tasklet_2, 'b', loop2_access_b, None, dace.Memlet('B[0]'))
+
+    end_access = end.add_access('A')
+    end_access_b = end.add_access('B')
+    end_tasklet = end.add_tasklet('end', {'a'}, {'b'}, 'b = a')
+    end.add_edge(end_access, None, end_tasklet, 'a', dace.Memlet('A[0]'))
+    end.add_edge(end_tasklet, 'b', end_access_b, None, dace.Memlet('B[0]'))
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 10'))
+    sdfg.add_edge(loop, loop2, dace.InterstateEdge())
+    sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    ppl = Pipeline([ScalarWriteShadowScopes()])
+    res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
+
+    assert res[0]['A'][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access), (end, end_access)}
+
+
+def test_loop_fake_complex_shadow():
+    sdfg = dace.SDFG('loop_fake_shadow')
+    sdfg.add_array('A', [1], dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    loop = sdfg.add_state('loop')
+    loop2 = sdfg.add_state('loop2')
+    end = sdfg.add_state('end')
+
+    init_access = init.add_access('A')
+    init_tasklet = init.add_tasklet('init', {}, {'a'}, 'a = 0')
+    init.add_edge(init_tasklet, 'a', init_access, None, dace.Memlet('A[0]'))
+
+    loop_access = loop.add_access('A')
+    loop_access_b = loop.add_access('B')
+    loop_tasklet_2 = loop.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop.add_edge(loop_access, None, loop_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop.add_edge(loop_tasklet_2, 'b', loop_access_b, None, dace.Memlet('B[0]'))
+
+    loop2_access = loop2.add_access('A')
+    loop2_access_b = loop2.add_access('B')
+    loop2_tasklet_1 = loop2.add_tasklet('loop_1', {}, {'a'}, 'a = 2')
+    loop2_tasklet_2 = loop2.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop2.add_edge(loop2_tasklet_1, 'a', loop2_access, None, dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_access, None, loop2_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_tasklet_2, 'b', loop2_access_b, None, dace.Memlet('B[0]'))
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 10'))
+    sdfg.add_edge(loop, loop2, dace.InterstateEdge())
+    sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    ppl = Pipeline([ScalarWriteShadowScopes()])
+    res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
+
+    assert res[0]['A'][(init, init_access)] == {(loop, loop_access), (loop2, loop2_access)}
+
+
+def test_loop_real_shadow():
+    sdfg = dace.SDFG('loop_fake_shadow')
+    sdfg.add_array('A', [1], dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    loop = sdfg.add_state('loop')
+    loop2 = sdfg.add_state('loop2')
+    end = sdfg.add_state('end')
+
+    init_access = init.add_access('A')
+    init_tasklet = init.add_tasklet('init', {}, {'a'}, 'a = 0')
+    init.add_edge(init_tasklet, 'a', init_access, None, dace.Memlet('A[0]'))
+
+    loop_access = loop.add_access('A')
+    loop_access_b = loop.add_access('B')
+    loop_tasklet_1 = loop.add_tasklet('loop_1', {}, {'a'}, 'a = 1')
+    loop_tasklet_2 = loop.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop.add_edge(loop_tasklet_1, 'a', loop_access, None, dace.Memlet('A[0]'))
+    loop.add_edge(loop_access, None, loop_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop.add_edge(loop_tasklet_2, 'b', loop_access_b, None, dace.Memlet('B[0]'))
+
+    loop2_access = loop2.add_access('A')
+    loop2_access_b = loop2.add_access('B')
+    loop2_tasklet_1 = loop2.add_tasklet('loop_1', {}, {'a'}, 'a = 2')
+    loop2_tasklet_2 = loop2.add_tasklet('loop_2', {'a'}, {'b'}, 'b = a')
+    loop2.add_edge(loop2_tasklet_1, 'a', loop2_access, None, dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_access, None, loop2_tasklet_2, 'a', dace.Memlet('A[0]'))
+    loop2.add_edge(loop2_tasklet_2, 'b', loop2_access_b, None, dace.Memlet('B[0]'))
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 10'))
+    sdfg.add_edge(loop, loop2, dace.InterstateEdge())
+    sdfg.add_edge(loop2, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
+
+    ppl = Pipeline([ScalarWriteShadowScopes()])
+    res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
+
+    assert res[0]['A'][(loop, loop_access)] == {(loop, loop_access)}
+    assert res[0]['A'][(loop2, loop2_access)] == {(loop2, loop2_access)}
+
+
+def test_dominationless_write_branch():
+    sdfg = dace.SDFG('dominationless_write_branch')
+    sdfg.add_array('A', [1], dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    left = sdfg.add_state('left')
+    merge = sdfg.add_state('merge')
+
+    init_a = init.add_access('A')
+    init_b = init.add_access('B')
+    init_t1 = init.add_tasklet('init_1', {}, {'a'}, 'a = 0')
+    init_t2 = init.add_tasklet('init_1', {'a'}, {'b'}, 'b = a + 1')
+    init.add_edge(init_t1, 'a', init_a, None, dace.Memlet('A[0]'))
+    init.add_edge(init_a, None, init_t2, 'a', dace.Memlet('A[0]'))
+    init.add_edge(init_t2, 'b', init_b, None, dace.Memlet('B[0]'))
+
+    guard_a = guard.add_access('A')
+    guard_t1 = guard.add_tasklet('guard_1', {}, {'a'}, 'a = 1')
+    guard.add_edge(guard_t1, 'a', guard_a, None, dace.Memlet('A[0]'))
+
+    left_a = left.add_access('A')
+    left_t1 = left.add_tasklet('left_1', {}, {'a'}, 'a = 2')
+    left.add_edge(left_t1, 'a', left_a, None, dace.Memlet('A[0]'))
+
+    merge_a = merge.add_access('A')
+    merge_b = merge.add_access('B')
+    merge_t1 = merge.add_tasklet('merge_1', {'a'}, {'b'}, 'b = a + 1')
+    merge.add_edge(merge_a, None, merge_t1, 'a', dace.Memlet('A[0]'))
+    merge.add_edge(merge_t1, 'b', merge_b, None, dace.Memlet('B[0]'))
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge())
+    sdfg.add_edge(guard, left, dace.InterstateEdge(condition='B[0] < 10'))
+    sdfg.add_edge(guard, merge, dace.InterstateEdge(condition='B[0] >= 10'))
+    sdfg.add_edge(left, merge, dace.InterstateEdge())
+
+    ppl = Pipeline([ScalarWriteShadowScopes()])
+    res = ppl.apply_pass(sdfg, {})[ScalarWriteShadowScopes.__name__]
+
+    assert res[0]['A'][(init, init_a)] == {(init, init_a)}
+    assert res[0]['A'][(guard, guard_a)] == {(merge, merge_a), (left, left_a)}
 
 
 def test_loop_fake_shadow():
@@ -517,3 +704,7 @@ if __name__ == '__main__':
     test_loop_fake_shadow()
     test_loop_fake_complex_shadow()
     test_loop_real_shadow()
+<<<<<<< HEAD
+=======
+    test_dominationless_write_branch()
+>>>>>>> origin/another_write_shadow_fix

@@ -641,7 +641,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+            if ((re - rb) >= m[a] * step) != False:
                 continue
 
             m = re.match(a * itersym + b)
@@ -1256,7 +1256,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         **self.constants, 'dace': dace,
                         'math': math
                     }))
-                evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
+                evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants), cpp_mode=True)
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)

@@ -29,7 +29,7 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
     with tempfile.TemporaryDirectory() as tmp_dir:
         cwd = os.getcwd()
         os.chdir(tmp_dir)
-        f2py.compile(source, modulename=program_name, verbose=True, extension=fortran_extension)
+        f2py.compile(source, modulename=program_name, extra_args=["--opt='-fdefault-real-8'"], verbose=True, extension=fortran_extension)
         sys.path.append(tmp_dir)
         module = import_module(program_name)
         function = getattr(module, subroutine_name)
