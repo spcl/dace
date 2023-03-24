@@ -8,6 +8,7 @@ from dace.transformation import transformation, helpers as xfh
 from dace.properties import DictProperty, Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
+from sympy import floor
 from typing import Dict
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
@@ -162,6 +163,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
+        # Propagate memlets to ensure that we can find the true array subsets that are written.
         propagate_memlets_sdfg(sdfg)
 
         for state in sdfg.nodes():
@@ -217,6 +219,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             name = sdfg.add_datadesc('gpu_' + onodename, newdesc, find_new_name=True)
             cloned_arrays[onodename] = name
 
+            # The following ensures that when writing to a subset of an array, we don't overwrite the rest of the array
+            # when copying back to the host. This is done by adding the array to the `inputs_nodes,` which will copy
+            # the entire array to the GPU.
             if (onodename, onode) not in input_nodes:
                 found_full_write = False
                 full_subset = sbs.Range.from_array(onode)
@@ -226,6 +231,15 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             if (isinstance(node, nodes.AccessNode) and node.data == onodename):
                                 for e in state.in_edges(node):
                                     if e.data.get_dst_subset(e, state) == full_subset:
+                                        is_full = True
+                                        for pe in state.memlet_tree(e):
+                                            vol = pe.data.volume
+                                            size = pe.data.get_dst_subset(pe, state).num_elements()
+                                            if pe.data.dynamic or vol / size != floor(vol / size):
+                                                is_full = False
+                                                break
+                                        if not is_full:
+                                            continue
                                         found_full_write = True
                                         raise StopIteration
                 except StopIteration:

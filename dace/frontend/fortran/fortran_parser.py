@@ -69,7 +69,8 @@ class AST_translator:
             "DOUBLE": dtypes.float64,
             "REAL": dtypes.float32,
             "INTEGER": dtypes.int32,
-            "BOOL": dtypes.bool,
+            "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
+            #"BOOL": dtypes.int32,
         }
 
     def get_dace_type(self, type):
