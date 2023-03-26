@@ -1328,9 +1328,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        # FIXME: This is a hack to get the stream number
-        #cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
-        cudastream = "__state->gpu_context->streams[0]"
+        cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
     else:  # Only default stream is used
         cudastream = 'nullptr'
 
