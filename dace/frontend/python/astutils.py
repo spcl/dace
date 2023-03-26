@@ -264,7 +264,7 @@ def unparse(node):
 
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
 # slice strings
-def subscript_to_slice(node, arrays, without_array=False):
+def subscript_to_slice(node, arrays, without_array=False, allow_actual_negative=False):
     """ Converts an AST subscript to slice on the form
         (<name>, [<3-tuples of indices>]). If an ast.Name is passed, return
         (name, None), implying the full range. """
@@ -275,7 +275,7 @@ def subscript_to_slice(node, arrays, without_array=False):
     else:
         arrname = None
 
-    rng = astrange_to_symrange(ast_slice, arrays, arrname)
+    rng = astrange_to_symrange(ast_slice, arrays, arrname, allow_actual_negative)
     if without_array:
         return rng
     else:
@@ -287,7 +287,7 @@ def slice_to_subscript(arrname, range):
     return ast.parse(f'{arrname}[{range}]').body[0].value
 
 
-def astrange_to_symrange(astrange, arrays, arrname=None):
+def astrange_to_symrange(astrange, arrays, arrname=None, allow_actual_negative=False):
     """ Converts an AST range (array, [(start, end, skip)]) to a symbolic math 
         range, using the obtained array sizes and resolved symbols. """
     if arrname is not None:
@@ -335,7 +335,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         else:
             # In the case where a single element is given
             begin = symbolic.pystr_to_symbolic(unparse(r))
-            if (begin < 0) == True:
+            if not allow_actual_negative and (begin < 0) == True:
                 begin += arrdesc.shape[i]
             end = begin
             skip = symbolic.pystr_to_symbolic(1)
