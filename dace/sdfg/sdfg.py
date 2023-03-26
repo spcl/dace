@@ -2483,7 +2483,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        states: Optional[List[Any]] = None,
                                        print_report: Optional[bool] = None,
                                        order_by_transformation: bool = True,
-                                       progress: Optional[bool] = None) -> int:
+                                       progress: Optional[bool] = None,
+                                       func=None, args=None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
 
@@ -2517,7 +2518,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         pazz = PatternMatchAndApplyRepeated(xforms, permissive, validate, validate_all, states, print_report, progress,
                                             order_by_transformation)
-        results = pazz.apply_pass(self, {})
+        results = pazz.apply_pass(self, {}, func, args)
 
         # Return number of transformations applied
         if results is None:

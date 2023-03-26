@@ -3,9 +3,9 @@ import copy
 import dace
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils
-from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.auto.auto_optimize import auto_optimize, greedy_fuse, tile_wcrs
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
+from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion, ScalarFission
 from importlib import import_module
 import numpy as np
 from numbers import Integral, Number
@@ -15,6 +15,13 @@ import pytest
 import sys
 import tempfile
 from typing import Dict, Union
+
+# Transformations
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.subgraph.composite import CompositeFusion
+from dace.transformation.subgraph import helpers as xfsh
+from dace.transformation import helpers as xfh
 
 
 def read_source(filename: str, extension: str = 'f90') -> str:
@@ -29,7 +36,7 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
     with tempfile.TemporaryDirectory() as tmp_dir:
         cwd = os.getcwd()
         os.chdir(tmp_dir)
-        f2py.compile(source, modulename=program_name, verbose=True, extension=fortran_extension)
+        f2py.compile(source, modulename=program_name, extra_args=["--opt='-fdefault-real-8'"], verbose=True, extension=fortran_extension)
         sys.path.append(tmp_dir)
         module = import_module(program_name)
         function = getattr(module, subroutine_name.lower())
@@ -57,25 +64,184 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
 
-    if normalize_offsets:
-        my_simplify = Pipeline([RemoveUnusedSymbols(), ScalarToSymbolPromotion()])
-    else:
-        my_simplify = Pipeline([RemoveUnusedSymbols()])
-    my_simplify.apply_pass(sdfg, {})
+    # if normalize_offsets:
+    #     my_simplify = Pipeline([RemoveUnusedSymbols(), ScalarToSymbolPromotion()])
+    # else:
+    #     my_simplify = Pipeline([RemoveUnusedSymbols()])
+    # my_simplify.apply_pass(sdfg, {})
 
-    if normalize_offsets:
-        utils.normalize_offsets(sdfg)
+    # if normalize_offsets:
+    #     utils.normalize_offsets(sdfg)
+    
+    for sd in sdfg.all_sdfgs_recursive():
+        promoted = ScalarToSymbolPromotion().apply_pass(sd, {})
+        print(f"Promoted the following scalars: {promoted}")
+    from dace.sdfg import utils
+    utils.normalize_offsets(sdfg)
+    sdfg.simplify(verbose=True)
+    pipeline = Pipeline([ScalarFission()])
+    for sd in sdfg.all_sdfgs_recursive():
+        results = pipeline.apply_pass(sd, {})[ScalarFission.__name__]
 
     return sdfg
 
 
+def validate_sdfg(sdfg, inputs, outputs, outputs_f) -> bool:
+    outputs_d = copy.deepcopy(outputs)
+    sdfg(**inputs, **outputs_d)
+
+    success = True
+    for k in outputs_f.keys():
+        farr = outputs_f[k]
+        darr = outputs_d[k]
+        if np.allclose(farr, darr):
+            print(f"{k}: OK!")
+        else:
+            print(f"{k}: relative error is {np.linalg.norm(farr - darr) / np.linalg.norm(farr)}")
+            success = False
+    
+    return success
+        # assert np.allclose(farr, darr)
+
+
+def debug_auto_optimize(sdfg: dace.SDFG, inputs, outputs, ref_outputs):
+
+    device = dace.DeviceType.Generic
+    validate = False
+    validate_all = False
+
+    sdfg.save(f"{sdfg.name}_autoopt_0.sdfg")
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+
+    # Simplification and loop parallelization
+    transformed = True
+    sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+
+    sdfg.save(f"{sdfg.name}_autoopt_1.sdfg")
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    i = 2
+    while transformed:
+        sdfg.simplify(validate=False, validate_all=validate_all)
+
+        sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+        i += 1
+        if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+            return
+
+        for s in sdfg.sdfg_list:
+            xfh.split_interstate_edges(s)
+        l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
+                                                   validate=False,
+                                                   validate_all=validate_all,
+                                                   func=validate_sdfg, args=[inputs, outputs, ref_outputs])
+        transformed = l2ms > 0
+
+        sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+        i += 1
+        if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+            return
+
+    # Collapse maps and eliminate trivial dimensions
+    sdfg.simplify()
+
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    # fuse subgraphs greedily
+    sdfg.simplify()
+
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    # fuse stencils greedily
+    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    # sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
+    # # Apply GPU transformations and set library node implementations
+    # if device == dtypes.DeviceType.GPU:
+    #     sdfg.apply_gpu_transformations()
+    #     sdfg.simplify()
+
+    # if device == dtypes.DeviceType.FPGA:
+    #     # apply FPGA Transformations
+    #     sdfg.apply_fpga_transformations()
+    #     fpga_auto_opt.fpga_global_to_local(sdfg)
+    #     fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
+
+    #     # Set all library nodes to expand to fast library calls
+    #     set_fast_implementations(sdfg, device)
+    #     return sdfg
+
+    # Tiled WCR and streams
+    for nsdfg in list(sdfg.all_sdfgs_recursive()):
+        tile_wcrs(nsdfg, validate_all)
+    
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    # Collapse maps
+    sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+    for node, _ in sdfg.all_nodes_recursive():
+        # Set OMP collapse property to map length
+        if isinstance(node, dace.sdfg.nodes.MapEntry):
+            # FORNOW: Leave out
+            # node.map.collapse = len(node.map.range)
+            pass
+    
+    sdfg.save(f"{sdfg.name}_autoopt_{i}.sdfg")
+    i += 1
+    if not validate_sdfg(sdfg, inputs, outputs, ref_outputs):
+        return
+
+    # if device == dtypes.DeviceType.Generic:
+    #     # Validate at the end
+    #     if validate or validate_all:
+    #         sdfg.validate()
+
+    #     return sdfg
+    return sdfg
+
+
 parameters = {
-    'KLON': 128,
+    'KLON': 4,
+    # 'KLON': 128,
     'KLEV': 137,
     'KIDIA': 1,
-    # 'KFDIA': 32,
-    'KFDIA': 128,
+    'KFDIA': 4,
+    # 'KFDIA': 128,
     'KFLDX': 25,
+
     'NCLV': 5,
     'NCLDQI': 2,
     'NCLDQL': 1,
@@ -91,26 +257,37 @@ parameters = {
     'NAECLSU': 1,
     'NCLDDIAG': 1,
     'NAERCLD': 1,
-    # 'NBLOCKS': 32,
-    'NBLOCKS': 512,
-    'LDMAINCALL': np.bool_(True),  # boolean (LOGICAL)
-    'LDSLPHY': np.bool_(True),  # boolean (LOGICAL),
-    'LAERLIQAUTOCP': np.bool_(True),  # boolean (LOGICAL)
-    'LAERLIQAUTOCPB': np.bool_(True),  # boolean (LOGICAL)
-    'LAERLIQAUTOLSP': np.bool_(True),  # boolean (LOGICAL)
-    'LAERLIQCOLL': np.bool_(True),  # boolean (LOGICAL)
-    'LAERICESED': np.bool_(True),  # boolean (LOGICAL)
-    'LAERICEAUTO': np.bool_(True),  # boolean (LOGICAL)
-    'LCLDEXTRA': np.bool_(True),  # boolean (LOGICAL)
-    'LCLDBUDGET': np.bool_(True),  # boolean (LOGICAL)
+
+    'NBLOCKS': 1,
+    # 'NBLOCKS': 512,
+    # 'LDMAINCALL': np.bool_(True),  # boolean (LOGICAL)
+    # 'LDSLPHY': np.bool_(True),  # boolean (LOGICAL),
+    # 'LAERLIQAUTOCP': np.bool_(True),  # boolean (LOGICAL)
+    # 'LAERLIQAUTOCPB': np.bool_(True),  # boolean (LOGICAL)
+    # 'LAERLIQAUTOLSP': np.bool_(True),  # boolean (LOGICAL)
+    # 'LAERLIQCOLL': np.bool_(True),  # boolean (LOGICAL)
+    # 'LAERICESED': np.bool_(True),  # boolean (LOGICAL)
+    # 'LAERICEAUTO': np.bool_(True),  # boolean (LOGICAL)
+    # 'LCLDEXTRA': np.bool_(True),  # boolean (LOGICAL)
+    # 'LCLDBUDGET': np.bool_(True),  # boolean (LOGICAL)
+    'LDMAINCALL': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LDSLPHY': np.int32(np.bool_(True)),  # boolean (LOGICAL),
+    'LAERLIQAUTOCP': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LAERLIQAUTOCPB': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LAERLIQAUTOLSP': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LAERLIQCOLL': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LAERICESED': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LAERICEAUTO': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LCLDEXTRA': np.int32(np.bool_(True)),  # boolean (LOGICAL)
+    'LCLDBUDGET': np.int32(np.bool_(True)),  # boolean (LOGICAL)
     'NGPBLKS': 10,
     'NUMOMP': 10,
-    # 'NGPTOT': 32*32,
-    'NGPTOT': 65536,
-    # 'NGPTOTG': 32*32,
+    'NGPTOT': 4*1,
+    # 'NGPTOT': 65536,
+    'NGPTOTG': 4*1,
     'NGPTOTG': 65536,
-    'NPROMA': 32,
-    'NPROMA': 128,
+    'NPROMA': 4,
+    # 'NPROMA': 128,
     'NBETA': 1,
 }
 
@@ -370,18 +547,18 @@ data = {
     'ZSOLAC': (parameters['KLON'],),
     'ZSUPSAT': (parameters['KLON'],),
     'ZTP1': (parameters['KLON'], parameters['KLEV']),
-    'DEBUG_EPSILON': (2,),
+    # 'DEBUG_EPSILON': (2,),
 }
 
 
 
 programs = {
-    'cloudscexp2_full_20230322': ('CLOUDPROGRAM', 'CLOUDSCOUTER')
+    'cloudscexp2_full_20230324': ('CLOUDPROGRAM', 'CLOUDSCOUTER')
 }
 
 
 program_parameters = {
-    'cloudscexp2_full_20230322': (
+    'cloudscexp2_full_20230324': (
         'NBLOCKS', 'NGPBLKS', 'NUMOMP', 'NGPTOT', 'NGPTOTG', 'NPROMA',
         'KLON', 'KLEV', 'KFLDX', 'LDSLPHY',  'LDMAINCALL',
         'NCLV', 'NCLDQL','NCLDQI','NCLDQR','NCLDQS', 'NCLDQV',
@@ -393,7 +570,7 @@ program_parameters = {
 
 
 program_inputs = {
-    'cloudscexp2_full_20230322': (
+    'cloudscexp2_full_20230324': (
         'PTSPHY','PT', 'PQ',
         'tendency_cml_a', 'tendency_cml_cld', 'tendency_cml_o3', 'tendency_cml_q',
         'tendency_cml_T', 'tendency_cml_u', 'tendency_cml_v',
@@ -442,7 +619,7 @@ program_inputs = {
 
 
 program_outputs = {
-    'cloudscexp2_full_20230322': (
+    'cloudscexp2_full_20230324': (
         'PLUDE',
     #  !---diagnostic output
         'PCOVPTOT', 'PRAINFRAC_TOPRFZ',
@@ -452,7 +629,7 @@ program_outputs = {
         'PFSQLTUR', 'PFSQITUR' ,
         'PFPLSL',   'PFPLSN',   'PFHPSL',   'PFHPSN',
         'PEXTRA',
-        'DEBUG_EPSILON'
+        # 'DEBUG_EPSILON'
     ),
 }
 
@@ -475,6 +652,7 @@ def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number
         if issubclass(dtype, Integral) or dtype is np.bool_:
             if dtype is np.bool_:
                 method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
             else:
                 method = lambda s, d: rng.integers(0, 10, s, d)
         if shape == (0,):  # Scalar
@@ -497,6 +675,7 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
         if issubclass(dtype, Integral) or dtype is np.bool_:
             if dtype is np.bool_:
                 method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
             else:
                 method = lambda s, d: rng.integers(0, 10, s, d)
         if shape == (0,):  # Scalar
@@ -515,8 +694,9 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     sdfg = get_sdfg(fsource, program_name, normalize_offsets)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
-    sdfg.simplify()
-    utils.make_dynamic_map_inputs_unique(sdfg)
+    # sdfg.simplify()
+    # utils.make_dynamic_map_inputs_unique(sdfg)
+    # auto_optimize(sdfg, dace.DeviceType.Generic)
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
@@ -526,20 +706,21 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     print("Running DaCe ...")
-    sdfg(**inputs, **outputs_d)
+    # sdfg(**inputs, **outputs_d)
 
-    for k in outputs_f.keys():
-        farr = outputs_f[k]
-        darr = outputs_d[k]
-        if np.allclose(farr, darr):
-            print(f"{k}: OK!")
-        else:
-            print(f"{k}: relative error is {np.linalg.norm(farr - darr) / np.linalg.norm(farr)}")
-        # assert np.allclose(farr, darr)
+    # for k in outputs_f.keys():
+    #     farr = outputs_f[k]
+    #     darr = outputs_d[k]
+    #     if np.allclose(farr, darr):
+    #         print(f"{k}: OK!")
+    #     else:
+    #         print(f"{k}: relative error is {np.linalg.norm(farr - darr) / np.linalg.norm(farr)}")
+    #     # assert np.allclose(farr, darr)
     
-    print(outputs_f['DEBUG_EPSILON'])
-    print(outputs_d['DEBUG_EPSILON'])
+    # # print(outputs_f['DEBUG_EPSILON'])
+    # # print(outputs_d['DEBUG_EPSILON'])
+    debug_auto_optimize(sdfg, inputs, outputs_d, outputs_f)
 
 
 if __name__ == "__main__":
-    test_program('cloudscexp2_full_20230322', dace.DeviceType.CPU, False)
+    test_program('cloudscexp2_full_20230324', dace.DeviceType.CPU, False)

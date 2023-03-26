@@ -200,7 +200,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     f'Validation failed after applying {match_name}. '
                     f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
 
-    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool, func=None, args=None) -> Dict[str, List[Any]]:
         """
         Internal apply pass method that can run once through the graph or repeatedly.
         """
@@ -230,7 +230,12 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                                     patterns=[xform],
                                                     states=self.states,
                                                     metadata=self._metadata):
+                            if func is not None:
+                                sdfg.save('before.sdfg')
                             self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                            if func is not None and not func(sdfg, *args):
+                                sdfg.save('after.sdfg')
+                                raise RuntimeError('Validation failed after applying {}.'.format(match.print_match(sdfg)))
                             applied = True
                             applied_anything = True
                             break
@@ -246,7 +251,12 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                             patterns=xforms,
                                             states=self.states,
                                             metadata=self._metadata):
+                    if func is not None:
+                        sdfg.save('before.sdfg')
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                    if func is not None and not func(sdfg, *args):
+                        sdfg.save('after.sdfg')
+                        raise RuntimeError('Validation failed after applying {}.'.format(match.print_match(sdfg)))
                     applied = True
                     break
                 if apply_once:
@@ -271,8 +281,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             return None
         return applied_transformations
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
-        return self._apply_pass(sdfg, pipeline_results, apply_once=False)
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], func=None, args=None) -> Dict[str, List[Any]]:
+        return self._apply_pass(sdfg, pipeline_results, apply_once=False, func=func, args=args)
 
 
 @dataclass
