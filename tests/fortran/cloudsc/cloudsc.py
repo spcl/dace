@@ -8,7 +8,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from importlib import import_module
 import numpy as np
-from numbers import Number
+from numbers import Integral, Number
 from numpy import f2py
 import os
 import pytest
@@ -122,7 +122,8 @@ data = {
     'ZQTMST': (0,),
     'ZVPICE': (0,),
     'ZVPLIQ': (0,),
-    'IPHASE': (parameters['NCLV'],),
+    'IPHASE': [(parameters['NCLV'],), np.int32],
+    'LLFALL': [(parameters['NCLV'],), np.bool_],
     'PAPH': (parameters['KLON'], parameters['KLEV']+1),
     'PAP': (parameters['KLON'], parameters['KLEV']),
     'PCOVPTOT': (parameters['KLON'], parameters['KLEV']),
@@ -153,6 +154,8 @@ data = {
     'tendency_tmp_a': (parameters['KLON'], parameters['KLEV']),
     'tendency_tmp_cld': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZA': (parameters['KLON'], parameters['KLEV']),
+    'ZACUST': (parameters['KLON'],),
+    'ZANEWM1': (parameters['KLON'],),
     'ZAORIG': (parameters['KLON'], parameters['KLEV']),
     'ZCLDTOPDIST': (parameters['KLON'],),
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
@@ -192,6 +195,7 @@ data = {
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQXFG': (parameters['KLON'], parameters['NCLV']),
     'ZQXN': (parameters['KLON'], parameters['NCLV']),
+    'ZQXNM1': (parameters['KLON'], parameters['NCLV']),
     'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZSOLAC': (parameters['KLON'],),
     'ZSUPSAT': (parameters['KLON'],),
@@ -202,7 +206,9 @@ data = {
     'PCLV': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'LLFALL': (parameters['NCLV']),
     'ZVQX': (parameters['NCLV']),
-    'PRE_ICE': (parameters['KLON'], parameters['KLEV'])
+    'PRE_ICE': (parameters['KLON'], parameters['KLEV']),
+    'PMFD': (parameters['KLON'], parameters['KLEV']),
+    'PMFU': (parameters['KLON'], parameters['KLEV']),
 }
 
 
@@ -226,6 +232,7 @@ programs = {
     'cloudsc_class3_965': 'evaporate_small_liquid_ice',
     'cloudsc_class3_1985': 'melting_snow_ice',
     'cloudsc_class3_2120': 'rain_evaporation',
+    'cloudsc_3p3_mini': 'cloud_evaporation_within_layer',
 }
 
 
@@ -248,6 +255,7 @@ program_parameters = {
     'cloudsc_class3_965': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL', 'NCLDTOP'),
     'cloudsc_class3_1985': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQS','NCLDQI', 'NCLDQL', 'NCLDTOP'),
     'cloudsc_class3_2120': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQR', 'NCLDTOP'),
+    'cloudsc_3p3_mini': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV'),
 }
 
 
@@ -279,6 +287,7 @@ program_inputs = {
     'cloudsc_class3_2120': ('RPRECRHMAX', 'ZCOVPMAX', 'ZEPSEC', 'ZEPSILON', 'RVRFACTOR', 'RG', 'RPECONS', 'PTSPHY',
                             'ZRG_R', 'RCOVPMIN', 'ZA', 'ZQX', 'ZQSLIQ', 'ZCOVPCLR', 'ZDTGDP', 'PAP', 'PAPH',
                             'ZCORQSLIQ', 'ZDP'),
+    'cloudsc_3p3_mini': ('PMFU', 'PMFD', 'ZDTGDP', 'ZANEWM1', 'LLFALL', 'IPHASE', 'ZQXNM1'),
 }
 
 
@@ -302,6 +311,7 @@ program_outputs = {
     'cloudsc_class3_965': ('ZSOLQA',),
     'cloudsc_class3_1985': ('ZICETOT', 'ZMELTMAX'),
     'cloudsc_class3_2120': ('ZSOLQA', 'ZCOVPTOT', 'ZQXFG'),
+    'cloudsc_3p3_mini': ('ZACUST', 'ZCONVSRCE',),
 }
 
 
@@ -310,22 +320,49 @@ def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number
     for p in program_parameters[program]:
         inp_data[p] = parameters[p]
     for inp in program_inputs[program]:
-        shape = data[inp]
-        if shape == (0,):  # Scalar
-            inp_data[inp] = rng.random()
+        if inp not in data:
+            print(inp)
+            continue
+        info = data[inp]
+        if isinstance(info, list):
+            shape, dtype = info
         else:
-            inp_data[inp] = np.asfortranarray(rng.random(shape))
+            shape = info
+            dtype = np.float64
+        method = lambda s, d: rng.random(s, d)
+        if issubclass(dtype, Integral) or dtype is np.bool_:
+            if dtype is np.bool_:
+                method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
+            else:
+                method = lambda s, d: rng.integers(0, 10, s, d)
+        if shape == (0,):  # Scalar
+            inp_data[inp] = method(None, dtype)
+        else:
+            inp_data[inp] = np.asfortranarray(method(shape, dtype))
     return inp_data
 
 
 def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
     out_data = dict()
     for out in program_outputs[program]:
-        shape = data[out]
+        info = data[out]
+        if isinstance(info, list):
+            shape, dtype = info
+        else:
+            shape = info
+            dtype = np.float64
+        method = lambda s, d: rng.random(s, d)
+        if issubclass(dtype, Integral) or dtype is np.bool_:
+            if dtype is np.bool_:
+                method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
+            else:
+                method = lambda s, d: rng.integers(0, 10, s, d)
         if shape == (0,):  # Scalar
             raise NotImplementedError
         else:
-            out_data[out] = np.asfortranarray(rng.random(shape))
+            out_data[out] = np.asfortranarray(method(shape, dtype))
     return out_data
 
 
@@ -410,6 +447,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     sdfg = get_sdfg(fsource, program_name, normalize_offsets)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
+    sdfg.simplify()
     utils.make_dynamic_map_inputs_unique(sdfg)
 
     rng = np.random.default_rng(42)
@@ -429,6 +467,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 if __name__ == "__main__":
     test_program('cloudsc_class1_2809', dace.DeviceType.CPU, False)
     test_program('cloudsc_class1_2809', dace.DeviceType.CPU, True)
+    test_program('cloudsc_3p3_mini', dace.DeviceType.CPU, False)
     test_program('cloudsc_1f', dace.DeviceType.CPU, False)
     test_program('cloudsc_1f', dace.DeviceType.CPU, True)
     test_program('cloudsc_3p1', dace.DeviceType.CPU, False)

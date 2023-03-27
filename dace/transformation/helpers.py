@@ -1448,3 +1448,86 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
     return True
+
+
+def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
+                                     sink: nodes.AccessNode):
+    """
+    Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
+    Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
+    transient.
+
+    :param sdfg: The SDFG in which the Access node resides.
+    :param state: The State in which the Access node resides.
+    :param map_exit: The exit node of the Map.
+    :param access: The Access node being written inside the Map.
+    :param sink: The Access node to be written outside the Map.
+    """
+
+    # Special case for scalars: if there is no write conflict resolution, then abort, since it is implied that the
+    # scalar is thread-local.
+    if isinstance(access.desc(sdfg), data.Scalar):
+        if any(e.data.wcr is None for e in state.in_edges(access)):
+            return
+
+    # Compute the union of the destination subsets of the edges that write to `access.`
+    in_union = None
+    for e in state.in_edges(access):
+        subset = e.data.get_dst_subset(e, state)
+        if in_union is None:
+            in_union = subset
+        else:
+            in_union = in_union.union(subset)
+
+    # Check if the union covers the output edges of `access.`
+    covers_out = True
+    if in_union is None:
+        covers_out = False
+    else:
+        for e in state.out_edges(access):
+            subset = e.data.get_src_subset(e, state)
+            if not in_union.covers(subset):
+                covers_out = False
+                break
+
+    # If the union covers the output edges of `access`, then we can remove `access` and replace it with a transient.
+    if covers_out:
+        shape = in_union.size()
+        if shape == [1]:
+            name, _ = sdfg.add_scalar(access.data, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        else:
+            name, _ = sdfg.add_array(access.data, shape, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        new_n = state.add_access(name)
+        for e in state.in_edges(access):
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_edge(
+                e.src, e.src_conn, new_n, None,
+                Memlet(data=name, subset=dst_subset.offset_new(dst_subset, negative=True), other_subset=src_subset))
+            state.add_memlet_path(new_n,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(dst_subset),
+                                                other_subset=dst_subset.offset_new(dst_subset, negative=True)))
+        for e in state.out_edges(access):
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_edge(new_n,
+                           None,
+                           e.dst,
+                           e.dst_conn,
+                           memlet=Memlet(data=name,
+                                         subset=src_subset.offset(src_subset, negative=True),
+                                         other_subset=dst_subset))
+        state.remove_node(access)
+    # Otherwise, we only add a memlet path to the sink.
+    else:
+        for e in state.in_edges(access):
+            subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(access,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(subset),
+                                                other_subset=copy.deepcopy(subset)))

@@ -301,7 +301,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
 
         return True
-    
+
     def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
         """
         This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
@@ -529,6 +529,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
 
+        # Check intermediate notes
+        intermediate_nodes = []
+        for node in body.nodes():
+            if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
+                # Scalars written without WCR must be thread-local
+                if isinstance(node.desc(sdfg), dt.Scalar) and any(e.data.wcr is None for e in body.in_edges(node)):
+                    continue
+                intermediate_nodes.append(node)
+
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
         exit = nodes.MapExit(map)
@@ -585,6 +594,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
+        intermediate_sinks = {}
+        for n in intermediate_nodes:
+            if n.data in intermediate_sinks:
+                sink = intermediate_sinks[n.data]
+            else:
+                sink = body.add_access(n.data)
+                intermediate_sinks[n.data] = sink
+            helpers.make_map_internal_write_external(sdfg, body, exit, n, sink)
 
         # Here we handle the direct edges among source and sink access nodes.
         for e in direct_edges:
