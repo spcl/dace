@@ -12,7 +12,7 @@ parameters = {
     'NCLDQR': 5,
     'NCLDQS': 6,
     'NCLDQV': 7,
-    'NCLDTOP': 1,
+    'NCLDTOP': 2,
     'NSSOPT': 1
 }
 
@@ -87,6 +87,8 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZQTMST': (0, ),
         'ZVPICE': (0, ),
         'ZVPLIQ': (0, ),
+        'ARRAY_A': (params['KLON'],),
+        'ARRAY_B': (params['KLON'],),
         'IPHASE': (params['NCLV'], ),
         'PAPH': (params['KLON'], params['KLEV'] + 1),
         'PAP': (params['KLON'], params['KLEV']),
@@ -125,12 +127,17 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZCORQSICE': (params['KLON']),
         'ZCORQSLIQ': (params['KLON']),
         'ZCOVPTOT': (params['KLON'], ),
+        'ZCOVPTOT2': (params['KLON'], params['KLEV']),
         'ZCOVPCLR': (params['KLON'], ),
+        'ZCOVPCLR2': (params['KLON'], params['KLEV']),
         'ZCOVPMAX': (params['KLON'], ),
+        'ZCOVPMAX2': (params['KLON'], params['KLEV']),
         'ZDTGDP': (params['KLON'], ),
         'ZICENUCLEI': (params['KLON'], ),
         'ZRAINCLD': (params['KLON'], ),
+        'ZRAINCLD2': (params['KLON'], params['KLEV']),
         'ZSNOWCLD': (params['KLON'], ),
+        'ZSNOWCLD2': (params['KLON'], params['KLEV']),
         'ZDA': (params['KLON'], ),
         'ZDP': (params['KLON'], ),
         'ZRHO': (params['KLON'], ),
@@ -149,6 +156,7 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZPSUPSATSRCE': (params['KLON'], params['NCLV']),
         'ZMELTMAX': (params['KLON'], ),
         'ZQPRETOT': (params['KLON'], ),
+        'ZQPRETOT2': (params['KLON'], params['KLEV']),
         'ZQSLIQ': (params['KLON'], params['KLEV']),
         'ZQSICE': (params['KLON'], params['KLEV']),
         'ZQX': (params['KLON'], params['KLEV'], params['NCLV']),
@@ -177,7 +185,8 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
     :type program: str
     :return: List of dictionaries. Each dictionary has an entry 'variables' listing all variable names which have the
     given ranges, an entry 'start' and 'stop' which are tuples with the start and stop indices (0-based) for the range
-    to check/compare.
+    to check/compare. Alternatively entries in start can also be lists of indices or a single index, the corresponding entries in stop
+    must then be None
     :rtype: List[Dict]
     """
     # This ranges have inclusive starts and exclusive ends. Remember that for fortran loops start and end are inclusive
@@ -192,7 +201,7 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                 {
                     'variables': ['ZQX', 'ZQX0'],
                     'start': (params['KIDIA']-1, 0, params['NCLDQV']-1),
-                    'end': (params['KFDIA'], params['KLEV'], params['NCLDQV'])
+                    'end': (params['KFDIA'], params['KLEV'], None)
                 }
             ],
             'cloudsc_class1_670': [
@@ -215,7 +224,101 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'start': (params['KIDIA']-1, 0, 0),
                     'end': (params['KFDIA'], params['KLEV']+1)
                 }
-            ]
+            ],
+            'cloudsc_class2_1516': [
+                {
+                    'variables': ['ZSOLQA'],
+                    'start': (params['KIDIA']-1, [params['NCLDQI'], params['NCLDQL']],
+                              [params['NCLDQI'], params['NCLDQL']]),
+                    'end': (params['KFDIA'], None, None)
+                },
+                {
+                    'variables': ['ZQXFG'],
+                    'start': (params['KIDIA']-1, params['NCLDQI']-1),
+                    'end': (params['KFDIA'], None)
+                }
+            ],
+            'cloudsc_class2_1762': [
+                {
+                    'variables': ['ZCOVPTOT2', 'ZCOVPCLR2', 'ZCOVPMAX2', 'ZRAINCLD2', 'ZSNOWCLD2'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_class2_781': [
+                {
+                    'variables': ["ZA", "ZLIQFRAC", "ZICEFRAC", "ZLI"],
+                    'start': (params['KIDIA']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_class2_1001': [
+                {
+                    'variables': ["ZSOLQA", "ZSUPSAT"],
+                    'start': (params['KIDIA']-1, [params['NCLDQI'], params['NCLDQL'], params['NCLDQV']]),
+                    'end': (params['KFDIA'], None)
+                },
+                {
+                    'variables': ["ZQXFG", "ZPSUPSATSRCE"],
+                    'start': (params['KIDIA']-1, [params['NCLDQL'], params['NCLDQI']]),
+                    'end': (params['KFDIA'], None)
+                },
+                {
+                    'variables': ["ZSOLAC", "ZFOKOOP", "ZSUPSAT"],
+                    'start': (params['KIDIA']-1),
+                    'end': (params['KFDIA'])
+                }
+            ],
+            'cloudsc_class3_1985': [
+                {
+                    'variables': ["ZICETOT", "ZMELTMAX"],
+                    'start': (params['KIDIA']-1,),
+                    'end': (params['KFDIA'],)
+                }
+            ],
+            'cloudsc_class3_2120': [
+                {
+                    'variables': ["ZSOLQA"],
+                    'start': (params['KIDIA']-1, [params['NCLDQV'], params['NCLDQR']],
+                              [params['NCLDQV'], params['NCLDQR']]),
+                    'end': (params['KFDIA'], None, None)
+                },
+                {
+                    'variables': ["ZCOVPTOT"],
+                    'start': (params['KIDIA']-1,),
+                    'end': (params['KFDIA'],)
+                },
+                {
+                    'variables': ["ZQXFG"],
+                    'start': (params['KIDIA']-1, params['NCLDQR']),
+                    'end': (params['KFDIA'], None)
+                }
+            ],
+            'cloudsc_class3_691': [
+                {
+                    'variables': ["ZQX"],
+                    'start': (params['KIDIA']-1, 0, [params['NCLDQV'], params['NCLDQL'], params['NCLDQI']]),
+                    'end': (params['KFDIA'], params['KLEV'], None)
+                },
+                {
+                    'variables': ["ZLNEG"],
+                    'start': (params['KIDIA']-1, 0, [params['NCLDQL'], params['NCLDQI']]),
+                    'end': (params['KFDIA'], params['KLEV'], None)
+                },
+                {
+                    'variables': ["tendency_loc_q", "tendency_loc_T"],
+                    'start': (params['KIDIA']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_class3_965': [
+                {
+                    'variables': ["ZSOLQA"],
+                    'start': (params['KIDIA']-1, [params['NCLDQV'], params['NCLDQL'], params['NCLDQI']],
+                              [params['NCLDQV'], params['NCLDQL'], params['NCLDQI']]),
+                    'end': (params['KFDIA'], None, None)
+                }
+            ],
     }
     return ranges[program]
 

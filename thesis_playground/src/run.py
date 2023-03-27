@@ -21,15 +21,26 @@ def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_meas
     for data in ncu_data:
         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
         id_triplet = tuple([int(id) for id in match.group(1).split('_')])
-        print(f"Kernel {id_triplet}")
-        program_measurement.add_measurement('Kernel Time',
-                                            data.durations_unit,
-                                            data=data.durations,
-                                            kernel_name=str(id_triplet))
-        program_measurement.add_measurement('Kernel Cycles',
-                                            data.cycles_unit,
-                                            data=data.cycles,
-                                            kernel_name=str(id_triplet))
+        time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
+        cycles_measurement = program_measurement.get_measurement('Kernel Cycles', kernel=str(id_triplet))
+        if time_measurement is None:
+            print(data.durations)
+            program_measurement.add_measurement('Kernel Time',
+                                                data.durations_unit,
+                                                data=data.durations,
+                                                kernel_name=str(id_triplet))
+        else:
+            for value in data.durations:
+                print(data.durations)
+                time_measurement.add_value(value)
+        if cycles_measurement is None:
+            program_measurement.add_measurement('Kernel Cycles',
+                                                data.cycles_unit,
+                                                data=data.cycles,
+                                                kernel_name=str(id_triplet))
+        else:
+            for value in data.cycles:
+                cycles_measurement.add_value(value)
 
 
 def main():
@@ -101,10 +112,11 @@ def main():
 
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
-            run([*command_ncu, *command_program], capture_output=True)
-            csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
-            ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-            convert_ncu_data_into_program_measurement(ncu_data, program_data)
+            for _ in range(5):
+                run([*command_ncu, *command_program], capture_output=True)
+                csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
+                ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
+                convert_ncu_data_into_program_measurement(ncu_data, program_data)
 
         if args.nsys:
             report_name = f"report_{program}.nsys-rep"

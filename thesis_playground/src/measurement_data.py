@@ -30,6 +30,7 @@ class Measurement:
         :param kernel_name: The name of the kernel measured if applicable, defaults to None
         :type kernel_name: Optional[str], optional
         """
+        print(f"Create Measurement with name: {name}, unit: {unit}")
         self.name = name
         self.unit = unit
         self.data = [] if data is None else data
@@ -77,6 +78,13 @@ class Measurement:
     def __repr__(self) -> str:
         return f"Measurement of {self.name} [{self.unit}] kernel {self.kernel_name} and {len(self.data)} data points"
 
+    def __eq__(self, other: 'Measurement') -> bool:
+        return \
+            self.unit == other.unit and \
+            self.name == other.name and \
+            self.data == other.data and \
+            self.kernel_name == other.kernel_name
+
 
 class ProgramMeasurement:
     """
@@ -117,6 +125,23 @@ class ProgramMeasurement:
             self.measurements[name] = []
         self.measurements[name].append(Measurement(name, unit, **kwargs))
 
+    def get_measurement(self, name: str, kernel: str = None) -> Optional[Measurement]:
+        """
+        Returns the measurement given the name and optional the kernel name
+
+        :param name: The name of the measurement
+        :type name: str
+        :param kernel: The kernel name, if needed to distinguish mutiple measurment, defaults to None
+        :type kernel: str, optional
+        :return: Found measurement or None if there is none
+        :rtype: Optional[Measurement]
+        """
+        if name in self.measurements:
+            for measurement in self.measurements[name]:
+                if kernel is None or measurement.kernel_name == kernel:
+                    return measurement
+        return None
+
     def add_value(self, name: str, value: Number):
         """
         Adds a value to a measurement identified by the name. Adds if to the first one with the same name
@@ -131,8 +156,10 @@ class ProgramMeasurement:
     @staticmethod
     def to_json(measurement: 'ProgramMeasurement') -> Dict:
         msr_dict = {}
-        for msr in measurement.measurements.values():
-            msr_dict[msr.name] = Measurement.to_json(msr)
+        for measurements in measurement.measurements.values():
+            msr_dict[measurements[0].name] = []
+            for msr in measurements:
+                msr_dict[msr.name].append(Measurement.to_json(msr))
         return {
                 "__ProgramMeasurement__": True,
                 "measurements": msr_dict,
@@ -149,6 +176,12 @@ class ProgramMeasurement:
             return Measurement.from_json(dict)
         else:
             return dict
+
+    def __eq__(self, other: 'ProgramMeasurement'):
+        return \
+            self.measurements == other.measurements and \
+            self.program == other.program and \
+            self.parameters == other.parameters
 
 
 class MeasurementRun:
@@ -225,3 +258,11 @@ class MeasurementRun:
             return Measurement.from_json(dict)
         else:
             return dict
+
+    def __eq__(self, other: 'MeasurementRun') -> bool:
+        return \
+            self.description == other.description and \
+            self.data == other.data and \
+            self.git_hash == other.git_hash and \
+            self.date == other.date and \
+            self.node == other.node

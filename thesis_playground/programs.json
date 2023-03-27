@@ -38,12 +38,12 @@
         "cloudsc_class1_2783": ["ZPFPLSX"],
         "cloudsc_class1_2857": ["RLVTT", "RLSTT", "PFPLSL", "PFPLSN"],
         "cloudsc_class2_781": ["RLMIN", "ZQX"],
-        "cloudsc_class2_1762": ["RCOVPMIN", "ZEPSEC", "ZQXFG", "ZA", "ZQPRETOT"],
+        "cloudsc_class2_1762": ["RCOVPMIN", "ZEPSEC", "ZQXFG", "ZA", "ZQPRETOT2"],
         "cloudsc_class2_1001": ["PTSPHY", "RAMIN", "RKOOP1", "RKOOP2", "RKOOPTAU", "R2ES", "R3IES", "R3LES", "R4IES",
             "R4LES", "RTHOMO", "RTT", "ZEPSEC", "ZEPSILON", "PSUPSAT", "ZA", "ZCORQSICE", "ZQSICE", "ZQX", "ZTP1"],
         "cloudsc_class2_1516": ["RTT", "R2ES", "R3IES", "R4IES", "RLMIN", "RV", "RD", "RG", "RLSTT", "RDEPLIQREFRATE",
             "RDEPLIQREFDEPTH", "RCLDTOPCF", "PTSPHY", "RICEINIT", "ZA", "ZCLDTOPDIST", "ZDP", "ZRHO", "ZTP1", "ZFOKOOP", "PAP",
-            "ZICECLD"],
+            "ZICECLD", "ZICENUCLEI"],
         "cloudsc_class3_691": ["RLMIN", "RAMIN", "ZQTMST", "RALVDCP", "RALSDCP", "ZA"],
         "cloudsc_class3_965": ["RLMIN", "ZQX"],
         "cloudsc_class3_1985": ["ZEPSEC", "RTT", "PTSPHY", "ZRLDCP", "RTAUMEL", "ZQSICE", "ZQXFG", "ZTP1", "PAP", "ZQX"],
@@ -51,7 +51,7 @@
                                 "ZRG_R", "RCOVPMIN", "ZA", "ZQX", "ZQSLIQ", "ZCOVPCLR", "ZDTGDP", "PAP", "PAPH",
                                 "ZCORQSLIQ", "ZDP"],
         "mwe_test":  ["ZQX"],
-        "my_test": []
+        "my_test": ["ARRAY_B"]
     },
     "program_outputs": {
         "cloudsc_class1_658": ["ZTP1", "ZQX", "ZQX0", "ZA", "ZAORIG"],
@@ -59,14 +59,14 @@
         "cloudsc_class1_2783": ["PFPLSL", "PFPLSN"],
         "cloudsc_class1_2857": ["PFHPSL", "PFHPSN"],
         "cloudsc_class2_781": ["ZA", "ZLIQFRAC", "ZICEFRAC", "ZLI"],
-        "cloudsc_class2_1762": ["ZCOVPTOT", "ZCOVPCLR", "ZCOVPMAX", "ZRAINCLD", "ZSNOWCLD"],
+        "cloudsc_class2_1762": ["ZCOVPTOT2", "ZCOVPCLR2", "ZCOVPMAX2", "ZRAINCLD2", "ZSNOWCLD2"],
         "cloudsc_class2_1001": ["ZSOLQA", "ZQXFG", "ZSOLAC", "ZFOKOOP", "ZPSUPSATSRCE", "ZSUPSAT"],
-        "cloudsc_class2_1516": ["ZCOVPTOT", "ZICENUCLEI", "ZSOLQA", "ZQXFG"],
+        "cloudsc_class2_1516": ["ZSOLQA", "ZQXFG"],
         "cloudsc_class3_691": ["ZQX", "ZLNEG", "tendency_loc_q", "tendency_loc_T"],
         "cloudsc_class3_965": ["ZSOLQA"],
         "cloudsc_class3_1985": ["ZICETOT", "ZMELTMAX"],
         "cloudsc_class3_2120": ["ZSOLQA", "ZCOVPTOT", "ZQXFG"],
         "mwe_test": ["ZFOKOOP", "ZSUPSAT"],
-        "my_test": ["ZFOKOOP"]
+        "my_test": ["ARRAY_A"]
     }
 }

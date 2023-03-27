@@ -1,8 +1,9 @@
 from argparse import ArgumentParser
 
 import dace
+from dace.config import Config
 
-from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files, read_source
+from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files, read_source, enable_debug_flags
 from my_auto_opt import auto_optimize
 
 
@@ -14,9 +15,13 @@ def main():
         '--only-graph',
         action='store_true',
         help='Does not compile the SDFGs into C++ code, only creates the SDFGs and runs the transformations')
+    parser.add_argument('--debug', action='store_true', default=False, help="Configure for debug build")
 
     device = dace.DeviceType.GPU
     args = parser.parse_args()
+
+    if args.debug:
+        enable_debug_flags()
 
     reset_graph_files(args.program)
 

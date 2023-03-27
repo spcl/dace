@@ -13,6 +13,7 @@ from datetime import datetime
 from subprocess import run
 
 import dace
+from dace.config import Config
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
@@ -105,7 +106,6 @@ def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = F
 
 
 # Copied from tests/fortran/cloudsc.py
-# TODO: Init to 0?
 def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
         -> Dict[str, Union[Number, np.ndarray]]:
     """
@@ -129,6 +129,7 @@ def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = 
             raise NotImplementedError
         else:
             out_data[out] = np.asfortranarray(rng.random(shape))
+            # out_data[out] = np.asfortranarray(np.zeros(shape))
     return out_data
 
 
@@ -143,7 +144,7 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     :return: Dictionary with information about programs
     :rtype: Dict[str, Dict]
     """
-    programs_file = os.path.join(os.path.dirname(__file__), 'programs.json')
+    programs_file = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'programs.json')
     with open(programs_file) as file:
         programs_data = json.load(file)
 
@@ -177,11 +178,11 @@ def get_results_dir() -> str:
     :return: Path to the directory
     :rtype: str
     """
-    return os.path.join(os.path.dirname(__file__), 'results')
+    return os.path.join(os.path.split(os.path.dirname(__file__))[0], 'results')
 
 
 counter = 0
-graphs_dir = os.path.join(os.path.dirname(__file__), 'sdfg_graphs')
+graphs_dir = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'sdfg_graphs')
 
 
 def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
@@ -250,15 +251,20 @@ def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
                       f"{list(output_a.keys())} and {list(output_b.keys())}")
             selection = []
             for start, stop in zip(range['start'], range['end']):
-                selection.append(slice(start, stop))
+                if stop is not None:
+                    # We have a slice
+                    selection.append(slice(start, stop))
+                else:
+                    # We have a list
+                    selection.append(start)
             selection = tuple(selection)
             this_same = np.allclose(
                     output_a[key][selection],
                     output_b[key][selection])
             if not this_same:
                 print(f"{key} is not the same for range {selection}")
-                # print(output_a[key][selection][0], output_b[key][selection][0])
-                print(np.isclose(output_a[key][selection], output_b[key][selection]))
+                # print(np.isclose(output_a[key][selection], output_b[key][selection]))
+                print_compare_matrix(output_a[key][selection], output_b[key][selection])
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
@@ -269,3 +275,32 @@ def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
         print(f"WARNING: Keys don't match. Range: {set_range_keys}, output_b: {set_b_keys}")
 
     return same
+
+
+def compare_output_all(output_a: Dict, output_b: Dict) -> bool:
+    same = True
+    for key in output_a.keys():
+        local_same = np.allclose(output_a[key], output_b[key])
+        same = same and local_same
+        if not local_same:
+            print(f"Variable {key} differs")
+    return same
+
+
+def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray):
+    diff_indices = np.isclose(output_a, output_b)
+    for row_a, row_b, row_diff in zip(output_a, output_b, diff_indices):
+        for val_a, val_b, diff in zip(row_a, row_b, row_diff):
+            if diff:
+                print(f"       {val_a:.3f}", end="   ")
+            else:
+                print(f"{val_a:.3f}!={val_b:.3f}", end="   ")
+        print()
+
+
+def enable_debug_flags():
+    print("Configure for debugging")
+    Config.set('compiler', 'build_type', value='Debug')
+    Config.set('compiler', 'cuda', 'syncdebug', value=True)
+    nvcc_args = Config.get('compiler', 'cuda', 'args')
+    Config.set('compiler', 'cuda', 'args', value=nvcc_args + ' -g -G')

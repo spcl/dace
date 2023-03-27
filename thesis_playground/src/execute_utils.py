@@ -8,7 +8,7 @@ from my_auto_opt import auto_optimize
 
 from data import get_program_parameters_data
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
-                  compare_output
+                  compare_output, compare_output_all
 from measurement_data import ProgramMeasurement
 
 RNG_SEED = 42
@@ -52,11 +52,13 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     print_with_time(f"{program} ({program_name}) on {device} with"
                     f"{' ' if normalize_memlets else 'out '}normalize memlets")
     passes_test = compare_output(outputs_f, outputs_d, program)
+    # passes_test = compare_output_all(outputs_f, outputs_d)
 
     if passes_test:
         print_with_time('Success')
     else:
         print_with_time('!!!TEST NOT PASSED!!!')
+    return passes_test
 
 
 def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
@@ -105,6 +107,10 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     print_with_time("Measure total runtime")
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
+
+    # for key in outputs:
+    #     print(f"{key} {np.count_nonzero(outputs[key])}/{np.prod(outputs[key].shape)}")
+
     reports = sdfg.get_instrumentation_reports()
 
     results.add_measurement("Total time", "ms")
