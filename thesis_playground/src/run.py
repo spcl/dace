@@ -24,14 +24,12 @@ def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_meas
         time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
         cycles_measurement = program_measurement.get_measurement('Kernel Cycles', kernel=str(id_triplet))
         if time_measurement is None:
-            print(data.durations)
             program_measurement.add_measurement('Kernel Time',
                                                 data.durations_unit,
                                                 data=data.durations,
                                                 kernel_name=str(id_triplet))
         else:
             for value in data.durations:
-                print(data.durations)
                 time_measurement.add_value(value)
         if cycles_measurement is None:
             program_measurement.add_measurement('Kernel Cycles',
@@ -74,6 +72,8 @@ def main():
                         help='Description to be saved into the json file')
     parser.add_argument('--no-total', default=False, action='store_true',
                         help='Do not run measurement of total runtime')
+    parser.add_argument('--ncu-repetitions', type=int, default=5,
+                        help='Number of times ncu is run to measure kernel runtime')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -112,13 +112,14 @@ def main():
 
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
-            for _ in range(5):
+            for _ in range(args.ncu_repetitions):
                 run([*command_ncu, *command_program], capture_output=True)
                 csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
                 ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
                 convert_ncu_data_into_program_measurement(ncu_data, program_data)
 
         if args.nsys:
+            print_with_time("Create nsys report")
             report_name = f"report_{program}.nsys-rep"
             command_nsys = ['nsys', 'profile', '--force-overwrite', 'true', '--output', report_name]
             print(f"Save nsys report into {report_name}")
@@ -127,9 +128,12 @@ def main():
         run_data.add_program_data(program_data)
 
     if args.output is not None:
-        with open(os.path.join(get_results_dir(), args.output), 'w') as file:
+        filename = os.path.join(get_results_dir(), args.output)
+        print_with_time(f"Save results into {filename}")
+        with open(filename, 'w') as file:
             json.dump(run_data, file, default=MeasurementRun.to_json)
 
+    print_with_time("Print results")
     print_results_v2(run_data)
 
 

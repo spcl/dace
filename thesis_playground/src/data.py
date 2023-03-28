@@ -27,14 +27,16 @@ custom_parameters = {
         'KLON': 5000,
         'KLEV': 5000,
         'KFDIA': 4998
-        },
-    'cloudsc_class2_1762': {
-        'KLEV': 10,
-        # 'KLON': 100000000,
-        # 'KFDIA': 99999998,
+    },
+    'my_test': {
+        'KLON': 100000000
+    },
+    'cloudsc_class2_1516':
+    {
         'KLON': 1000,
-        'KFDIA': 998,
-        }
+        'KLEV': 1000,
+        'KFDIA': 998
+    }
 }
 
 # changes from the parameters dict for testing
@@ -122,6 +124,7 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZA': (params['KLON'], params['KLEV']),
         'ZAORIG': (params['KLON'], params['KLEV']),
         'ZCLDTOPDIST': (params['KLON'], ),
+        'ZCLDTOPDIST2': (params['KLON'], params['KLEV']),
         'ZCONVSINK': (params['KLON'], params['NCLV']),
         'ZCONVSRCE': (params['KLON'], params['NCLV']),
         'ZCORQSICE': (params['KLON']),
@@ -162,10 +165,12 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZQX': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZQX0': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZQXFG': (params['KLON'], params['NCLV']),
+        'ZQXFG2': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZQXN': (params['KLON'], params['NCLV']),
         'ZQXN2D': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZSOLAC': (params['KLON'], ),
         'ZSOLQA': (params['KLON'], params['NCLV'], params['NCLV']),
+        'ZSOLQA2': (params['KLON'], params['KLEV'], params['NCLV'], params['NCLV']),
         'ZSUPSAT': (params['KLON'], ),
         'ZTP1': (params['KLON'], params['KLEV']),
         'PT': (params['KLON'], params['KLEV']),
@@ -227,15 +232,15 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
             ],
             'cloudsc_class2_1516': [
                 {
-                    'variables': ['ZSOLQA'],
-                    'start': (params['KIDIA']-1, [params['NCLDQI'], params['NCLDQL']],
+                    'variables': ['ZSOLQA2'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, [params['NCLDQI'], params['NCLDQL']],
                               [params['NCLDQI'], params['NCLDQL']]),
-                    'end': (params['KFDIA'], None, None)
+                    'end': (params['KFDIA'], params['KLEV'], None, None)
                 },
                 {
-                    'variables': ['ZQXFG'],
-                    'start': (params['KIDIA']-1, params['NCLDQI']-1),
-                    'end': (params['KFDIA'], None)
+                    'variables': ['ZQXFG2'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, [params['NCLDQI'], params['NCLDQL']]),
+                    'end': (params['KFDIA'], params['KLEV'], None)
                 }
             ],
             'cloudsc_class2_1762': [

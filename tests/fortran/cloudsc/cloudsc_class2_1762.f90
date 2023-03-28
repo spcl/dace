@@ -17,26 +17,26 @@ PROGRAM precipitation_cover_overlap
     REAL(KIND=JPRB)     :: ZEPSEC
     REAL(KIND=JPRB)     :: ZQXFG(KLON, NCLV)
     REAL(KIND=JPRB)     :: ZA(KLON, KLEV)
-    REAL(KIND=JPRB)     :: ZQPRETOT(KLON)
+    REAL(KIND=JPRB)     :: ZQPRETOT2(KLON, KLEV)
 
-    REAL(KIND=JPRB)     :: ZCOVPTOT(KLON)
-    REAL(KIND=JPRB)     :: ZCOVPCLR(KLON)
-    REAL(KIND=JPRB)     :: ZCOVPMAX(KLON)
-    REAL(KIND=JPRB)     :: ZRAINCLD(KLON)
-    REAL(KIND=JPRB)     :: ZSNOWCLD(KLON)
+    REAL(KIND=JPRB)     :: ZCOVPTOT2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPCLR2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPMAX2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZRAINCLD2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZSNOWCLD2(KLON, KLEV)
 
 
     CALL precipitation_cover_overlap_routine(&
         & KLON, KLEV, KIDIA, KFDIA, NCLV, NCLDTOP, NCLDQS, NCLDQR, &
-        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT, &
-        & ZCOVPTOT, ZCOVPCLR, ZCOVPMAX, ZRAINCLD, ZSNOWCLD)
+        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT2, &
+        & ZCOVPTOT2, ZCOVPCLR2, ZCOVPMAX2, ZRAINCLD2, ZSNOWCLD2)
 
 END
 
 SUBROUTINE precipitation_cover_overlap_routine(&
         & KLON, KLEV, KIDIA, KFDIA, NCLV, NCLDTOP, NCLDQS, NCLDQR, &
-        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT, &
-        & ZCOVPTOT, ZCOVPCLR, ZCOVPMAX, ZRAINCLD, ZSNOWCLD)
+        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT2, &
+        & ZCOVPTOT2, ZCOVPCLR2, ZCOVPMAX2, ZRAINCLD2, ZSNOWCLD2)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -55,31 +55,31 @@ SUBROUTINE precipitation_cover_overlap_routine(&
     REAL(KIND=JPRB)     :: ZEPSEC
     REAL(KIND=JPRB)     :: ZQXFG(KLON, NCLV)
     REAL(KIND=JPRB)     :: ZA(KLON, KLEV)
-    REAL(KIND=JPRB)     :: ZQPRETOT(KLON)
+    REAL(KIND=JPRB)     :: ZQPRETOT2(KLON, KLEV)
 
-    REAL(KIND=JPRB)     :: ZCOVPTOT(KLON)
-    REAL(KIND=JPRB)     :: ZCOVPCLR(KLON)
-    REAL(KIND=JPRB)     :: ZCOVPMAX(KLON)
-    REAL(KIND=JPRB)     :: ZRAINCLD(KLON)
-    REAL(KIND=JPRB)     :: ZSNOWCLD(KLON)
+    REAL(KIND=JPRB)     :: ZCOVPTOT2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPCLR2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPMAX2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZRAINCLD2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZSNOWCLD2(KLON, KLEV)
 
     DO JK=NCLDTOP,KLEV
         DO JL=KIDIA,KFDIA     ! LOOP CLASS 2
-            IF (ZQPRETOT(JL)>ZEPSEC) THEN
-                ZCOVPTOT(JL) = 1.0 - ((1.0-ZCOVPTOT(JL))*&
+            IF (ZQPRETOT2(JL, JK)>ZEPSEC) THEN
+                ZCOVPTOT2(JL, JK) = 1.0 - ((1.0-ZCOVPTOT2(JL, JK))*&
                 &            (1.0 - MAX(ZA(JL,JK),ZA(JL,JK-1)))/&
                 &            (1.0 - MIN(ZA(JL,JK-1),1.0-1.E-06)) )  
-                ZCOVPTOT(JL) = MAX(ZCOVPTOT(JL),RCOVPMIN)
-                ZCOVPCLR(JL) = MAX(0.0,ZCOVPTOT(JL)-ZA(JL,JK)) ! clear sky proportion
-                ZRAINCLD(JL) = ZQXFG(JL,NCLDQR)/ZCOVPTOT(JL)
-                ZSNOWCLD(JL) = ZQXFG(JL,NCLDQS)/ZCOVPTOT(JL)
-                ZCOVPMAX(JL) = MAX(ZCOVPTOT(JL),ZCOVPMAX(JL))
+                ZCOVPTOT2(JL, JK) = MAX(ZCOVPTOT2(JL, JK),RCOVPMIN)
+                ZCOVPCLR2(JL, JK) = MAX(0.0,ZCOVPTOT2(JL, JK)-ZA(JL,JK)) ! clear sky proportion
+                ZRAINCLD2(JL, JK) = ZQXFG(JL,NCLDQR)/ZCOVPTOT2(JL, JK)
+                ZSNOWCLD2(JL, JK) = ZQXFG(JL,NCLDQS)/ZCOVPTOT2(JL, JK)
+                ZCOVPMAX2(JL, JK) = MAX(ZCOVPTOT2(JL, JK),ZCOVPMAX2(JL, JK))
             ELSE
-                ZRAINCLD(JL) = 0.0 
-                ZSNOWCLD(JL) = 0.0 
-                ZCOVPTOT(JL) = 0.0 ! no flux - reset cover
-                ZCOVPCLR(JL) = 0.0   ! reset clear sky proportion 
-                ZCOVPMAX(JL) = 0.0 ! reset max cover for ZZRH calc 
+                ZRAINCLD2(JL, JK) = 0.0 
+                ZSNOWCLD2(JL, JK) = 0.0 
+                ZCOVPTOT2(JL, JK) = 0.0 ! no flux - reset cover
+                ZCOVPCLR2(JL, JK) = 0.0   ! reset clear sky proportion 
+                ZCOVPMAX2(JL, JK) = 0.0 ! reset max cover for ZZRH calc 
             ENDIF
         ENDDO
     ENDDO

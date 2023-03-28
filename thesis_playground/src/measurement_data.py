@@ -30,7 +30,6 @@ class Measurement:
         :param kernel_name: The name of the kernel measured if applicable, defaults to None
         :type kernel_name: Optional[str], optional
         """
-        print(f"Create Measurement with name: {name}, unit: {unit}")
         self.name = name
         self.unit = unit
         self.data = [] if data is None else data

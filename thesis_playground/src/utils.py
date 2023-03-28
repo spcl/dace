@@ -26,7 +26,8 @@ from measurement_data import MeasurementRun
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
 def read_source(filename: str, extension: str = 'f90') -> str:
     source = None
-    with open(os.path.join(os.path.dirname(__file__), f'{filename}.{extension}'), 'r') as file:
+    with open(os.path.join(os.path.split(os.path.dirname(__file__))[0], 'fortran_programs', f'{filename}.{extension}'),
+              'r') as file:
         source = file.read()
     assert source
     return source
@@ -164,8 +165,8 @@ def print_results_v2(run_data: MeasurementRun):
                 if measurement.kernel_name is not None:
                     name += f" of {measurement.kernel_name}"
                 name += f" [{measurement.unit}] (#={measurement.amount()})"
-                flat_data.append([program_measurement.program, name, measurement.min(), measurement.max(),
-                                  measurement.average(), measurement.median()])
+                flat_data.append([program_measurement.program, name,
+                                  measurement.average(), measurement.median(), measurement.min(), measurement.max()])
 
     print(f"Node: {run_data.node}")
     print(tabulate(flat_data, headers=headers))
@@ -263,7 +264,6 @@ def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
                     output_b[key][selection])
             if not this_same:
                 print(f"{key} is not the same for range {selection}")
-                # print(np.isclose(output_a[key][selection], output_b[key][selection]))
                 print_compare_matrix(output_a[key][selection], output_b[key][selection])
             same = same and this_same
     set_range_keys = set(range_keys)
@@ -288,6 +288,7 @@ def compare_output_all(output_a: Dict, output_b: Dict) -> bool:
 
 
 def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray):
+    print(output_a.shape)
     diff_indices = np.isclose(output_a, output_b)
     for row_a, row_b, row_diff in zip(output_a, output_b, diff_indices):
         for val_a, val_b, diff in zip(row_a, row_b, row_diff):

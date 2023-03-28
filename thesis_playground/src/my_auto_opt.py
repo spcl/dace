@@ -12,7 +12,7 @@ from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_f
 
 # Transformations
 from dace.transformation.dataflow import TrivialMapElimination, MapCollapse
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf
 from dace.transformation import helpers as xfh
 
 from utils import save_graph
@@ -112,7 +112,12 @@ def auto_optimize(sdfg: SDFG,
             pass
 
     if program is not None:
-        save_graph(sdfg, program, "after_map_colapse.")
+        save_graph(sdfg, program, "after_map_colapse")
+
+    sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_move_assignment_outside_if")
+
     if device == dtypes.DeviceType.Generic:
         # Validate at the end
         if validate or validate_all:
