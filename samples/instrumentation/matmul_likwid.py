@@ -54,14 +54,18 @@ C = np.zeros((m, n), dtype=np.float32)
 # We will now iterate through the SDFG and set the instrumentation
 # type to LIKWID_CPU for all states and top-level map entries.
 # Non-top-level map entries are currently not supported!
-for nsdfg in sdfg.all_sdfgs_recursive():
-    for state in nsdfg.nodes():
-        state.instrument = dace.InstrumentationType.LIKWID_CPU
+for state in sdfg.states():
+    state.instrument = dace.InstrumentationType.LIKWID_CPU
 
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different
 # threads are measured by likwid and written into a performance report
 # in form of events. This report is saved at .dacecache/matmul/perf.
+import os
+
+os.environ["LIKWID_EVENTS"] = "FLOPS_SP"
+os.environ["LIKWID_FORCE"] = "1"
+
 csdfg = sdfg.compile()
 csdfg(A=A, B=B, C=C, K=k, M=m, N=n)
 
