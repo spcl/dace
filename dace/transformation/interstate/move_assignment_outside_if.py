@@ -75,9 +75,14 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             write_only = True
             for node, state in nodes:
                 if node.has_reads(state):
-                    # The read is only a problem if it is not written before -> the access node has node incoming edge
+                    # The read is only a problem if it is not written before -> the access node has no incoming edge
                     if state.in_degree(node) == 0:
                         write_only = False
+                    else:
+                        # There is also a problem if any edge is an update instead of write
+                        for edge in [*state.out_edges(node), *state.out_edges(node)]:
+                            if edge.data.wcr is not None:
+                                write_only = False
 
             if write_only:
                 self.write_only_values.add(data)
@@ -85,6 +90,8 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         # Want only the values which are only written to and one option uses a constant value
         self.write_only_values = assigned_const.intersection(self.write_only_values)
 
+        if len(self.write_only_values) == 0:
+            return False
         return True
 
     def apply(self, _, sdfg: sd.SDFG):
@@ -104,4 +111,7 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
                 new_assign_state.add_edge(tasklet, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
             state.remove_node(tasklet)
+            # Remove the state if it was emptied
+            if state.is_empty():
+                sdfg.remove_node(state)
         return sdfg
