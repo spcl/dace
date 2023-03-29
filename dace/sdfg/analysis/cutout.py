@@ -18,6 +18,7 @@ from dace.transformation.transformation import (MultiStateTransformation,
                                                 PatternTransformation,
                                                 SubgraphTransformation,
                                                 SingleStateTransformation)
+from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -135,9 +136,11 @@ class SDFGCutout(SDFG):
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
 
-        if isinstance(transformation, (SubgraphTransformation, SingleStateTransformation)):
-
-            state = target_sdfg.node(transformation.state_id)
+        if (all(isinstance(n, nd.Node) for n in affected_nodes) or
+            isinstance(transformation, (SubgraphTransformation, SingleStateTransformation))):
+            state = target_sdfg.parent
+            if transformation.state_id >= 0:
+                state = target_sdfg.node(transformation.state_id)
             cutout = cls.singlestate_cutout(state, *affected_nodes, make_side_effects_global=make_side_effects_global,
                                             use_alibi_nodes=use_alibi_nodes, reduce_input_config=reduce_input_config,
                                             symbols_map=symbols_map)
@@ -375,8 +378,17 @@ class SDFGCutout(SDFG):
             state_defined_symbols = state.defined_symbols()
             for sym in state_defined_symbols:
                 defined_symbols[sym] = state_defined_symbols[sym]
+        for edge in subgraph.edges():
+            is_edge: InterstateEdge = edge.data
+            free_symbols |= is_edge.free_symbols
+            for rmem in is_edge.get_read_memlets(sdfg.arrays):
+                if rmem.data in cutout.arrays:
+                    continue
+                new_desc = sdfg.arrays[rmem.data].clone()
+                cutout.add_datadesc(rmem.data, new_desc)
         for sym in free_symbols:
-            cutout.add_symbol(sym, defined_symbols[sym])
+            if not sym in cutout.symbols:
+                cutout.add_symbol(sym, defined_symbols[sym])
 
         for state in cutout_states:
             for dnode in state.data_nodes():
@@ -473,6 +485,19 @@ def _transformation_determine_affected_nodes(
             except KeyError:
                 # Ignored.
                 pass
+
+        # Transformations that modify a loop in any way must also include the loop init node, i.e. the state directly
+        # before the loop guard.
+        # TODO: This is hacky and should be replaced with a more general mechanism - this is something that
+        #       transformation intents / transactions will need to solve.
+        if isinstance(transformation, DetectLoop):
+            if transformation.loop_guard is not None and transformation.loop_guard in target_sdfg.nodes():
+                for iedge in target_sdfg.in_edges(transformation.loop_guard):
+                    affected_nodes.add(iedge.src)
+
+        if len(affected_nodes) == 0 and transformation.state_id < 0 and target_sdfg.parent_nsdfg_node is not None:
+            # This is a transformation that affects a nested SDFG node, grab that NSDFG node.
+            affected_nodes.add(target_sdfg.parent_nsdfg_node)
     else:
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
@@ -542,9 +567,9 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
                 state_input_configuration.add(dn.data)
             else:
                 check_for_write_before.add(dn.data)
-    for state in reaching_cutout:
-        for dn in state.data_nodes():
-            if state.in_degree(dn) > 0:
+    for pre_state in reaching_cutout:
+        for dn in pre_state.data_nodes():
+            if pre_state.in_degree(dn) > 0:
                 # For any writes, check if they are reads from the cutout that need to be checked. If they are, they're
                 # part of the system state.
                 if dn.data in check_for_write_before:
