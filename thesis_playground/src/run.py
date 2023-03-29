@@ -19,6 +19,7 @@ from measurement_data import ProgramMeasurement, MeasurementRun
 
 def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
     for data in ncu_data:
+        print(data.kernel_name)
         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
         id_triplet = tuple([int(id) for id in match.group(1).split('_')])
         time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
@@ -113,10 +114,20 @@ def main():
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
             for _ in range(args.ncu_repetitions):
-                run([*command_ncu, *command_program], capture_output=True)
-                csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
-                ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-                convert_ncu_data_into_program_measurement(ncu_data, program_data)
+                ncu_output = run([*command_ncu, *command_program], capture_output=True)
+                if ncu_output.returncode != 0:
+                    print("Failed to run the program with ncu")
+                    print(ncu_output.stdout.decode('UTF-8'))
+                    print(ncu_output.stderr.decode('UTF-8'))
+                else:
+                    csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
+                    if csv_stdout.returncode != 0:
+                        print(f"Failed to read the ncu report")
+                        print(csv_stdout.stdout.decode('UTF-8'))
+                        print(csv_stdout.stderr.decode('UTF-8'))
+                    else:
+                        ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
+                        convert_ncu_data_into_program_measurement(ncu_data, program_data)
 
         if args.nsys:
             print_with_time("Create nsys report")
