@@ -132,6 +132,9 @@ class SDFGCutout(SDFG):
         """
         affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
 
+        if len(affected_nodes) == 0:
+            return sdfg
+
         target_sdfg = sdfg
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
@@ -380,7 +383,8 @@ class SDFGCutout(SDFG):
                 defined_symbols[sym] = state_defined_symbols[sym]
         for edge in subgraph.edges():
             is_edge: InterstateEdge = edge.data
-            free_symbols |= is_edge.free_symbols
+            available_symbols = sdfg.symbols.keys()
+            free_symbols |= (is_edge.free_symbols & available_symbols)
             for rmem in is_edge.get_read_memlets(sdfg.arrays):
                 if rmem.data in cutout.arrays:
                     continue
