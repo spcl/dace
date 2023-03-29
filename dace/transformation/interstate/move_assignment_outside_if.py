@@ -75,7 +75,9 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             write_only = True
             for node, state in nodes:
                 if node.has_reads(state):
-                    write_only = False
+                    # The read is only a problem if it is not written before -> the access node has node incoming edge
+                    if state.in_degree(node) == 0:
+                        write_only = False
 
             if write_only:
                 self.write_only_values.add(data)
