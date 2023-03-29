@@ -95,8 +95,7 @@ def _run_fpga_test(vendor: str, test_function: Callable, test_timeout: int, run_
     with temporary_config():
         Config.set("compiler", "use_cache", value=False)
         Config.set("cache", value="unique")
-        Config.set("optimizer", "transform_on_call", value=False)
-        Config.set("optimizer", "interface", value=None)
+        Config.set("call_hooks", value=None)
         Config.set("optimizer", "autooptimize", value=False)
         if vendor == "xilinx":
             Config.set("compiler", "fpga", "vendor", value="xilinx")

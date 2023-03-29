@@ -134,6 +134,25 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             sdfg.add_edge(e.src, new_state, e.data)
         for e in sdfg.out_edges(sink_node):
             sdfg.add_edge(new_state, e.dst, e.data)
+        
+        # TODO: How safe is this?
+        # Record symbols defined in the subgraph's border edges
+        border_mapping = dict()
+        border_arrays = set()
+        for state in states:
+            for e in sdfg.in_edges(state):
+                if e in subgraph.edges():
+                    continue
+                border_mapping.update(e.data.assignments)
+                border_arrays.update(m.data for m in e.data.get_read_memlets(sdfg.arrays))
+                e.data.assignments = dict()
+        init_state = nsdfg.start_state
+        # pre_init_state = nsdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+        pre_init_state = nsdfg.add_state('clean_symbols', is_start_state=True)
+        nsdfg.add_edge(pre_init_state, init_state, InterstateEdge(assignments=border_mapping))
+        # edge = nsdfg.edges_between(pre_init_state, init_state)[0]
+        # edge.data.assignments.update({k: v for k, v in border_mapping.items()})
+        read_set.update(border_arrays)
 
         sdfg.remove_nodes_from(states)
 
@@ -177,7 +196,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         # Add NestedSDFG node
         fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols - strictly_defined_symbols)
-        mapping = {s: s for s in fsymbols}
+        if sdfg.parent_nsdfg_node is None:
+            symbol_mapping = {}
+        else:
+            symbol_mapping = sdfg.parent_nsdfg_node.symbol_mapping
+        mapping = {s: symbol_mapping[str(s)] if str(s) in symbol_mapping else s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
@@ -290,8 +313,16 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
         if isinstance(child, cf.SingleState):
             if child.state in visited:
                 continue
-            components[child.state] = (set([child.state]), child)
-            visited[child.state] = child.state
+            in_edges = sdfg.in_edges(child.state)
+            if len(in_edges) == 1 and in_edges[0].data.assignments:
+                guard = sdfg.add_state_before(child.state, f"new_{child.state.label}")
+                edge = sdfg.edges_between(guard, child.state)[0]
+                edge.data.assignments = in_edges[0].data.assignments
+                in_edges[0].data.assignments = {}
+                components[guard] = (set([guard, child.state]), cf.MultiState(None, guard))
+            else:
+                components[child.state] = (set([child.state]), child)
+                visited[child.state] = child.state
         elif isinstance(child, (cf.ForScope, cf.WhileScope)):
             guard = child.guard
             fexit = None
@@ -303,19 +334,22 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             if fexit is None:
                 raise ValueError("Cannot find for-scope's exit state.")
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
                     raise NotImplementedError
                 del components[visited[guard]]
                 del visited[guard]
+            
+            if len(fexit.nodes()) > 0:
+                fexit = sdfg.add_state_before(fexit, f"new_{fexit.label}")
 
             if fexit in visited:
                 if not isinstance(components[visited[fexit]][1], cf.SingleState):
                     raise NotImplementedError
                 del components[visited[fexit]]
                 del visited[fexit]
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
 
             # Need init state so that ForScope is still recognized as as such after nesting
             if isinstance(child, cf.ForScope):
@@ -331,6 +365,10 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                         break
                 if init is None:
                     raise ValueError("Cannot find for-scope's init state.")
+                
+                if len(init.nodes()) > 0:
+                    init = sdfg.add_state_after(init, f"new_{init.label}")
+                    del init_edge.data.assignments[child.itervar]
 
                 if init in visited:
                     if not isinstance(components[visited[init]][1], cf.SingleState):
@@ -348,7 +386,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
+            if len(guard.nodes()) > 0:
+                guard = sdfg.add_state_after(guard, f"new_{guard.label}")
 
             if guard in visited:
                 if not isinstance(components[visited[guard]][1], cf.SingleState):
@@ -356,29 +395,48 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
                 else:
                     del components[visited[guard]]
                     del visited[guard]
+            
+            if len(ifexit.nodes()) > 0:
+                ifexit = sdfg.add_state_before(ifexit, f"new_{ifexit.label}")
 
             if ifexit in visited:
                 if not isinstance(components[visited[ifexit]][1], cf.SingleState):
                     raise NotImplementedError
                 del components[visited[ifexit]]
                 del visited[ifexit]
+            
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
 
             components[guard] = (states, child)
             visited.update({s: guard for s in states})
         else:
             raise ValueError(f"Unsupported control flow class {type(child)}")
+    
+    def sgraph_free_symbols(sgraph: graph.SubgraphView) -> Set[str]:
+        free_symbols = set()
+        for state in sgraph:
+            free_symbols |= state.free_symbols
+        for edge in sgraph.edges():
+            free_symbols |= edge.data.free_symbols
+        return set([str(s) for s in free_symbols])
 
     # Second pass to create MultiStates
     result = OrderedDict()
     guard = None
     states = set(sdfg.states())
-    for k, v in components.items():
-        if isinstance(v[1], cf.SingleState):
+    subgraph_fsymbols = []
+    for _, v in components.items():
+        subgraph_fsymbols.append(sgraph_free_symbols(graph.SubgraphView(sdfg, v[0])))
+    for i, (k, v) in enumerate(components.items()):
+        if isinstance(v[1], (cf.SingleState, cf.MultiState)):
             has_assign = False
-            for e in sdfg.in_edges(k):
-                if e.data.assignments:
-                    has_assign = True
-                    break
+            for st in v[0]:
+                for e in sdfg.in_edges(k):
+                    if e.data.assignments:
+                        for j in range(i + 1, len(components)):
+                            if any(k in subgraph_fsymbols[j] for k in e.data.assignments.keys()):
+                                has_assign = True
+                                break
             if has_assign:
                 guard = k
                 break
@@ -1390,3 +1448,86 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
     return True
+
+
+def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
+                                     sink: nodes.AccessNode):
+    """
+    Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
+    Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
+    transient.
+
+    :param sdfg: The SDFG in which the Access node resides.
+    :param state: The State in which the Access node resides.
+    :param map_exit: The exit node of the Map.
+    :param access: The Access node being written inside the Map.
+    :param sink: The Access node to be written outside the Map.
+    """
+
+    # Special case for scalars: if there is no write conflict resolution, then abort, since it is implied that the
+    # scalar is thread-local.
+    if isinstance(access.desc(sdfg), data.Scalar):
+        if any(e.data.wcr is None for e in state.in_edges(access)):
+            return
+
+    # Compute the union of the destination subsets of the edges that write to `access.`
+    in_union = None
+    for e in state.in_edges(access):
+        subset = e.data.get_dst_subset(e, state)
+        if in_union is None:
+            in_union = subset
+        else:
+            in_union = in_union.union(subset)
+
+    # Check if the union covers the output edges of `access.`
+    covers_out = True
+    if in_union is None:
+        covers_out = False
+    else:
+        for e in state.out_edges(access):
+            subset = e.data.get_src_subset(e, state)
+            if not in_union.covers(subset):
+                covers_out = False
+                break
+
+    # If the union covers the output edges of `access`, then we can remove `access` and replace it with a transient.
+    if covers_out:
+        shape = in_union.size()
+        if shape == [1]:
+            name, _ = sdfg.add_scalar(access.data, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        else:
+            name, _ = sdfg.add_array(access.data, shape, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        new_n = state.add_access(name)
+        for e in state.in_edges(access):
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_edge(
+                e.src, e.src_conn, new_n, None,
+                Memlet(data=name, subset=dst_subset.offset_new(dst_subset, negative=True), other_subset=src_subset))
+            state.add_memlet_path(new_n,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(dst_subset),
+                                                other_subset=dst_subset.offset_new(dst_subset, negative=True)))
+        for e in state.out_edges(access):
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_edge(new_n,
+                           None,
+                           e.dst,
+                           e.dst_conn,
+                           memlet=Memlet(data=name,
+                                         subset=src_subset.offset(src_subset, negative=True),
+                                         other_subset=dst_subset))
+        state.remove_node(access)
+    # Otherwise, we only add a memlet path to the sink.
+    else:
+        for e in state.in_edges(access):
+            subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(access,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(subset),
+                                                other_subset=copy.deepcopy(subset)))

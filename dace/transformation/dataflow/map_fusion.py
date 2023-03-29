@@ -399,23 +399,32 @@ class MapFusion(transformation.SingleStateTransformation):
                 graph.remove_edge(edge)
                 continue
 
-            # This is an external input to the second map which will now go
-            # through the first map.
-            conn = first_entry.next_connector()
-            graph.add_edge(edge.src, edge.src_conn, first_entry, 'IN_' + conn, dcpy(edge.data))
-            first_entry.add_in_connector('IN_' + conn)
-            graph.remove_edge(edge)
-            for out_enode in tree.children:
-                out_e = out_enode.edge
-                graph.add_edge(
-                    first_entry,
-                    'OUT_' + conn,
-                    out_e.dst,
-                    out_e.dst_conn,
-                    dcpy(out_e.data),
-                )
-                graph.remove_edge(out_e)
-            first_entry.add_out_connector('OUT_' + conn)
+            # This is an external input to the second map which will now gothrough the first map.
+            if not edge.dst_conn.startswith('IN_'):
+                # Special handling for dynamic inputs
+                if edge.dst_conn in first_entry.in_connectors:
+                    other_edge = next(e for e in graph.in_edges_by_connector(first_entry, edge.dst_conn))
+                    if edge.data.subset != other_edge.data.subset:
+                        raise NotImplementedError('Cannot fuse maps with different dynamic inputs using the same connector name.')
+                else:
+                    first_entry.add_in_connector(edge.dst_conn)
+                    graph.add_edge(edge.src, edge.src_conn, first_entry, edge.dst_conn, dcpy(edge.data))
+            else:
+                conn = first_entry.next_connector()
+                graph.add_edge(edge.src, edge.src_conn, first_entry, 'IN_' + conn, dcpy(edge.data))
+                first_entry.add_in_connector('IN_' + conn)
+                graph.remove_edge(edge)
+                for out_enode in tree.children:
+                    out_e = out_enode.edge
+                    graph.add_edge(
+                        first_entry,
+                        'OUT_' + conn,
+                        out_e.dst,
+                        out_e.dst_conn,
+                        dcpy(out_e.data),
+                    )
+                    graph.remove_edge(out_e)
+                first_entry.add_out_connector('OUT_' + conn)
         
         # NOTE: Check the second MapEntry for output edges with empty memlets
         for edge in graph.out_edges(second_entry):

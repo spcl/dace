@@ -4,7 +4,6 @@ import warnings
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
@@ -544,9 +543,9 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                 desc_res = sdfg.arrays[e.data.data]
 
         if desc_x.dtype != desc_y.dtype:
-            raise TypeError("Data types of input operands must be equal: " f"{desc_x.dtype}, {desc_y.dtype}")
+            raise TypeError(f"Data types of input operands must be equal: {desc_x.dtype}, {desc_y.dtype}")
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
-            raise TypeError("Data types of input and output must be equal: " f"{desc_x.dtype}, {desc_res.dtype}")
+            raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)

@@ -78,7 +78,7 @@ class MapTiling(transformation.SingleStateTransformation):
 
             dim_idx -= removed_maps
             # If tile size is trivial, skip strip-mining map dimension
-            if tile_size == map_entry.map.range.size()[dim_idx]:
+            if not self.tile_trivial and tile_size == map_entry.map.range.size()[dim_idx]:
                 continue
 
             stripmine = StripMining()

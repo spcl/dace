@@ -10,7 +10,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import symstr, overapproximate
+from dace.symbolic import overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
@@ -1186,6 +1186,20 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         in_subset = subsets.union(in_subset, ie.data.dst_subset)
                     else:
                         in_subset = ie.data.dst_subset
+                
+                can_proceed = True
+                for oe in graph.out_edges(node):
+                    if not in_subset.covers(oe.data.src_subset):
+                        try:
+                            intersects = in_subset.intersects(oe.data.src_subset)
+                        except TypeError:
+                            intersects = False
+                        if intersects:
+                            can_proceed = False
+                            break
+                
+                if not can_proceed:
+                    continue
 
                 # Create transient data corresponding to the union of the incoming subsets.
                 desc = sdfg.arrays[node.data]

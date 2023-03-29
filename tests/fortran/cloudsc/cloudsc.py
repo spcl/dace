@@ -8,7 +8,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from importlib import import_module
 import numpy as np
-from numbers import Number
+from numbers import Integral, Number
 from numpy import f2py
 import os
 import pytest
@@ -29,7 +29,7 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
     with tempfile.TemporaryDirectory() as tmp_dir:
         cwd = os.getcwd()
         os.chdir(tmp_dir)
-        f2py.compile(source, modulename=program_name, verbose=True, extension=fortran_extension)
+        f2py.compile(source, modulename=program_name, extra_args=["--opt='-fdefault-real-8'"], verbose=True, extension=fortran_extension)
         sys.path.append(tmp_dir)
         module = import_module(program_name)
         function = getattr(module, subroutine_name)
@@ -121,7 +121,8 @@ data = {
     'ZQTMST': (0,),
     'ZVPICE': (0,),
     'ZVPLIQ': (0,),
-    'IPHASE': (parameters['NCLV'],),
+    'IPHASE': [(parameters['NCLV'],), np.int32],
+    'LLFALL': [(parameters['NCLV'],), np.bool_],
     'PAPH': (parameters['KLON'], parameters['KLEV']+1),
     'PAP': (parameters['KLON'], parameters['KLEV']),
     'PCOVPTOT': (parameters['KLON'], parameters['KLEV']),
@@ -152,6 +153,8 @@ data = {
     'tendency_tmp_a': (parameters['KLON'], parameters['KLEV']),
     'tendency_tmp_cld': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZA': (parameters['KLON'], parameters['KLEV']),
+    'ZACUST': (parameters['KLON'],),
+    'ZANEWM1': (parameters['KLON'],),
     'ZAORIG': (parameters['KLON'], parameters['KLEV']),
     'ZCLDTOPDIST': (parameters['KLON'],),
     'ZCONVSINK': (parameters['KLON'], parameters['NCLV']),
@@ -191,6 +194,7 @@ data = {
     'ZQX0': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZQXFG': (parameters['KLON'], parameters['NCLV']),
     'ZQXN': (parameters['KLON'], parameters['NCLV']),
+    'ZQXNM1': (parameters['KLON'], parameters['NCLV']),
     'ZQXN2D': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
     'ZSOLAC': (parameters['KLON'],),
     'ZSUPSAT': (parameters['KLON'],),
@@ -199,6 +203,8 @@ data = {
     'PQ': (parameters['KLON'], parameters['KLEV']),
     'PA': (parameters['KLON'], parameters['KLEV']),
     'PCLV': (parameters['KLON'], parameters['KLEV'], parameters['NCLV']),
+    'PMFD': (parameters['KLON'], parameters['KLEV']),
+    'PMFU': (parameters['KLON'], parameters['KLEV']),
 }
 
 
@@ -221,6 +227,7 @@ programs = {
     'cloudsc_class3_965': 'evaporate_small_liquid_ice',
     'cloudsc_class3_1985': 'melting_snow_ice',
     'cloudsc_class3_2120': 'rain_evaporation',
+    'cloudsc_3p3_mini': 'cloud_evaporation_within_layer',
 }
 
 
@@ -242,6 +249,7 @@ program_parameters = {
     'cloudsc_class3_965': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQI', 'NCLDQL', 'NCLDTOP'),
     'cloudsc_class3_1985': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQS','NCLDQI', 'NCLDQL', 'NCLDTOP'),
     'cloudsc_class3_2120': ('KLON', 'KLEV', 'NCLV', 'KIDIA', 'KFDIA', 'NCLDQV', 'NCLDQR', 'NCLDTOP'),
+    'cloudsc_3p3_mini': ('KLON', 'KLEV', 'KIDIA', 'KFDIA', 'NCLV'),
 }
 
 
@@ -270,6 +278,7 @@ program_inputs = {
     'cloudsc_class3_2120': ('RPRECRHMAX', 'ZCOVPMAX', 'ZEPSEC', 'ZEPSILON', 'RVRFACTOR', 'RG', 'RPECONS', 'PTSPHY',
                             'ZRG_R', 'RCOVPMIN', 'ZA', 'ZQX', 'ZQSLIQ', 'ZCOVPCLR', 'ZDTGDP', 'PAP', 'PAPH',
                             'ZCORQSLIQ', 'ZDP'),
+    'cloudsc_3p3_mini': ('PMFU', 'PMFD', 'ZDTGDP', 'ZANEWM1', 'LLFALL', 'IPHASE', 'ZQXNM1'),
 }
 
 
@@ -292,6 +301,7 @@ program_outputs = {
     'cloudsc_class3_965': ('ZSOLQA',),
     'cloudsc_class3_1985': ('ZICETOT', 'ZMELTMAX'),
     'cloudsc_class3_2120': ('ZSOLQA', 'ZCOVPTOT', 'ZQXFG'),
+    'cloudsc_3p3_mini': ('ZACUST', 'ZCONVSRCE',),
 }
 
 
@@ -300,26 +310,53 @@ def get_inputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number
     for p in program_parameters[program]:
         inp_data[p] = parameters[p]
     for inp in program_inputs[program]:
-        shape = data[inp]
-        if shape == (0,):  # Scalar
-            inp_data[inp] = rng.random()
+        if inp not in data:
+            print(inp)
+            continue
+        info = data[inp]
+        if isinstance(info, list):
+            shape, dtype = info
         else:
-            inp_data[inp] = np.asfortranarray(rng.random(shape))
+            shape = info
+            dtype = np.float64
+        method = lambda s, d: rng.random(s, d)
+        if issubclass(dtype, Integral) or dtype is np.bool_:
+            if dtype is np.bool_:
+                method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
+            else:
+                method = lambda s, d: rng.integers(0, 10, s, d)
+        if shape == (0,):  # Scalar
+            inp_data[inp] = method(None, dtype)
+        else:
+            inp_data[inp] = np.asfortranarray(method(shape, dtype))
     return inp_data
 
 
 def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Number, np.ndarray]]:
     out_data = dict()
     for out in program_outputs[program]:
-        shape = data[out]
+        info = data[out]
+        if isinstance(info, list):
+            shape, dtype = info
+        else:
+            shape = info
+            dtype = np.float64
+        method = lambda s, d: rng.random(s, d)
+        if issubclass(dtype, Integral) or dtype is np.bool_:
+            if dtype is np.bool_:
+                method = lambda s, d: rng.integers(0, 2, s, d)
+                dtype = np.int32
+            else:
+                method = lambda s, d: rng.integers(0, 10, s, d)
         if shape == (0,):  # Scalar
             raise NotImplementedError
         else:
-            out_data[out] = np.asfortranarray(rng.random(shape))
+            out_data[out] = np.asfortranarray(method(shape, dtype))
     return out_data
 
 
-@pytest.mark.parametrize("program, device", "normalize_offsets", [
+@pytest.mark.parametrize("program, device, normalize_offsets", [
     pytest.param('cloudsc_1f', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_1f', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_1f', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
@@ -348,15 +385,14 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_8', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_8', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
-    # does currently not work, due to errors/problems when simplifying the SDFG
     pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_658', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_658', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_670', dace.DeviceType.CPU, True),
-    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
-    # pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
+    pytest.param('cloudsc_class1_670', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, False),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.CPU, True),
     pytest.param('cloudsc_class1_2783', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
@@ -390,15 +426,17 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     pytest.param('cloudsc_class3_2120', dace.DeviceType.GPU, False, marks=pytest.mark.gpu),
     pytest.param('cloudsc_class3_2120', dace.DeviceType.GPU, True, marks=pytest.mark.gpu),
 ])
-def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool):
+def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool):
 
     fsource = read_source(program)
     program_name = programs[program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
-    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
+    sdfg = get_sdfg(fsource, program_name, normalize_offsets)
     if device == dace.DeviceType.GPU:
         auto_optimize(sdfg, device)
+    sdfg.simplify()
+    utils.make_dynamic_map_inputs_unique(sdfg)
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
@@ -410,11 +448,12 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
 
     for k in outputs_f.keys():
         farr = outputs_f[k]
-        darr = outputs_f[k]
+        darr = outputs_d[k]
         assert np.allclose(farr, darr)
 
 
 if __name__ == "__main__":
+    test_program('cloudsc_3p3_mini', dace.DeviceType.CPU, False)
     test_program('cloudsc_1f', dace.DeviceType.CPU, False)
     test_program('cloudsc_1f', dace.DeviceType.CPU, True)
     test_program('cloudsc_3p1', dace.DeviceType.CPU, False)
@@ -429,7 +468,6 @@ if __name__ == "__main__":
     test_program('cloudsc_8c', dace.DeviceType.CPU, True)
     test_program('cloudsc_8', dace.DeviceType.CPU, False)
     test_program('cloudsc_8', dace.DeviceType.CPU, True)
-    # does currently not work, due to errors/problems when simplifying the SDFG
     test_program('cloudsc_class1_658', dace.DeviceType.CPU, False)
     test_program('cloudsc_class1_658', dace.DeviceType.CPU, True)
     test_program('cloudsc_class1_670', dace.DeviceType.CPU, False)

@@ -461,8 +461,8 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                ranges.append(
-                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]), symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
+                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
+                ranges.append((value, value, 1))
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid

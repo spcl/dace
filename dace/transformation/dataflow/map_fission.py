@@ -3,7 +3,7 @@
 
 from copy import deepcopy as dcpy
 from collections import defaultdict
-from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
+from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt, symbolic
 from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
@@ -124,8 +124,11 @@ class MapFission(transformation.SingleStateTransformation):
             # Get NestedSDFG control flow components
             cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
             if len(cf_comp) == 1:
-                return False
-            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+                cf_item = list(cf_comp.values())[0][1]
+                if not isinstance(cf_item, cf.SingleState):
+                    return False
+            else:
+                helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
 
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
@@ -222,6 +225,33 @@ class MapFission(transformation.SingleStateTransformation):
                     del nsdfg_node.symbol_mapping[str(name)]
                 if str(name) in nsdfg_node.sdfg.symbols:
                     del nsdfg_node.sdfg.symbols[str(name)]
+            
+            # TODO: This was an attempt to fix an issue with MapFission and symbols in the NestedSDFG's symbol mapping
+            # depending on other symbols and the Map's parameters. Disabled for now until the issue is clarified.
+            # # Clean-up symbols depending on the map parameters
+            # to_remove = dict()
+            # to_add = dict()
+            # for symname, symexpr in nsdfg_node.symbol_mapping.items():
+            #     try:
+            #         fsymbols = symbolic.pystr_to_symbolic(symexpr).free_symbols
+            #     except AttributeError:
+            #         fsymbols = set()
+            #     if any(str(s) in outer_map.params for s in fsymbols):
+            #         to_remove[symname] = symexpr
+            #         for s in fsymbols:
+            #             if str(s) not in outer_map.params and str(s) not in nsdfg_node.sdfg.symbols:
+            #                 to_add[str(s)] = sdfg.symbols[(str(s))]
+            # if to_remove:
+            #     for symname in to_remove:
+            #         print(f"Removing symbol {symname} from nested SDFG {nsdfg_node.label}")
+            #         del nsdfg_node.symbol_mapping[symname]
+            #         if symname in nsdfg_node.sdfg.symbols:
+            #             del nsdfg_node.sdfg.symbols[symname]
+            #     nsdfg_node.sdfg.symbols.update(to_add)
+            #     init_state = nsdfg_node.sdfg.start_state
+            #     pre_init_state = nsdfg_node.sdfg.add_state_before(init_state, 'clean_symbols', is_start_state=True)
+            #     edge = nsdfg_node.sdfg.edges_between(pre_init_state, init_state)[0]
+            #     edge.data.assignments.update({str(k): str(v) for k, v in to_remove.items()})
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
@@ -235,11 +265,11 @@ class MapFission(transformation.SingleStateTransformation):
             else:
                 external_edges_entry = [
                     e for e in subgraph.edges()
-                    if (isinstance(e.src, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.src.data].transient)
+                    if (not e.data.is_empty() and isinstance(e.src, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.src.data].transient)
                 ]
                 external_edges_exit = [
                     e for e in subgraph.edges()
-                    if (isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
+                    if (not e.data.is_empty() and isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
                 ]
 
             # Map external edges to outer memlets
@@ -441,6 +471,8 @@ class MapFission(transformation.SingleStateTransformation):
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
+                                if e.data.is_empty():
+                                    continue
                                 e.data.subset = helpers.unsqueeze_memlet(e.data,
                                                                          outer_edge.data,
                                                                          internal_offset=desc.offset,
@@ -466,6 +498,8 @@ class MapFission(transformation.SingleStateTransformation):
                                   for d, r, o in zip(outer_map.params, outer_map.range, offsets)]
                     for edge in state.all_edges(node):
                         for e in state.memlet_tree(edge):
+                            if e.data.is_empty():
+                                continue
                             # Prepend map dimensions to memlet
                             # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
                             # to/from another AccessNode, the other data may not need extra dimensions. For example, see
@@ -489,9 +523,8 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.num_accesses = edge.data.subset.num_elements()
 
                 # Find matching edge inside map
-                inner_edge = next(e for e in graph.out_edges(map_entry)
-                                  if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
-                graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
+                for inner_edge in graph.out_edges_by_connector(map_entry, f"OUT_{edge.dst_conn[3:]}"):
+                    graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
 
             for edge in graph.out_edges(map_exit):
                 # Modify edge coming out of nested SDFG to include entire array
@@ -499,8 +532,8 @@ class MapFission(transformation.SingleStateTransformation):
                 edge.data.subset = subsets.Range.from_array(desc)
 
                 # Find matching edge inside map
-                inner_edge = next(e for e in graph.in_edges(map_exit) if e.dst_conn[3:] == edge.src_conn[4:])
-                graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
+                for inner_edge in graph.in_edges_by_connector(map_exit, f"IN_{edge.src_conn[4:]}"):
+                    graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])

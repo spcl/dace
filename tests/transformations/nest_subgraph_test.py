@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.codegen import control_flow as cf
-from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
+from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow, split_interstate_edges
 from dace.sdfg import utils
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import StateSubgraphView
@@ -68,6 +68,7 @@ def test_symbolic_return():
 
     sdfg = symbolic_return.to_sdfg()
 
+    split_interstate_edges(sdfg)
     cft = cf.structured_control_flow_tree(sdfg, None)
     for_scope = None
     for i, child in enumerate(cft.children):
@@ -197,8 +198,8 @@ def test_nest_cf_simple_if_chain():
 
 
 if __name__ == '__main__':
-    test_nest_oneelementmap()
-    test_internal_outarray()
+    # test_nest_oneelementmap()
+    # test_internal_outarray()
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()
