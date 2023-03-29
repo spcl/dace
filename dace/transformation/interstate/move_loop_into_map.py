@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Moves a loop around a map into the map """
 
+import ast
 import copy
 import dace
 import dace.transformation.helpers as helpers
@@ -400,6 +401,43 @@ class MoveMapIntoLoop(transformation.SingleStateTransformation):
 
         forward_loop = step > 0
 
+        # Pull all transients of the nested SDFG into the outer SDFG
+        map_state = nsdfg.parent
+        map_shape = self.map_entry.map.range.size()
+        thread_locals = sdutil.get_thread_local_data(nsdfg)
+        for name, desc in nsdfg.arrays.items():
+            if name in thread_locals:
+                continue
+            if desc.transient:
+
+                if isinstance(desc, dt.Scalar):
+                    outer_desc = dt.Array(desc.dtype, desc.shape, desc.transient, desc.allow_conflicts, desc.storage,
+                                    desc.location, desc.strides, desc.offset, False, desc.lifetime, 0, desc.debuginfo,
+                                    desc.total_size, desc.start_offset)
+                else:
+                    outer_desc = copy.deepcopy(desc)
+                for sz in reversed(map_shape):
+                    outer_desc.strides = [outer_desc.total_size] + list(outer_desc.strides)
+                    outer_desc.total_size = outer_desc.total_size * sz
+                outer_desc.shape = map_shape + list(desc.shape)
+                # Try to keep consistent offsets.
+                offset = desc.offset[0]
+                if any(o != offset for o in desc.offset):
+                    offset = 0
+                outer_desc.offset = [offset] * len(map_shape) + list(desc.offset)
+
+                new_name = sdfg.add_datadesc(name, outer_desc, find_new_name=True)
+
+                desc.transient = False
+                # NOTE: Need to take into account the offset
+                subset = sbs.Range([(f"{p} - {r[0]}", f"{p} - {r[0]}", 1) for p, r in zip(self.map_entry.map.params, self.map_entry.map.range)] + [(0, s - 1, 1) for s in desc.shape])
+                read = map_state.add_access(new_name)
+                self.nested_sdfg.add_in_connector(name)
+                map_state.add_memlet_path(read, self.map_entry, self.nested_sdfg, dst_conn=name, memlet=Memlet(data=new_name, subset=copy.deepcopy(subset)))
+                write = map_state.add_access(new_name)
+                self.nested_sdfg.add_out_connector(name, force=True)
+                map_state.add_memlet_path(self.nested_sdfg, self.map_exit, write, src_conn=name, memlet=Memlet(data=new_name, subset=copy.deepcopy(subset)))
+
         # nest map's content in sdfg
         map_subgraph = graph.scope_subgraph(self.map_entry, include_entry=True, include_exit=True)
         new_nsdfg = helpers.nest_state_subgraph(sdfg, graph, map_subgraph, full_data=True)
@@ -435,10 +473,13 @@ class MoveMapIntoLoop(transformation.SingleStateTransformation):
             nsdfg.parent_nsdfg_node.symbol_mapping[itervar] = dace.symbol(itervar, dace.int32)
 
         from dace.transformation.interstate import RefineNestedAccess
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        sdfg.apply_transformations_repeated(RefineNestedAccess)
         propagation.propagate_states(new_nsdfg.sdfg)
         propagation.propagate_memlets_state(new_nsdfg.sdfg, nsdfg.parent)
-        nsdfg.apply_transformations_repeated(RefineNestedAccess)
         propagation.propagate_memlets_state(sdfg, graph)
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        sdfg.apply_transformations_repeated(RefineNestedAccess)
 
 
 class MoveMapIntoIf(transformation.SingleStateTransformation):
@@ -505,6 +546,19 @@ class MoveMapIntoIf(transformation.SingleStateTransformation):
                 symbols_to_check.add(k)
         if any(str(s) in symbols_to_check for s in condition.get_free_symbols()):
             return False
+
+        # Check the read memlets of the condition
+        cond_edge = next(e for e in nsdfg.out_edges(if_guard) if e.dst is not if_exit)
+        cond_memlets = cond_edge.data.get_read_memlets(nsdfg.arrays)
+        for m in cond_memlets:
+            in_data = m.data
+            in_desc = nsdfg.arrays[in_data]
+            out_edge = next(e for e in nsdfg.parent.in_edges_by_connector(self.nested_sdfg, in_data))
+            out_data = nsdfg.parent.memlet_path(out_edge)[0].src.data
+            out_desc = sdfg.arrays[out_data]
+            new_m = helpers.unsqueeze_memlet(m, out_edge.data, map=self.map_entry.map)
+            if any(str(s) in symbols_to_check for s in new_m.free_symbols):
+                return False
 
         # Collect read and writes from states
         read_set: Set[str] = set()
@@ -585,8 +639,90 @@ class MoveMapIntoIf(transformation.SingleStateTransformation):
         condition = cf_node.condition
         inv_condition = nsdfg.edges_between(if_guard, if_exit)[0].data.condition
 
+        # Unsqueeze memlets in conditions
+        fsymbols = set()
+        cond_edge = next(e for e in nsdfg.out_edges(if_guard) if e.dst is not if_exit)
+        cond_memlets = cond_edge.data.get_read_memlets(nsdfg.arrays)
+        new_memlets = []
+        for m in cond_memlets:
+            in_data = m.data
+            in_desc = nsdfg.arrays[in_data]
+            out_edge = next(e for e in nsdfg.parent.in_edges_by_connector(self.nested_sdfg, in_data))
+            out_data = nsdfg.parent.memlet_path(out_edge)[0].src.data
+            out_desc = sdfg.arrays[out_data]
+            new_m = helpers.unsqueeze_memlet(m, out_edge.data, map=self.map_entry.map)
+            new_m = propagation.propagate_memlet(nsdfg.parent, new_m, self.map_entry, False)
+            new_memlets.append(new_m)
+            fsymbols.update(new_m.free_symbols)
+        for node in ast.walk(cond_edge.data.condition.code[0]):
+            if isinstance(node, ast.Subscript):
+                        m = new_memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+        
+        inv_cond_edge = nsdfg.edges_between(if_guard, if_exit)[0]
+        inv_cond_memlets = inv_cond_edge.data.get_read_memlets(nsdfg.arrays)
+        new_memlets = []
+        for m in cond_memlets:
+            in_data = m.data
+            in_desc = nsdfg.arrays[in_data]
+            out_edge = next(e for e in nsdfg.parent.in_edges_by_connector(self.nested_sdfg, in_data))
+            out_data = nsdfg.parent.memlet_path(out_edge)[0].src.data
+            out_desc = sdfg.arrays[out_data]
+            new_m = helpers.unsqueeze_memlet(m, out_edge.data, map=self.map_entry.map)
+            new_m = propagation.propagate_memlet(nsdfg.parent, new_m, self.map_entry)
+            new_memlets.append(new_m)
+            fsymbols.update(new_m.free_symbols)
+        for node in ast.walk(inv_cond_edge.data.condition.code[0]):
+            if isinstance(node, ast.Subscript):
+                        m = new_memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+        
+        condition = cond_edge.data.condition
+        inv_condition = inv_cond_edge.data.condition
+
         # remove IfScope.
         nsdfg.remove_nodes_from([if_guard, if_exit])
+
+        # Pull all transients of the nested SDFG into the outer SDFG
+        map_state = nsdfg.parent
+        map_shape = self.map_entry.map.range.size()
+        thread_locals = sdutil.get_thread_local_data(nsdfg)
+        for name, desc in nsdfg.arrays.items():
+            if name in thread_locals:
+                continue
+            if desc.transient:
+
+                if isinstance(desc, dt.Scalar):
+                    outer_desc = dt.Array(desc.dtype, desc.shape, desc.transient, desc.allow_conflicts, desc.storage,
+                                    desc.location, desc.strides, desc.offset, False, desc.lifetime, 0, desc.debuginfo,
+                                    desc.total_size, desc.start_offset)
+                else:
+                    outer_desc = copy.deepcopy(desc)
+                for sz in reversed(map_shape):
+                    outer_desc.strides = [outer_desc.total_size] + list(outer_desc.strides)
+                    outer_desc.total_size = outer_desc.total_size * sz
+                outer_desc.shape = map_shape + list(desc.shape)
+                # Try to keep consistent offsets.
+                offset = desc.offset[0]
+                if any(o != offset for o in desc.offset):
+                    offset = 0
+                outer_desc.offset = [offset] * len(map_shape) + list(desc.offset)
+
+                new_name = sdfg.add_datadesc(name, outer_desc, find_new_name=True)
+
+                desc.transient = False
+                # NOTE: Need to take into account the offset
+                subset = sbs.Range([(f"{p} - {r[0]}", f"{p} - {r[0]}", 1) for p, r in zip(self.map_entry.map.params, self.map_entry.map.range)] + [(0, s - 1, 1) for s in desc.shape])
+                read = map_state.add_access(new_name)
+                self.nested_sdfg.add_in_connector(name)
+                map_state.add_memlet_path(read, self.map_entry, self.nested_sdfg, dst_conn=name, memlet=Memlet(data=new_name, subset=copy.deepcopy(subset)))
+                write = map_state.add_access(new_name)
+                self.nested_sdfg.add_out_connector(name, force=True)
+                map_state.add_memlet_path(self.nested_sdfg, self.map_exit, write, src_conn=name, memlet=Memlet(data=new_name, subset=copy.deepcopy(subset)))
 
         # nest map's content in sdfg
         map_subgraph = graph.scope_subgraph(self.map_entry, include_entry=True, include_exit=True)
@@ -597,12 +733,16 @@ class MoveMapIntoIf(transformation.SingleStateTransformation):
         body = new_nsdfg.sdfg.nodes()[0]
         if_guard = new_nsdfg.sdfg.add_state('if_guard')
         if_exit = new_nsdfg.sdfg.add_state('if_exit')
+        new_nsdfg.symbol_mapping.update({s: s for s in fsymbols if s not in new_nsdfg.sdfg.symbols})
         new_nsdfg.sdfg.add_edge(if_guard, body, dace.InterstateEdge(condition=condition))
         new_nsdfg.sdfg.add_edge(if_guard, if_exit, dace.InterstateEdge(condition=inv_condition))
         new_nsdfg.sdfg.add_edge(body, if_exit, dace.InterstateEdge())
 
         from dace.transformation.interstate import RefineNestedAccess
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        sdfg.apply_transformations_repeated(RefineNestedAccess)
         propagation.propagate_states(new_nsdfg.sdfg)
         propagation.propagate_memlets_state(new_nsdfg.sdfg, nsdfg.parent)
-        nsdfg.apply_transformations_repeated(RefineNestedAccess)
         propagation.propagate_memlets_state(sdfg, graph)
+        nsdfg.apply_transformations_repeated(RefineNestedAccess)
+        sdfg.apply_transformations_repeated(RefineNestedAccess)
