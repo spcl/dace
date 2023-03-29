@@ -86,17 +86,11 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
         return True
 
     def apply(self, _, sdfg: sd.SDFG):
-        # create a new state before the guard state
-        new_assign_state = SDFGState(label="foo", sdfg=sdfg)
-        state_before = sdfg.in_edges(self.if_guard)
-        # can_be_applied checks that the lenght is either 0 or 1
-        if len(state_before) == 1:
-            sdfg.remove_edge(state_before[0])
-            sdfg.add_edge(state_before[0].src, new_assign_state, state_before[0].data)
-            sdfg.add_edge(new_assign_state, self.if_guard, state_before[0].data)
-        else:
-            sdfg.add_edge(new_assign_state, self.if_guard, sd.InterstateEdge())
+        # create a new state before the guard state where the zero assignment happens
+        # TODO: Find a better name for the new state
+        new_assign_state = sdfg.add_state_before(self.if_guard, label="const_assignment_state")
 
+        # Move all the Tasklets together with the AccessNode
         for value in self.write_only_values:
             state = self.assign_context[value]["state"]
             tasklet = self.assign_context[value]["tasklet"]
