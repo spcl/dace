@@ -19,7 +19,6 @@ from measurement_data import ProgramMeasurement, MeasurementRun
 
 def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
     for data in ncu_data:
-        print(data.kernel_name)
         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
         id_triplet = tuple([int(id) for id in match.group(1).split('_')])
         time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
