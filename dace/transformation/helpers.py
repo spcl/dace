@@ -818,7 +818,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
+                     external_offset: Tuple[int] = None,
+                     map: nodes.Map = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
@@ -828,6 +829,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
+        :param map: The map node that contains the internal memlet. If provided, it is used to solve ambiguous cases.
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
@@ -856,7 +858,15 @@ def unsqueeze_memlet(internal_memlet: Memlet,
             external_subset = external_memlet.subset.offset_new(external_offset, False)
             to_unsqueeze = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
         if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
-            raise NotImplementedError
+            if map is not None:
+                # Try to solve ambiguous cases by using the map
+                to_unsqueeze = [i for i in to_unsqueeze if not any(str(s) in map.params for s in external_memlet.subset[i][0].free_symbols)]
+            else:
+                if not to_unsqueeze:
+                    # If there are no ones, try to unsqueeze the last dimensions
+                    to_unsqueeze = list(range(len(internal_subset), len(external_memlet.subset)))
+                else:
+                    raise NotImplementedError
 
         result.subset.unsqueeze(to_unsqueeze)
         internal_offset = list(internal_offset)
