@@ -466,6 +466,14 @@ class MapFission(transformation.SingleStateTransformation):
                             desc.strides = outer_desc.strides
                             desc.total_size = outer_desc.total_size
 
+                        # Get Map
+                        if isinstance(outer_edge.src, nodes.MapEntry):
+                            scope_map = outer_edge.src.map
+                        elif isinstance(outer_edge.dst, nodes.MapExit):
+                            scope_map = outer_edge.dst.map
+                        else:
+                            scope_map = None
+
                         # Inside the nested SDFG, offset all memlets to include
                         # the offsets from within the map.
                         # NOTE: Relies on propagation to fix outer memlets
@@ -476,7 +484,8 @@ class MapFission(transformation.SingleStateTransformation):
                                 e.data.subset = helpers.unsqueeze_memlet(e.data,
                                                                          outer_edge.data,
                                                                          internal_offset=desc.offset,
-                                                                         external_offset=outer_desc.offset).subset
+                                                                         external_offset=outer_desc.offset,
+                                                                         map=scope_map).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
