@@ -221,7 +221,7 @@ class MeasurementRun:
             hash_output = run(['git', 'rev-parse', '--short', 'HEAD'],
                               cwd=path.split(path.dirname(__file__))[0],
                               capture_output=True)
-            self.git_hash = hash_output.stdout.decode('UTF-8')
+            self.git_hash = hash_output.stdout.decode('UTF-8').replace('\n', '')
         self.date = date
         self.node = node
         if self.node == '':

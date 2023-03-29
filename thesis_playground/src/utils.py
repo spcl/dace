@@ -168,7 +168,8 @@ def print_results_v2(run_data: MeasurementRun):
                 flat_data.append([program_measurement.program, name,
                                   measurement.average(), measurement.median(), measurement.min(), measurement.max()])
 
-    print(f"Node: {run_data.node}")
+    print(run_data.description)
+    print(f"Node: {run_data.node} git commit: {run_data.git_hash} date: {run_data.date.strftime('%Y-%m-%d %H:%M')}")
     print(tabulate(flat_data, headers=headers))
 
 
