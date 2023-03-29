@@ -72,24 +72,28 @@ def create_qq_plot(runs_data: List[MeasurementRun], filename: str = "qqplot.png"
     create_plot_grid(runs_data, filename, "QQ Plots of total runtime", subfigure_plot_function)
 
 
-def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram.png"):
+def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram.png", data_key="Total time"):
     """
     Creates a histogram plot of the total runtime
 
-    :param runs_data: [TODO:description]
+    :param runs_data: The data to use
     :type runs_data: List[MeasurementRun]
     :param filename: The name of the file where the plot is saved, defaults to histogram.png
     :type filename: str
+    :param data_key: The key in the measurements to plot, defaults to "Total time"
+    :type data_key: str
     """
 
     def subfigure_plot_function(ax, result):
-        measurement = result.measurements['Total time'][0]
+        measurement = result.measurements[data_key][0]
         ax.set_title(f"{result.program} (#={measurement.amount()})")
-        bins = np.linspace(measurement.min(), measurement.max(), num=20)
-        ax.hist(measurement.data, bins=bins)
+        bins = np.linspace(measurement.min(), measurement.max(), num=15)
+        if measurement.min() == measurement.max():
+            bins = np.linspace(measurement.min()*0.9, measurement.max()*1.1, num=15)
+        ax.hist(measurement.data, bins=bins, rwidth=1)
         ax.set_xlabel(f'Time [{measurement.unit}]')
 
-    create_plot_grid(runs_data, filename, "Total runtime histogram", subfigure_plot_function)
+    create_plot_grid(runs_data, filename, "{data_key} histogram", subfigure_plot_function)
 
 
 def main():
@@ -99,6 +103,7 @@ def main():
             type=str,
             nargs='+',
             help="Path to the json files to read")
+    parser.add_argument('--data-key', type=str, default="Total time", help="Key in the measurements to plot")
 
     args = parser.parse_args()
 
@@ -110,8 +115,8 @@ def main():
         with open(os.path.join(get_results_dir(), file_path)) as file:
             run_data.append(json.load(file, object_hook=MeasurementRun.from_json))
 
-    create_qq_plot(run_data)
-    create_histogram(run_data)
+    # create_qq_plot(run_data)
+    create_histogram(run_data, data_key=args.data_key)
 
 
 if __name__ == '__main__':
