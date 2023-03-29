@@ -737,6 +737,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                 elif ise.condition.language is dtypes.Language.CPP:
                     for scalar in to_promote:
                         ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
+                ise._cond_sympy = None
 
             # Assignments
             for aname, assignment in ise.assignments.items():
