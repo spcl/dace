@@ -93,7 +93,7 @@ def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram
         ax.hist(measurement.data, bins=bins, rwidth=1)
         ax.set_xlabel(f'Time [{measurement.unit}]')
 
-    create_plot_grid(runs_data, filename, "{data_key} histogram", subfigure_plot_function)
+    create_plot_grid(runs_data, filename, f"{data_key} histogram", subfigure_plot_function)
 
 
 def main():

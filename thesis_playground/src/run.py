@@ -74,6 +74,8 @@ def main():
                         help='Do not run measurement of total runtime')
     parser.add_argument('--ncu-repetitions', type=int, default=5,
                         help='Number of times ncu is run to measure kernel runtime')
+    parser.add_argument('--skip-test', default=False, action='store_true',
+                        help='Dont compare output to fortran output before profiling')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -94,8 +96,9 @@ def main():
             if not use_cache(program):
                 return 1
 
-        if not test_program(program, dace.DeviceType.GPU, normalize_memlets):
-            continue
+        if not args.skip_test:
+            if not test_program(program, dace.DeviceType.GPU, normalize_memlets):
+                continue
         if not args.no_total:
             program_data = profile_program(program, repetitions=args.repetitions, normalize_memlets=normalize_memlets)
         else:
