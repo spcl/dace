@@ -126,7 +126,7 @@ class ProgramMeasurement:
 
     def get_measurement(self, name: str, kernel: str = None) -> Optional[Measurement]:
         """
-        Returns the measurement given the name and optional the kernel name
+        Returns the measurement given the name and optionally the kernel name
 
         :param name: The name of the measurement
         :type name: str
