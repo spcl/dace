@@ -491,13 +491,21 @@ def _transformation_determine_affected_nodes(
                 pass
 
         # Transformations that modify a loop in any way must also include the loop init node, i.e. the state directly
-        # before the loop guard.
+        # before the loop guard. Also make sure that ALL loop body states are part of the set of affected nodes.
         # TODO: This is hacky and should be replaced with a more general mechanism - this is something that
         #       transformation intents / transactions will need to solve.
         if isinstance(transformation, DetectLoop):
             if transformation.loop_guard is not None and transformation.loop_guard in target_sdfg.nodes():
                 for iedge in target_sdfg.in_edges(transformation.loop_guard):
                     affected_nodes.add(iedge.src)
+            if transformation.loop_begin is not None and transformation.loop_begin in target_sdfg.nodes():
+                to_visit = [transformation.loop_begin]
+                while to_visit:
+                    state = to_visit.pop(0)
+                    for _, dst, _ in target_sdfg.out_edges(state):
+                        if dst not in affected_nodes and dst is not transformation.loop_guard:
+                            to_visit.append(dst)
+                    affected_nodes.add(state)
 
         if len(affected_nodes) == 0 and transformation.state_id < 0 and target_sdfg.parent_nsdfg_node is not None:
             # This is a transformation that affects a nested SDFG node, grab that NSDFG node.
