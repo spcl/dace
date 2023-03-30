@@ -1,5 +1,6 @@
 import numpy as np
 import copy
+import cupy as cp
 
 import dace
 
@@ -8,7 +9,7 @@ from my_auto_opt import auto_optimize
 
 from data import get_program_parameters_data
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
-                  compare_output, compare_output_all
+                  compare_output, compare_output_all, copy_to_device
 from measurement_data import ProgramMeasurement
 
 RNG_SEED = 42
@@ -83,6 +84,11 @@ def compile_for_profile(program: str, device: dace.DeviceType, normalize_memlets
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
     auto_optimize(sdfg, device)
+
+    for k, v in sdfg.arrays.items():
+        if not v.transient and type(v) == dace.data.Array:
+            v.storage = dace.dtypes.StorageType.GPU_Global
+
     sdfg.instrument = dace.InstrumentationType.Timer
     sdfg.compile()
     return sdfg
@@ -105,11 +111,10 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
 
     sdfg.clear_instrumentation_reports()
     print_with_time("Measure total runtime")
+    inputs = copy_to_device(inputs)
+    outputs = copy_to_device(outputs)
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
-
-    # for key in outputs:
-    #     print(f"{key} {np.count_nonzero(outputs[key])}/{np.prod(outputs[key].shape)}")
 
     reports = sdfg.get_instrumentation_reports()
 

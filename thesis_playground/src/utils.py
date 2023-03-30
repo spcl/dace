@@ -11,6 +11,7 @@ from tabulate import tabulate
 from glob import glob
 from datetime import datetime
 from subprocess import run
+import cupy as cp
 
 import dace
 from dace.config import Config
@@ -104,6 +105,24 @@ def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = F
         else:
             inp_data[inp] = np.asfortranarray(rng.random(shape))
     return inp_data
+
+
+def copy_to_device(host_data: Dict[str, Union[Number, np.ndarray]]) -> Dict[str, cp.ndarray]:
+    """
+    Take a dictionary with data and converts all numpy arrays to cupy arrays
+
+    :param host_data: The numpy (host) data
+    :type host_data: Dict[str, Union[Number, np.ndarray]]
+    :return: The converted cupy (device) data
+    :rtype: Dict[str, cp.ndarray]
+    """
+    device_data = {}
+    for name, array in host_data.items():
+        if isinstance(array, np.ndarray):
+            device_data[name] = cp.asarray(array)
+        else:
+            device_data[name] = array
+    return device_data
 
 
 # Copied from tests/fortran/cloudsc.py
