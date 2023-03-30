@@ -297,6 +297,14 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Collect all border arrays and code->code edges
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
+
+            # Collect intermediate nodes in dataflow Map bodies
+            intermediate_nodes = []
+            if self.expr_index == 0:
+                for node in subgraph.nodes():
+                    if isinstance(node, nodes.AccessNode) and node.data in arrays:
+                        intermediate_nodes.append(node)
+
             scalars = defaultdict(list)
             for _, component_out in components:
                 for e in subgraph.out_edges(component_out):
@@ -543,6 +551,26 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find matching edge inside map
                 for inner_edge in graph.in_edges_by_connector(map_exit, f"IN_{edge.src_conn[4:]}"):
                     graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
+        else:
+            # In dataflow bodies, reconnect intermediate nodes to subgraphs outside of the (original) Map
+            for node in intermediate_nodes:
+                full_memlet = mm.Memlet.from_array(node.data, sdfg.arrays[node.data])
+                for edge in graph.edges_between(map_entry, node):
+                    path = graph.memlet_path(edge)
+                    if len(path) > 1:
+                        outer_edge = path[-2]
+                        src_subset = outer_edge.data.get_src_subset(outer_edge, graph)
+                        dst_subset = full_memlet.subset.compose(src_subset)
+                        mem = mm.Memlet(data=outer_edge.data.data, subset=src_subset, other_subset=dst_subset)
+                        graph.add_edge(outer_edge.src, outer_edge.src_conn, node, edge.dst_conn, mem)
+                for edge in graph.edges_between(node, map_exit):
+                    path = graph.memlet_path(edge)
+                    if len(path) > 1:
+                        outer_edge = path[1]
+                        dst_subset = outer_edge.data.get_dst_subset(outer_edge, graph)
+                        src_subset = full_memlet.subset.compose(dst_subset)
+                        mem = mm.Memlet(data=outer_edge.data.data, subset=dst_subset, other_subset=src_subset)
+                        graph.add_edge(node, edge.src_conn, outer_edge.dst, outer_edge.dst_conn, mem)
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
