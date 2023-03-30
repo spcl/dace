@@ -1,5 +1,5 @@
 """ Collection of classes representing measurement data"""
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from numbers import Number
 import numpy as np
 from subprocess import run
@@ -193,13 +193,15 @@ class MeasurementRun:
     git_hash: str
     date: datetime
     node: str
+    properties: Dict[str, str]
 
     def __init__(self,
                  description: str,
                  data: List[ProgramMeasurement] = None,
                  git_hash: str = '',
                  date: datetime = datetime.now(),
-                 node: str = ''):
+                 node: str = '',
+                 properties: Dict[str, Any] = None):
         """
         Constructs the class
 
@@ -212,7 +214,9 @@ class MeasurementRun:
         :param date: The time the measurements were run, defaults to datetime.now()
         :type date: datetime, optional
         :param node: The name of the node the measurements were take on, if not set, will get it automatically
-        :type str:
+        :type node: str
+        :param properties: Dictionary of any additional properties
+        :type properties: Dict[str, Any]
         """
         self.description = description
         self.data = data if data is not None else []
@@ -227,6 +231,7 @@ class MeasurementRun:
         if self.node == '':
             node_output = run(['uname', '-a'], capture_output=True)
             self.node = node_output.stdout.decode('UTF-8').split(' ')[1].split('.')[0]
+        self.properties = properties if properties is not None else {}
 
     def add_program_data(self, data: ProgramMeasurement):
         self.data.append(data)
@@ -242,14 +247,20 @@ class MeasurementRun:
                 'git_hash': run.git_hash,
                 'data': data_list,
                 'date': run.date.isoformat(),
-                'node': run.node
+                'node': run.node,
+                'properties': run.properties
                 }
 
     @staticmethod
     def from_json(dict: Dict) -> 'MeasurementRun':
         if '__MeasurementRun__' in dict:
-            return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
-                                  date=datetime.fromisoformat(dict['date']), node=dict['node'])
+            if 'properties' in dict:
+                return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
+                                      date=datetime.fromisoformat(dict['date']), node=dict['node'],
+                                      properties=dict['properties'])
+            else:
+                return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
+                                      date=datetime.fromisoformat(dict['date']), node=dict['node'])
         if '__ProgramMeasurement__' in dict:
             return ProgramMeasurement(dict['program'], dict['parameters'],
                                       measurements=dict['measurements'])

@@ -19,6 +19,7 @@ from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
+from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 from data import get_program_parameters_data, get_testing_parameters_data, get_iteration_ranges
 
 from measurement_data import MeasurementRun
@@ -188,6 +189,7 @@ def print_results_v2(run_data: MeasurementRun):
                                   measurement.average(), measurement.median(), measurement.min(), measurement.max()])
 
     print(run_data.description)
+    print(run_data.properties)
     print(f"Node: {run_data.node} git commit: {run_data.git_hash} date: {run_data.date.strftime('%Y-%m-%d %H:%M')}")
     print(tabulate(flat_data, headers=headers))
 
@@ -325,3 +327,25 @@ def enable_debug_flags():
     Config.set('compiler', 'cuda', 'syncdebug', value=True)
     nvcc_args = Config.get('compiler', 'cuda', 'args')
     Config.set('compiler', 'cuda', 'args', value=nvcc_args + ' -g -G')
+
+
+def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True):
+    """
+    Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
+    flag
+
+    :param sdfg: The SDFG to optimize
+    :type sdfg: SDFG
+    :param device: The device to optimize it on
+    :type device: dace.DeviceType
+    :param use_my_auto_opt: Flag to control if my custon auto_opt should be used, defaults to True
+    :type use_my_auto_opt: bool, optional
+    """
+    # avoid cyclic dependency
+    from my_auto_opt import auto_optimize as my_auto_optimize
+    if device == dace.DeviceType.GPU:
+        if use_my_auto_opt:
+            my_auto_optimize(sdfg, device)
+        else:
+            dace_auto_optimize(sdfg, device)
+    return sdfg

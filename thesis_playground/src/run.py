@@ -13,9 +13,6 @@ from execute_utils import test_program, profile_program
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
 
-# --- TOOD Next ---
-# - plot etc.
-
 
 def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
     for data in ncu_data:
@@ -57,8 +54,7 @@ def main():
                         default=None,
                         dest='kernel_class',
                         help="Run all programs of a given class")
-    parser.add_argument('--cache',
-                        default=False,
+    parser.add_argument('--cache', default=False,
                         action='store_true',
                         help='Use the cache, does not regenerate and rebuild the code')
     parser.add_argument('-r', '--repetitions', type=int, default=5, help='Number of repetitions')
@@ -76,6 +72,8 @@ def main():
                         help='Number of times ncu is run to measure kernel runtime')
     parser.add_argument('--skip-test', default=False, action='store_true',
                         help='Dont compare output to fortran output before profiling')
+    parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
+                        help='Use DaCes auto_opt instead of mine')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -90,6 +88,9 @@ def main():
         return 1
 
     run_data = MeasurementRun(args.description)
+
+    run_data.properties['auto_opt'] = 'DaCe' if args.use_dace_auto_opt else 'My'
+
     for program in selected_programs:
         print(f"Run program {program}")
         if args.cache:
@@ -97,10 +98,11 @@ def main():
                 return 1
 
         if not args.skip_test:
-            if not test_program(program, dace.DeviceType.GPU, normalize_memlets):
+            if not test_program(program, not args.use_dace_auto_opt, dace.DeviceType.GPU, normalize_memlets):
                 continue
         if not args.no_total:
-            program_data = profile_program(program, repetitions=args.repetitions, normalize_memlets=normalize_memlets)
+            program_data = profile_program(program, not args.use_dace_auto_opt, repetitions=args.repetitions,
+                                           normalize_memlets=normalize_memlets)
         else:
             program_data = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
         command_ncu = [
@@ -112,6 +114,8 @@ def main():
         command_program = ['python3', test_program_path, program, '--repetitions', '1']
         if normalize_memlets:
             command_program.append('--normalize-memlets')
+        if args.use_dace_auto_opt:
+            command_program.append('--use-dace-auto-opt')
 
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
@@ -124,7 +128,7 @@ def main():
                 else:
                     csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
                     if csv_stdout.returncode != 0:
-                        print(f"Failed to read the ncu report")
+                        print("Failed to read the ncu report")
                         print(csv_stdout.stdout.decode('UTF-8'))
                         print(csv_stdout.stderr.decode('UTF-8'))
                     else:

@@ -1,28 +1,26 @@
 import numpy as np
 import copy
-import cupy as cp
 
 import dace
 
-# from dace.transformation.auto.auto_optimize import auto_optimize
-from my_auto_opt import auto_optimize
-
 from data import get_program_parameters_data
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
-                  compare_output, compare_output_all, copy_to_device
+                  compare_output, compare_output_all, copy_to_device, optimize_sdfg
 from measurement_data import ProgramMeasurement
 
 RNG_SEED = 42
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool) -> bool:
+def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
 
     :param program: The program name
     :type program: str
+    :param use_my_auto_opt: Flag to control if my custon auto_opt should be used
+    :type use_my_auto_opt: bool
     :param device: The deive
     :type device: dace.DeviceType
     :param normalize_memlets: If memlets should be normalized
@@ -37,8 +35,7 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    if device == dace.DeviceType.GPU:
-        auto_optimize(sdfg, device)
+    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
 
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, testing_dataset=True)
@@ -62,13 +59,13 @@ def test_program(program: str, device: dace.DeviceType, normalize_memlets: bool)
     return passes_test
 
 
-def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
+def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
     programs = get_programs_data()['programs']
     print(f"Run {program} ({programs[program]}) for {repetitions} time on device {device}")
     fsource = read_source(program)
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    auto_optimize(sdfg, device)
+    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
 
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)
@@ -78,12 +75,12 @@ def run_program(program: str, repetitions: int = 1, device=dace.DeviceType.GPU, 
         sdfg(**inputs, **outputs)
 
 
-def compile_for_profile(program: str, device: dace.DeviceType, normalize_memlets: bool) -> dace.SDFG:
+def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool) -> dace.SDFG:
     programs = get_programs_data()['programs']
     fsource = read_source(program)
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    auto_optimize(sdfg, device)
+    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
 
     for k, v in sdfg.arrays.items():
         if not v.transient and type(v) == dace.data.Array:
@@ -94,8 +91,8 @@ def compile_for_profile(program: str, device: dace.DeviceType, normalize_memlets
     return sdfg
 
 
-def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=False, repetitions=10) \
-        -> ProgramMeasurement:
+def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, normalize_memlets=False,
+                    repetitions=10) -> ProgramMeasurement:
 
     results = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
 
@@ -103,7 +100,7 @@ def profile_program(program: str, device=dace.DeviceType.GPU, normalize_memlets=
     print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
     routine_name = f"{programs[program]}_routine"
 
-    sdfg = compile_for_profile(program, device, normalize_memlets)
+    sdfg = compile_for_profile(program, use_my_auto_opt, device, normalize_memlets)
 
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)

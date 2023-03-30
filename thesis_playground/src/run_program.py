@@ -1,9 +1,6 @@
 from argparse import ArgumentParser
-import os
-from subprocess import run
 
 import dace
-from dace.config import Config
 
 from utils import use_cache, enable_debug_flags
 from execute_utils import run_program, test_program
@@ -17,6 +14,8 @@ def main():
     parser.add_argument('-r', '--repetitions', type=int, default=1, help="Number of repetitions to run")
     parser.add_argument('--only-test', action='store_true', default=False, help="Only test the program")
     parser.add_argument('--debug', action='store_true', default=False, help="Configure for debug build")
+    parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
+                        help='Use DaCes auto_opt instead of mine')
 
     args = parser.parse_args()
 
@@ -28,9 +27,10 @@ def main():
             return 1
 
     if args.only_test:
-        test_program(args.program, device=dace.DeviceType.GPU, normalize_memlets=args.normalize_memlets)
+        test_program(args.program, not args.use_dace_auto_opt, device=dace.DeviceType.GPU,
+                     normalize_memlets=args.normalize_memlets)
     else:
-        run_program(args.program, repetitions=args.repetitions, device=dace.DeviceType.GPU,
+        run_program(args.program, not args.use_dace_auto_opt, repetitions=args.repetitions, device=dace.DeviceType.GPU,
                     normalize_memlets=args.normalize_memlets)
 
 
