@@ -627,6 +627,41 @@ class MapFissionTest(unittest.TestCase):
         outer_sdfg(A=A, B=val, fidx=1, lidx=5)
 
         assert np.array_equal(val, ref)
+    
+    def test_intermediate_write_out(self):
+
+        sdfg = dace.SDFG('intermediate_write_out')
+        sdfg.add_array('A', (10, ), dtype=dace.int32)
+        sdfg.add_array('B', (10, ), dtype=dace.int32)
+        sdfg.add_array('C', (10, ), dtype=dace.int32)
+        sdfg.add_scalar('tmp', dtype=dace.int32, transient=True)
+
+        state = sdfg.add_state('state')
+        
+        a = state.add_access('A')
+        b = state.add_access('B')
+        c = state.add_access('C')
+        tmp = state.add_access('tmp')
+        t1 = state.add_tasklet('t1', {'a'}, {'b'}, 'b = a + 1')
+        t2 = state.add_tasklet('t2', {'b'}, {'c'}, 'c = b + 1')
+        me, mx = state.add_map('map', {'i': '0:10'})
+
+        state.add_memlet_path(a, me, t1, dst_conn='a', memlet=dace.Memlet('A[i]'))
+        state.add_edge(t1, 'b', tmp, None, dace.Memlet('tmp'))
+        state.add_edge(tmp, None, t2, 'b', dace.Memlet('tmp'))
+        state.add_memlet_path(tmp, mx, b, memlet=dace.Memlet('B[i]'))
+        state.add_memlet_path(t2, mx, c, src_conn='c', memlet=dace.Memlet('C[i]'))
+
+        num = sdfg.apply_transformations(MapFission)
+        assert num == 1
+
+        A = np.arange(10, dtype=np.int32)
+        B = np.zeros_like(A)
+        C = np.zeros_like(A)
+
+        sdfg(A=A, B=B, C=C)
+        assert np.array_equal(B, A + 1)
+        assert np.array_equal(C, A + 2)
 
 
 if __name__ == '__main__':
