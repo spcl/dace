@@ -81,8 +81,10 @@ class SDFGCutout(SDFG):
                     # Ignore.
                     pass
         elif isinstance(transformation, MultiStateTransformation):
-            transformation._sdfg = self
-            transformation.sdfg_id = 0
+            new_sdfg_id = self._in_translation[transformation.sdfg_id]
+            new_sdfg = self.sdfg_list[new_sdfg_id]
+            transformation._sdfg = new_sdfg
+            transformation.sdfg_id = new_sdfg_id
             for k in transformation.subgraph.keys():
                 old_state = self._base_sdfg.node(transformation.subgraph[k])
                 try:
@@ -303,6 +305,14 @@ class SDFGCutout(SDFG):
 
         cutout._in_translation = in_translation
         cutout._out_translation = out_translation
+
+        # Translate in nested SDFG nodes and their SDFGs (their list id, specifically).
+        cutout.reset_sdfg_list()
+        outers = set(in_translation.keys())
+        for outer in outers:
+            if isinstance(outer, nd.NestedSDFG):
+                inner: nd.NestedSDFG = in_translation[outer]
+                cutout._in_translation[outer.sdfg.sdfg_id] = inner.sdfg.sdfg_id
 
         return cutout
 
