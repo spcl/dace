@@ -1080,10 +1080,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 # Refine descriptor
                 desc = nsdfg.arrays[aname]
                 if isinstance(desc, data.Array):
-                    desc.shape = refine.subset.size()
+                    subset_shape = refine.subset.size()
+                    desc.shape = [s if i in indices else d for i, (s, d) in enumerate(zip(subset_shape, desc.shape))]
                     # desc.total_size = sum(((shp - 1) * s for shp, s in zip(desc.shape, desc.strides))) + 1
                     desc.total_size = data._prod(desc.shape)
-                # NOTE: We leave strides as-is. What about total_size? Is he above correct?
+                # NOTE: We leave strides as-is. What about total_size? Is the above correct?
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges
