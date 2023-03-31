@@ -6,9 +6,12 @@ from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.sdfg.scope import is_devicelevel_fpga
 from dace.sdfg.state import SDFGState
 from dace.codegen import common
+from dace.codegen import cppunparse
 from dace.codegen.targets import cpp
+from dace.properties import CodeBlock
 import os
-from typing import Tuple, TYPE_CHECKING
+import warnings
+from typing import Tuple, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
@@ -98,6 +101,33 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         if sdfg.parent is None:
             sdfg.append_exit_code('delete __state->serializer;\n')
 
+    def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream, global_stream: CodeIOStream):
+        if state.symbol_instrument == dtypes.DataInstrumentationType.No_Instrumentation:
+            return
+
+        condition_preamble, condition_postamble = '', ''
+        condition: Optional[CodeBlock] = state.symbol_instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
+            condition_postamble = '}'
+
+        state_id = sdfg.node_id(state)
+        local_stream.write(condition_preamble, sdfg, state_id)
+        defined_symbols = state.defined_symbols()
+        for sym, _ in defined_symbols.items():
+            local_stream.write(
+                f'__state->serializer->save_symbol("{sym}", "{state_id}", {cpp.sym2cpp(sym)});\n', sdfg, state_id
+            )
+        local_stream.write(condition_postamble, sdfg, state_id)
+
     def on_node_end(self, sdfg: SDFG, state: SDFGState, node: nodes.AccessNode, outer_stream: CodeIOStream,
                     inner_stream: CodeIOStream, global_stream: CodeIOStream):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
@@ -105,6 +135,20 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         if is_devicelevel_gpu(sdfg, state, node) or is_devicelevel_fpga(sdfg, state, node):
             # Only run on host code
             return
+
+        condition_preamble, condition_postamble = '', ''
+        condition: Optional[CodeBlock] = node.instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
+            condition_postamble = '}'
 
         desc = node.desc(sdfg)
 
@@ -130,11 +174,13 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         strides = ', '.join(cpp.sym2cpp(s) for s in desc.strides)
 
         # Write code
+        inner_stream.write(condition_preamble, sdfg, state_id, node_id)
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
             f'"{node.data}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
+        inner_stream.write(condition_postamble, sdfg, state_id, node_id)
 
 
 @registry.autoregister_params(type=dtypes.DataInstrumentationType.Restore)
@@ -170,6 +216,34 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         if sdfg.parent is None:
             sdfg.append_exit_code('delete __state->serializer;\n')
 
+    def on_state_begin(self, sdfg: SDFG, state: SDFGState, local_stream: CodeIOStream, global_stream: CodeIOStream):
+        if state.symbol_instrument == dtypes.DataInstrumentationType.No_Instrumentation:
+            return
+
+        condition_preamble, condition_postamble = '', ''
+        condition: Optional[CodeBlock] = state.symbol_instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
+            condition_postamble = '}'
+
+        state_id = sdfg.node_id(state)
+        local_stream.write(condition_preamble, sdfg, state_id)
+        defined_symbols = state.defined_symbols()
+        for sym, sym_type in defined_symbols.items():
+            local_stream.write(
+                f'{cpp.sym2cpp(sym)} = __state->serializer->restore_symbol<{sym_type.ctype}>("{sym}", "{state_id}");\n',
+                sdfg, state_id
+            )
+        local_stream.write(condition_postamble, sdfg, state_id)
+
     def on_node_begin(self, sdfg: SDFG, state: SDFGState, node: nodes.AccessNode, outer_stream: CodeIOStream,
                       inner_stream: CodeIOStream, global_stream: CodeIOStream):
         from dace.codegen.dispatcher import DefinedType  # Avoid import loop
@@ -177,6 +251,20 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         if is_devicelevel_gpu(sdfg, state, node) or is_devicelevel_fpga(sdfg, state, node):
             # Only run on host code
             return
+
+        condition_preamble, condition_postamble = '', ''
+        condition: Optional[CodeBlock] = node.instrument_condition
+        if condition is not None and not condition.as_string == '1':
+            cond_string = None
+            if condition.language == dtypes.Language.CPP:
+                cond_string = condition.as_string
+            elif condition.language == dtypes.Language.Python:
+                cond_string = cppunparse.py2cpp(condition.code[0], expr_semicolon=False)
+            else:
+                warnings.warn('Unrecognized language %s in codeblock' % condition.language)
+                cond_string = condition.as_string
+            condition_preamble = f'if ({cond_string})' + ' {'
+            condition_postamble = '}'
 
         desc = node.desc(sdfg)
 
@@ -198,8 +286,10 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             preamble, postamble, ptrname = self._generate_copy_to_device(node, desc, ptrname)
 
         # Write code
+        inner_stream.write(condition_preamble, sdfg, state_id, node_id)
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->restore({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
             f'"{node.data}", "{uuid}");\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
+        inner_stream.write(condition_postamble, sdfg, state_id, node_id)

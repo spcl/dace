@@ -669,7 +669,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._edges[t] = edge
         self._nodes[src][1][t] = edge
         self._nodes[dst][0][t] = edge
-        return self._nx.add_edge(src, dst, data=data)
+        self._nx.add_edge(src, dst, data=data)
+        return edge
 
     def remove_node(self, node: NodeT):
         try:

@@ -212,7 +212,8 @@ class Data:
     # `validate` function.
     def _validate(self):
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
+            raise TypeError('Shape must be a list or tuple of integer values '
+                            'or symbols')
         return True
 
     def to_json(self):
@@ -619,7 +620,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer ' 'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -852,7 +853,7 @@ class Stream(Data):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
     def size_string(self):
-        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in self.shape]))
+        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s, cpp_mode=True)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1
@@ -930,6 +931,7 @@ class View(Array):
     In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
     generate Views.
     """
+
     def validate(self):
         super().validate()
 
@@ -953,6 +955,7 @@ class Reference(Array):
     
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
+
     def validate(self):
         super().validate()
 

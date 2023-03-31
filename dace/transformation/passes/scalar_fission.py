@@ -54,7 +54,7 @@ class ScalarFission(ppl.Pass):
                 continue
 
             for write, shadowed_reads in write_scope_dict.items():
-                if write is not None:
+                if write is not None and len(shadowed_reads) > 0:
                     newdesc = desc.clone()
                     newname = sdfg.add_datadesc(name, newdesc, find_new_name=True)
 

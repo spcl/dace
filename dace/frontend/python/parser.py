@@ -10,7 +10,7 @@ import sympy
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 import warnings
 
-from dace import symbolic, data, dtypes
+from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG
@@ -111,7 +111,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                 if repldict:
                     sym_dim = sym_dim.subs(repldict)
 
-                equations.append(sym_dim - real_dim)
+                if symbolic.issymbolic(sym_dim - real_dim):
+                    equations.append(sym_dim - real_dim)
 
     if len(symbols) == 0:
         return {}
@@ -232,6 +233,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param use_cache: If True, tries to find an already parsed SDFG in the local cache. Otherwise, re-parses SDFG.
         :return: An SDFG object that can be transformed, saved, or called.
         """
+
+        if self.recreate_sdfg == False:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recreate_sdfg' to False. "
+                          "This may not be what you want.")
+        if self.recompile == False:
+            warnings.warn("You are calling to_sdfg() on a dace program that "
+                          "has set 'recompile' to False. "
+                          "This may not be what you want.")
 
         if use_cache:
             # Update global variables with current closure
@@ -426,26 +436,23 @@ class DaceProgram(pycommon.SDFGConvertible):
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
         if self.recreate_sdfg:
-            # Allow CLI to prompt for optimizations
-            if Config.get_bool('optimizer', 'transform_on_call'):
-                sdfg = sdfg.optimize()
-
             # Invoke auto-optimization as necessary
             if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
                 sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
                 sdfg.simplify()
 
-        # Compile SDFG (note: this is done after symbol inference due to shape
-        # altering transformations such as Vectorization)
-        binaryobj = sdfg.compile(validate=self.validate)
+        with hooks.invoke_sdfg_call_hooks(sdfg) as sdfg:
+            # Compile SDFG (note: this is done after symbol inference due to shape
+            # altering transformations such as Vectorization)
+            binaryobj = sdfg.compile(validate=self.validate)
 
-        # Recreate key and add to cache
-        cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
-                                        constant_args)
-        self._cache.add(cachekey, sdfg, binaryobj)
+            # Recreate key and add to cache
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                            constant_args)
+            self._cache.add(cachekey, sdfg, binaryobj)
 
-        # Call SDFG
-        result = binaryobj(**sdfg_args)
+            # Call SDFG
+            result = binaryobj(**sdfg_args)
 
         return result
 
@@ -895,6 +902,5 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set regenerate and recompile flags
             sdfg._regenerate_code = self.regenerate_code
             sdfg._recompile = self.recompile
-
 
         return sdfg, cached

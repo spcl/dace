@@ -44,31 +44,83 @@ HTML file that contains a standalone viewer, which is then opened.
 |                       |              | :code:`program.sdfg` in said folder                      |
 +-----------------------+--------------+----------------------------------------------------------+
 
-.. _sdprof:
+.. _daceprof:
 
-:code:`sdprof` - SDFG Profile Viewer
-------------------------------------
+:code:`daceprof` - Profiler and Report Viewer
+---------------------------------------------
 
-The SDFG Profile Viewer :code:`sdprof` shows summarizations of SDFG profiling and instrumentation
-reports in the command-line.
+The DaCe profiler is a versatile profiling and analysis tool that can provide performance results
+and performance modeling for DaCe programs. Calling a Python script or module with ``daceprof`` instead
+of ``python`` will profile/instrument each individual call to a DaCe program and print the latest
+report at the end.
+
+The tool can also be used to view a profiling report directly in the console with the ``-i`` flag.
+
+If ``--type`` is given, performs instrumentation of specific elements in the invoked DaCe program. If
+nothing is given, the tool will time the entire execution of each program using :func:`~dace.builtin_hooks.profile`.
+
 
 | Usage:
-| :code:`sdprof [-s CRITERION] [-a] <filepath>`
+| :code:`daceprof [ARGUMENTS] myscript.py [SCRIPT ARGUMENTS]`
+| :code:`daceprof [ARGUMENTS] -m package.module [MODULE ARGUMENTS]`
+| :code:`daceprof [ARGUMENTS] -i profile.json`
 
-+-----------------------+--------------+-----------------------------------------------------------+
-| Argument              | Required     | Description                                               |
-+=======================+==============+===========================================================+
-| **<filepath>**        | Yes          | Path to the file containing the report.                   |
-+-----------------------+--------------+-----------------------------------------------------------+
-| :code:`-s,--sort`     |              | Sort by a specific criterion. Choices are:                |
-|                       |              |                                                           |
-|                       |              | - :code:`min|max|mean|median`:                            |
-|                       |              |   Sort by the minimum/maximum/mean/median observed value. |
-|                       |              | - :code:`counter`: Sort by counter name/type.             |
-|                       |              | - :code:`value`: Sort by the observed value.              |
-+-----------------------+--------------+-----------------------------------------------------------+
-| :code:`-a,--ascending`|              | If given, sort in ascending order.                        |
-+-----------------------+--------------+-----------------------------------------------------------+
++---------------------------+--------------+-----------------------------------------------------------+
+| Argument                  | Required     | Description                                               |
++===========================+==============+===========================================================+
+| **Execution arguments**   |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| <scriptpath>        OR    | Yes          | Path to the script file, report, or Python module.        |
+| -m <modulepath>     OR    |              |                                                           |
+| -i <filepath>             |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| **Profiling arguments**   |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-r,--repetitions`  |              | Runs each profiled program for the specified number of    |
+| ``REPETITIONS``           |              | repetitions (default: 100).                               |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-w,--warmup`       |              | Number of additional repetitions to run before measuring  |
+| ``WARMUP``                |              | runtime (default: 0).                                     |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-t,--type` ``TYPE``|              | Followed by :class:`~dace.dtypes.InstrumentationType`,    |
+|                           |              | specified which instrumentation type to use. If not given,|
+|                           |              | times the entire SDFG with a wall-clock timer.            |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`--instrument`      |              | A comma-separated list specifying which SDFG elements to  |
+| INSTRUMENT                |              | instrument. Can be a comma-separated list of element types|
+|                           |              | from the following: ``map, tasklet, state, sdfg``.        |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`--sequential`      |              | Disable CPU multi-threading in code generation.           |
++---------------------------+--------------+-----------------------------------------------------------+
+| **Data instrumentation**  |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-ds,--save-data`   |              | Enable data instrumentation and store all (or filtered)   |
+|                           |              | arrays.                                                   |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-dr,--restore-data`|              | Reproducibly run code by restoring all (or filtered)      |
+|                           |              | arrays.                                                   |
++---------------------------+--------------+-----------------------------------------------------------+
+| **Filtering arguments**   |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-f,--filter`       |              | Specifies a filter for elements to instrument.            |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-df,--filter-data` |              | Specifies a filter for data containers to serialize.      |
++---------------------------+--------------+-----------------------------------------------------------+
+| **Report arguments**      |              |                                                           |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-s,--sort`         |              | Sort by a specific criterion. Choices are:                |
+|                           |              |                                                           |
+|                           |              | - :code:`min|max|mean|median`:                            |
+|                           |              |   Sort by the minimum/maximum/mean/median observed value. |
+|                           |              | - :code:`counter`: Sort by counter name/type.             |
+|                           |              | - :code:`value`: Sort by the observed value.              |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-a,--ascending`    |              | If given, sort in ascending order.                        |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`-o,--output`       |              | If given, saves report in output path.                    |
++---------------------------+--------------+-----------------------------------------------------------+
+| :code:`--csv`             |              | Use Comma-Separated Values (CSV) for reporting.           |
++---------------------------+--------------+-----------------------------------------------------------+
 
 For a more detailed guide on how to profile SDFGs and work with the resulting data, see :ref:`profiling` and
 `this tutorial <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb#Benchmarking-and-Instrumentation-API>`_.

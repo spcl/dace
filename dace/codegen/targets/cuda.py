@@ -1001,7 +1001,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write("}")
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                copysize = ' * '.join([cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in copy_shape])
+                copysize = ' * '.join(_topy(copy_shape))
                 array_length = copysize
                 copysize += ' * sizeof(%s)' % dtype.ctype
 
@@ -1863,7 +1863,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                         block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
 
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(%s / (%s)) %% (%s)' % (
+                    block_expr = '((%s / (%s)) %% (%s))' % (
                         block_expr,
                         _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
@@ -2440,8 +2440,8 @@ void  *{kname}_args[] = {{ {kargs} }};
 def _topy(arr):
     """ Converts an array of symbolic variables (or one) to C++ strings. """
     if not isinstance(arr, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(arr))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in arr]
+        return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True))
+    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True)) for d in arr]
 
 
 def _named_idx(idx):

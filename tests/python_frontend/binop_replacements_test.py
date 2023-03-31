@@ -405,6 +405,25 @@ def test_mixed():
     assert (C[0] == ref)
 
 
+def test_sym_floordiv():
+    M, N, K = 20, 20, 2
+
+    @dace.program
+    def tester(a: dace.float64[M, N, K]):
+        for flat in dace.map[0:M * N * K]:
+            i = flat // (N * K)
+            resid = flat % (N * K)
+            j = resid // K
+            k = resid % K
+            a[i, j, k] = i * 1000 + j * 100 + k
+
+    a = np.random.rand(20, 20, 2)
+    ref = np.copy(a)
+    tester(a)
+    tester.f(ref)
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     test_array_array()
     test_array_array1()
@@ -441,3 +460,4 @@ if __name__ == "__main__":
     test_sym_sym()
     test_mixed()
     test_bool_bool()
+    test_sym_floordiv()

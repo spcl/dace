@@ -995,8 +995,8 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                          location=location,
                          inputs=({"_a", "_b", "_cin"} if beta != 0 and cin else {"_a", "_b"}),
                          outputs={"_c"})
-        self.transA = transA
-        self.transB = transB
+        self.transA = True if transA else False
+        self.transB = True if transB else False
         self.alpha = alpha
         self.beta = beta
         self.cin = cin

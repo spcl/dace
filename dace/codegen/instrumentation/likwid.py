@@ -62,7 +62,7 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
 #include <string>
 #include <sys/types.h>
 
-#define MAX_NUM_EVENTS 64
+#define MAX_NUM_EVENTS 256
 '''
         global_stream.write(header_code, sdfg)
 
