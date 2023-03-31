@@ -171,7 +171,10 @@ def test_library_gemm(implementation):
                       "misconfigured, skipping test for {}.".format(implementation))
 
 
-@pytest.mark.parametrize(('implementation', ), [('pure', ), ('MKL', ), pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ('implementation', ),
+    [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl),
+     pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemm_dim1(implementation):
 
     @dace.program
