@@ -1009,18 +1009,15 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
-                if len(subset) > 2:
-                    subset.squeeze()
+                subset.squeeze()
                 size0 = subset.size()
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
-                if len(subset) > 2:
-                    subset.squeeze()
+                subset.squeeze()
                 size1 = subset.size()
             if dst_conn == '_c':
                 subset = dc(memlet.subset)
-                if len(subset) > 2:
-                    subset.squeeze()
+                subset.squeeze()
                 size2 = subset.size()
 
         if self.transA:
@@ -1039,8 +1036,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Inputs to matrix-matrix product "
                              "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
-        if len(out_subset) > 2:
-            out_subset.squeeze()
+        out_subset.squeeze()
         size3 = out_subset.size()
         if size2 is not None and size2 != size3:
             raise ValueError("Input C matrix must match output matrix.")
