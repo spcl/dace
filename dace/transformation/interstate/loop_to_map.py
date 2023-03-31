@@ -105,6 +105,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
             return False
+        
+        if permissive:
+            return True
 
         itervar, (start, end, step), (_, body_end) = found
 

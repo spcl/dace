@@ -1074,8 +1074,17 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     if isedge.data.condition.language is dtypes.Language.Python:
                         for i, stmt in enumerate(isedge.data.condition.code):
                             isedge.data.condition.code[i] = refiner.visit(stmt)
+                        isedge.data._cond_sympy = None
                     else:
                         raise NotImplementedError
+                # Refine descriptor
+                desc = nsdfg.arrays[aname]
+                if isinstance(desc, data.Array):
+                    subset_shape = refine.subset.size()
+                    desc.shape = [s if i in indices else d for i, (s, d) in enumerate(zip(subset_shape, desc.shape))]
+                    # desc.total_size = sum(((shp - 1) * s for shp, s in zip(desc.shape, desc.strides))) + 1
+                    desc.total_size = data._prod(desc.shape)
+                # NOTE: We leave strides as-is. What about total_size? Is the above correct?
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges

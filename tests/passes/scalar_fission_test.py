@@ -101,8 +101,8 @@ def test_scalar_fission():
 
     # Both interstate edges should be different now.
     assert tmp1_edge.assignments != tmp2_edge.assignments
-    # There should now be 5 arrays in the SDFG, i.e. 2 more than before since two isolated scopes of tmp exist.
-    assert len(sdfg.arrays.keys()) == 5
+    # There should now be 5 arrays in the SDFG, i.e. 3 more than before since 3 isolated scopes of tmp exist.
+    assert len(sdfg.arrays.keys()) == 6
     # Assert all accesses per scope are identical.
     assert all([n.data == list(tmp1_edge.assignments.values())[0] for n in [tmp1_write, loop1_read_tmp]])
     assert all([n.data == list(tmp2_edge.assignments.values())[0] for n in [tmp2_write, loop2_read_tmp]])

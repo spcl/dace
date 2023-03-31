@@ -418,7 +418,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     for write_node in access_nodes[desc][state][1]:
                         if not (state, write_node) in result[desc]:
                             write = self._find_dominating_write(
-                                desc, state, write_node, access_nodes, idom, access_sets, no_self_shadowing=True
+                                desc, state, write_node, access_nodes, idom, access_sets, no_self_shadowing=False
                             )
                             result[desc][write].add((state, write_node))
 

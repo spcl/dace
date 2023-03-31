@@ -200,6 +200,8 @@ class TaskletWriter:
         # This is a replacement for the epsilon function in fortran
         if node.name.name == "__dace_epsilon":
             return str(finf(fl).eps)
+        if node.name.name == "pow":
+            return " ( " + self.write_code(node.args[0]) + " ** " + self.write_code(node.args[1]) + "  ) "
         return_str = self.write_code(node.name) + "(" + self.write_code(node.args[0])
         for i in node.args[1:]:
             return_str += ", " + self.write_code(i)

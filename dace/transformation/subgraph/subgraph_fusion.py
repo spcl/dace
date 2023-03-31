@@ -267,7 +267,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     container_dict[node.data].append(node)
 
             # Check for read/write dependencies between input and output nodes
-            outputs = set(n.data for n in out_nodes)
+            # NOTE: Is it valid for a MapExit to be an output node? (empty memlet maybe?)
+            outputs = set(n.data for n in out_nodes if isinstance(n, nodes.AccessNode))
             from dace.transformation.interstate import StateFusion
             for node in in_nodes:
                 if isinstance(node, nodes.AccessNode) and node.data in outputs:
@@ -853,11 +854,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
                 is_dynamic = False
-                if edge.dst_conn[:3] != "IN_":
+                if not edge.data.is_empty() and edge.dst_conn[:3] != "IN_":
                     is_dynamic = True
                     dyn_in_conn = edge.dst_conn
 
-                if src in in_nodes:
+                if not edge.data.is_empty() and src in in_nodes:
                     in_conn = None
                     out_conn = None
                     if not is_dynamic and src in inconnectors_dict:
@@ -937,7 +938,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # dimensions
                         union = None
                         for oe in graph.out_edges(transients_created[dst]):
-                            union = subsets.union(union, oe.data.subset)
+                            subset = oe.data.get_src_subset(oe, graph)
+                            if subset is None:
+                                subset = oe.data.subset
+                            union = subsets.union(union, subset)
                         if isinstance(union, subsets.Indices):
                             union = subsets.Range.from_indices(union)
                         inner_memlet = dcpy(edge.data)
