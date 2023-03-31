@@ -981,7 +981,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             out_conn = 'OUT_' + next_conn
                             global_map_exit.add_in_connector(in_conn)
                             global_map_exit.add_out_connector(out_conn)
-                            self.copy_edge(graph, edge, new_dst=global_map_exit, new_dst_conn=in_conn)
+                            # self.copy_edge(graph, edge, new_dst=global_map_exit, new_dst_conn=in_conn)
+                            graph.add_edge(edge.src, edge.src_conn, global_map_exit, in_conn, dcpy(edge.data))
                             port_created = (in_conn, out_conn)
 
                         else:
@@ -989,7 +990,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             out_conn = port_created.nd
 
                         # map
-                        graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))
+                        graph.add_edge(global_map_exit, out_conn, dst, out_edge.dst_conn, dcpy(out_edge.data))     
 
             # maps are now ready to be discarded
             # all connected edges will be finally removed as well
