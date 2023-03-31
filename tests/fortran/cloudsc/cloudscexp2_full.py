@@ -191,22 +191,68 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     # if normalize_offsets:
     #     utils.normalize_offsets(sdfg)
 
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.replace('NCLV', '5')
+    #     sd.replace('NCLDQL', '1')
+    #     sd.replace('NCLDQI', '2')
+    #     sd.replace('NCLDQR', '3')
+    #     sd.replace('NCLDQS', '4')
+    #     sd.replace('NCLDQV', '5')
+    #     #sdfg.add_constant('NCLDTOP', 15)
+
+    #     for state in sd.nodes():
+    #         for edge in list(state.edges()):
+    #             if not edge.data.is_empty() and edge.data.data == 'NSSOPT':
+    #                 if edge in state.edges():
+    #                     state.remove_memlet_path(edge, remove_orphans=True)
+    #     sd.replace('NSSOPT', '1')
+    #     for state in sd.nodes():
+    #         for edge in list(state.edges()):
+    #             if not edge.data.is_empty() and edge.data.data == 'NCLDTOP':
+    #                 if edge in state.edges():
+    #                     state.remove_memlet_path(edge, remove_orphans=True)
+    #     sd.replace('NCLDTOP', '15')
+
+    repl_dict = {'KLON': 'NPROMA',
+                 'NCLV': '5',
+                 'NCLDQL': '1',
+                 'NCLDQI': '2',
+                 'NCLDQR': '3',
+                 'NCLDQS': '4',
+                 'NCLDQV': '5',
+                 'NSSOPT': '1',
+                 'NCLDTOP': '15'}
+
+    # Verify and fix NSSOPT and NCLDTOP
     for sd in sdfg.all_sdfgs_recursive():
-        sd.replace_dict({'KLON': 'NPROMA'})
+        for state in sd.nodes():
+            for edge in list(state.edges()):
+                if not edge.data.is_empty() and edge.data.data in ('NSSOPT', 'NCLDTOP'):
+                    print(f"Found {edge.data.data} in {sd.name}, {state.name}, {edge}, and fixing ...")
+                    if edge in state.edges():
+                        state.remove_memlet_path(edge, remove_orphans=True)
+    # Promote/replace symbols
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.replace_dict(repl_dict)
         if sd.parent_nsdfg_node is not None:
-            if 'KLON' in sd.parent_nsdfg_node.symbol_mapping:
-                del sd.parent_nsdfg_node.symbol_mapping['KLON']
+            for k in repl_dict.keys():
+                if k in sd.parent_nsdfg_node.symbol_mapping:
+                    del sd.parent_nsdfg_node.symbol_mapping[k]
+        for k in repl_dict.keys():
+            if k in sd.symbols:
+                del sd.symbols[k]
+    # Verify promotion/replacement
     for sd in sdfg.all_sdfgs_recursive():
-        assert 'KLON' not in sd.symbols
-        assert 'KLON' not in (str(s) for s in sd.free_symbols)
+        assert not any(k in sd.symbols for k in repl_dict.keys())
+        assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
         for state in sd.states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.Tasklet):
-                    assert 'KLON' not in node.code.as_string
+                    assert not any(k in node.code.as_string for k in repl_dict.keys())
                 elif isinstance(node, dace.nodes.NestedSDFG):
                     for s, m in node.symbol_mapping.items():
-                        assert 'KLON' not in str(s)
-                        assert 'KLON' not in (str(s) for s in m.free_symbols)
+                        assert not any(k in str(s) for k in repl_dict.keys())
+                        assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
     
     for sd in sdfg.all_sdfgs_recursive():
         promoted = ScalarToSymbolPromotion().apply_pass(sd, {})
@@ -393,7 +439,7 @@ parameters = {
     # 'KLON': 128,
     'KLEV': 137,
     'KIDIA': 1,
-    'KFDIA': 4,
+    'KFDIA': 137,
     # 'KFDIA': 128,
     'KFLDX': 25,
 
@@ -403,7 +449,7 @@ parameters = {
     'NCLDQR': 3,
     'NCLDQS': 4,
     'NCLDQV': 5,
-    'NCLDTOP': 1,
+    'NCLDTOP': 15,
     'NSSOPT': 1,
     'NAECLBC': 1,
     'NAECLDU': 1,
@@ -846,21 +892,21 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     fsource = read_source(program)
     program_name, routine_name = programs[program]
     ffunc = get_fortran(fsource, program_name, routine_name)
-    # sdfg = get_sdfg(fsource, program_name, normalize_offsets)
-    # if device == dace.DeviceType.GPU:
-    #     auto_optimize(sdfg, device)
-    # # sdfg.simplify()
-    # # utils.make_dynamic_map_inputs_unique(sdfg)
-    # auto_optimize(sdfg, dace.DeviceType.Generic)
-    # sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-
+    sdfg = get_sdfg(fsource, program_name, normalize_offsets)
+    if device == dace.DeviceType.GPU:
+        auto_optimize(sdfg, device)
+    # sdfg.simplify()
+    # utils.make_dynamic_map_inputs_unique(sdfg)
+    sdfg.save('CLOUDSCOUTER_simplify.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+    auto_optimize(sdfg, dace.DeviceType.Generic)
+    sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-    # fix_sdfg_symbols(sdfg)
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_6.sdfg')
+    fix_sdfg_symbols(sdfg)
     for sd in sdfg.all_sdfgs_recursive():
         sd.openmp_sections = False
     count = 1
-    iteration = 7
+    iteration = 0
     while count > 0:
         count = fission_sdfg(sdfg, sdfg.name, iteration)
         print(f"Fissioned {count} maps")
@@ -880,13 +926,6 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     print("Running DaCe ...")
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_0.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_interim_step_1.sdfg')
-    # sdfg.name = 'CLOUDSCOUTER_interim_step_1'
-    # for sd in sdfg.all_sdfgs_recursive():
-    #     sd.openmp_sections = False
-    # fission_sdfg(sdfg, 'CLOUDSCOUTER', 1)
-    # sdfg.name = 'CLOUDSCOUTER_fission_step_1'
     sdfg(**inputs, **outputs_d)
 
     for k in outputs_f.keys():
