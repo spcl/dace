@@ -905,21 +905,23 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
     # fix_sdfg_symbols(sdfg)
 
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
 
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.openmp_sections = False
-    count = 1
-    iteration = 2
-    while count > 0:
-        count = fission_sdfg(sdfg, sdfg.name, iteration)
-        print(f"Fissioned {count} maps")
-        iteration += 1
-        sdfg.compile()
-    sdfg.simplify()
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.openmp_sections = False
+    # count = 1
+    # iteration = 2
+    # while count > 0:
+    #     count = fission_sdfg(sdfg, sdfg.name, iteration)
+    #     print(f"Fissioned {count} maps")
+    #     iteration += 1
+    #     sdfg.compile()
+    # sdfg.simplify()
 
-    for sd, state, map_entry in find_toplevel_maps(sdfg):
-        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
 
 
     rng = np.random.default_rng(42)
