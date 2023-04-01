@@ -107,6 +107,8 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
             dims = []
+            map_dims = 0
+            found_conlict = False
             for i, r in enumerate(subset):
                 if not isinstance(r, (list, tuple)):
                     r = [r]
@@ -114,6 +116,8 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 for token in r:
                     if symbolic.issymbolic(token):
                         fsymbols = fsymbols.union({str(s) for s in token.free_symbols})
+                if any(p in fsymbols for p in mparams) and itervar not in fsymbols:
+                    map_dims += 1
                 if itervar in fsymbols:
                     if fsymbols.intersection(mparams):
                         return (False, [])
@@ -122,12 +126,18 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                         if not permissive:
                             # Only indices allowed
                             if len(r) > 1 and r[0] != r[1]:
-                                return (False, [])
+                                # return (False, [])
+                                found_conlict = True
                             derivative = diff(r[0])
                             # Index function must be injective
                             if not (((derivative > 0) == True) or ((derivative < 0) == True)):
-                                return (False, [])
+                                # return (False, [])
+                                found_conlict = True
                         dims.append(i)
+            if map_dims == len(mparams):
+                return (True, dims)
+            elif found_conlict:
+                return (False, [])
             return (True, dims)
 
         # Check that Map memlets depend on itervar in a consistent manner

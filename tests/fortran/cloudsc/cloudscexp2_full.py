@@ -107,7 +107,7 @@ def fission_sdfg(sdfg: dace.SDFG, name: str = None, iteration: int = 0) -> int:
     count = 0
     for sd, state, map_entry in top_level_maps:
         mem = count_map_transient_memory(sd, state, map_entry)
-        if dace.symbolic.issymbolic(mem) or mem > 10:
+        if dace.symbolic.issymbolic(mem) or mem > 20:
             print(f"[{sd.label}, {state}, {map_entry}]: {mem} {'(TO FISSION)' if dace.symbolic.issymbolic(mem) else ''}")
             scope_children = state.scope_children()[map_entry]
             if len(scope_children) == 2 and isinstance(scope_children[0], dace.nodes.NestedSDFG):
@@ -892,21 +892,25 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
     fsource = read_source(program)
     program_name, routine_name = programs[program]
     ffunc = get_fortran(fsource, program_name, routine_name)
-    sdfg = get_sdfg(fsource, program_name, normalize_offsets)
-    if device == dace.DeviceType.GPU:
-        auto_optimize(sdfg, device)
-    # sdfg.simplify()
-    # utils.make_dynamic_map_inputs_unique(sdfg)
-    sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-    auto_optimize(sdfg, dace.DeviceType.Generic)
-    sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
+    # sdfg = get_sdfg(fsource, program_name, normalize_offsets)
+    # if device == dace.DeviceType.GPU:
+    #     auto_optimize(sdfg, device)
+    # # sdfg.simplify()
+    # # utils.make_dynamic_map_inputs_unique(sdfg)
+    # sdfg.save('CLOUDSCOUTER_simplify.sdfg')
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+    # auto_optimize(sdfg, dace.DeviceType.Generic)
+    # sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-    fix_sdfg_symbols(sdfg)
+
+    # fix_sdfg_symbols(sdfg)
+
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
+
     for sd in sdfg.all_sdfgs_recursive():
         sd.openmp_sections = False
     count = 1
-    iteration = 0
+    iteration = 2
     while count > 0:
         count = fission_sdfg(sdfg, sdfg.name, iteration)
         print(f"Fissioned {count} maps")

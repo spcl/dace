@@ -860,7 +860,23 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
             if map is not None:
                 # Try to solve ambiguous cases by using the map
-                to_unsqueeze = [i for i in to_unsqueeze if not any(str(s) in map.params for s in external_memlet.subset[i][0].free_symbols)]
+                to_unsqueeze = []
+                for i, sbs in enumerate(external_memlet.subset):
+                    fsymbols = sbs[0].free_symbols
+                    if not (fsymbols and any(str(s) in map.params for s in fsymbols)):
+                        to_unsqueeze.append(i)
+                # if len(internal_subset) + len(to_unsqueeze) > len(external_memlet.subset):
+                #     try:
+                #         for i in list(to_unsqueeze):
+                #             extsbs = external_memlet.subset[i]
+                #             for intsbs in internal_memlet.subset:
+                #                 if extsbs == intsbs:
+                #                     to_unsqueeze.remove(i)
+                #                     if len(internal_subset) + len(to_unsqueeze) == len(external_memlet.subset):
+                #                         raise StopIteration
+                #     except StopIteration:
+                #         pass
+                assert len(internal_subset) + len(to_unsqueeze) == len(external_memlet.subset)
             else:
                 if not to_unsqueeze:
                     # If there are no ones, try to unsqueeze the last dimensions
