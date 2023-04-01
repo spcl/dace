@@ -39,7 +39,10 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # If loop cannot be detected, fail
         if not found:
             return False
-        _, rng, _ = found
+        itvar, rng, _ = found
+
+        if itvar == '_for_it_103':
+            return False
 
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(rng[2], sdfg.constants):
@@ -104,10 +107,12 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
         # Remove old states from SDFG
 
-        for sdd in sdfg.all_sdfgs_recursive():
+        #for sdd in sdfg.all_sdfgs_recursive():
 
-            if itervar in sdd.symbols:
-                del sdd.symbols[itervar]
+        #    if itervar in sdd.symbols:
+        #        del sdd.symbols[itervar]
+        if itervar in sdfg.symbols:
+            del sdfg.symbols[itervar]
         #tmp_sdfg = sdfg
         #while tmp_sdfg.parent_sdfg is not None:
         #    tmp_sdfg = tmp_sdfg.parent_sdfg
@@ -116,6 +121,17 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         #        del sdd.symbols[itervar]
 
         sdfg.remove_nodes_from([guard] + loop_states)
+
+    def recursive_replace(self, state, itervar, value):
+        for n in state.nodes():
+            if isinstance(n, sd.nodes.NestedSDFG):
+                internal_name = n.symbol_mapping(itervar)
+                n.sdfg.replace_dict({itervar: str(value)})
+
+                for nestedstate in n.sdfg.states():
+                    self.recursive_replace(nestedstate, itervar, value)
+                #if itervar in n.symbol_mapping:
+                #    n.symbol_mapping.pop(itervar)
 
     def instantiate_loop(
         self,
@@ -134,10 +150,9 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         for state in new_states:
             state.set_label(state.label + '_' + itervar + '_' +
                             (state_suffix if state_suffix is not None else str(value)))
-            if itervar == '_for_it_103':
-                state.replace('_for_it_104', '_for_it_104_' + str(value))
-                state.replace('_for_it_105', '_for_it_105_' + str(value))
+
             state.replace(itervar, value)
+            #self.recursive_replace(state, itervar, value)
 
         # Add subgraph to original SDFG
         for edge in loop_subgraph.edges():
@@ -148,20 +163,20 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
 
             repl = {itervar: str(value)}
-            topsdfg = sdfg
-            while topsdfg.parent_sdfg is not None:
-                topsdfg = topsdfg.parent_sdfg
-            if itervar == '_for_it_103':
-                repl['_for_it_104'] = '_for_it_104_' + str(value)
+            # topsdfg = sdfg
+            # while topsdfg.parent_sdfg is not None:
+            #     topsdfg = topsdfg.parent_sdfg
+            # if itervar == '_for_it_103':
+            #     repl['_for_it_104'] = '_for_it_104_' + str(value)
 
-                for sdd in topsdfg.all_sdfgs_recursive():
-                    if '_for_it_104_' + str(value) not in sdd.symbols:
-                        sdd.add_symbol('_for_it_104_' + str(value), dtypes.int32)
-                        
-                repl['_for_it_105'] = '_for_it_105_' + str(value)
-                for sdd in topsdfg.all_sdfgs_recursive():
-                    if '_for_it_105_' + str(value) not in sdd.symbols:
-                        sdd.add_symbol('_for_it_105_' + str(value), dtypes.int32)
+            #     for sdd in topsdfg.all_sdfgs_recursive():
+            #         if '_for_it_104_' + str(value) not in sdd.symbols:
+            #             sdd.add_symbol('_for_it_104_' + str(value), dtypes.int32)
+
+            #     repl['_for_it_105'] = '_for_it_105_' + str(value)
+            #     for sdd in topsdfg.all_sdfgs_recursive():
+            #         if '_for_it_105_' + str(value) not in sdd.symbols:
+            #             sdd.add_symbol('_for_it_105_' + str(value), dtypes.int32)
             #for name, new_name in repl.items():
             #    for k, v in repl.items():
             #        if v == name:
