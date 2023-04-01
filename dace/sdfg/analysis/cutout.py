@@ -135,7 +135,9 @@ class SDFGCutout(SDFG):
         affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
 
         if len(affected_nodes) == 0:
-            return sdfg
+            cut_sdfg = copy.deepcopy(sdfg)
+            transformation._sdfg = cut_sdfg
+            return cut_sdfg
 
         target_sdfg = sdfg
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
@@ -158,7 +160,7 @@ class SDFGCutout(SDFG):
                 cutout.translate_transformation_into(transformation)
             return cutout
         raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
-
+                    
     @classmethod
     def singlestate_cutout(cls,
                            state: SDFGState,
@@ -313,6 +315,7 @@ class SDFGCutout(SDFG):
             if isinstance(outer, nd.NestedSDFG):
                 inner: nd.NestedSDFG = in_translation[outer]
                 cutout._in_translation[outer.sdfg.sdfg_id] = inner.sdfg.sdfg_id
+        _recursively_set_nsdfg_parents(cutout)
 
         return cutout
 
@@ -361,14 +364,14 @@ class SDFGCutout(SDFG):
                 frontier, frontier_edges = bfs_queue.popleft()
                 if len(frontier_edges) == 0:
                     # No explicit start state, but also no frontier to select from.
-                    return sdfg
+                    return copy.deepcopy(sdfg)
                 elif len(frontier_edges) == 1:
                     # If there is only one predecessor frontier edge, its destination must be the start state.
                     start_state = list(frontier_edges)[0].dst
                 else:
                     if len(frontier) == 0:
                         # No explicit start state, but also no frontier to select from.
-                        return sdfg
+                        return copy.deepcopy(sdfg)
                     if len(frontier) == 1:
                         # For many frontier edges but only one frontier state, the frontier state is the new start state
                         # and is included in the cutout.
@@ -464,6 +467,9 @@ class SDFGCutout(SDFG):
 
         cutout._in_translation = in_translation
         cutout._out_translation = out_translation
+
+        cutout.reset_sdfg_list()
+        _recursively_set_nsdfg_parents(cutout)
 
         return cutout
 
@@ -604,7 +610,7 @@ def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use
     if symbols_map is None:
         symbols_map = dict()
         consts = state.parent.constants
-        for s in state.parent.free_symbols:
+        for s in state.parent.symbols:
             if s in consts:
                 symbols_map[s] = consts[s]
             else:
@@ -1031,3 +1037,11 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                     system_state.add(dn.data)
 
     return system_state
+
+
+def _recursively_set_nsdfg_parents(target: SDFG):
+    for state in target.states():
+        for n in state.nodes():
+            if isinstance(n, nd.NestedSDFG):
+                n.sdfg.parent_sdfg = target
+                _recursively_set_nsdfg_parents(n.sdfg)
