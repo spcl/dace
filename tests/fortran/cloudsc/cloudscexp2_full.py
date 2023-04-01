@@ -1,8 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import argparse
 import copy
 import dace
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils
+from dace.transformation import helpers
 from dace.transformation.auto.auto_optimize import auto_optimize, greedy_fuse, tile_wcrs
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion, ScalarFission
@@ -18,7 +20,7 @@ from typing import Dict, Union
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -107,7 +109,7 @@ def fission_sdfg(sdfg: dace.SDFG, name: str = None, iteration: int = 0) -> int:
     count = 0
     for sd, state, map_entry in top_level_maps:
         mem = count_map_transient_memory(sd, state, map_entry)
-        if dace.symbolic.issymbolic(mem) or mem > 20:
+        if dace.symbolic.issymbolic(mem) or mem > 100:
             print(f"[{sd.label}, {state}, {map_entry}]: {mem} {'(TO FISSION)' if dace.symbolic.issymbolic(mem) else ''}")
             scope_children = state.scope_children()[map_entry]
             if len(scope_children) == 2 and isinstance(scope_children[0], dace.nodes.NestedSDFG):
@@ -136,8 +138,8 @@ def fission_sdfg(sdfg: dace.SDFG, name: str = None, iteration: int = 0) -> int:
             sd.apply_transformations_repeated(MapCollapse)
             sdfg.simplify()
             sdfg.apply_transformations_repeated(RemoveIntermediateWrite)
-            fix_sdfg_symbols(sdfg)
-            fix_arrays(sdfg)
+            # fix_sdfg_symbols(sdfg)
+            # fix_arrays(sdfg)
             sdfg.save(f'{name}fission_step_{iteration}.sdfg')
     return count
 
@@ -886,41 +888,34 @@ def get_outputs(program: str, rng: np.random.Generator) -> Dict[str, Union[Numbe
     return out_data
 
 
+def force_maps(sdfg: dace.SDFG):
+    itervars = (f'_for_it_{i}' for i in (27, 30, 43, 46, 47, 52, 63, 64))
+    helpers.split_interstate_edges(sdfg)
+    for itervar in itervars:
+        num = sdfg.apply_transformations_repeated(LoopToMap, options={'itervar': itervar}, permissive=True)
+        print(f'Applied {num} LoopToMap')
+    sdfg.simplify()
+
+
+def move_loops(sdfg: dace.SDFG):
+    helpers.split_interstate_edges(sdfg)
+    num = sdfg.apply_transformations_repeated(MoveLoopIntoMap)
+    print(f'Applied {num} transformations')
+    sdfg.simplify()
+    num = sdfg.apply_transformations_repeated(MapCollapse)
+    print(f'Applied {num} transformations')
+    sdfg.simplify()
+    num = sdfg.apply_transformations_repeated(MapCollapse)
+    print(f'Applied {num} transformations')
+    sdfg.simplify()
+
+
 @pytest.mark.skip
-def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool):
+def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
 
     fsource = read_source(program)
     program_name, routine_name = programs[program]
     ffunc = get_fortran(fsource, program_name, routine_name)
-    # sdfg = get_sdfg(fsource, program_name, normalize_offsets)
-    # if device == dace.DeviceType.GPU:
-    #     auto_optimize(sdfg, device)
-    # # sdfg.simplify()
-    # # utils.make_dynamic_map_inputs_unique(sdfg)
-    # sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-    # auto_optimize(sdfg, dace.DeviceType.Generic)
-    # sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-
-    # fix_sdfg_symbols(sdfg)
-
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
-
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.openmp_sections = False
-    count = 1
-    iteration = 2
-    while count > 0:
-        count = fission_sdfg(sdfg, sdfg.name, iteration)
-        print(f"Fissioned {count} maps")
-        iteration += 1
-        sdfg.compile()
-    sdfg.simplify()
-
-    for sd, state, map_entry in find_toplevel_maps(sdfg):
-        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
-
 
     rng = np.random.default_rng(42)
     inputs = get_inputs(program, rng)
@@ -929,6 +924,69 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
+
+    if sdfg_id == 0:
+        sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
+        sdfg.save('CLOUDSCOUTER_simplify.sdfg')
+        sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
+    if sdfg_id == 1:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+        auto_optimize(sdfg, dace.DeviceType.Generic)
+        sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
+        sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
+    if sdfg_id == 2:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
+        force_maps(sdfg)
+        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
+        sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
+    if sdfg_id == 3:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+        move_loops(sdfg)
+        sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+        sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+
+    
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    fix_sdfg_symbols(sdfg)
+
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.openmp_sections = False
+
+    try:
+        count = 1
+        iteration = 0
+        while count > 0:
+            count = fission_sdfg(sdfg, sdfg.name, iteration)
+            print(f"Fissioned {count} maps")
+            iteration += 1
+            sdfg.compile()
+            print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+        sdfg.simplify()
+    except:
+        pass
+
+    last_iteration = iteration - 1
+    sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+
+    for sd, state, map_entry in find_toplevel_maps(sdfg):
+        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
+
+
+    if device == dace.DeviceType.GPU:
+        auto_optimize(sdfg, device)
+    sdfg.simplify()
+    # utils.make_dynamic_map_inputs_unique(sdfg)
+
     print("Running DaCe ...")
     sdfg(**inputs, **outputs_d)
 
@@ -947,4 +1005,22 @@ def test_program(program: str, device: dace.DeviceType, normalize_offsets: bool)
 
 
 if __name__ == "__main__":
-    test_program('cloudscexp2_full_20230324', dace.DeviceType.CPU, False)
+    parser = argparse.ArgumentParser(description='CLOUDSC')
+    parser.add_argument('-t',
+                        '--target',
+                        nargs="?",
+                        choices=['cpu', 'gpu'],
+                        default='cpu',
+                        help='The target architecture.')
+    parser.add_argument('-s',
+                        '--sdfg_id',
+                        type=int,
+                        nargs="?",
+                        default=0,
+                        help='The SDFG to use.')
+    args = parser.parse_args()
+    
+    device = dace.DeviceType.GPU if args.target == 'gpu' else dace.DeviceType.CPU
+    sdfg_id = args.sdfg_id
+
+    test_program('cloudscexp2_full_20230324', device, sdfg_id)
