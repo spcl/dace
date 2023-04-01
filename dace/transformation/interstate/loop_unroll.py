@@ -12,6 +12,7 @@ from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation import transformation as xf
 
+
 @make_properties
 class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
@@ -99,6 +100,10 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             sdfg.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
+        for sdd in sdfg.all_sdfgs_recursive():
+            if itervar in sdd.symbols:
+                del sdd.symbols[itervar]
+
         sdfg.remove_nodes_from([guard] + loop_states)
 
     def instantiate_loop(
@@ -125,11 +130,16 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             src = new_states[loop_states.index(edge.src)]
             dst = new_states[loop_states.index(edge.dst)]
 
+            
             # Replace conditions in subgraph edges
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
             if data.condition:
-                ASTFindReplace({itervar: str(value)}).visit(data.condition)
-
+                ASTFindReplace({itervar: str(value)}).visit(data.condition.code[0])
+            else:
+                print('here')
+            for sds in sdfg.all_sdfgs_recursive():
+                if not sds is sdfg:
+                    sds.replace(itervar,value)    
             sdfg.add_edge(src, dst, data)
 
         return new_states
