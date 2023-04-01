@@ -582,10 +582,12 @@ def auto_optimize(sdfg: SDFG,
     # fuse subgraphs greedily
     sdfg.simplify()
 
-    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+    if device != dtypes.DeviceType.Generic:
 
-    # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+        greedy_fuse(sdfg, device=device, validate_all=validate_all)
+
+        # fuse stencils greedily
+        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
