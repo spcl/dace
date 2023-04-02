@@ -214,7 +214,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             sdfg.remove_edge(body_outedge)
         for guard_inedge in sdfg.in_edges(guard):
             before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
-            guard_inedge.data.assignments = {}
+            guard_inedge.data.assignments = {}  # Could there be here assignments needed outside?
             sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
             sdfg.remove_edge(guard_inedge)
         for guard_outedge in sdfg.out_edges(guard):
