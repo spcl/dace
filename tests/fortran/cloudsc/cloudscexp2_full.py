@@ -925,27 +925,27 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
 
-    if sdfg_id == 0:
+    if sdfg_id < 1:
         sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
         sdfg.save('CLOUDSCOUTER_simplify.sdfg')
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id == 1:
+    if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
         auto_optimize(sdfg, dace.DeviceType.Generic)
         sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id == 2:
+    if sdfg_id < 3:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
         force_maps(sdfg)
         sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id == 3:
+    if sdfg_id < 4:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
         move_loops(sdfg)
         sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
@@ -980,11 +980,22 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
 
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+    # move_loops(sdfg)
+    # count = 1
+    # iteration = 2
+    # while count > 0:
+    #     count = fission_sdfg(sdfg, sdfg.name, iteration)
+    #     print(f"Fissioned {count} maps")
+    #     iteration += 1
+    #     sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # sdfg.simplify()
 
 
-    if device == dace.DeviceType.GPU:
-        auto_optimize(sdfg, device)
-    sdfg.simplify()
+    # if device == dace.DeviceType.GPU:
+    #     auto_optimize(sdfg, device)
+    # sdfg.simplify()
     # utils.make_dynamic_map_inputs_unique(sdfg)
 
     print("Running DaCe ...")
