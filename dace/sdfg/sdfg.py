@@ -214,7 +214,16 @@ class InterstateEdge(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
-        return self.read_symbols() - set(self.assignments.keys())
+        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        lhs_symbols = set()
+        rhs_symbols = set()
+        for lhs, rhs in self.assignments.items():
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            if lhs not in cond_symbols and lhs not in rhs_symbols:
+                lhs_symbols.add(lhs)
+        return (cond_symbols | rhs_symbols) - lhs_symbols
+        
+        # return self.read_symbols() - set(self.assignments.keys())
 
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
@@ -1298,8 +1307,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
             # Add free inter-state symbols
             for e in self.out_edges(state):
-                defined_syms |= set(e.data.assignments.keys())
                 efsyms = e.data.free_symbols
+                defined_syms |= set(e.data.assignments.keys()) - efsyms
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
 
