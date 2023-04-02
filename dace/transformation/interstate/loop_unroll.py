@@ -41,8 +41,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             return False
         itvar, rng, _ = found
 
-        if itvar == '_for_it_103':
-            return False
+        #    return False
 
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(rng[2], sdfg.constants):
@@ -72,19 +71,24 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
+        print("Unrolling: ", itervar)
 
         try:
             start, end, stride = (r for r in rng)
             stride = symbolic.evaluate(stride, sdfg.constants)
-            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
+            start, end, stride = (int(s) for s in (start, end, stride))
+            indices = list(range(start, end + stride, stride))
+            print(f"{start}, {end}, {stride}: {indices}")
+            loop_diff = int(symbolic.evaluate(abs(end - start) + 1, sdfg.constants))
             is_symbolic = any([symbolic.issymbolic(r) for r in rng[:2]])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
         # Create states for loop subgraph
         unrolled_states = []
 
-        for i in range(0, loop_diff, stride):
-            current_index = start + i
+        # for i in range(0, loop_diff, stride):
+        for current_index in indices:
+            # current_index = start + i
             # Instantiate loop states with iterate value
             new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph, itervar, current_index,
                                                str(i) if is_symbolic else None)
@@ -98,7 +102,8 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # Get any assignments that might be on the edge to the after state
         after_assignments = (sdfg.edges_between(guard, after_state)[0].data.assignments)
 
-        # Connect new states to before and after states without conditions
+        # Connect new stat
+        # es to before and after states without conditions
         if unrolled_states:
             before_states = loop_struct[0]
             for before_state in before_states:
