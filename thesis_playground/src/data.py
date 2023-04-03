@@ -18,6 +18,11 @@ parameters = {
 
 # changes from the parameters dict for certrain programs
 custom_parameters = {
+    'cloudsc_class1_658': {
+        'KLON': 5000,
+        'KLEV': 5000,
+        'KFDIA': 4998,
+    },
     'cloudsc_class1_670': {
         'KLON': 1000,
         'KLEV': 1000,
@@ -33,9 +38,9 @@ custom_parameters = {
     },
     'cloudsc_class2_1516':
     {
-        'KLON': 1000,
-        'KLEV': 1000,
-        'KFDIA': 998
+        'KLON': 3000,
+        'KLEV': 3000,
+        'KFDIA': 2998
     }
 }
 

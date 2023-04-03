@@ -79,7 +79,6 @@ def compute_speedup(
     header = ["program", "measurement", "speedup (average)"]
     speedup_data = []
     for program in data.data:
-        print(program.program)
         baseline_program = find_program_measurement_in_run(baseline, program.program)
         if baseline_program is None:
             print(f"WARNING: Could not find a baseline program for {program.program}")
@@ -108,6 +107,7 @@ def main():
     parser.add_argument('--ignore-kernel-names', action='store_true', default=False,
                         help="Ignore kernel names, requires that there is only one kernel per measurement")
     parser.add_argument('--baseline', type=str, required=True, help="Json file with the baseline data")
+    parser.add_argument('--format', type=str, default="plain", help="The format for tabulate to use")
     parser.add_argument('files', type=str, nargs='+', help="Json file(s) with the (faster) runtime")
 
     args = parser.parse_args()
@@ -117,7 +117,7 @@ def main():
             with open(os.path.join(get_results_dir(), file)) as f:
                 data = json.load(f, object_hook=MeasurementRun.from_json)
                 header, speedups = compute_speedup(baseline_data, data, args.ignore_kernel_names)
-                print(tabulate(speedups, headers=header))
+                print(tabulate(speedups, headers=header, tablefmt=args.format))
 
 
 if __name__ == '__main__':

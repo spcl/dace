@@ -1,11 +1,12 @@
 import numpy as np
 import copy
+import cupy as cp
 
 import dace
 
 from data import get_program_parameters_data
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
-                  compare_output, compare_output_all, copy_to_device, optimize_sdfg
+                  compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host
 from measurement_data import ProgramMeasurement
 
 RNG_SEED = 42
@@ -28,6 +29,7 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     :return: True if test passes, False otherwise
     :rtype: bool
     """
+    assert device == dace.DeviceType.GPU
 
     programs_data = get_programs_data()
     fsource = read_source(program)
@@ -40,15 +42,17 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, testing_dataset=True)
     outputs_f = get_outputs(program, rng, testing_dataset=True)
-    outputs_d = copy.deepcopy(outputs_f)
+    outputs_d_device = copy_to_device(copy.deepcopy(outputs_f))
     sdfg.validate()
     sdfg.simplify(validate_all=True)
 
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
-    sdfg(**inputs, **outputs_d)
+    inputs_device = copy_to_device(inputs)
+    sdfg(**inputs_device, **outputs_d_device)
 
     print_with_time(f"{program} ({program_name}) on {device} with"
                     f"{' ' if normalize_memlets else 'out '}normalize memlets")
+    outputs_d = copy_to_host(outputs_d_device)
     passes_test = compare_output(outputs_f, outputs_d, program)
     # passes_test = compare_output_all(outputs_f, outputs_d)
 
@@ -81,10 +85,6 @@ def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.Device
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name, normalize_memlets)
     optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
-
-    for k, v in sdfg.arrays.items():
-        if not v.transient and type(v) == dace.data.Array:
-            v.storage = dace.dtypes.StorageType.GPU_Global
 
     sdfg.instrument = dace.InstrumentationType.Timer
     sdfg.compile()

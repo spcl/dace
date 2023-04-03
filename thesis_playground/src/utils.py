@@ -126,6 +126,24 @@ def copy_to_device(host_data: Dict[str, Union[Number, np.ndarray]]) -> Dict[str,
     return device_data
 
 
+def copy_to_host(device_data: Dict[str, Union[Number, cp.ndarray]]) -> Dict[str, np.ndarray]:
+    """
+    Take a dictionary with data and converts all cupy arrays to numpy arrays
+
+    :param host_data: The cupy (device) data
+    :type host_data: Dict[str, Union[Number, cp.ndarray]]
+    :return: The converted cupy (host) data
+    :rtype: Dict[str, np.ndarray]
+    """
+    host_data = {}
+    for name, array in device_data.items():
+        if isinstance(array, cp.ndarray):
+            host_data[name] = cp.asnumpy(array)
+        else:
+            host_data[name] = array
+    return host_data
+
+
 # Copied from tests/fortran/cloudsc.py
 def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
         -> Dict[str, Union[Number, np.ndarray]]:
@@ -348,4 +366,10 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
             my_auto_optimize(sdfg, device)
         else:
             dace_auto_optimize(sdfg, device)
+
+    for k, v in sdfg.arrays.items():
+        if not v.transient and type(v) == dace.data.Array:
+            v.storage = dace.dtypes.StorageType.GPU_Global
+
     return sdfg
+

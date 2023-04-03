@@ -43,6 +43,7 @@ def create_plot_grid(
     for row, (run_data, subfig) in enumerate(zip(runs_data, subfigs)):
         subfig.suptitle(f"{run_data.description} at {run_data.date.strftime('%Y-%m-%d %H:%H')} "
                         f"and commit {run_data.git_hash} on {run_data.node}")
+        print(run_data.description)
         for col, result in enumerate(run_data.data, start=1):
             if row == 0:
                 ax = subfig.add_subplot(1, len(run_data.data), col)
@@ -82,14 +83,33 @@ def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram
     :type filename: str
     :param data_key: The key in the measurements to plot, defaults to "Total time"
     :type data_key: str
+    :param save_tex: Also save output as .tex file, optional, defaults to False
+    :type save_tex: bool
     """
+    # create dictionary of min and max value for each program over all runs
+    min_max_values = {}
+    for run in runs_data:
+        for result in run.data:
+            if result.program not in min_max_values:
+                min_max_values[result.program] = (result.measurements[data_key][0].min(),
+                                                  result.measurements[data_key][0].max())
+            else:
+                new_min = min(result.measurements[data_key][0].min(), min_max_values[result.program][0])
+                new_max = max(result.measurements[data_key][0].max(), min_max_values[result.program][1])
+                min_max_values[result.program] = (new_min, new_max)
+
+    print(min_max_values)
 
     def subfigure_plot_function(ax, result):
         measurement = result.measurements[data_key][0]
         ax.set_title(f"{result.program} (#={measurement.amount()})")
-        bins = np.linspace(measurement.min(), measurement.max(), num=15)
-        if measurement.min() == measurement.max():
-            bins = np.linspace(measurement.min()*0.9, measurement.max()*1.1, num=15)
+        bins = np.linspace(*min_max_values[result.program], num=50)
+        if min_max_values[result.program][0] == min_max_values[result.program][1]:
+            bins = np.linspace(min_max_values[result.program][0]*0.9, min_max_values[result.program][1]*1.1, num=50)
+        print(result.program)
+        print(len(measurement.data))
+        print(measurement.min(), measurement.max())
+        print(min(measurement.data), max(measurement.data))
         ax.hist(measurement.data, bins=bins, rwidth=1)
         ax.set_xlabel(f'Time [{measurement.unit}]')
 
@@ -104,6 +124,7 @@ def main():
             nargs='+',
             help="Path to the json files to read")
     parser.add_argument('--data-key', type=str, default="Total time", help="Key in the measurements to plot")
+    parser.add_argument('--name', type=str, default=None, help="Basename for the produced files")
 
     args = parser.parse_args()
 
@@ -116,7 +137,8 @@ def main():
             run_data.append(json.load(file, object_hook=MeasurementRun.from_json))
 
     # create_qq_plot(run_data)
-    create_histogram(run_data, data_key=args.data_key)
+    basename = f"{args.name}_" if args.name is not None else ""
+    create_histogram(run_data, data_key=args.data_key, filename=f"{basename}histogram.pdf")
 
 
 if __name__ == '__main__':
