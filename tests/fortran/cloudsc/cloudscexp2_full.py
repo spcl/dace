@@ -925,61 +925,61 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
 
-    if sdfg_id < 1:
-        sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
-        sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 1:
+    #     sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
+    #     sdfg.save('CLOUDSCOUTER_simplify.sdfg')
+    #     sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 2:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-        auto_optimize(sdfg, dace.DeviceType.Generic)
-        sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 2:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+    #     auto_optimize(sdfg, dace.DeviceType.Generic)
+    #     sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
+    #     sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 3:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-        force_maps(sdfg)
-        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 3:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
+    #     force_maps(sdfg)
+    #     sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
+    #     sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 4:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
-        move_loops(sdfg)
-        sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 4:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+    #     move_loops(sdfg)
+    #     sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    #     sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-    fix_sdfg_symbols(sdfg)
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    # fix_sdfg_symbols(sdfg)
 
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.openmp_sections = False
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.openmp_sections = False
 
-    try:
-        count = 1
-        iteration = 0
-        while count > 0:
-            count = fission_sdfg(sdfg, sdfg.name, iteration)
-            print(f"Fissioned {count} maps")
-            iteration += 1
-            sdfg.compile()
-            print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
-        sdfg.simplify()
-    except:
-        pass
+    # try:
+    #     count = 1
+    #     iteration = 0
+    #     while count > 0:
+    #         count = fission_sdfg(sdfg, sdfg.name, iteration)
+    #         print(f"Fissioned {count} maps")
+    #         iteration += 1
+    #         sdfg.compile()
+    #         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    #     sdfg.simplify()
+    # except:
+    #     pass
 
-    last_iteration = iteration - 1
-    sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+    # last_iteration = iteration - 1
+    # sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
 
-    for sd, state, map_entry in find_toplevel_maps(sdfg):
-        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
 
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
     # move_loops(sdfg)
     # count = 1
