@@ -1554,18 +1554,18 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
         for e in state.out_edges(access):
             if e in visited:
                 continue
-            visited.add(e)
-            # NOTE: We assume here that the intermediate write is happening just before the Map's exit node.
-            # Is this always correct?
-            src_subset = e.data.get_src_subset(e, state)
-            dst_subset = e.data.get_dst_subset(e, state)
-            state.add_edge(new_n,
-                           None,
-                           e.dst,
-                           e.dst_conn,
-                           memlet=Memlet(data=name,
-                                         subset=src_subset.offset(src_subset, negative=True),
-                                         other_subset=dst_subset))
+            offset = e.data.get_src_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                src = new_n if e2.src is access else e2.src
+                state.add_edge(
+                    src, e2.src_conn, e2.dst, e2.dst_conn,
+                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset))
         for e in visited:
             state.remove_edge(e)
         state.remove_node(access)
