@@ -27,6 +27,14 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         'iterations (loop must be constant-sized for 0)',
     )
 
+    threshold = Property(
+        dtype=int,
+        default=10,
+        desc='Threshold for unrolling (number of states in the loop). '
+        'If the number of states in the loop is less than this threshold, the loop will not be unrolled. '
+        'If the threshold is zero, the loop will always be unrolled.',
+    )
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -49,6 +57,17 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # If loop range diff is not constant-sized, fail
         if symbolic.issymbolic(rng[1] - rng[0], sdfg.constants):
             return False
+        
+        if self.threshold > 0:
+            try:
+                start, end, stride = (r for r in rng)
+                stride = symbolic.evaluate(stride, sdfg.constants)
+                loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
+            except TypeError:
+                return False
+            if loop_diff > self.threshold:
+                return False
+        
         return True
 
     def apply(self, _, sdfg):
@@ -60,6 +79,8 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.
         itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
+        
+        print("LoopUnroll: ", itervar, rng)
 
         # Loop must be fully unrollable for now.
         if self.count != 0:

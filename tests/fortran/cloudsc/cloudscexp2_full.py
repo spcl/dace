@@ -20,7 +20,7 @@ from typing import Dict, Union
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap, LoopUnroll, TrivialLoopElimination
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -43,7 +43,7 @@ def fix_sdfg_symbols(sdfg: dace.SDFG):
                 fix_sdfg_symbols(node.sdfg)
     for s in find_defined_symbols(sdfg):
         del sdfg.symbols[s]
-        if s in sdfg.parent_nsdfg_node.symbol_mapping:
+        if sdfg.parent is not None and s in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[s]
 
 
@@ -223,7 +223,9 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
                  'NCLDQS': '4',
                  'NCLDQV': '5',
                  'NSSOPT': '1',
-                 'NCLDTOP': '15'}
+                 'NCLDTOP': '15',
+                 'KLEV':'137',
+                 'KFLDX': '1',}
 
     # Verify and fix NSSOPT and NCLDTOP
     for sd in sdfg.all_sdfgs_recursive():
@@ -262,9 +264,44 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     from dace.sdfg import utils
     utils.normalize_offsets(sdfg)
     sdfg.simplify(verbose=True)
+
+    repl_dict = {'NPROMA': '1'}
+    # Promote/replace symbols
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.replace_dict(repl_dict)
+        if sd.parent_nsdfg_node is not None:
+            for k in repl_dict.keys():
+                if k in sd.parent_nsdfg_node.symbol_mapping:
+                    del sd.parent_nsdfg_node.symbol_mapping[k]
+        for k in repl_dict.keys():
+            if k in sd.symbols:
+                del sd.symbols[k]
+    # Verify promotion/replacement
+    for sd in sdfg.all_sdfgs_recursive():
+        assert not any(k in sd.symbols for k in repl_dict.keys())
+        assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    assert not any(k in node.code.as_string for k in repl_dict.keys())
+                elif isinstance(node, dace.nodes.NestedSDFG):
+                    for s, m in node.symbol_mapping.items():
+                        assert not any(k in str(s) for k in repl_dict.keys())
+                        assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
+
+    sdfg.simplify(verbose=True)
+
+    sdfg.save('CLOUDSCOUTER_before_loop_elimination.sdfg')
+
+    helpers.split_interstate_edges(sdfg)
+    sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False)
+    sdfg.save('CLOUDSCOUTER_loops_eliminated_internal.sdfg')
+
     pipeline = Pipeline([ScalarFission()])
     for sd in sdfg.all_sdfgs_recursive():
         results = pipeline.apply_pass(sd, {})[ScalarFission.__name__]
+    
+    sdfg.simplify(verbose=True)
 
     return sdfg
 
@@ -437,13 +474,14 @@ def debug_auto_optimize(sdfg: dace.SDFG, inputs, outputs, ref_outputs):
 
 
 parameters = {
-    'KLON': 4,
+    'KLON': 1,  # Should be equal to NPROMA
     # 'KLON': 128,
     'KLEV': 137,
     'KIDIA': 1,
     'KFDIA': 137,
     # 'KFDIA': 128,
-    'KFLDX': 25,
+    'KFLDX': 1,
+    # 'KFLDX': 25,
 
     'NCLV': 5,
     'NCLDQI': 2,
@@ -485,13 +523,13 @@ parameters = {
     'LCLDBUDGET': np.int32(np.bool_(True)),  # boolean (LOGICAL)
     'NGPBLKS': 10,
     'NUMOMP': 10,
-    'NGPTOT': 4*4,
+    'NGPTOT': 4*1,
     # 'NGPTOT': 65536,
-    'NGPTOTG': 4*4,
+    'NGPTOTG': 4*1,
     # 'NGPTOTG': 65536,
-    'NPROMA': 4,
+    'NPROMA': 1,
     # 'NPROMA': 128,
-    'NBETA': 1,
+    'NBETA': 4,
 }
 
 
@@ -928,32 +966,57 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     if sdfg_id < 1:
         sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
         sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
         auto_optimize(sdfg, dace.DeviceType.Generic)
+        sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 3:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-        force_maps(sdfg)
-        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
-        sdfg.compile()
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 4:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+        force_maps(sdfg)
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
+    if sdfg_id < 5:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
         move_loops(sdfg)
+        sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+
+    if sdfg_id < 6:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+        helpers.split_interstate_edges(sdfg)
+        sdfg.apply_transformations_repeated(LoopUnroll)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+
+    greedy_fuse(sdfg, False)
+    sdfg.save('CLOUDSCOUTER_fuse.sdfg')
+
     fix_sdfg_symbols(sdfg)
 
     for sd in sdfg.all_sdfgs_recursive():
@@ -966,7 +1029,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
             count = fission_sdfg(sdfg, sdfg.name, iteration)
             print(f"Fissioned {count} maps")
             iteration += 1
-            sdfg.compile()
+            # sdfg.compile()
             print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
         sdfg.simplify()
     except:
@@ -978,12 +1041,12 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     for sd, state, map_entry in find_toplevel_maps(sdfg):
         print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
 
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
-    # move_loops(sdfg)
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_2.sdfg')
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+    # # move_loops(sdfg)
     # count = 1
-    # iteration = 2
+    # iteration = 3
     # while count > 0:
     #     count = fission_sdfg(sdfg, sdfg.name, iteration)
     #     print(f"Fissioned {count} maps")
@@ -992,10 +1055,13 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     # sdfg.simplify()
 
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
 
-    # if device == dace.DeviceType.GPU:
-    #     auto_optimize(sdfg, device)
-    # sdfg.simplify()
+
+    if device == dace.DeviceType.GPU:
+        auto_optimize(sdfg, device)
+    sdfg.simplify()
     # utils.make_dynamic_map_inputs_unique(sdfg)
 
     print("Running DaCe ...")
