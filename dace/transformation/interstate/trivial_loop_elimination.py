@@ -59,6 +59,18 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         #     states.add(state)
         states: List[sd.SDFGState] = list(sdutil.dfs_conditional(sdfg, [body], lambda _, c: c is not guard))
         subgraph = gr.SubgraphView(sdfg, states)
+        init_state = None
+        exit_state = None
+        for edge in sdfg.in_edges(guard):
+            if edge.src is body_end:
+                continue
+            init_state = edge.src
+            break
+        for edge in sdfg.out_edges(guard):
+            if edge.dst is body:
+                continue
+            exit_state = edge.dst
+            break
 
         # Remove itervar assignments
         for edge in sdfg.in_edges(guard):
@@ -75,27 +87,35 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
             edge.data.replace_dict(replace_dict)
         for edge in sdfg.edges_between(body_end, guard):
             edge.data.replace_dict(replace_dict)
+        for edge in sdfg.edges_between(guard, exit_state):
+            edge.data.replace_dict(replace_dict)
 
         # Remove loop
         guard_body_assignments = dict()
+        # NOTE: There shouldn't be any conditions here that we need to save. Otherwise, it wouldn't be a valid for-loop.
         for edge in sdfg.edges_between(guard, body):
             guard_body_assignments.update(edge.data.assignments)
             sdfg.remove_edge(edge)
         body_guard_assignments = dict()
+        body_guard_condition: CodeBlock = None
+        # NOTE: There may be conditions here that we need to save.
         for edge in sdfg.edges_between(body_end, guard):
             body_guard_assignments.update(edge.data.assignments)
+            body_guard_condition = edge.data.condition 
             sdfg.remove_edge(edge)
 
-        for guard_inedge in sdfg.in_edges(guard):
-            guard_inedge.data.assignments.update(guard_body_assignments)
-            sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
-            sdfg.remove_edge(guard_inedge)
-        for guard_outedge in sdfg.out_edges(guard):
-            guard_outedge.data.condition = CodeBlock("1")
-            guard_outedge.data.assignments.update(body_guard_assignments)
-            sdfg.add_edge(body_end, guard_outedge.dst, guard_outedge.data)
-
-            sdfg.remove_edge(guard_outedge)
+        # NOTE: We assume that there ia single edge between init_state and guard, and between guard and exit_state.
+        for edge in sdfg.edges_between(init_state, guard):
+            edge.data.assignments.update(guard_body_assignments)
+            sdfg.add_edge(edge.src, body, edge.data)
+            sdfg.remove_edge(edge)
+        for edge in sdfg.edges_between(guard, exit_state):
+            edge.data.assignments.update(body_guard_assignments)
+            # NOTE: We assume that the previous condition involved the iteration variable, and we can just overwrite it.
+            edge.data.condition = body_guard_condition
+            edge.data._cond_sympy = None
+            sdfg.add_edge(body_end, edge.dst, edge.data)
+            sdfg.remove_edge(edge)
         sdfg.remove_node(guard)
         if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
             sdfg.remove_symbol(itervar)
