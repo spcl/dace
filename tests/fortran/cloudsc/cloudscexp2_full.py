@@ -963,44 +963,44 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
 
-    if sdfg_id < 1:
-        sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
-        sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-        # sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 1:
+    #     sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
+    #     sdfg.save('CLOUDSCOUTER_simplify.sdfg')
+    #     # sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 2:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-        auto_optimize(sdfg, dace.DeviceType.Generic)
-        sdfg.simplify()
-        sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-        # sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 2:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+    #     auto_optimize(sdfg, dace.DeviceType.Generic)
+    #     sdfg.simplify()
+    #     sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
+    #     # sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 3:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-        sdfg.apply_transformations_repeated(TrivialMapElimination)
-        sdfg.simplify()
-        sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
-        # sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 3:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
+    #     sdfg.apply_transformations_repeated(TrivialMapElimination)
+    #     sdfg.simplify()
+    #     sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+    #     # sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 4:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
-        force_maps(sdfg)
-        sdfg.apply_transformations_repeated(TrivialMapElimination)
-        sdfg.simplify()
-        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
-        # sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 4:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+    #     force_maps(sdfg)
+    #     sdfg.apply_transformations_repeated(TrivialMapElimination)
+    #     sdfg.simplify()
+    #     sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
+    #     # sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 5:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
-        move_loops(sdfg)
-        sdfg.simplify()
-        sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        # sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    # if sdfg_id < 5:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+    #     move_loops(sdfg)
+    #     sdfg.simplify()
+    #     sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    #     # sdfg.compile()
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     if sdfg_id < 6:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
