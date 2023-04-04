@@ -289,13 +289,15 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
                         assert not any(k in str(s) for k in repl_dict.keys())
                         assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
 
+    sdfg.simplify(verbose=True)
+
     sdfg.save('CLOUDSCOUTER_before_loop_elimination.sdfg')
     
-    # helpers.split_interstate_edges(sdfg)
-    # sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False)
-    # sdfg.save('CLOUDSCOUTER_loops_eliminated.sdfg')
+    helpers.split_interstate_edges(sdfg)
+    sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False)
+    sdfg.save('CLOUDSCOUTER_loops_eliminated_internal.sdfg')
     # fix_sdfg_symbols(sdfg)
-    sdfg.simplify(verbose=True)
+    # sdfg.simplify(verbose=True)
 
     pipeline = Pipeline([ScalarFission()])
     for sd in sdfg.all_sdfgs_recursive():
@@ -967,10 +969,21 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+    # helpers.split_interstate_edges(sdfg)
+    # sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False, func=validate_sdfg, args=(inputs, outputs_d, outputs_f))
+    # # sdfg.apply_transformations_repeated(TrivialLoopElimination)
+    # sdfg.save('CLOUDSCOUTER_loops_eliminated.sdfg')
+    # fix_sdfg_symbols(sdfg)
+    # sdfg.simplify(verbose=True)
+
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_loops_eliminated.sdfg')
+    # sdfg.compile()
+    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
     if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
         auto_optimize(sdfg, dace.DeviceType.Generic)
-        sdfg.apply_transformations_repeated(TrivialMapElimination)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
         sdfg.compile()
@@ -978,6 +991,14 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     
     if sdfg_id < 3:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+        sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    
+    if sdfg_id < 4:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
         force_maps(sdfg)
         sdfg.apply_transformations_repeated(TrivialMapElimination)
         sdfg.simplify()
@@ -985,7 +1006,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
-    if sdfg_id < 4:
+    if sdfg_id < 5:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
         move_loops(sdfg)
         sdfg.simplify()
@@ -993,7 +1014,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
-    if sdfg_id < 5:
+    if sdfg_id < 6:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
         helpers.split_interstate_edges(sdfg)
         sdfg.apply_transformations_repeated(LoopUnroll)
