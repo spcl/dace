@@ -292,16 +292,16 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     sdfg.simplify(verbose=True)
 
     sdfg.save('CLOUDSCOUTER_before_loop_elimination.sdfg')
-    
+
     helpers.split_interstate_edges(sdfg)
     sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False)
     sdfg.save('CLOUDSCOUTER_loops_eliminated_internal.sdfg')
-    # fix_sdfg_symbols(sdfg)
-    # sdfg.simplify(verbose=True)
 
     pipeline = Pipeline([ScalarFission()])
     for sd in sdfg.all_sdfgs_recursive():
         results = pipeline.apply_pass(sd, {})[ScalarFission.__name__]
+    
+    sdfg.simplify(verbose=True)
 
     return sdfg
 
@@ -966,27 +966,15 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     if sdfg_id < 1:
         sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
         sdfg.save('CLOUDSCOUTER_simplify.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
-    
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-    # helpers.split_interstate_edges(sdfg)
-    # sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False, func=validate_sdfg, args=(inputs, outputs_d, outputs_f))
-    # # sdfg.apply_transformations_repeated(TrivialLoopElimination)
-    # sdfg.save('CLOUDSCOUTER_loops_eliminated.sdfg')
-    # fix_sdfg_symbols(sdfg)
-    # sdfg.simplify(verbose=True)
-
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_loops_eliminated.sdfg')
-    # sdfg.compile()
-    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
         auto_optimize(sdfg, dace.DeviceType.Generic)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 3:
@@ -994,7 +982,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.apply_transformations_repeated(TrivialMapElimination)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 4:
@@ -1003,7 +991,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.apply_transformations_repeated(TrivialMapElimination)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     
     if sdfg_id < 5:
@@ -1011,7 +999,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         move_loops(sdfg)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     if sdfg_id < 6:
@@ -1020,7 +1008,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         sdfg.apply_transformations_repeated(LoopUnroll)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
-        sdfg.compile()
+        # sdfg.compile()
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     
@@ -1028,7 +1016,6 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
 
     greedy_fuse(sdfg, False)
     sdfg.save('CLOUDSCOUTER_fuse.sdfg')
-
 
     fix_sdfg_symbols(sdfg)
 
@@ -1042,7 +1029,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
             count = fission_sdfg(sdfg, sdfg.name, iteration)
             print(f"Fissioned {count} maps")
             iteration += 1
-            sdfg.compile()
+            # sdfg.compile()
             print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
         sdfg.simplify()
     except:
