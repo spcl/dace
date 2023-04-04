@@ -1,5 +1,7 @@
 import copy
 from typing import Dict, Union, Tuple, List
+import numpy as np
+from number import Number
 
 parameters = {
     'KLON': 10000,
@@ -331,6 +333,51 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
             ],
     }
     return ranges[program]
+
+
+def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str, pattern: str):
+    """
+    Sets a specific pattern into the given input data depending on the program. Used to trigger certain pattern for
+    if/else conditions inside the programs. Current patterns are:
+        - const: Use the const branch in class 2 (setting to const value)
+        - formula: Use the formula branch in class 2
+        - worst: Alternate between each branch inbetween each thread in a block
+
+    :param inputs: The input data to manipulate
+    :type inputs: Dict[str, Union[Number, np.ndarray]]
+    :param program: The program name
+    :type program: str
+    :param pattern: The pattern name
+    :type pattern: str
+    """
+    params = get_program_parameters_data(program)['parameters']
+    if pattern == 'const':
+        if program == 'cloudsc_class2_781':
+            inputs['RLMIN'] = 10.0
+        elif program == 'cloudsc_class2_1762':
+            inputs['ZEPSEC'] = 10.0
+        elif program == 'cloudsc_class2_1516':
+            print(f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516")
+    elif pattern == 'formula':
+        if program == 'cloudsc_class2_781':
+            inputs['RLMIN'] = 0.0
+        elif program == 'cloudsc_class2_1762':
+            inputs['ZEPSEC'] = 0.0
+        elif program == 'cloudsc_class2_1516':
+            inputs['ZA'] = np.ones_like(inputs['ZA'])
+    elif pattern == 'worst':
+        if program == 'cloudsc_class2_781':
+            inputs['RLMIN'] = 1.0
+            inputs['ZQX'] = np.zeros_like(inputs['ZQX'])
+            inputs['ZQX'][0::2, :, params['NCLDQL']-1] = 100.0
+        elif program == 'cloudsc_class2_1762':
+            inputs['ZEPSEC'] = 1.0
+            inputs['ZQPRETOT2'] = np.zeros_like(inputs['ZQX'])
+            inputs['ZQPRETOT2'][0::2, :] = 100.0
+        elif program == 'cloudsc_class2_1516':
+            inputs['ZA'] = np.zeros_like(inputs['ZA'])
+            inputs['ZA'][0::2, :] = 1.0
+            inputs['RCLDTOPCF'] = 0.5
 
 
 def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, Tuple]]]:

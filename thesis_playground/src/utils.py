@@ -203,8 +203,12 @@ def print_results_v2(run_data: MeasurementRun):
                 if measurement.kernel_name is not None:
                     name += f" of {measurement.kernel_name}"
                 name += f" [{measurement.unit}] (#={measurement.amount()})"
-                flat_data.append([program_measurement.program, name,
-                                  measurement.average(), measurement.median(), measurement.min(), measurement.max()])
+                print(name)
+                print(measurement)
+                if not measurement.is_empty():
+                    flat_data.append([program_measurement.program, name,
+                                      measurement.average(), measurement.median(), measurement.min(),
+                                      measurement.max()])
 
     print(run_data.description)
     print(run_data.properties)
@@ -373,3 +377,19 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
     return sdfg
 
+def print_non_zero_percentage(data: Dict[str, Union[Number, Union[np.ndarray, cp.ndarray]]], variable: str):
+    """
+    Prints the number of total and nonzero values and the percentage of a given variable. Data can have numpy or cupy
+    arrays
+
+    :param data: The data where the variable is inside
+    :type data: Dict[str, Union[Number, Union[np.ndarray, cp.ndarray]]]
+    :param variable: The variable name
+    :type variable: str
+    """
+    variable_data = data[variable]
+    if isinstance(variable_data, cp.ndarray):
+        variable_data = cp.asnumpy(variable_data)
+    num_nnz = np.count_nonzero(variable_data)
+    num_tot = np.prod(variable_data.shape)
+    print(f"{variable}: {num_nnz}/{num_tot} = {num_nnz/num_tot*100}%")

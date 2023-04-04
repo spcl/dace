@@ -1,12 +1,12 @@
 import numpy as np
 import copy
-import cupy as cp
 
 import dace
 
-from data import get_program_parameters_data
+from data import get_program_parameters_data, set_input_pattern
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
-                  compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host
+                  compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
+                  print_non_zero_percentage
 from measurement_data import ProgramMeasurement
 
 RNG_SEED = 42
@@ -72,12 +72,11 @@ def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, devic
     optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
 
     rng = np.random.default_rng(RNG_SEED)
-    inputs = get_inputs(program, rng)
-    outputs = get_outputs(program, rng)
+    inputs = copy_to_device(get_inputs(program, rng))
+    outputs = copy_to_device(get_outputs(program, rng))
 
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
-
 
 def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool) -> dace.SDFG:
     programs = get_programs_data()['programs']
@@ -105,14 +104,19 @@ def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, n
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)
     outputs = get_outputs(program, rng)
+    set_input_pattern(inputs, program, 'const')
 
-    sdfg.clear_instrumentation_reports()
+    variables = {'cloudsc_class2_781': 'ZLIQFRAC', 'cloudsc_class2_1762': 'ZSNOWCLD2',
+                 'cloudsc_class2_1516': 'ZCLDTOPDIST2'}
+    sdfg.clear_instrumentation_reports(outputs, variables[program])
     print_with_time("Measure total runtime")
+    inputs['RLMIN'] = 10.0
     inputs = copy_to_device(inputs)
     outputs = copy_to_device(outputs)
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
 
+    print_non_zero_percentage(outputs, )
     reports = sdfg.get_instrumentation_reports()
 
     results.add_measurement("Total time", "ms")
