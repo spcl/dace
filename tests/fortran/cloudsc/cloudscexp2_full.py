@@ -502,7 +502,11 @@ def change_data_layout(sdfg: dace.SDFG):
         dl_perm[klev_idx] = nblocks_idx
         dl_perm[nblocks_idx] = klev_idx
         desc.shape = _permute(desc.shape, dl_perm)
-        desc.strides = _permute(desc.strides, dl_perm)
+        # desc.strides = _permute(desc.strides, dl_perm)
+        strides = [1]
+        for i in range(1, len(desc.shape)):
+            strides.append(strides[i-1] * desc.shape[i-1])
+        desc.strides = tuple(strides)
 
         perms[name] = dl_perm
 
