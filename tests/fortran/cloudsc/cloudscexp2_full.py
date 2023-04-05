@@ -1,8 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
+import ast
 import copy
 import dace
 from dace.frontend.fortran import fortran_parser
+from dace.frontend.python import astutils
 from dace.sdfg import utils
 from dace.transformation import helpers
 from dace.transformation.auto.auto_optimize import auto_optimize, greedy_fuse, tile_wcrs
@@ -471,6 +473,83 @@ def debug_auto_optimize(sdfg: dace.SDFG, inputs, outputs, ref_outputs):
 
     #     return sdfg
     return sdfg
+
+
+def change_data_layout(sdfg: dace.SDFG):
+
+    def _permute(before, perm):
+        return type(before)([before[i] for i in perm])
+    
+    perms = dict()
+    for name, desc in sdfg.arrays.items():
+
+        # We target arrays that have NBLOCKS and KLEV or KLEV + 1 in their shape
+        shape_str = [str(s) for s in desc.shape]
+        try:
+            nblocks_idx = shape_str.index('NBLOCKS')
+        except ValueError:
+            continue
+
+        if '137' in shape_str:
+            klev_idx = shape_str.index('137')
+        elif '138' in shape_str:
+            klev_idx = shape_str.index('138')
+        else:
+            continue
+
+        # Change the layout
+        dl_perm = list(range(len(desc.shape)))
+        dl_perm[klev_idx] = nblocks_idx
+        dl_perm[nblocks_idx] = klev_idx
+        desc.shape = _permute(desc.shape, dl_perm)
+        desc.strides = _permute(desc.strides, dl_perm)
+
+        perms[name] = dl_perm
+
+    # Change memlets and recurse in nested SDFGs
+    for state in sdfg.nodes():
+        visited = set()
+        for node in state.nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data in perms:
+                for e0 in state.all_edges(node):
+                    if e0 in visited:
+                        continue
+                    for e1 in state.memlet_tree(e0):
+                        if e1 in visited:
+                            continue
+                        visited.add(e1)
+                        if e1.data.data == node.data:
+                            e1.data.subset.ranges = _permute(e1.data.subset.ranges, perms[node.data])
+                        else:
+                            e1.data.other_subset.ranges = _permute(e1.data.other_subset.ranges, perms[node.data])
+                    visited.add(e0)
+            elif isinstance(node, dace.sdfg.nodes.NestedSDFG):
+                change_data_layout(node.sdfg)
+    
+    # Change InterstateEdges
+    for edge in sdfg.edges():
+        memlets = edge.data.get_read_memlets(sdfg.arrays)
+        for m in memlets:
+            if m.data in perms:
+                m.subset.ranges = _permute(m.subset.ranges, perms[m.data])
+        for node in ast.walk(edge.data.condition.code[0]):
+            if isinstance(node, ast.Subscript):
+                m = memlets.pop(0)
+                subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                node.slice = ast.copy_location(subscript.slice, node.slice)
+        edge.data._cond_sympy = None
+        for k, v in edge.data.assignments.items():
+            vast = ast.parse(v)
+            for node in ast.walk(vast):
+                if isinstance(node, ast.Subscript):
+                    m = memlets.pop(0)
+                    subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                    assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                    node.slice = ast.copy_location(subscript.slice, node.slice)
+            newv = astutils.unparse(vast)
+            edge.data.assignments[k] = newv
+        assert not memlets
 
 
 parameters = {
@@ -1013,39 +1092,46 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
-    # sdfg.simplify(verbose=True)
-    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+    sdfg.simplify(verbose=True)
+    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     greedy_fuse(sdfg, False)
     sdfg.simplify(verbose=True)
     sdfg.save('CLOUDSCOUTER_fuse.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
+    change_data_layout(sdfg)
+    sdfg.save('CLOUDSCOUTER_layout.sdfg')
+    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
-    # fix_sdfg_symbols(sdfg)
+    exit(0)
 
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.openmp_sections = False
 
-    try:
-        count = 1
-        iteration = 0
-        while count > 0:
-            count = fission_sdfg(sdfg, sdfg.name, iteration)
-            print(f"Fissioned {count} maps")
-            iteration += 1
-            # sdfg.compile()
-            print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
-        sdfg.simplify()
-    except:
-        pass
+    # # fix_sdfg_symbols(sdfg)
 
-    last_iteration = iteration - 1
-    sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.openmp_sections = False
 
-    for sd, state, map_entry in find_toplevel_maps(sdfg):
-        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+    # try:
+    #     count = 1
+    #     iteration = 0
+    #     while count > 0:
+    #         count = fission_sdfg(sdfg, sdfg.name, iteration)
+    #         print(f"Fissioned {count} maps")
+    #         iteration += 1
+    #         # sdfg.compile()
+    #         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    #     sdfg.simplify()
+    # except:
+    #     pass
+
+    # last_iteration = iteration - 1
+    # sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
 
     # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_2.sdfg')
