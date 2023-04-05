@@ -2,6 +2,7 @@
 import argparse
 import ast
 import copy
+import cupy as cp
 import dace
 from dace.frontend.fortran import fortran_parser
 from dace.frontend.python import astutils
@@ -22,7 +23,7 @@ from typing import Dict, Union
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap, LoopUnroll, TrivialLoopElimination
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap, LoopUnroll, TrivialLoopElimination, GPUTransformSDFG
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -32,6 +33,9 @@ from dace.transformation.dataflow import MapFission, RemoveIntermediateWrite
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.interstate.move_loop_into_map import MoveMapIntoLoop, MoveMapIntoIf
 from typing import List, Set, Tuple
+
+
+from cupyx.profiler import benchmark
 
 
 def find_defined_symbols(sdfg: dace.SDFG) -> Set[str]:
@@ -308,9 +312,12 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     return sdfg
 
 
-def validate_sdfg(sdfg, inputs, outputs, outputs_f) -> bool:
+def validate_sdfg(sdfg, inputs, outputs, outputs_f, permutation=None) -> bool:
     outputs_d = copy.deepcopy(outputs)
     sdfg(**inputs, **outputs_d)
+
+    if permutation is not None:
+        outputs_d = unpermute_output(outputs_d, permutation)
 
     success = True
     for k in outputs_f.keys():
@@ -527,8 +534,8 @@ def change_data_layout(sdfg: dace.SDFG):
                         else:
                             e1.data.other_subset.ranges = _permute(e1.data.other_subset.ranges, perms[node.data])
                     visited.add(e0)
-            elif isinstance(node, dace.sdfg.nodes.NestedSDFG):
-                change_data_layout(node.sdfg)
+            # elif isinstance(node, dace.sdfg.nodes.NestedSDFG):
+            #     change_data_layout(node.sdfg)
     
     # Change InterstateEdges
     for edge in sdfg.edges():
@@ -554,6 +561,61 @@ def change_data_layout(sdfg: dace.SDFG):
             newv = astutils.unparse(vast)
             edge.data.assignments[k] = newv
         assert not memlets
+    
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is sdfg:
+            continue
+        for nname, ndesc in sd.arrays.items():
+            if nname in perms:
+                shape_str = [str(s) for s in ndesc.shape]
+                if '137' in shape_str:
+                    nklev_idx = shape_str.index('137')
+                elif '138' in shape_str:
+                    nklev_idx = shape_str.index('138')
+                else:
+                    continue
+                odesc = sdfg.arrays[nname]
+                shape_str = [str(s) for s in odesc.shape]
+                if 'NBLOCKS' in shape_str:
+                    onblocks_idx = shape_str.index('NBLOCKS')
+                else:
+                    continue
+                if '137' in shape_str:
+                    oklev_idx = shape_str.index('137')
+                elif '138' in shape_str:
+                    oklev_idx = shape_str.index('138')
+                else:
+                    continue
+                
+                if len(ndesc.strides) > 3:
+                    print(f"{nname}: {ndesc.shape}, {ndesc.strides}")
+                old_strides = list(ndesc.strides)
+                old_strides[nklev_idx] = odesc.strides[oklev_idx]
+                if len(ndesc.strides) > 3 and len(odesc.strides) > 3:
+                    old_strides[nklev_idx + 1] = odesc.strides[oklev_idx + 1]
+                ndesc.strides = tuple(old_strides)
+                if len(ndesc.strides) > 3:
+                    print(f"{nname}: {ndesc.shape}, {ndesc.strides}")
+                    print()
+                if 'NBLOCKS' not in sd.parent_nsdfg_node.symbol_mapping:
+                    sd.parent_nsdfg_node.symbol_mapping['NBLOCKS'] = 'NBLOCKS'
+                    sd.add_symbol('NBLOCKS', dace.int32)
+
+    return perms
+
+
+def unpermute_output(output: Dict[str, np.ndarray], perm: Dict[str, List[int]]) -> Dict[str, np.ndarray]:
+
+    unpermuted = dict()
+    for name, arr in output.items():
+        if name in perm:
+            unpermuted[name] = arr.transpose(perm[name]).reshape(arr.shape)
+        else:
+            unpermuted[name] = arr
+    
+    return unpermuted
+
+nbvalue = 32768
 
 
 parameters = {
@@ -582,7 +644,7 @@ parameters = {
     'NCLDDIAG': 1,
     'NAERCLD': 1,
 
-    'NBLOCKS': 4,
+    'NBLOCKS': nbvalue,
     # 'NBLOCKS': 512,
     # 'LDMAINCALL': np.bool_(True),  # boolean (LOGICAL)
     # 'LDSLPHY': np.bool_(True),  # boolean (LOGICAL),
@@ -606,13 +668,13 @@ parameters = {
     'LCLDBUDGET': np.int32(np.bool_(True)),  # boolean (LOGICAL)
     'NGPBLKS': 10,
     'NUMOMP': 10,
-    'NGPTOT': 4*1,
+    'NGPTOT': nbvalue*1,
     # 'NGPTOT': 65536,
-    'NGPTOTG': 4*1,
+    'NGPTOTG': nbvalue*1,
     # 'NGPTOTG': 65536,
     'NPROMA': 1,
     # 'NPROMA': 128,
-    'NBETA': 4,
+    'NBETA': nbvalue,
 }
 
 
@@ -1106,11 +1168,44 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
-    change_data_layout(sdfg)
+    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    permutation = change_data_layout(sdfg)
     sdfg.save('CLOUDSCOUTER_layout.sdfg')
-    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
     exit(0)
+
+    # inputs_dev = {k: cp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in inputs.items()}
+    # outputs_dev = {k: cp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in outputs_d.items()}
+
+    # def _to_gpu(sdfg: dace.SDFG):
+    #     for _, desc in sdfg.arrays.items():
+    #         if not desc.transient and isinstance(desc, dace.data.Array):
+    #             desc.storage = dace.dtypes.StorageType.GPU_Global
+    #     for state in sdfg.states():
+    #         for node in state.nodes():
+    #             if isinstance(node, dace.sdfg.nodes.MapEntry):
+    #                 node.schedule = dace.ScheduleType.GPU_Device
+    
+    # def _func(exec, inputs, outputs):
+    #     exec(**inputs, **outputs)
+    
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    # _to_gpu(sdfg)
+    # csdfg = sdfg.compile()
+    # print(benchmark(_func, (csdfg, inputs_dev, outputs_dev), n_repeat=10, n_warmup=10))
+
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_layout.sdfg')
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    # permutation = change_data_layout(sdfg)
+    # sdfg.save('CLOUDSCOUTER_layout.sdfg')
+    # _to_gpu(sdfg)
+    # csdfg = sdfg.compile()
+    # print(benchmark(_func, (csdfg, inputs_dev, outputs_dev), n_repeat=10, n_warmup=10))
+
+
+    # exit(0)
+
 
 
     # # fix_sdfg_symbols(sdfg)
@@ -1189,7 +1284,7 @@ if __name__ == "__main__":
                         '--sdfg_id',
                         type=int,
                         nargs="?",
-                        default=0,
+                        default=7,
                         help='The SDFG to use.')
     args = parser.parse_args()
     
