@@ -528,7 +528,7 @@ class StateFusion(transformation.MultiStateTransformation):
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
+            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes and x in first_state.nodes()]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate

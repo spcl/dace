@@ -1004,7 +1004,8 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
 
     if sdfg_id < 6:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        helpers.split_interstate_edges(sdfg)
+        for sd in sdfg.all_sdfgs_recursive():
+            helpers.split_interstate_edges(sd)
         sdfg.apply_transformations_repeated(LoopUnroll)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
@@ -1012,12 +1013,17 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+    # sdfg.simplify(verbose=True)
+    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
     greedy_fuse(sdfg, False)
+    sdfg.simplify(verbose=True)
     sdfg.save('CLOUDSCOUTER_fuse.sdfg')
+    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
 
-    fix_sdfg_symbols(sdfg)
+
+    # fix_sdfg_symbols(sdfg)
 
     for sd in sdfg.all_sdfgs_recursive():
         sd.openmp_sections = False
