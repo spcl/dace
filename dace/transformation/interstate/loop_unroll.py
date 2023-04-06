@@ -8,7 +8,10 @@ from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
+from dace import dtypes
 from dace.frontend.python.astutils import ASTFindReplace
+from dace.frontend.python import astutils, wrappers
+import ast
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation import transformation as xf
 
@@ -36,7 +39,10 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # If loop cannot be detected, fail
         if not found:
             return False
-        _, rng, _ = found
+        itvar, rng, _ = found
+
+        if itvar == '_for_it_103':
+            return False
 
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(rng[2], sdfg.constants):
@@ -100,11 +106,32 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
             sdfg.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
-        for sdd in sdfg.all_sdfgs_recursive():
-            if itervar in sdd.symbols:
-                del sdd.symbols[itervar]
+
+        #for sdd in sdfg.all_sdfgs_recursive():
+
+        #    if itervar in sdd.symbols:
+        #        del sdd.symbols[itervar]
+        if itervar in sdfg.symbols:
+            del sdfg.symbols[itervar]
+        #tmp_sdfg = sdfg
+        #while tmp_sdfg.parent_sdfg is not None:
+        #    tmp_sdfg = tmp_sdfg.parent_sdfg
+        #for sdd in tmp_sdfg.all_sdfgs_recursive():
+        #    if itervar in sdd.symbols:
+        #        del sdd.symbols[itervar]
 
         sdfg.remove_nodes_from([guard] + loop_states)
+
+    def recursive_replace(self, state, itervar, value):
+        for n in state.nodes():
+            if isinstance(n, sd.nodes.NestedSDFG):
+                internal_name = n.symbol_mapping(itervar)
+                n.sdfg.replace_dict({itervar: str(value)})
+
+                for nestedstate in n.sdfg.states():
+                    self.recursive_replace(nestedstate, itervar, value)
+                #if itervar in n.symbol_mapping:
+                #    n.symbol_mapping.pop(itervar)
 
     def instantiate_loop(
         self,
@@ -123,23 +150,67 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         for state in new_states:
             state.set_label(state.label + '_' + itervar + '_' +
                             (state_suffix if state_suffix is not None else str(value)))
+
             state.replace(itervar, value)
+            #self.recursive_replace(state, itervar, value)
 
         # Add subgraph to original SDFG
         for edge in loop_subgraph.edges():
             src = new_states[loop_states.index(edge.src)]
             dst = new_states[loop_states.index(edge.dst)]
 
-            
             # Replace conditions in subgraph edges
             data: sd.InterstateEdge = copy.deepcopy(edge.data)
-            if data.condition:
-                ASTFindReplace({itervar: str(value)}).visit(data.condition.code[0])
-            else:
-                print('here')
-            for sds in sdfg.all_sdfgs_recursive():
-                if not sds is sdfg:
-                    sds.replace(itervar,value)    
+
+            repl = {itervar: str(value)}
+            # topsdfg = sdfg
+            # while topsdfg.parent_sdfg is not None:
+            #     topsdfg = topsdfg.parent_sdfg
+            # if itervar == '_for_it_103':
+            #     repl['_for_it_104'] = '_for_it_104_' + str(value)
+
+            #     for sdd in topsdfg.all_sdfgs_recursive():
+            #         if '_for_it_104_' + str(value) not in sdd.symbols:
+            #             sdd.add_symbol('_for_it_104_' + str(value), dtypes.int32)
+
+            #     repl['_for_it_105'] = '_for_it_105_' + str(value)
+            #     for sdd in topsdfg.all_sdfgs_recursive():
+            #         if '_for_it_105_' + str(value) not in sdd.symbols:
+            #             sdd.add_symbol('_for_it_105_' + str(value), dtypes.int32)
+            #for name, new_name in repl.items():
+            #    for k, v in repl.items():
+            #        if v == name:
+            #            repl[k] = new_name
+
+            for k, v in data.assignments.items():
+                vast = ast.parse(v)
+                vast = astutils.ASTFindReplace(repl).visit(vast)
+                newv = astutils.unparse(vast)
+                if newv != v:
+                    data.assignments[k] = newv
+            tmp_assignments = {}
+            for k in data.assignments.keys():
+                if k in repl.keys():
+                    tmp_assignments[repl[k]] = data.assignments[k]
+                else:
+                    tmp_assignments[k] = data.assignments[k]
+            data.assignments = tmp_assignments
+            condition = ast.parse(data.condition.as_string)
+            condition = astutils.ASTFindReplace(repl).visit(condition)
+            newc = astutils.unparse(condition)
+            if newc != condition:
+                data.condition.as_string = newc
+                data._uncond = None
+                data._cond_sympy = None
+
+            # if data.assignments:
+            #     for k in data.assignments:
+            #         data.assignments[k] = data.assignments[k].replace(itervar, str(value))
+            # if data.condition:
+
+            #     for i in data.condition.code:
+            #         ASTFindReplace({itervar: str(value)}).visit(i)
+
             sdfg.add_edge(src, dst, data)
 
         return new_states
