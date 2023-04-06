@@ -1,8 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
+import ast
 import copy
+import cupy as cp
 import dace
+from dace.data import _prod
 from dace.frontend.fortran import fortran_parser
+from dace.frontend.python import astutils
 from dace.sdfg import utils
 from dace.transformation import helpers
 from dace.transformation.auto.auto_optimize import auto_optimize, greedy_fuse, tile_wcrs
@@ -16,11 +20,11 @@ import os
 import pytest
 import sys
 import tempfile
-from typing import Dict, Union
+from typing import Any, Dict, Union
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveLoopIntoMap, LoopUnroll, TrivialLoopElimination, GPUTransformSDFG
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -29,7 +33,11 @@ from dace.transformation import helpers as xfh
 from dace.transformation.dataflow import MapFission, RemoveIntermediateWrite
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.interstate.move_loop_into_map import MoveMapIntoLoop, MoveMapIntoIf
+from timeit import repeat
 from typing import List, Set, Tuple
+
+
+from cupyx.profiler import benchmark
 
 
 def find_defined_symbols(sdfg: dace.SDFG) -> Set[str]:
@@ -43,7 +51,7 @@ def fix_sdfg_symbols(sdfg: dace.SDFG):
                 fix_sdfg_symbols(node.sdfg)
     for s in find_defined_symbols(sdfg):
         del sdfg.symbols[s]
-        if s in sdfg.parent_nsdfg_node.symbol_mapping:
+        if sdfg.parent is not None and s in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[s]
 
 
@@ -223,7 +231,9 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
                  'NCLDQS': '4',
                  'NCLDQV': '5',
                  'NSSOPT': '1',
-                 'NCLDTOP': '15'}
+                 'NCLDTOP': '15',
+                 'KLEV':'137',
+                 'KFLDX': '1',}
 
     # Verify and fix NSSOPT and NCLDTOP
     for sd in sdfg.all_sdfgs_recursive():
@@ -262,16 +272,60 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     from dace.sdfg import utils
     utils.normalize_offsets(sdfg)
     sdfg.simplify(verbose=True)
+
+    repl_dict = {'NPROMA': '1'}
+    # Promote/replace symbols
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.replace_dict(repl_dict)
+        if sd.parent_nsdfg_node is not None:
+            for k in repl_dict.keys():
+                if k in sd.parent_nsdfg_node.symbol_mapping:
+                    del sd.parent_nsdfg_node.symbol_mapping[k]
+        for k in repl_dict.keys():
+            if k in sd.symbols:
+                del sd.symbols[k]
+    # Verify promotion/replacement
+    for sd in sdfg.all_sdfgs_recursive():
+        assert not any(k in sd.symbols for k in repl_dict.keys())
+        assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    assert not any(k in node.code.as_string for k in repl_dict.keys())
+                elif isinstance(node, dace.nodes.NestedSDFG):
+                    for s, m in node.symbol_mapping.items():
+                        assert not any(k in str(s) for k in repl_dict.keys())
+                        assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
+
+    sdfg.simplify(verbose=True)
+
+    sdfg.save('CLOUDSCOUTER_before_loop_elimination.sdfg')
+
+    helpers.split_interstate_edges(sdfg)
+    sdfg.apply_transformations_repeated(TrivialLoopElimination, validate=False)
+    sdfg.save('CLOUDSCOUTER_loops_eliminated_internal.sdfg')
+
     pipeline = Pipeline([ScalarFission()])
     for sd in sdfg.all_sdfgs_recursive():
         results = pipeline.apply_pass(sd, {})[ScalarFission.__name__]
+    
+    sdfg.simplify(verbose=True)
 
     return sdfg
 
 
-def validate_sdfg(sdfg, inputs, outputs, outputs_f) -> bool:
-    outputs_d = copy.deepcopy(outputs)
-    sdfg(**inputs, **outputs_d)
+def validate_sdfg(sdfg, inputs, outputs, outputs_f, permutation=None) -> bool:
+    if permutation:
+        inputs_d = permute(inputs, permutation)
+        outputs_d = permute(outputs, permutation)
+    else:
+        inputs_d = inputs
+        outputs_d = copy.deepcopy(outputs)
+    sdfg(**inputs_d, **outputs_d)
+
+    if permutation is not None:
+        # outputs_d = unpermute_output(outputs_d, permutation)
+        outputs_d = unpermute(outputs_d, outputs_f, permutation)
 
     success = True
     for k in outputs_f.keys():
@@ -436,14 +490,299 @@ def debug_auto_optimize(sdfg: dace.SDFG, inputs, outputs, ref_outputs):
     return sdfg
 
 
+def change_data_layout(sdfg: dace.SDFG):
+
+    def _permute(before, perm):
+        return type(before)([before[i] for i in perm])
+    
+    perms = dict()
+    for name, desc in sdfg.arrays.items():
+
+        # We target arrays that have NBLOCKS and KLEV or KLEV + 1 in their shape
+        shape_str = [str(s) for s in desc.shape]
+        try:
+            nblocks_idx = shape_str.index('NBLOCKS')
+        except ValueError:
+            continue
+
+        if '137' in shape_str:
+            klev_idx = shape_str.index('137')
+        elif '138' in shape_str:
+            klev_idx = shape_str.index('138')
+        else:
+            continue
+
+        # Change the layout
+        dl_perm = list(range(len(desc.shape)))
+        dl_perm[klev_idx] = nblocks_idx
+        dl_perm[nblocks_idx] = klev_idx
+        desc.shape = _permute(desc.shape, dl_perm)
+        # desc.strides = _permute(desc.strides, dl_perm)
+        strides = [1]
+        for i in range(1, len(desc.shape)):
+            strides.append(strides[i-1] * desc.shape[i-1])
+        desc.strides = tuple(strides)
+
+        perms[name] = dl_perm
+
+    # Change memlets and recurse in nested SDFGs
+    for state in sdfg.nodes():
+        visited = set()
+        for node in state.nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data in perms:
+                for e0 in state.all_edges(node):
+                    if e0 in visited:
+                        continue
+                    for e1 in state.memlet_tree(e0):
+                        if e1 in visited:
+                            continue
+                        visited.add(e1)
+                        if e1.data.data == node.data:
+                            e1.data.subset.ranges = _permute(e1.data.subset.ranges, perms[node.data])
+                        else:
+                            e1.data.other_subset.ranges = _permute(e1.data.other_subset.ranges, perms[node.data])
+                    visited.add(e0)
+            # elif isinstance(node, dace.sdfg.nodes.NestedSDFG):
+            #     change_data_layout(node.sdfg)
+    
+    # Change InterstateEdges
+    for edge in sdfg.edges():
+        memlets = edge.data.get_read_memlets(sdfg.arrays)
+        for m in memlets:
+            if m.data in perms:
+                m.subset.ranges = _permute(m.subset.ranges, perms[m.data])
+        for node in ast.walk(edge.data.condition.code[0]):
+            if isinstance(node, ast.Subscript):
+                m = memlets.pop(0)
+                subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                node.slice = ast.copy_location(subscript.slice, node.slice)
+        edge.data._cond_sympy = None
+        for k, v in edge.data.assignments.items():
+            vast = ast.parse(v)
+            for node in ast.walk(vast):
+                if isinstance(node, ast.Subscript):
+                    m = memlets.pop(0)
+                    subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                    assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                    node.slice = ast.copy_location(subscript.slice, node.slice)
+            newv = astutils.unparse(vast)
+            edge.data.assignments[k] = newv
+        assert not memlets
+    
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is sdfg:
+            continue
+        for nname, ndesc in sd.arrays.items():
+            if nname in perms:
+                shape_str = [str(s) for s in ndesc.shape]
+                if '137' in shape_str:
+                    nklev_idx = shape_str.index('137')
+                elif '138' in shape_str:
+                    nklev_idx = shape_str.index('138')
+                else:
+                    continue
+                odesc = sdfg.arrays[nname]
+                shape_str = [str(s) for s in odesc.shape]
+                if 'NBLOCKS' in shape_str:
+                    onblocks_idx = shape_str.index('NBLOCKS')
+                else:
+                    continue
+                if '137' in shape_str:
+                    oklev_idx = shape_str.index('137')
+                elif '138' in shape_str:
+                    oklev_idx = shape_str.index('138')
+                else:
+                    continue
+                
+                if len(ndesc.strides) > 3:
+                    print(f"{nname}: {ndesc.shape}, {ndesc.strides}")
+                old_strides = list(ndesc.strides)
+                old_strides[nklev_idx] = odesc.strides[oklev_idx]
+                if len(ndesc.strides) > 3 and len(odesc.strides) > 3:
+                    old_strides[nklev_idx + 1] = odesc.strides[oklev_idx + 1]
+                ndesc.strides = tuple(old_strides)
+                if len(ndesc.strides) > 3:
+                    print(f"{nname}: {ndesc.shape}, {ndesc.strides}")
+                    print()
+                if 'NBLOCKS' not in sd.parent_nsdfg_node.symbol_mapping:
+                    sd.parent_nsdfg_node.symbol_mapping['NBLOCKS'] = 'NBLOCKS'
+                    sd.add_symbol('NBLOCKS', dace.int32)
+
+    return perms
+
+
+def unpermute_output(output: Dict[str, np.ndarray], perm: Dict[str, List[int]]) -> Dict[str, np.ndarray]:
+
+    unpermuted = dict()
+    for name, arr in output.items():
+        if name in perm:
+            unpermuted[name] = arr.transpose(perm[name]).reshape(arr.shape)
+        else:
+            unpermuted[name] = arr
+    
+    return unpermuted
+
+def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str] = None) -> Dict[str, int]:
+
+    permutation = dict()
+    syms_to_add = syms_to_add or set()
+
+    print(f'TOP-LEVEL SDFG {sdfg.name}')
+
+    for name, desc in sdfg.arrays.items():
+
+        # We target arrays that have KLEV or KLEV + 1 in their shape
+        shape_str = [str(s) for s in desc.shape]
+        klev_idx = None
+        divisor = None
+        for v in klev_vals:
+            if str(v) in shape_str:
+                klev_idx = shape_str.index(str(v))
+                divisor = v
+                break
+        if klev_idx is None:
+            continue
+
+        permutation[name] = klev_idx
+
+        is_fortran = (desc.strides[0] == 1)
+
+        # Update the strides
+        new_strides = list(desc.strides)
+        if is_fortran:
+            for idx in range(klev_idx + 1, len(desc.shape)):
+                new_strides[idx] /= divisor
+        else:
+            for idx in range(klev_idx):
+                new_strides[idx] /= divisor
+        new_strides[klev_idx] = _prod(desc.shape) / divisor
+
+        print(f"Changing strides of {name} with shape {desc.shape} from {desc.strides} to {new_strides}")
+
+        desc.strides = tuple(new_strides)
+
+    # Go to nested SDFGs
+    # Assuming only 1 level of nested SDFG
+    for sd in sdfg.all_sdfgs_recursive():
+
+        if sd is sdfg:
+            continue
+
+        assert sd.parent_sdfg is sdfg
+
+        print()
+        print(f'NESTED SDFG {sd.name} (parent: {sd.parent_sdfg.name})')
+
+        for s in syms_to_add:
+            if s not in sd.parent_nsdfg_node.symbol_mapping:
+                    sd.parent_nsdfg_node.symbol_mapping[s] = s
+                    sd.add_symbol(s, dace.int32)
+
+        for nname, ndesc in sd.arrays.items():
+
+            if isinstance(ndesc, dace.data.Scalar):
+                continue
+            if ndesc.transient:
+                continue
+            
+            nsdfg_node = sd.parent_nsdfg_node
+            is_input = True
+            edges = list(sd.parent.in_edges_by_connector(nsdfg_node, nname))
+            if len(edges) == 0:
+                is_input = False
+                edges = list(sd.parent.out_edges_by_connector(nsdfg_node, nname))
+                if len(edges) == 0:
+                    raise ValueError
+            edge = edges[0]
+            if is_input:
+                src = sd.parent.memlet_path(edge)[0].src
+            else:
+                src = sd.parent.memlet_path(edge)[-1].dst
+            assert isinstance(src, dace.nodes.AccessNode)
+            if src.data not in sdfg.arrays or src.data not in permutation:
+                continue
+
+            desc = sdfg.arrays[src.data]
+            new_strides = list(desc.strides)
+
+            subset = edge.data.subset
+            squeezed = copy.deepcopy(subset)
+            rem_idx = squeezed.squeeze()
+            if len(squeezed) != len(ndesc.shape):
+                # print(f"WARNING: {nname}'s has subset {subset} is squeezed to {squeezed}, but the NestedSDFG connector has shape {ndesc.shape}")
+                if len(ndesc.shape) - len(squeezed) == 1:
+                    rem_idx.insert(0, 0)
+                elif len(ndesc.shape) - len(squeezed) == 2:
+                    rem_idx.insert(0, 0)
+                    rem_idx.insert(2, 0)
+                else:
+                    raise NotImplementedError
+            nnew_strides = [new_strides[i] for i in rem_idx]
+
+            print(f"Changing strides of {nname} with shape {ndesc.shape} from {ndesc.strides} to {nnew_strides}")
+
+            ndesc.strides = tuple(nnew_strides)
+    
+    return permutation
+
+
+def permute(input: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any]:
+    permuted = dict()
+    for name, arr in input.items():
+        if name in permutation:
+            klev_idx = permutation[name]
+            is_fortran = np.isfortran(arr)
+            if is_fortran:
+                order = list(range(klev_idx)) + list(range(klev_idx + 1, len(arr.shape))) + [klev_idx]
+            else:
+                print(f"WARNING: {name} is not in Fortran order")
+                order = [klev_idx] + list(range(klev_idx)) + list(range(klev_idx + 1, len(arr.shape)))
+            permuted[name] = arr.transpose(order).copy(order='F')
+            old_strides = [s // 8 for s in arr.strides]
+            strides = [s // 8 for s in permuted[name].strides]
+            print(f"Permuting {name} from {arr.shape} and strides {old_strides} to {permuted[name].shape} and strides{strides}")
+        else:
+            if isinstance(arr, np.ndarray):
+                permuted[name] = arr.copy()
+            else:
+                permuted[name] = arr
+    return permuted
+
+def unpermute(output: Dict[str, Any], ref: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any]:
+    unpermuted = dict()
+    for name, arr in output.items():
+        if name in permutation:
+            klev_idx = permutation[name]
+            is_fortran = np.isfortran(ref[name])
+            if is_fortran:
+                order = list(range(klev_idx)) + [len(arr.shape) - 1] + list(range(klev_idx, len(arr.shape) - 1))
+            else:
+                print(f"WARNING: {name} is not in Fortran order")
+                order = list(range(1, klev_idx + 1)) + [0] + list(range(klev_idx + 1, len(arr.shape)))
+            unpermuted[name] = arr.transpose(order).copy(order='F')
+            old_strides = [s // 8 for s in arr.strides]
+            strides = [s // 8 for s in unpermuted[name].strides]
+            print(f"Unpermuting {name} from {arr.shape} and strides {old_strides} to {unpermuted[name].shape} and strides {strides}")
+        else:
+            if isinstance(arr, np.ndarray):
+                unpermuted[name] = arr.copy()
+            else:
+                unpermuted[name] = arr
+    return unpermuted
+
+nbvalue = 4
+
+
 parameters = {
-    'KLON': 4,
+    'KLON': 1,  # Should be equal to NPROMA
     # 'KLON': 128,
     'KLEV': 137,
     'KIDIA': 1,
     'KFDIA': 137,
     # 'KFDIA': 128,
-    'KFLDX': 25,
+    'KFLDX': 1,
+    # 'KFLDX': 25,
 
     'NCLV': 5,
     'NCLDQI': 2,
@@ -461,7 +800,7 @@ parameters = {
     'NCLDDIAG': 1,
     'NAERCLD': 1,
 
-    'NBLOCKS': 4,
+    'NBLOCKS': nbvalue,
     # 'NBLOCKS': 512,
     # 'LDMAINCALL': np.bool_(True),  # boolean (LOGICAL)
     # 'LDSLPHY': np.bool_(True),  # boolean (LOGICAL),
@@ -485,13 +824,13 @@ parameters = {
     'LCLDBUDGET': np.int32(np.bool_(True)),  # boolean (LOGICAL)
     'NGPBLKS': 10,
     'NUMOMP': 10,
-    'NGPTOT': 4*4,
+    'NGPTOT': nbvalue*1,
     # 'NGPTOT': 65536,
-    'NGPTOTG': 4*4,
+    'NGPTOTG': nbvalue*1,
     # 'NGPTOTG': 65536,
-    'NPROMA': 4,
+    'NPROMA': 1,
     # 'NPROMA': 128,
-    'NBETA': 1,
+    'NBETA': nbvalue,
 }
 
 
@@ -925,6 +1264,9 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
 
+    # medians = repeat("ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})", repeat=2, number=1, globals={**globals(), **locals()})
+    # print(medians)
+
     if sdfg_id < 1:
         sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
         sdfg.save('CLOUDSCOUTER_simplify.sdfg')
@@ -933,57 +1275,134 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     
     if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
-        auto_optimize(sdfg, dace.DeviceType.Generic)
-        sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
-    
+        permutation = change_strides(sdfg, (137, 138), {'NBLOCKS'})
+        sdfg.save('CLOUDSCOUTER_simplify_layout.sdfg')
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+
     if sdfg_id < 3:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
-        force_maps(sdfg)
-        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify_layout.sdfg')
+        auto_optimize(sdfg, dace.DeviceType.Generic)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
     
     if sdfg_id < 4:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt.sdfg')
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+    
+    if sdfg_id < 5:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_map_elimination.sdfg')
+        force_maps(sdfg)
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_loops.sdfg')
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+    
+    if sdfg_id < 6:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
         move_loops(sdfg)
+        sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-        sdfg.compile()
-        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+
+    if sdfg_id < 7:
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+        for sd in sdfg.all_sdfgs_recursive():
+            helpers.split_interstate_edges(sd)
+        sdfg.apply_transformations_repeated(LoopUnroll)
+        sdfg.simplify()
+        sdfg.save('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+        # sdfg.compile()
+        print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
     
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-    fix_sdfg_symbols(sdfg)
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+    # sdfg.simplify(verbose=True)
+    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.openmp_sections = False
+    greedy_fuse(sdfg, False)
+    sdfg.simplify(verbose=True)
+    sdfg.save('CLOUDSCOUTER_fuse.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
-    try:
-        count = 1
-        iteration = 0
-        while count > 0:
-            count = fission_sdfg(sdfg, sdfg.name, iteration)
-            print(f"Fissioned {count} maps")
-            iteration += 1
-            sdfg.compile()
-            print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
-        sdfg.simplify()
-    except:
-        pass
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    # permutation = change_data_layout(sdfg)
+    # sdfg.save('CLOUDSCOUTER_layout.sdfg')
+    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
-    last_iteration = iteration - 1
-    sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+    # exit(0)
 
-    for sd, state, map_entry in find_toplevel_maps(sdfg):
-        print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+    # inputs_dev = {k: cp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in inputs.items()}
+    # outputs_dev = {k: cp.asarray(v) if isinstance(v, np.ndarray) else v for k, v in outputs_d.items()}
 
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_1.sdfg')
-    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
-    # move_loops(sdfg)
+    # def _to_gpu(sdfg: dace.SDFG):
+    #     for _, desc in sdfg.arrays.items():
+    #         if not desc.transient and isinstance(desc, dace.data.Array):
+    #             desc.storage = dace.dtypes.StorageType.GPU_Global
+    #     for state in sdfg.states():
+    #         for node in state.nodes():
+    #             if isinstance(node, dace.sdfg.nodes.MapEntry):
+    #                 node.schedule = dace.ScheduleType.GPU_Device
+    
+    # def _func(exec, inputs, outputs):
+    #     exec(**inputs, **outputs)
+    
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    # _to_gpu(sdfg)
+    # csdfg = sdfg.compile()
+    # print(benchmark(_func, (csdfg, inputs_dev, outputs_dev), n_repeat=10, n_warmup=10))
+
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_layout.sdfg')
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fuse.sdfg')
+    # permutation = change_data_layout(sdfg)
+    # sdfg.save('CLOUDSCOUTER_layout.sdfg')
+    # _to_gpu(sdfg)
+    # csdfg = sdfg.compile()
+    # print(benchmark(_func, (csdfg, inputs_dev, outputs_dev), n_repeat=10, n_warmup=10))
+
+
+    # exit(0)
+
+
+
+    # # fix_sdfg_symbols(sdfg)
+
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.openmp_sections = False
+
+    # try:
+    #     count = 1
+    #     iteration = 0
+    #     while count > 0:
+    #         count = fission_sdfg(sdfg, sdfg.name, iteration)
+    #         print(f"Fissioned {count} maps")
+    #         iteration += 1
+    #         # sdfg.compile()
+    #         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
+    #     sdfg.simplify()
+    # except:
+    #     pass
+
+    # last_iteration = iteration - 1
+    # sdfg = dace.SDFG.from_file(f'CLOUDSCOUTER_fission_step_{last_iteration}.sdfg')
+
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_moved.sdfg')
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_fission_step_2.sdfg')
+    # # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops.sdfg')
+    # # move_loops(sdfg)
     # count = 1
-    # iteration = 2
+    # iteration = 3
     # while count > 0:
     #     count = fission_sdfg(sdfg, sdfg.name, iteration)
     #     print(f"Fissioned {count} maps")
@@ -992,27 +1411,30 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f)}")
     # sdfg.simplify()
 
+    # for sd, state, map_entry in find_toplevel_maps(sdfg):
+    #     print(f"[{sd.label}, {state}, {map_entry}]: {count_map_transient_memory(sd, state, map_entry)}")
+
 
     # if device == dace.DeviceType.GPU:
     #     auto_optimize(sdfg, device)
     # sdfg.simplify()
-    # utils.make_dynamic_map_inputs_unique(sdfg)
+    # # utils.make_dynamic_map_inputs_unique(sdfg)
 
-    print("Running DaCe ...")
-    sdfg(**inputs, **outputs_d)
+    # print("Running DaCe ...")
+    # sdfg(**inputs, **outputs_d)
 
-    for k in outputs_f.keys():
-        farr = outputs_f[k]
-        darr = outputs_d[k]
-        if np.allclose(farr, darr):
-            print(f"{k}: OK!")
-        else:
-            print(f"{k}: relative error is {np.linalg.norm(farr - darr) / np.linalg.norm(farr)}")
-        # assert np.allclose(farr, darr)
+    # for k in outputs_f.keys():
+    #     farr = outputs_f[k]
+    #     darr = outputs_d[k]
+    #     if np.allclose(farr, darr):
+    #         print(f"{k}: OK!")
+    #     else:
+    #         print(f"{k}: relative error is {np.linalg.norm(farr - darr) / np.linalg.norm(farr)}")
+    #     # assert np.allclose(farr, darr)
     
-    # # print(outputs_f['DEBUG_EPSILON'])
-    # # print(outputs_d['DEBUG_EPSILON'])
-    # debug_auto_optimize(sdfg, inputs, outputs_d, outputs_f)
+    # # # print(outputs_f['DEBUG_EPSILON'])
+    # # # print(outputs_d['DEBUG_EPSILON'])
+    # # debug_auto_optimize(sdfg, inputs, outputs_d, outputs_f)
 
 
 if __name__ == "__main__":

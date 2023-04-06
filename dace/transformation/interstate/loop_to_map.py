@@ -599,6 +599,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 body.add_nedge(n, exit, memlet.Memlet())
         intermediate_sinks = {}
         for n in intermediate_nodes:
+            if isinstance(sdfg.arrays[n.data], dt.View):
+                continue
             if n.data in intermediate_sinks:
                 sink = intermediate_sinks[n.data]
             else:
