@@ -2682,24 +2682,28 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             gpu_data.add(src.data)
             gpu_node = map_state.add_access(src.data + '_gpu')
             map_state.add_edge(src, None, gpu_node, None, dace.Memlet.from_array(src.data, desc))
-            map_state.add_edge(gpu_node, None, edge.dst, edge.dst_conn, dace.Memlet.from_array(gpu_node, gpu_desc))
+            nedge = map_state.add_edge(gpu_node, None, edge.dst, edge.dst_conn, dace.Memlet.from_array(gpu_node, gpu_desc))
             map_state.remove_edge(edge)
+            for e in map_state.memlet_path(nedge):
+                e.data.data = src.data + '_gpu'
         for edge in map_state.out_edges(map_exit):
             assert isinstance(edge.dst, dace.nodes.AccessNode)
             dst = edge.dst
+            desc = sdfg.arrays[dst.data]
             if dst.data in gpu_data:
                 gpu_desc = sdfg.arrays[dst.data + '_gpu']
             else:
-                desc = sdfg.arrays[dst.data]
                 gpu_desc = copy.deepcopy(desc)
                 gpu_desc.storage = dace.StorageType.GPU_Global
                 gpu_desc.transient = True
                 sdfg.add_datadesc(dst.data + '_gpu', gpu_desc)
                 gpu_data.add(dst.data)
             gpu_node = map_state.add_access(dst.data + '_gpu')
-            map_state.add_edge(edge.src, edge.src_conn, gpu_node, None, dace.Memlet.from_array(gpu_node, gpu_desc))
+            nedge = map_state.add_edge(edge.src, edge.src_conn, gpu_node, None, dace.Memlet.from_array(gpu_node, gpu_desc))
             map_state.add_edge(gpu_node, None, dst, None, dace.Memlet.from_array(dst.data, desc))
             map_state.remove_edge(edge)
+            for e in map_state.memlet_path(nedge):
+                e.data.data = dst.data + '_gpu'
         
         map_entry.map.schedule = dace.ScheduleType.GPU_Device
 
