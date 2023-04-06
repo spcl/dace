@@ -39,6 +39,8 @@ from typing import List, Set, Tuple
 
 from cupyx.profiler import benchmark
 
+from dace.libraries.ttranspose import TensorTranspose
+
 
 def find_defined_symbols(sdfg: dace.SDFG) -> Set[str]:
     return sdfg.symbols.keys() - sdfg.free_symbols
@@ -630,7 +632,36 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
 
     print(f'TOP-LEVEL SDFG {sdfg.name}')
 
-    for name, desc in sdfg.arrays.items():
+    # Gather inputs/outputs
+    for state in sdfg.states():
+        if state.name == 'stateCLOUDSC':
+            main_state = state
+        elif state.name == 'BeginFOR_l_1345_c_1345':
+            init_state = state
+        elif state.name == 'MergeFOR_l_1345_c_1345':
+            exit_state = state
+
+
+    inputs = set()
+    outputs = set()
+
+    for node in main_state.nodes():
+        if isinstance(node, dace.sdfg.nodes.AccessNode):
+            in_degree = main_state.in_degree(node)
+            out_degree = main_state.out_degree(node)
+            if in_degree > 0 and out_degree > 0:
+                raise ValueError('Access node has both in and out edges')
+            if in_degree == 0 and out_degree == 0:
+                raise ValueError('Access node has no in or out edges')
+            if in_degree > 0:
+                outputs.add(node.data)
+            else:
+                inputs.add(node.data)
+    
+    pre_state = sdfg.add_state_before(init_state, 'pre')
+    post_state = sdfg.add_state_after(exit_state, 'post')
+
+    for name, desc in dict(sdfg.arrays).items():
 
         # We target arrays that have KLEV or KLEV + 1 in their shape
         shape_str = [str(s) for s in desc.shape]
@@ -648,6 +679,13 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
 
         is_fortran = (desc.strides[0] == 1)
 
+        # Add new array
+        orig_desc = copy.deepcopy(desc)
+        sdfg.arrays[name] = orig_desc
+        # sdfg.add_datadesc(name + '_orig', orig_desc)
+        sdfg.arrays[f"{name}_perm"] = desc
+        desc.transient = True
+
         # Update the strides
         new_strides = list(desc.strides)
         if is_fortran:
@@ -661,6 +699,58 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
         print(f"Changing strides of {name} with shape {desc.shape} from {desc.strides} to {new_strides}")
 
         desc.strides = tuple(new_strides)
+
+        if name in inputs:
+            orig_node = pre_state.add_access(name)
+            perm_node = pre_state.add_access(name + '_perm')
+
+            if is_fortran:
+                corder = list(range(klev_idx)) + list(range(klev_idx + 1, len(desc.shape))) + [klev_idx]
+                dorder = list(range(klev_idx)) + [len(desc.shape) - 1] + list(range(klev_idx, len(desc.shape) - 1))
+            else:
+                print(f"WARNING: {name} is not in Fortran order")
+                corder = [klev_idx] + list(range(klev_idx)) + list(range(klev_idx + 1, len(desc.shape)))
+                dorder = list(range(1, klev_idx + 1)) + [0] + list(range(klev_idx + 1, len(desc.shape)))
+
+            vshape = [desc.shape[corder[i]] for i in range(len(desc.shape))]
+            vstrides = [desc.strides[corder[i]] for i in range(len(desc.shape))]
+            _, view = sdfg.add_view(name + '_in_view', vshape, desc.dtype, desc.storage, vstrides)
+
+            view_node = pre_state.add_access(name + '_in_view')
+            
+            code_node = TensorTranspose(f"perm_{name}", corder)
+            code_node.implementation = 'pure'
+
+            pre_state.add_edge(orig_node, None, code_node, '_inp_tensor', dace.Memlet.from_array(name, orig_desc))
+            pre_state.add_edge(code_node, '_out_tensor', view_node, None, dace.Memlet.from_array(name + '_in_view', view))
+            pre_state.add_edge(view_node, 'views', perm_node, None, dace.Memlet(data=name + '_perm', subset=dace.subsets.Range.from_array(desc),
+                                                                                other_subset=dace.subsets.Range.from_array(view)))
+        
+        if name in outputs:
+            perm_node = post_state.add_access(name + '_perm')
+            orig_node = post_state.add_access(name )
+
+            if is_fortran:
+                corder = list(range(klev_idx)) + [len(desc.shape) - 1] + list(range(klev_idx, len(desc.shape) - 1))
+                dorder = list(range(klev_idx)) + list(range(klev_idx + 1, len(desc.shape))) + [klev_idx]
+            else:
+                print(f"WARNING: {name} is not in Fortran order")
+                corder = list(range(1, klev_idx + 1)) + [0] + list(range(klev_idx + 1, len(desc.shape)))
+                dorder = [klev_idx] + list(range(klev_idx)) + list(range(klev_idx + 1, len(desc.shape)))
+            
+            vshape = [desc.shape[dorder[i]] for i in range(len(desc.shape))]
+            vstrides = [desc.strides[dorder[i]] for i in range(len(desc.shape))]
+            _, view = sdfg.add_view(name + '_out_view', vshape, desc.dtype, desc.storage, vstrides)
+
+            view_node = post_state.add_access(name + '_out_view')
+            
+            code_node = TensorTranspose(f"unperm_{name}", corder)
+            code_node.implementation = 'pure'
+
+            post_state.add_edge(perm_node, None, view_node, 'views', dace.Memlet(data=name + '_perm', subset=dace.subsets.Range.from_array(desc),
+                                                                                 other_subset=dace.subsets.Range.from_array(view)))
+            post_state.add_edge(view_node, None, code_node, '_inp_tensor', dace.Memlet.from_array(name + '_out_view', view))
+            post_state.add_edge(code_node, '_out_tensor', orig_node, None, dace.Memlet.from_array(name, orig_desc))
 
     # Go to nested SDFGs
     # Assuming only 1 level of nested SDFG
@@ -703,7 +793,7 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
             if src.data not in sdfg.arrays or src.data not in permutation:
                 continue
 
-            desc = sdfg.arrays[src.data]
+            desc = sdfg.arrays[src.data + '_perm']
             new_strides = list(desc.strides)
 
             subset = edge.data.subset
@@ -723,6 +813,14 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
             print(f"Changing strides of {nname} with shape {ndesc.shape} from {ndesc.strides} to {nnew_strides}")
 
             ndesc.strides = tuple(nnew_strides)
+
+    # Fix names
+    for node in main_state.nodes():
+        if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data in permutation:
+            node.data += '_perm'
+    for edge in main_state.edges():
+        if edge.data.data in permutation:
+            edge.data.data += '_perm'
     
     return permutation
 
@@ -1276,6 +1374,7 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     if sdfg_id < 2:
         sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
         permutation = change_strides(sdfg, (137, 138), {'NBLOCKS'})
+        permutation = None
         sdfg.save('CLOUDSCOUTER_simplify_layout.sdfg')
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
