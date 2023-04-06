@@ -2648,6 +2648,63 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             you can simplify() after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
+
+        sdfg = self
+
+        map_state = None
+        map_entry = None
+        map_exit = None
+        try:
+            for state in sdfg.states():
+                for node in state.nodes():
+                    if isinstance(node, dace.sdfg.nodes.MapEntry):
+                        map_state = state
+                        map_entry = node
+                        map_exit = state.exit_node(node)
+                        raise StopIteration
+        except StopIteration:
+            pass
+        assert map_state is not None
+        assert map_entry is not None
+        assert map_exit is not None
+
+        gpu_data = set()
+        for edge in map_state.in_edges(map_entry):
+            assert isinstance(edge.src, dace.nodes.AccessNode)
+            src = edge.src
+            desc = sdfg.arrays[src.data]
+            if isinstance(desc, dace.data.Scalar):
+                continue
+            gpu_desc = copy.deepcopy(desc)
+            gpu_desc.storage = dace.StorageType.GPU_Global
+            gpu_desc.transient = True
+            sdfg.add_datadesc(src.data + '_gpu', gpu_desc)
+            gpu_data.add(src.data)
+            gpu_node = map_state.add_access(src.data + '_gpu')
+            map_state.add_edge(src, None, gpu_node, None, dace.Memlet.from_array(src.data, desc))
+            map_state.add_edge(gpu_node, None, edge.dst, edge.dst_conn, dace.Memlet.from_array(gpu_node, gpu_desc))
+            map_state.remove_edge(edge)
+        for edge in map_state.out_edges(map_exit):
+            assert isinstance(edge.dst, dace.nodes.AccessNode)
+            dst = edge.dst
+            if dst.data in gpu_data:
+                gpu_desc = sdfg.arrays[dst.data + '_gpu']
+            else:
+                desc = sdfg.arrays[dst.data]
+                gpu_desc = copy.deepcopy(desc)
+                gpu_desc.storage = dace.StorageType.GPU_Global
+                gpu_desc.transient = True
+                sdfg.add_datadesc(dst.data + '_gpu', gpu_desc)
+                gpu_data.add(dst.data)
+            gpu_node = map_state.add_access(dst.data + '_gpu')
+            map_state.add_edge(edge.src, edge.src_conn, gpu_node, None, dace.Memlet.from_array(gpu_node, gpu_desc))
+            map_state.add_edge(gpu_node, None, dst, None, dace.Memlet.from_array(dst.data, desc))
+            map_state.remove_edge(edge)
+        
+        map_entry.map.schedule = dace.ScheduleType.GPU_Device
+
+        return
+
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFGCloudSC
 
