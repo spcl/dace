@@ -25,20 +25,20 @@ PROGRAM melting_snow_ice
     REAL(KIND=JPRB) PAP(KLON, KLEV)
     REAL(KIND=JPRB) ZQX(KLON, KLEV, NCLV)
 
-    REAL(KIND=JPRB) ZICETOT(KLON)
-    REAL(KIND=JPRB) ZMELTMAX(KLON)
+    REAL(KIND=JPRB) ZICETOT2(KLON, KLEV)
+    REAL(KIND=JPRB) ZMELTMAX2(KLON, KLEV)
 
     CALL melting_snow_ice_routine(&
         & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQV, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
         & ZEPSEC, RTT, PTSPHY, ZRLDCP, RTAUMEL, ZQSICE, ZQXFG, ZTP1, PAP, ZQX, &
-        & ZICETOT, ZMELTMAX)
+        & ZICETOT2, ZMELTMAX2)
 
 END PROGRAM
 
 SUBROUTINE melting_snow_ice_routine(&
         & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQV, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
         & ZEPSEC, RTT, PTSPHY, ZRLDCP, RTAUMEL, ZQSICE, ZQXFG, ZTP1, PAP, ZQX, &
-        & ZICETOT, ZMELTMAX)
+        & ZICETOT2, ZMELTMAX2)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -65,8 +65,8 @@ SUBROUTINE melting_snow_ice_routine(&
     REAL(KIND=JPRB) PAP(KLON, KLEV)
     REAL(KIND=JPRB) ZQX(KLON, KLEV, NCLV)
 
-    REAL(KIND=JPRB) ZICETOT(KLON)
-    REAL(KIND=JPRB) ZMELTMAX(KLON)
+    REAL(KIND=JPRB) ZICETOT2(KLON, KLEV)
+    REAL(KIND=JPRB) ZMELTMAX2(KLON, KLEV)
 
     ! temporary variables
     REAL(KIND=JPRB) ZSUBSAT
@@ -82,11 +82,11 @@ SUBROUTINE melting_snow_ice_routine(&
     DO JK=NCLDTOP,KLEV
         DO JL=KIDIA,KFDIA     ! LOOP CLASS 3
 
-            ZICETOT(JL)=ZQXFG(JL,NCLDQI)+ZQXFG(JL,NCLDQS)
-            ZMELTMAX(JL) = 0.0
+            ZICETOT2(JL,JK)=ZQXFG(JL,NCLDQI)+ZQXFG(JL,NCLDQS)
+            ZMELTMAX2(JL,JK) = 0.0
 
             ! If there are frozen hydrometeors present and dry-bulb temperature > 0degC
-            IF(ZICETOT(JL) > ZEPSEC .AND. ZTP1(JL,JK) > RTT) THEN
+            IF(ZICETOT2(JL,JK) > ZEPSEC .AND. ZTP1(JL,JK) > RTT) THEN
 
                 ! Calculate subsaturation
                 ZSUBSAT = MAX(ZQSICE(JL,JK)-ZQX(JL,JK,NCLDQV),0.0)
@@ -101,7 +101,7 @@ SUBROUTINE melting_snow_ice_routine(&
                 ! Not implicit yet... 
                 ! Ensure ZCONS1 is positive so that ZMELTMAX=0 if ZTDMTW0<0
                 ZCONS1 = ABS(PTSPHY*(1.0+0.5*ZTDMTW0)/RTAUMEL)
-                ZMELTMAX(JL) = MAX(ZTDMTW0*ZCONS1*ZRLDCP,0.0)
+                ZMELTMAX2(JL,JK) = MAX(ZTDMTW0*ZCONS1*ZRLDCP,0.0)
             ENDIF
         ENDDO
     ENDDO

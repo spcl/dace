@@ -35,15 +35,15 @@ PROGRAM rain_evaporation
     REAL(KIND=JPRB) ZDP(KLON)
 
     ! outputs
-    REAL(KIND=JPRB) ZSOLQA(KLON, NCLV, NCLV)
-    REAL(KIND=JPRB) ZCOVPTOT(KLON)
-    REAL(KIND=JPRB) ZQXFG(KLON, NCLV)
+    REAL(KIND=JPRB) ZSOLQA2(KLON, KLEV, NCLV, NCLV)
+    REAL(KIND=JPRB) ZCOVPTOT2(KLON,KLEV)
+    REAL(KIND=JPRB) ZQXFG2(KLON, KLEV, NCLV)
 
     CALL rain_evaporation_routine(&
         & KLON, KLEV, NCLV, KIDIA , KFDIA , NCLDQV , NCLDQR , NCLDTOP, &
         & RPRECRHMAX, ZEPSEC, ZEPSILON, RVRFACTOR, RG, RPECONS, PTSPHY, ZRG_R, RCOVPMIN, &
         & ZCOVPMAX, ZA, ZQX, ZQSLIQ, ZCOVPCLR, ZDTGDP, PAP, PAPH, ZCORQSLIQ, ZDP, &
-        & ZSOLQA, ZCOVPTOT, ZQXFG)
+        & ZSOLQA2, ZCOVPTOT2, ZQXFG2)
 
 END PROGRAM
 
@@ -51,7 +51,7 @@ SUBROUTINE rain_evaporation_routine(&
         & KLON, KLEV, NCLV, KIDIA , KFDIA , NCLDQV , NCLDQR , NCLDTOP, &
         & RPRECRHMAX, ZEPSEC, ZEPSILON, RVRFACTOR, RG, RPECONS, PTSPHY, ZRG_R, RCOVPMIN, &
         & ZCOVPMAX, ZA, ZQX, ZQSLIQ, ZCOVPCLR, ZDTGDP, PAP, PAPH, ZCORQSLIQ, ZDP, &
-        & ZSOLQA, ZCOVPTOT, ZQXFG)
+        & ZSOLQA2, ZCOVPTOT2, ZQXFG2)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -87,9 +87,9 @@ SUBROUTINE rain_evaporation_routine(&
     REAL(KIND=JPRB) ZDP(KLON)
 
     ! outputs
-    REAL(KIND=JPRB) ZSOLQA(KLON, NCLV, NCLV)
-    REAL(KIND=JPRB) ZCOVPTOT(KLON)
-    REAL(KIND=JPRB) ZQXFG(KLON, NCLV)
+    REAL(KIND=JPRB) ZSOLQA2(KLON, KLEV, NCLV, NCLV)
+    REAL(KIND=JPRB) ZCOVPTOT2(KLON, KLEV)
+    REAL(KIND=JPRB) ZQXFG2(KLON, KLEV, NCLV)
 
     ! temporary variables
     REAL(KIND=JPRB) ZZRH
@@ -116,13 +116,13 @@ SUBROUTINE rain_evaporation_routine(&
         !---------------------------------------------
         ZQE=MAX(0.0,MIN(ZQE,ZQSLIQ(JL,JK)))
         LLO1=ZCOVPCLR(JL)>ZEPSEC .AND. &
-        & ZQXFG(JL,NCLDQR)>ZEPSEC .AND. &
+        & ZQXFG2(JL,JK,NCLDQR)>ZEPSEC .AND. &
         & ZQE<ZZRH*ZQSLIQ(JL,JK)
 
         IF(LLO1) THEN
             ! note: zpreclr is a rain flux
-            ZPRECLR = ZQXFG(JL,NCLDQR)*ZCOVPCLR(JL)/ &
-            & SIGN(MAX(ABS(ZCOVPTOT(JL)*ZDTGDP(JL)),ZEPSILON),ZCOVPTOT(JL)*ZDTGDP(JL))
+            ZPRECLR = ZQXFG2(JL,JK,NCLDQR)*ZCOVPCLR(JL)/ &
+            & SIGN(MAX(ABS(ZCOVPTOT2(JL,JK)*ZDTGDP(JL)),ZEPSILON),ZCOVPTOT2(JL,JK)*ZDTGDP(JL))
 
             !--------------------------------------
             ! actual microphysics formula in zbeta
@@ -146,21 +146,21 @@ SUBROUTINE rain_evaporation_routine(&
             !---------------------------------------------------------
 
             ! Evaporate rain
-            ZEVAP = MIN(ZDPEVAP,ZQXFG(JL,NCLDQR))
+            ZEVAP = MIN(ZDPEVAP,ZQXFG2(JL,JK,NCLDQR))
 
-            ZSOLQA(JL,NCLDQV,NCLDQR) = ZSOLQA(JL,NCLDQV,NCLDQR)+ZEVAP
-            ZSOLQA(JL,NCLDQR,NCLDQV) = ZSOLQA(JL,NCLDQR,NCLDQV)-ZEVAP
+            ZSOLQA2(JL,JK,NCLDQV,NCLDQR) = ZSOLQA2(JL,JK,NCLDQV,NCLDQR)+ZEVAP
+            ZSOLQA2(JL,JK,NCLDQR,NCLDQV) = ZSOLQA2(JL,JK,NCLDQR,NCLDQV)-ZEVAP
 
             !-------------------------------------------------------------
             ! Reduce the total precip coverage proportional to evaporation
             ! to mimic the previous scheme which had a diagnostic
             ! 2-flux treatment, abandoned due to the new prognostic precip
             !-------------------------------------------------------------
-            ZCOVPTOT(JL) = MAX(RCOVPMIN,ZCOVPTOT(JL)-MAX(0.0, &
-            &            (ZCOVPTOT(JL)-ZA(JL,JK))*ZEVAP/ZQXFG(JL,NCLDQR)))
+            ZCOVPTOT2(JL,JK) = MAX(RCOVPMIN,ZCOVPTOT2(JL,JK)-MAX(0.0, &
+            &            (ZCOVPTOT2(JL,JK)-ZA(JL,JK))*ZEVAP/ZQXFG2(JL,JK,NCLDQR)))
 
             ! Update fg field
-            ZQXFG(JL,NCLDQR) = ZQXFG(JL,NCLDQR)-ZEVAP
+            ZQXFG2(JL,JK,NCLDQR) = ZQXFG2(JL,JK,NCLDQR)-ZEVAP
 
             ENDIF
         ENDDO
