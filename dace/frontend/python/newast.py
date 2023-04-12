@@ -2913,8 +2913,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays for t in sr.free_symbols):
+                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+                               for t in sr.free_symbols):
                             sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
+                            repl_dict = {}
+                            break
                         else:
                             sym_rng.append(sr)
                             # NOTE: Assume that the i-th index of the range is
