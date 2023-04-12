@@ -138,6 +138,24 @@ def test_nested_dec_offset_access_dappy():
     assert (np.allclose(out, ref))
 
 
+def test_nested_offset_access_nested_dependency():
+    @dc.program
+    def nested_offset_access_nested_dep(inp: dc.float64[6, 5, 5]):
+        out = np.zeros((5, 5, 5), np.float64)
+        for i, j in dc.map[0:5, 0:5]:
+            out[i, j, 0] = 0.25 * (inp[i + 1, j, 1] + inp[i, j, 1])
+            for k in range(1, 4):
+                for l in range(k, 5):
+                    out[i, j, k] = 0.25 * (inp[i + 1, j, l - k + 1] + inp[i, j, l - k + 1])
+        return out
+
+    inp = np.reshape(np.arange(6 * 5 * 5, dtype=np.float64), (6, 5, 5)).copy()
+    out = nested_offset_access_nested_dep(inp)
+    ref = nested_offset_access_nested_dep.f(inp)
+    assert (np.allclose(out, ref))
+
+
+
 if __name__ == "__main__":
     test_nested_name_accesses()
     test_nested_offset_access()
@@ -146,3 +164,4 @@ if __name__ == "__main__":
     test_nested_multi_offset_access_dappy()
     test_nested_dec_offset_access()
     test_nested_dec_offset_access_dappy()
+    test_nested_offset_access_nested_dependency()
