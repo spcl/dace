@@ -98,18 +98,12 @@ def create_histogram(runs_data: List[MeasurementRun], filename: str = "histogram
                 new_max = max(result.measurements[data_key][0].max(), min_max_values[result.program][1])
                 min_max_values[result.program] = (new_min, new_max)
 
-    print(min_max_values)
-
     def subfigure_plot_function(ax, result):
         measurement = result.measurements[data_key][0]
         ax.set_title(f"{result.program} (#={measurement.amount()})")
         bins = np.linspace(*min_max_values[result.program], num=50)
         if min_max_values[result.program][0] == min_max_values[result.program][1]:
             bins = np.linspace(min_max_values[result.program][0]*0.9, min_max_values[result.program][1]*1.1, num=50)
-        print(result.program)
-        print(len(measurement.data))
-        print(measurement.min(), measurement.max())
-        print(min(measurement.data), max(measurement.data))
         ax.hist(measurement.data, bins=bins, rwidth=1)
         ax.set_xlabel(f'Time [{measurement.unit}]')
 

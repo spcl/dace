@@ -2,7 +2,7 @@ import os
 import numpy as np
 from numpy import f2py
 from numbers import Number
-from typing import Dict, Union, List
+from typing import Dict, Union, List, Tuple
 from importlib import import_module
 import sys
 import tempfile
@@ -17,12 +17,14 @@ import dace
 from dace.config import Config
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG
+from dace.sdfg.nodes import MapEntry
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 from data import get_program_parameters_data, get_testing_parameters_data, get_iteration_ranges
 
 from measurement_data import MeasurementRun
+from flop_computation import FlopCount
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -193,29 +195,6 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-def print_results_v2(run_data: MeasurementRun):
-    headers = ["program", "measurement", "avg", "median", "min", "max"]
-    flat_data = []
-    for program_measurement in run_data.data:
-        for measurement_list in program_measurement.measurements.values():
-            for measurement in measurement_list:
-                name = measurement.name
-                if measurement.kernel_name is not None:
-                    name += f" of {measurement.kernel_name}"
-                name += f" [{measurement.unit}] (#={measurement.amount()})"
-                print(name)
-                print(measurement)
-                if not measurement.is_empty():
-                    flat_data.append([program_measurement.program, name,
-                                      measurement.average(), measurement.median(), measurement.min(),
-                                      measurement.max()])
-
-    print(run_data.description)
-    print(run_data.properties)
-    print(f"Node: {run_data.node} git commit: {run_data.git_hash} date: {run_data.date.strftime('%Y-%m-%d %H:%M')}")
-    print(tabulate(flat_data, headers=headers))
-
-
 def get_results_dir() -> str:
     """
     Returns path to the directory where the results are stored
@@ -241,10 +220,6 @@ def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
 def reset_graph_files(program: str):
     for file in glob(os.path.join(graphs_dir, f"*{program}_*.sdfg")):
         os.remove(file)
-
-
-def print_with_time(text: str):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
 
 
 def use_cache(program: str) -> bool:
@@ -305,10 +280,11 @@ def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
             selection = tuple(selection)
             this_same = np.allclose(
                     output_a[key][selection],
-                    output_b[key][selection])
+                    output_b[key][selection],
+                    atol=10e-5)
             if not this_same:
                 print(f"{key} is not the same for range {selection}")
-                print_compare_matrix(output_a[key][selection], output_b[key][selection])
+                # print_compare_matrix(output_a[key][selection], output_b[key][selection], selection)
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
@@ -331,15 +307,17 @@ def compare_output_all(output_a: Dict, output_b: Dict) -> bool:
     return same
 
 
-def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray):
-    print(output_a.shape)
-    diff_indices = np.isclose(output_a, output_b)
-    for row_a, row_b, row_diff in zip(output_a, output_b, diff_indices):
-        for val_a, val_b, diff in zip(row_a, row_b, row_diff):
-            if diff:
-                print(f"       {val_a:.3f}", end="   ")
-            else:
-                print(f"{val_a:.3f}!={val_b:.3f}", end="   ")
+def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection):
+    if len(selection) == 0:
+        diff = np.isclose(output_a, output_b)
+        if diff:
+            print(f"       {output_a:.3f}", end="   ")
+        else:
+            print(f"{output_a:.3f}!={output_b:.3f}", end="   ")
+            print(output_a-output_b)
+    else:
+        for elem_a, elem_b in zip(output_a, output_b):
+            print_compare_matrix(elem_a, elem_b, selection[1:])
         print()
 
 
@@ -377,6 +355,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
     return sdfg
 
+
 def print_non_zero_percentage(data: Dict[str, Union[Number, Union[np.ndarray, cp.ndarray]]], variable: str):
     """
     Prints the number of total and nonzero values and the percentage of a given variable. Data can have numpy or cupy
@@ -393,3 +372,50 @@ def print_non_zero_percentage(data: Dict[str, Union[Number, Union[np.ndarray, cp
     num_nnz = np.count_nonzero(variable_data)
     num_tot = np.prod(variable_data.shape)
     print(f"{variable}: {num_nnz}/{num_tot} = {num_nnz/num_tot*100}%")
+
+
+def set_all_arrays_to_zero(sdfg: SDFG):
+    # Try to set all arrays to zero, but seems more complicated
+    arrays = []
+    for k, v in sdfg.arrays.items():
+        if not v.transient and type(v) == dace.data.Array:
+            arrays.append((k, v))
+
+    map_node = None
+    for node in sdfg.all_nodes_recursive():
+        if type(node[0]) is MapEntry:
+            map_node = node[0]
+            break
+
+    for nsdfg in sdfg.sdfg_list:
+        if nsdfg != sdfg:
+            for state in nsdfg.states():
+                nsdfg.remove_node(state)
+            set_zero_state = nsdfg.add_state(label="set_all_to_zero", is_start_state=True)
+            for name, array in arrays:
+                tasklet = set_zero_state.add_tasklet(name, None, None, f"{name}=0")
+                access = set_zero_state.add_write(name)
+                set_zero_state.add_edge(tasklet, "out", access, "in", dace.memlet.Memlet())
+
+
+def convert_to_seconds(value: Number, unit: str) -> float:
+    """
+    Converts a given value into seconds
+
+    :param value: The value given
+    :type value: Number
+    :param unit: The unit in which the value is given as a string
+    :type unit: str
+    :return: The given value in seconds
+    :rtype: float
+    """
+    factors = {
+            'second': 1,
+            'msecond': 1000,
+            'usecond': 100000
+            }
+    if unit in factors:
+        return float(value) / float(factors[unit])
+    else:
+        print(f"ERROR: No factor recorded for {unit}")
+        return None

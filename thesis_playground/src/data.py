@@ -1,7 +1,8 @@
 import copy
 from typing import Dict, Union, Tuple, List
 import numpy as np
-from number import Number
+from numbers import Number
+from print_utils import print_with_time
 
 parameters = {
     'KLON': 10000,
@@ -40,6 +41,26 @@ custom_parameters = {
     },
     'cloudsc_class2_1516':
     {
+        'KLON': 3000,
+        'KLEV': 3000,
+        'KFDIA': 2998
+    },
+    'cloudsc_class3_691': {
+        'KLON': 3000,
+        'KLEV': 3000,
+        'KFDIA': 2998
+    },
+    'cloudsc_class3_965': {
+        'KLON': 3000,
+        'KLEV': 3000,
+        'KFDIA': 2998
+    },
+    'cloudsc_class3_1985': {
+        'KLON': 3000,
+        'KLEV': 3000,
+        'KFDIA': 2998
+    },
+    'cloudsc_class3_2120': {
         'KLON': 3000,
         'KLEV': 3000,
         'KFDIA': 2998
@@ -159,12 +180,14 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZICECLD': (params['KLON'], ),
         'ZICEFRAC': (params['KLON'], params['KLEV']),
         'ZICETOT': (params['KLON'], ),
+        'ZICETOT2': (params['KLON'], params['KLEV']),
         'ZLI': (params['KLON'], params['KLEV']),
         'ZLIQFRAC': (params['KLON'], params['KLEV']),
         'ZLNEG': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZPFPLSX': (params['KLON'], params['KLEV'] + 1, params['NCLV']),
         'ZPSUPSATSRCE': (params['KLON'], params['NCLV']),
         'ZMELTMAX': (params['KLON'], ),
+        'ZMELTMAX2': (params['KLON'], params['KLEV']),
         'ZQPRETOT': (params['KLON'], ),
         'ZQPRETOT2': (params['KLON'], params['KLEV']),
         'ZQSLIQ': (params['KLON'], params['KLEV']),
@@ -248,6 +271,11 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'variables': ['ZQXFG2'],
                     'start': (params['KIDIA']-1, params['NCLDTOP']-1, [params['NCLDQI'], params['NCLDQL']]),
                     'end': (params['KFDIA'], params['KLEV'], None)
+                },
+                {
+                    'variables': ['ZCLDTOPDIST2'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['KFDIA'], params['KLEV'])
                 }
             ],
             'cloudsc_class2_1762': [
@@ -283,27 +311,26 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
             ],
             'cloudsc_class3_1985': [
                 {
-                    'variables': ["ZICETOT", "ZMELTMAX"],
-                    'start': (params['KIDIA']-1,),
-                    'end': (params['KFDIA'],)
+                    'variables': ["ZICETOT2", "ZMELTMAX2"],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['KFDIA'], params['KLEV'])
                 }
             ],
             'cloudsc_class3_2120': [
                 {
-                    'variables': ["ZSOLQA"],
-                    'start': (params['KIDIA']-1, [params['NCLDQV'], params['NCLDQR']],
-                              [params['NCLDQV'], params['NCLDQR']]),
-                    'end': (params['KFDIA'], None, None)
+                    'variables': ["ZSOLQA2"],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NCLV'], params['NCLV'])
                 },
                 {
-                    'variables': ["ZCOVPTOT"],
-                    'start': (params['KIDIA']-1,),
-                    'end': (params['KFDIA'],)
+                    'variables': ["ZCOVPTOT2"],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['KFDIA'], params['KLEV'])
                 },
                 {
-                    'variables': ["ZQXFG"],
-                    'start': (params['KIDIA']-1, params['NCLDQR']),
-                    'end': (params['KFDIA'], None)
+                    'variables': ["ZQXFG2"],
+                    'start': (params['KIDIA']-1, params['NCLDTOP'], params['NCLDQR']),
+                    'end': (params['KFDIA'], params['KLEV'], None)
                 }
             ],
             'cloudsc_class3_691': [
@@ -318,24 +345,33 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'end': (params['KFDIA'], params['KLEV'], None)
                 },
                 {
-                    'variables': ["tendency_loc_q", "tendency_loc_T"],
+                    'variables': ["tendency_loc_q", "tendency_loc_T", "ZA"],
                     'start': (params['KIDIA']-1, 0),
                     'end': (params['KFDIA'], params['KLEV'])
                 }
             ],
             'cloudsc_class3_965': [
                 {
-                    'variables': ["ZSOLQA"],
-                    'start': (params['KIDIA']-1, [params['NCLDQV'], params['NCLDQL'], params['NCLDQI']],
-                              [params['NCLDQV'], params['NCLDQL'], params['NCLDQI']]),
-                    'end': (params['KFDIA'], None, None)
+                    'variables': ["ZSOLQA2"],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NCLV'], params['NCLV'])
+                }
+            ],
+            'my_test': [
+                {
+                    'variables': ['ARRAY_A'],
+                    'start': (0,),
+                    'end': (params['KLON'],)
                 }
             ],
     }
     return ranges[program]
 
 
-def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str, pattern: str):
+def set_input_pattern(
+        inputs: Dict[str, Union[Number, np.ndarray]],
+        outputs: Dict[str, Union[Number, np.ndarray]],
+        program: str, pattern: str):
     """
     Sets a specific pattern into the given input data depending on the program. Used to trigger certain pattern for
     if/else conditions inside the programs. Current patterns are:
@@ -343,13 +379,18 @@ def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str
         - formula: Use the formula branch in class 2
         - worst: Alternate between each branch inbetween each thread in a block
 
+    Builds on the assumption that the given input data is all in the range (0,1)
+
     :param inputs: The input data to manipulate
+    :type inputs: Dict[str, Union[Number, np.ndarray]]
+    :param inputs: The output data to manipulate, which sometimes also serves as input
     :type inputs: Dict[str, Union[Number, np.ndarray]]
     :param program: The program name
     :type program: str
     :param pattern: The pattern name
     :type pattern: str
     """
+    print_with_time(f"Set input pattern {pattern} for {program}")
     params = get_program_parameters_data(program)['parameters']
     if pattern == 'const':
         if program == 'cloudsc_class2_781':
@@ -358,6 +399,20 @@ def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str
             inputs['ZEPSEC'] = 10.0
         elif program == 'cloudsc_class2_1516':
             print(f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516")
+        elif program == 'my_test_routine':
+            inputs['ARRAY_B'] = np.zeros_like(inputs['ARRAY_B'])
+        elif program == 'cloudsc_class3_691':
+            inputs['RAMIN'] = 0.0
+            inputs['RLMIN'] = 0.0
+        elif program == 'cloudsc_class3_965':
+            inputs['RLMIN'] = 0.0
+        elif program == 'cloudsc_class3_1985':
+            inputs['ZEPSEC'] = 10.0
+            inputs['RTT'] = 10.0
+        elif program == 'cloudsc_class3_2120':
+            inputs['ZEPSEC'] = 10.0
+        else:
+            print(f"ERROR: Pattern {pattern} does not exists for {program}")
     elif pattern == 'formula':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 0.0
@@ -365,6 +420,20 @@ def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str
             inputs['ZEPSEC'] = 0.0
         elif program == 'cloudsc_class2_1516':
             inputs['ZA'] = np.ones_like(inputs['ZA'])
+        elif program == 'my_test_routine':
+            inputs['ARRAY_B'] = np.ones_like(inputs['ARRAY_B'])
+        elif program == 'cloudsc_class3_691':
+            inputs['RAMIN'] = 10.0
+        elif program == 'cloudsc_class3_965':
+            inputs['RLMIN'] = 10.0
+        elif program == 'cloudsc_class3_1985':
+            inputs['ZEPSEC'] = 0.0
+            inputs['RTT'] = 0.0
+        elif program == 'cloudsc_class3_2120':
+            inputs['ZEPSEC'] = 0.0
+            inputs['RPCECRHMAX'] = 10000.0
+        else:
+            print(f"ERROR: Pattern {pattern} does not exists for {program}")
     elif pattern == 'worst':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 1.0
@@ -372,12 +441,27 @@ def set_input_pattern(inputs: Dict[str, Union[Number, np.ndarray]], program: str
             inputs['ZQX'][0::2, :, params['NCLDQL']-1] = 100.0
         elif program == 'cloudsc_class2_1762':
             inputs['ZEPSEC'] = 1.0
-            inputs['ZQPRETOT2'] = np.zeros_like(inputs['ZQX'])
+            inputs['ZQPRETOT2'] = np.zeros_like(inputs['ZQPRETOT2'])
             inputs['ZQPRETOT2'][0::2, :] = 100.0
         elif program == 'cloudsc_class2_1516':
             inputs['ZA'] = np.zeros_like(inputs['ZA'])
             inputs['ZA'][0::2, :] = 1.0
             inputs['RCLDTOPCF'] = 0.5
+        elif program == 'my_test_routine':
+            inputs['ARRAY_B'] = np.ones_like(inputs['ARRAY_B'])
+            inputs['ARRAY_B'][0::2] = 0.0
+        elif program == 'cloudsc_class3_691':
+            inputs['RLMIN'] = 0.0
+            inputs['RAMIN'] = 0.5
+            outputs['ZA'] = np.zeros_like(outputs['ZA'])
+            outputs['ZA'][0::2, :] = 1.0
+        elif program == 'my_test_routine':
+            inputs['ZQX'] = np.ones_like(inputs['ZQX'])
+            inputs['ZQX'][0::2] = 0.0
+        else:
+            print(f"ERROR: Pattern {pattern} does not exists for {program}")
+    else:
+        print(f"ERROR: Unknown pattern {pattern}")
 
 
 def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, Tuple]]]:

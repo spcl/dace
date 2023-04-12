@@ -2,16 +2,17 @@ from argparse import ArgumentParser
 import os
 from subprocess import run
 import re
-import json
 from typing import List
+import json
 
 import dace
 
-from utils import get_programs_data, get_results_dir, print_results_v2, print_with_time, use_cache, \
-                  get_program_parameters_data
-from execute_utils import test_program, profile_program
+from utils import get_programs_data, get_results_dir, use_cache, get_program_parameters_data
+from print_utils import print_with_time, print_results_v2, print_performance
+from execute_utils import test_program, profile_program, get_roofline_data
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
+from flop_computation import save_roofline_data
 
 
 def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
@@ -74,6 +75,10 @@ def main():
                         help='Dont compare output to fortran output before profiling')
     parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
                         help='Use DaCes auto_opt instead of mine')
+    parser.add_argument('--roofline', default=False, action='store_true',
+                        help='Stores roofline data. Filename generated using value of --output flag')
+    parser.add_argument('--pattern', choices=['const', 'formula', 'worst'], type=str, default=None,
+                        help='Pattern for in and output')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -90,19 +95,21 @@ def main():
     run_data = MeasurementRun(args.description)
 
     run_data.properties['auto_opt'] = 'DaCe' if args.use_dace_auto_opt else 'My'
+    roofline_data = {}
 
     for program in selected_programs:
-        print(f"Run program {program}")
+        print_with_time(f"Run program {program}")
         if args.cache:
             if not use_cache(program):
                 return 1
 
         if not args.skip_test:
-            if not test_program(program, not args.use_dace_auto_opt, dace.DeviceType.GPU, normalize_memlets):
+            if not test_program(program, not args.use_dace_auto_opt, dace.DeviceType.GPU, normalize_memlets,
+                                pattern=args.pattern):
                 continue
         if not args.no_total:
             program_data = profile_program(program, not args.use_dace_auto_opt, repetitions=args.repetitions,
-                                           normalize_memlets=normalize_memlets)
+                                           normalize_memlets=normalize_memlets, pattern=args.pattern)
         else:
             program_data = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
         command_ncu = [
@@ -116,6 +123,8 @@ def main():
             command_program.append('--normalize-memlets')
         if args.use_dace_auto_opt:
             command_program.append('--use-dace-auto-opt')
+        if args.pattern is not None:
+            command_program.extend(['--pattern', args.pattern])
 
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
@@ -144,14 +153,24 @@ def main():
 
         run_data.add_program_data(program_data)
 
+        if args.roofline:
+            print_with_time("Compute roofline data")
+            roofline_data[program] = get_roofline_data(program, pattern=args.pattern)
+
     if args.output is not None:
         filename = os.path.join(get_results_dir(), args.output)
         print_with_time(f"Save results into {filename}")
         with open(filename, 'w') as file:
             json.dump(run_data, file, default=MeasurementRun.to_json)
+        if args.roofline:
+            roofline_filename = f"{''.join(filename.split('.')[:-1])}_roofline_rough.json"
+            print(f"Save roofline data into {roofline_filename}")
+            save_roofline_data(roofline_data, roofline_filename)
 
     print_with_time("Print results")
     print_results_v2(run_data)
+    if args.roofline:
+        print_performance(roofline_data, run_data)
 
 
 if __name__ == '__main__':

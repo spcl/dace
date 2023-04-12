@@ -16,6 +16,8 @@ def main():
     parser.add_argument('--debug', action='store_true', default=False, help="Configure for debug build")
     parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
                         help='Use DaCes auto_opt instead of mine')
+    parser.add_argument('--pattern', choices=['const', 'formula', 'worst'], type=str, default=None,
+                        help='Pattern for in and output')
 
     args = parser.parse_args()
 
@@ -28,10 +30,10 @@ def main():
 
     if args.only_test:
         test_program(args.program, not args.use_dace_auto_opt, device=dace.DeviceType.GPU,
-                     normalize_memlets=args.normalize_memlets)
+                     normalize_memlets=args.normalize_memlets, pattern=args.pattern)
     else:
         run_program(args.program, not args.use_dace_auto_opt, repetitions=args.repetitions, device=dace.DeviceType.GPU,
-                    normalize_memlets=args.normalize_memlets)
+                    normalize_memlets=args.normalize_memlets, pattern=args.pattern)
 
 
 if __name__ == '__main__':

@@ -33,10 +33,6 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
             return False
 
         # Outgoing edges must be a negation of each other
-        print(f"edge 0 string condition: {guard_outedges[0].data.condition.as_string}")
-        print(f"edge 0 sympy condition:  {guard_outedges[0].data.condition_sympy()}")
-        print(f"edge 1 string condition: {guard_outedges[1].data.condition.as_string}")
-        print(f"edge 1 sympy condition:  {guard_outedges[1].data.condition_sympy()}")
         if guard_outedges[0].data.condition_sympy() != (sp.Not(guard_outedges[1].data.condition_sympy())):
             return False
 

@@ -1,19 +1,24 @@
 import numpy as np
 import copy
+from numbers import Number
+from typing import Tuple, Optional
 
 import dace
 
 from data import get_program_parameters_data, set_input_pattern
-from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, print_with_time, \
+from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                   compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
                   print_non_zero_percentage
+from flop_computation import FlopCount, get_number_of_bytes_rough, get_number_of_flops, save_roofline_data
 from measurement_data import ProgramMeasurement
+from print_utils import print_with_time
 
 RNG_SEED = 42
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool) -> bool:
+def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool, pattern:
+        Optional[str] = None) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -26,6 +31,9 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     :type device: dace.DeviceType
     :param normalize_memlets: If memlets should be normalized
     :type normalize_memlets: bool
+    :param pattern: Name of pattern to apply to in- and output. If empty none will be applied. defaults to None,
+    optional
+    :type pattern: Optional[str]
     :return: True if test passes, False otherwise
     :rtype: bool
     """
@@ -42,6 +50,8 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, testing_dataset=True)
     outputs_f = get_outputs(program, rng, testing_dataset=True)
+    if pattern is not None:
+        set_input_pattern(inputs, outputs_f, program, pattern)
     outputs_d_device = copy_to_device(copy.deepcopy(outputs_f))
     sdfg.validate()
     sdfg.simplify(validate_all=True)
@@ -63,7 +73,8 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     return passes_test
 
 
-def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, device=dace.DeviceType.GPU, normalize_memlets=False):
+def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, device=dace.DeviceType.GPU,
+                normalize_memlets=False, pattern: Optional[str] = None):
     programs = get_programs_data()['programs']
     print(f"Run {program} ({programs[program]}) for {repetitions} time on device {device}")
     fsource = read_source(program)
@@ -74,11 +85,15 @@ def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, devic
     rng = np.random.default_rng(RNG_SEED)
     inputs = copy_to_device(get_inputs(program, rng))
     outputs = copy_to_device(get_outputs(program, rng))
+    if pattern is not None:
+        set_input_pattern(inputs, outputs, program, pattern)
 
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
 
-def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool) -> dace.SDFG:
+
+def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.DeviceType,
+                        normalize_memlets: bool) -> dace.SDFG:
     programs = get_programs_data()['programs']
     fsource = read_source(program)
     program_name = programs[program]
@@ -91,7 +106,7 @@ def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.Device
 
 
 def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, normalize_memlets=False,
-                    repetitions=10) -> ProgramMeasurement:
+                    repetitions=10, pattern: Optional[str] = None) -> ProgramMeasurement:
 
     results = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
 
@@ -104,19 +119,19 @@ def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, n
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng)
     outputs = get_outputs(program, rng)
-    set_input_pattern(inputs, program, 'const')
+    if pattern is not None:
+        set_input_pattern(inputs, outputs, program, pattern)
 
-    variables = {'cloudsc_class2_781': 'ZLIQFRAC', 'cloudsc_class2_1762': 'ZSNOWCLD2',
-                 'cloudsc_class2_1516': 'ZCLDTOPDIST2'}
-    sdfg.clear_instrumentation_reports(outputs, variables[program])
+    sdfg.clear_instrumentation_reports()
     print_with_time("Measure total runtime")
-    inputs['RLMIN'] = 10.0
     inputs = copy_to_device(inputs)
     outputs = copy_to_device(outputs)
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
 
-    print_non_zero_percentage(outputs, )
+    variables = {'cloudsc_class2_781': 'ZLIQFRAC', 'cloudsc_class2_1762': 'ZSNOWCLD2',
+                 'cloudsc_class2_1516': 'ZCLDTOPDIST2', 'my_test': 'ARRAY_A'}
+    # print_non_zero_percentage(outputs, variables[program])
     reports = sdfg.get_instrumentation_reports()
 
     results.add_measurement("Total time", "ms")
@@ -129,3 +144,16 @@ def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, n
                           float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0]))
 
     return results
+
+
+def get_roofline_data(program: str, pattern: Optional[str] = None) -> Tuple[FlopCount, Number]:
+    rng = np.random.default_rng(RNG_SEED)
+    params_data = get_program_parameters_data(program)
+    params = params_data['parameters']
+    inputs = get_inputs(program, rng)
+    outputs = get_outputs(program, rng)
+    if pattern is not None:
+        set_input_pattern(inputs, outputs, program, pattern)
+    flop_count = get_number_of_flops(params, inputs, outputs, program)
+    bytes = get_number_of_bytes_rough(params, inputs, outputs, program)
+    return (flop_count, bytes)
