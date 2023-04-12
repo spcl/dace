@@ -31,14 +31,14 @@ def map_loop(inp: dtype[NBLOCKS, KLEV], out: dtype[NBLOCKS, KLEV]):
 
 @dace.program
 def map_loop2(inp: dtype[KLEV, NBLOCKS], out: dtype[KLEV, NBLOCKS]):
-    tmp = np.zeros(([KLEV, NBLOCKS]), dtype=ntype)
+    tmp = np.zeros(([3, NBLOCKS]), dtype=ntype)
     # tmp = dace.define_local([KLEV, NBLOCKS], dtype)
     for i in dace.map[0:NBLOCKS]:
         # tmp[0, i] = inp[0, i]
         # tmp[1, i] = (inp[0, i] + inp[1, i]) * 2
         for j in range(2, KLEV):
-            tmp[j, i] = (inp[j, i] + inp[j - 1, i] + inp[j - 2, i]) * 3
-            out[j, i] = (tmp[j, i] + tmp[j - 1, i] + tmp[j - 2, i]) * 3
+            tmp[j % 3, i] = (inp[j, i] + inp[j - 1, i] + inp[j - 2, i]) * 3
+            out[j, i] = (tmp[j % 3, i] + tmp[(j - 1) % 3, i] + tmp[(j - 2) % 3, i]) * 3
 
 
 def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str] = None) -> Dict[str, int]:
@@ -166,6 +166,31 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
                 # ndesc.strides = tuple(new_strides)
     
     return permutation
+
+
+# def compress_klev(sdfg: dace.SDFG, klev_vals: Tuple[int], cmpr_size: int) -> Dict[str, int]:
+
+#     for name, desc in sdfg.arrays.items():
+
+#         if not desc.transient:
+#             continue
+
+#         # We target arrays that have KLEV or KLEV + 1 in their shape
+#         shape_str = [str(s) for s in desc.shape]
+#         klev_idx = None
+#         divisor = None
+#         for v in klev_vals:
+#             if str(v) in shape_str:
+#                 klev_idx = shape_str.index(str(v))
+#                 divisor = v
+#                 break
+#         if klev_idx is None:
+#             continue
+
+#         # Assuming that the KLEV dimension has the highest stride
+#         new_shape = list(desc.shape)
+#         new_shape[klev_idx] = cmpr_size
+
 
 
 def permute(input: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any]:

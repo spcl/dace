@@ -237,36 +237,36 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
                  'KLEV':'137',
                  'KFLDX': '1',}
 
-    # Verify and fix NSSOPT and NCLDTOP
-    for sd in sdfg.all_sdfgs_recursive():
-        for state in sd.nodes():
-            for edge in list(state.edges()):
-                if not edge.data.is_empty() and edge.data.data in ('NSSOPT', 'NCLDTOP'):
-                    print(f"Found {edge.data.data} in {sd.name}, {state.name}, {edge}, and fixing ...")
-                    if edge in state.edges():
-                        state.remove_memlet_path(edge, remove_orphans=True)
-    # Promote/replace symbols
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.replace_dict(repl_dict)
-        if sd.parent_nsdfg_node is not None:
-            for k in repl_dict.keys():
-                if k in sd.parent_nsdfg_node.symbol_mapping:
-                    del sd.parent_nsdfg_node.symbol_mapping[k]
-        for k in repl_dict.keys():
-            if k in sd.symbols:
-                del sd.symbols[k]
-    # Verify promotion/replacement
-    for sd in sdfg.all_sdfgs_recursive():
-        assert not any(k in sd.symbols for k in repl_dict.keys())
-        assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
-        for state in sd.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet):
-                    assert not any(k in node.code.as_string for k in repl_dict.keys())
-                elif isinstance(node, dace.nodes.NestedSDFG):
-                    for s, m in node.symbol_mapping.items():
-                        assert not any(k in str(s) for k in repl_dict.keys())
-                        assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
+    # # Verify and fix NSSOPT and NCLDTOP
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     for state in sd.nodes():
+    #         for edge in list(state.edges()):
+    #             if not edge.data.is_empty() and edge.data.data in ('NSSOPT', 'NCLDTOP'):
+    #                 print(f"Found {edge.data.data} in {sd.name}, {state.name}, {edge}, and fixing ...")
+    #                 if edge in state.edges():
+    #                     state.remove_memlet_path(edge, remove_orphans=True)
+    # # Promote/replace symbols
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.replace_dict(repl_dict)
+    #     if sd.parent_nsdfg_node is not None:
+    #         for k in repl_dict.keys():
+    #             if k in sd.parent_nsdfg_node.symbol_mapping:
+    #                 del sd.parent_nsdfg_node.symbol_mapping[k]
+    #     for k in repl_dict.keys():
+    #         if k in sd.symbols:
+    #             del sd.symbols[k]
+    # # Verify promotion/replacement
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     assert not any(k in sd.symbols for k in repl_dict.keys())
+    #     assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
+    #     for state in sd.states():
+    #         for node in state.nodes():
+    #             if isinstance(node, dace.nodes.Tasklet):
+    #                 assert not any(k in node.code.as_string for k in repl_dict.keys())
+    #             elif isinstance(node, dace.nodes.NestedSDFG):
+    #                 for s, m in node.symbol_mapping.items():
+    #                     assert not any(k in str(s) for k in repl_dict.keys())
+    #                     assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
     
     for sd in sdfg.all_sdfgs_recursive():
         promoted = ScalarToSymbolPromotion().apply_pass(sd, {})
@@ -275,29 +275,29 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
     utils.normalize_offsets(sdfg)
     sdfg.simplify(verbose=True)
 
-    repl_dict = {'NPROMA': '1'}
-    # Promote/replace symbols
-    for sd in sdfg.all_sdfgs_recursive():
-        sd.replace_dict(repl_dict)
-        if sd.parent_nsdfg_node is not None:
-            for k in repl_dict.keys():
-                if k in sd.parent_nsdfg_node.symbol_mapping:
-                    del sd.parent_nsdfg_node.symbol_mapping[k]
-        for k in repl_dict.keys():
-            if k in sd.symbols:
-                del sd.symbols[k]
-    # Verify promotion/replacement
-    for sd in sdfg.all_sdfgs_recursive():
-        assert not any(k in sd.symbols for k in repl_dict.keys())
-        assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
-        for state in sd.states():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.Tasklet):
-                    assert not any(k in node.code.as_string for k in repl_dict.keys())
-                elif isinstance(node, dace.nodes.NestedSDFG):
-                    for s, m in node.symbol_mapping.items():
-                        assert not any(k in str(s) for k in repl_dict.keys())
-                        assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
+    # repl_dict = {'NPROMA': '1'}
+    # # Promote/replace symbols
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     sd.replace_dict(repl_dict)
+    #     if sd.parent_nsdfg_node is not None:
+    #         for k in repl_dict.keys():
+    #             if k in sd.parent_nsdfg_node.symbol_mapping:
+    #                 del sd.parent_nsdfg_node.symbol_mapping[k]
+    #     for k in repl_dict.keys():
+    #         if k in sd.symbols:
+    #             del sd.symbols[k]
+    # # Verify promotion/replacement
+    # for sd in sdfg.all_sdfgs_recursive():
+    #     assert not any(k in sd.symbols for k in repl_dict.keys())
+    #     assert not any(k in str(s) for s in sd.free_symbols for k in repl_dict.keys())
+    #     for state in sd.states():
+    #         for node in state.nodes():
+    #             if isinstance(node, dace.nodes.Tasklet):
+    #                 assert not any(k in node.code.as_string for k in repl_dict.keys())
+    #             elif isinstance(node, dace.nodes.NestedSDFG):
+    #                 for s, m in node.symbol_mapping.items():
+    #                     assert not any(k in str(s) for k in repl_dict.keys())
+    #                     assert not any(k in str(s) for s in m.free_symbols for k in repl_dict.keys())
 
     sdfg.simplify(verbose=True)
 
@@ -869,6 +869,119 @@ def unpermute(output: Dict[str, Any], ref: Dict[str, Any], permutation: Dict[str
                 unpermuted[name] = arr
     return unpermuted
 
+
+def compress_klev(sdfg: dace.SDFG, klev_vals: Tuple[int], cmpr_size: int):
+
+    exclude = set(['ZQX', 'ZQX0', 'ZQXN2D', 'ZPFPLSX'])
+
+    # Find the Nested SDFG
+    nsdfg = None
+    for sd in sdfg.all_sdfgs_recursive():
+        if sd is sdfg:
+            continue
+        if sd.parent_sdfg is sdfg:
+            nsdfg = sd
+            break
+    assert nsdfg is not None
+
+    cmpr_data = dict()
+    for name, desc in nsdfg.arrays.items():
+
+        if name in exclude:
+            continue
+
+        if not desc.transient:
+            continue
+
+        shape_str = [str(s) for s in desc.shape]
+        klev_idx = None
+        for v in klev_vals:
+            if str(v) in shape_str:
+                klev_idx = shape_str.index(str(v))
+                break
+        if klev_idx is None:
+            continue
+
+        new_shape = list(desc.shape)
+        new_shape[klev_idx] = cmpr_size
+        new_strides =  [1]
+        for i in range(len(new_shape) - 1):
+            new_strides.append(new_strides[-1] * new_shape[i])
+        print(f"Compressing {name} with shape {desc.shape} and strides {desc.strides} to shape {new_shape} and strides {new_strides}")
+        desc.shape = tuple(new_shape)
+        desc.strides = tuple(new_strides)
+
+        cmpr_data[name] = klev_idx
+    
+    # Update memlets
+    for state in nsdfg.nodes():
+        visited = set()
+        for node in state.nodes():
+            if isinstance(node, dace.sdfg.nodes.AccessNode) and node.data in cmpr_data:
+                klev_idx = cmpr_data[node.data]
+                for e0 in state.all_edges(node):
+                    if e0 in visited:
+                        continue
+                    for e1 in state.memlet_tree(e0):
+                        if e1 in visited:
+                            continue
+                        visited.add(e1)
+                        if e1.data.data == node.data:
+                            rng = e1.data.subset.ranges
+                            klev_dim = rng[klev_idx]
+                            assert klev_dim[0] == klev_dim[1]
+                            idx = dace.symbolic.pystr_to_symbolic(f"Mod({klev_dim[0]}, {cmpr_size})")
+                            klev_dim = (idx, idx, 1)
+                            rng[klev_idx] = klev_dim
+                            e1.data.subset = dace.subsets.Range(rng)
+                        else:
+                            rng = e1.data.other_subset.ranges
+                            klev_dim = rng[klev_idx]
+                            assert klev_dim[0] == klev_dim[1]
+                            idx = dace.symbolic.pystr_to_symbolic(f"Mod({klev_dim[0]}, {cmpr_size})")
+                            klev_dim = (idx, idx, 1)
+                            rng[klev_idx] = klev_dim
+                            e1.data.other_subset = dace.subsets.Range(rng)
+                    visited.add(e0)
+    
+    # Change InterstateEdges
+    for edge in nsdfg.edges():
+        memlets = edge.data.get_read_memlets(nsdfg.arrays)
+        for m in memlets:
+            if m.data in cmpr_data:
+                klev_idx = cmpr_data[m.data]
+                # klev_dim = m.subset.ranges[klev_idx]
+                # assert klev_dim[0] == klev_dim[1]
+                # klev_dim = (klev_dim[0] % cmpr_size, klev_dim[1] % cmpr_size, 1)
+                # m.subset.ranges[klev_idx] = klev_dim
+                rng = m.subset.ranges
+                klev_dim = rng[klev_idx]
+                assert klev_dim[0] == klev_dim[1]
+                idx = dace.symbolic.pystr_to_symbolic(f"Mod({klev_dim[0]}, {cmpr_size})")
+                klev_dim = (idx, idx, 1)
+                rng[klev_idx] = klev_dim
+                m.subset = dace.subsets.Range(rng)
+        for node in ast.walk(edge.data.condition.code[0]):
+            if isinstance(node, ast.Subscript):
+                m = memlets.pop(0)
+                subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                node.slice = ast.copy_location(subscript.slice, node.slice)
+        edge.data._cond_sympy = None
+        for k, v in edge.data.assignments.items():
+            vast = ast.parse(v)
+            for node in ast.walk(vast):
+                if isinstance(node, ast.Subscript):
+                    m = memlets.pop(0)
+                    subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                    assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                    node.slice = ast.copy_location(subscript.slice, node.slice)
+            newv = astutils.unparse(vast)
+            edge.data.assignments[k] = newv
+        assert not memlets
+
+
+
 nbvalue = 4
 
 
@@ -1362,19 +1475,21 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
     print("Running Fortran ...")
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
 
-    # medians = repeat("ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})", repeat=2, number=1, globals={**globals(), **locals()})
-    # print(medians)
+    # # medians = repeat("ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})", repeat=2, number=1, globals={**globals(), **locals()})
+    # # print(medians)
+    # permutation = None
+
+    # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
+
+    # sdfg.apply_gpu_transformations_cloudsc()
+
+    # # sdfg.view()
+    # # sdfg.compile()
+    # print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+
+    # exit(0)
     permutation = None
 
-    sdfg = dace.SDFG.from_file('CLOUDSCOUTER_autoopt_loops_unrolled.sdfg')
-
-    sdfg.apply_gpu_transformations_cloudsc()
-
-    # sdfg.view()
-    # sdfg.compile()
-    print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
-
-    exit(0)
     if sdfg_id < 1:
         sdfg = get_sdfg(fsource, program_name, normalize_offsets=True)
         sdfg.save('CLOUDSCOUTER_simplify.sdfg')
@@ -1387,9 +1502,17 @@ def test_program(program: str, device: dace.DeviceType, sdfg_id: int):
         permutation = None
         sdfg.save('CLOUDSCOUTER_simplify_layout.sdfg')
         print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
+    
+    # if sdfg_id < 3:
+    #     sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify_layout.sdfg')
+    #     compress_klev(sdfg, (137, 138), 4)
+    #     sdfg.save('CLOUDSCOUTER_compress_klev.sdfg')
+    #     print(f"Validates? {validate_sdfg(sdfg, inputs, outputs_d, outputs_f, permutation=permutation)}")
 
     if sdfg_id < 3:
-        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify_layout.sdfg')
+        sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify.sdfg')
+        # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_simplify_layout.sdfg')
+        # sdfg = dace.SDFG.from_file('CLOUDSCOUTER_compress_klev.sdfg')
         auto_optimize(sdfg, dace.DeviceType.Generic)
         sdfg.simplify()
         sdfg.save('CLOUDSCOUTER_autoopt.sdfg')
@@ -1558,7 +1681,7 @@ if __name__ == "__main__":
                         '--sdfg_id',
                         type=int,
                         nargs="?",
-                        default=0,
+                        default=2,
                         help='The SDFG to use.')
     args = parser.parse_args()
     
