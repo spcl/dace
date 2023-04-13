@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dc
 import numpy as np
+import os
 
 N = dc.symbol('N')
 
@@ -150,8 +151,11 @@ def test_nested_offset_access_nested_dependency():
         return out
 
     inp = np.reshape(np.arange(6 * 5 * 5, dtype=np.float64), (6, 5, 5)).copy()
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
     with dc.config.set_temporary('testing', 'serialization', value=False):
         out = nested_offset_access_nested_dep(inp)
+    os.environ['DACE_testing_serialization'] = last_value
     ref = nested_offset_access_nested_dep.f(inp)
     assert (np.allclose(out, ref))
 
