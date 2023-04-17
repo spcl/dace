@@ -122,6 +122,15 @@ def get_number_of_flops(
             number_if_iterations * FlopCount(adds=8, muls=15, divs=6, minmax=5, abs=1, powers=1, roots=1)
     elif program == 'my_roofline_test':
         return KLEV * (KFDIA-KIDIA+1) * FlopCount(muls=1, minmax=1, adds=0)
+    # How to compute the number of flop here?
+    elif program == 'cloudsc_class2_1516':
+        number_formula = np.count_nonzero(
+                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-2:KLEV-1] < inputs['RCLDTOPCF']) &
+                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] >= inputs['RCLDTOPCF']))
+        # TODO: Continue
+    elif program == 'cloudsc_class2_1762':
+        number_formula = np.count_nonzero(inputs['ZQPRETOT2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['ZEPSEC'])
+        return number_formula * FlopCount(adds=4, muls=1, divs=3, minmax=5)
 
 
 # Length of a double in bytes
