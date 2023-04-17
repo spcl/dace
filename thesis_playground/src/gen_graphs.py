@@ -1,7 +1,6 @@
 from argparse import ArgumentParser
 
 import dace
-from dace.config import Config
 
 from utils import get_programs_data, save_graph, get_sdfg, reset_graph_files, read_source, enable_debug_flags
 from my_auto_opt import auto_optimize

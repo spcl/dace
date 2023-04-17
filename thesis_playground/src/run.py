@@ -79,6 +79,8 @@ def main():
                         help='Stores roofline data. Filename generated using value of --output flag')
     parser.add_argument('--pattern', choices=['const', 'formula', 'worst'], type=str, default=None,
                         help='Pattern for in and output')
+    parser.add_argument('--ncu-report', default=False, action='store_true',
+                        help='Create a full ncu report and save it')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -151,6 +153,17 @@ def main():
             print(f"Save nsys report into {report_name}")
             run([*command_nsys, *command_program], capture_output=True)
 
+        if args.ncu_report:
+            print_with_time("Create ncu reports")
+            ncu_command = ['ncu', '--set', 'full', '--force-overwrite']
+            if args.output is not None:
+                ncu_command.append('--export')
+                ncu_command.append(f"report_{''.join(args.output.split('.')[:-1])}_{program}.ncu-rep")
+            else:
+                ncu_command.append('--export')
+                ncu_command.append(f"report_{program}.ncu-rep")
+            run([*ncu_command, *command_program], capture_output=True)
+
         run_data.add_program_data(program_data)
 
         if args.roofline:
@@ -159,18 +172,22 @@ def main():
 
     if args.output is not None:
         filename = os.path.join(get_results_dir(), args.output)
-        print_with_time(f"Save results into {filename}")
-        with open(filename, 'w') as file:
-            json.dump(run_data, file, default=MeasurementRun.to_json)
+        if not (args.no_total and args.no_ncu):
+            print_with_time(f"Save results into {filename}")
+            with open(filename, 'w') as file:
+                json.dump(run_data, file, default=MeasurementRun.to_json)
         if args.roofline:
-            roofline_filename = f"{''.join(filename.split('.')[:-1])}_roofline_rough.json"
+            roofline_filename = f"{''.join(filename.split('.')[:-1])}_roofline.json"
             print(f"Save roofline data into {roofline_filename}")
             save_roofline_data(roofline_data, roofline_filename)
 
     print_with_time("Print results")
     print_results_v2(run_data)
     if args.roofline:
-        print_performance(roofline_data, run_data)
+        with open('nodes.json') as node_file:
+            node_data = json.load(node_file)
+            gpu = node_data['ault_nodes'][run_data.node]['GPU']
+            print_performance(roofline_data, run_data, node_data['GPUs'][gpu])
 
 
 if __name__ == '__main__':

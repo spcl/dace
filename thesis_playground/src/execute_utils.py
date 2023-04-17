@@ -9,7 +9,7 @@ from data import get_program_parameters_data, set_input_pattern
 from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                   compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
                   print_non_zero_percentage
-from flop_computation import FlopCount, get_number_of_bytes_rough, get_number_of_flops, save_roofline_data
+from flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurement_data import ProgramMeasurement
 from print_utils import print_with_time
 
@@ -17,8 +17,8 @@ RNG_SEED = 42
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool, pattern:
-        Optional[str] = None) -> bool:
+def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool,
+                 pattern: Optional[str] = None) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -129,8 +129,8 @@ def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, n
     for i in range(repetitions):
         sdfg(**inputs, **outputs)
 
-    variables = {'cloudsc_class2_781': 'ZLIQFRAC', 'cloudsc_class2_1762': 'ZSNOWCLD2',
-                 'cloudsc_class2_1516': 'ZCLDTOPDIST2', 'my_test': 'ARRAY_A'}
+    # variables = {'cloudsc_class2_781': 'ZLIQFRAC', 'cloudsc_class2_1762': 'ZSNOWCLD2',
+    #              'cloudsc_class2_1516': 'ZCLDTOPDIST2', 'my_test': 'ARRAY_A'}
     # print_non_zero_percentage(outputs, variables[program])
     reports = sdfg.get_instrumentation_reports()
 
@@ -155,5 +155,5 @@ def get_roofline_data(program: str, pattern: Optional[str] = None) -> Tuple[Flop
     if pattern is not None:
         set_input_pattern(inputs, outputs, program, pattern)
     flop_count = get_number_of_flops(params, inputs, outputs, program)
-    bytes = get_number_of_bytes_rough(params, inputs, outputs, program)
+    bytes = get_number_of_bytes(params, inputs, outputs, program)
     return (flop_count, bytes)

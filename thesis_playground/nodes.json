@@ -2,16 +2,23 @@
     "ault_nodes": {
         "ault06": {
             "GPU": "V100"
+        },
+        "ault10": {
+            "GPU": "V100"
         }
     },
     "GPUs": {
         "V100": {
-            "flop_per_second": { "theoretical": 7000000000000 },
+            "flop_per_second": { "theoretical": 6239000000000 },
             "bytes_per_second": { 
                 "global": {"theoretical": 900000000000, "measured": 750000000000},
-                "shared": {"theoretical": 13800000000000, "measured": 12080000000000}
+                "shared": {"theoretical": 13800000000000, "measured": 12080000000000},
+                "l2": {"measured": 2150000000000}
                 },
-            "graphics_clock": 1380000000,
+            "bytes_per_cycle": {
+                "l1": {"theoretical": 20480, "measured": 108.3}
+            },
+            "graphics_clock": 1230000000,
             "global_memory_clock": 870000000,
             "sources": ["https://images.nvidia.com/content/technologies/volta/pdf/tesla-volta-v100-datasheet-letter-fnl-web.pdf", "https://arxiv.org/pdf/1804.06826.pdf"]
 

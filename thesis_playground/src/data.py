@@ -64,7 +64,14 @@ custom_parameters = {
         'KLON': 3000,
         'KLEV': 3000,
         'KFDIA': 2998
-    }
+    },
+    'my_roofline_test':
+    {
+        'KLON': 10000,
+        'KLEV': 10000,
+        'KIDIA': 1,
+        'KFDIA': 10000,
+    },
 }
 
 # changes from the parameters dict for testing
@@ -117,8 +124,9 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZQTMST': (0, ),
         'ZVPICE': (0, ),
         'ZVPLIQ': (0, ),
-        'ARRAY_A': (params['KLON'],),
-        'ARRAY_B': (params['KLON'],),
+        'ARRAY_A': (params['KLON'], params['KLEV']),
+        'ARRAY_B': (params['KLON'], params['KLEV']),
+        'ARRAY_C': (params['KLON'], params['KLEV']),
         'IPHASE': (params['NCLV'], ),
         'PAPH': (params['KLON'], params['KLEV'] + 1),
         'PAP': (params['KLON'], params['KLEV']),
@@ -220,8 +228,8 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
     :type program: str
     :return: List of dictionaries. Each dictionary has an entry 'variables' listing all variable names which have the
     given ranges, an entry 'start' and 'stop' which are tuples with the start and stop indices (0-based) for the range
-    to check/compare. Alternatively entries in start can also be lists of indices or a single index, the corresponding entries in stop
-    must then be None
+    to check/compare. Alternatively entries in start can also be lists of indices or a single index, the corresponding
+    entries in stop must then be None
     :rtype: List[Dict]
     """
     # This ranges have inclusive starts and exclusive ends. Remember that for fortran loops start and end are inclusive
@@ -364,6 +372,13 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'end': (params['KLON'],)
                 }
             ],
+            'my_roofline_test': [
+                {
+                    'variables': ['ARRAY_A'],
+                    'start': (params['KIDIA']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'])
+                }
+            ],
     }
     return ranges[program]
 
@@ -431,7 +446,7 @@ def set_input_pattern(
             inputs['RTT'] = 0.0
         elif program == 'cloudsc_class3_2120':
             inputs['ZEPSEC'] = 0.0
-            inputs['RPCECRHMAX'] = 10000.0
+            inputs['RPRECRHMAX'] = 10000.0
         else:
             print(f"ERROR: Pattern {pattern} does not exists for {program}")
     elif pattern == 'worst':

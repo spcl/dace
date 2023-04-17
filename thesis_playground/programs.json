@@ -13,7 +13,7 @@
         "cloudsc_class3_1985": "melting_snow_ice",
         "cloudsc_class3_2120": "rain_evaporation",
         "mwe_test": "mwe_test",
-        "my_test": "my_test"
+        "my_roofline_test": "my_roofline_test"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -30,7 +30,7 @@
         "cloudsc_class3_1985": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQS","NCLDQI", "NCLDQL", "NCLDTOP"],
         "cloudsc_class3_2120": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQR", "NCLDTOP"],
         "mwe_test": ["KLON", "KLEV", "KIDIA", "KFDIA", "NCLV", "NCLDQV"],
-        "my_test": ["KLON"]
+        "my_roofline_test": ["KLON", "KLEV", "KIDIA", "KFDIA"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -51,7 +51,7 @@
                                 "ZRG_R", "RCOVPMIN", "ZA", "ZQX", "ZQSLIQ", "ZCOVPCLR", "ZDTGDP", "PAP", "PAPH",
                                 "ZCORQSLIQ", "ZDP"],
         "mwe_test":  ["ZQX"],
-        "my_test": ["ARRAY_B"]
+        "my_roofline_test": ["ARRAY_B", "ARRAY_C"]
     },
     "program_outputs": {
         "cloudsc_class1_658": ["ZTP1", "ZQX", "ZQX0", "ZA", "ZAORIG"],
@@ -67,6 +67,6 @@
         "cloudsc_class3_1985": ["ZICETOT2", "ZMELTMAX2"],
         "cloudsc_class3_2120": ["ZSOLQA2", "ZCOVPTOT2", "ZQXFG2"],
         "mwe_test": ["ZFOKOOP", "ZSUPSAT"],
-        "my_test": ["ARRAY_A"]
+        "my_roofline_test": ["ARRAY_A"]
     }
 }

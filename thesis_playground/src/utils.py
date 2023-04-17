@@ -2,14 +2,12 @@ import os
 import numpy as np
 from numpy import f2py
 from numbers import Number
-from typing import Dict, Union, List, Tuple
+from typing import Dict, Union, List
 from importlib import import_module
 import sys
 import tempfile
 import json
-from tabulate import tabulate
 from glob import glob
-from datetime import datetime
 from subprocess import run
 import cupy as cp
 
@@ -17,14 +15,10 @@ import dace
 from dace.config import Config
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG
-from dace.sdfg.nodes import MapEntry
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 from data import get_program_parameters_data, get_testing_parameters_data, get_iteration_ranges
-
-from measurement_data import MeasurementRun
-from flop_computation import FlopCount
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -374,30 +368,6 @@ def print_non_zero_percentage(data: Dict[str, Union[Number, Union[np.ndarray, cp
     print(f"{variable}: {num_nnz}/{num_tot} = {num_nnz/num_tot*100}%")
 
 
-def set_all_arrays_to_zero(sdfg: SDFG):
-    # Try to set all arrays to zero, but seems more complicated
-    arrays = []
-    for k, v in sdfg.arrays.items():
-        if not v.transient and type(v) == dace.data.Array:
-            arrays.append((k, v))
-
-    map_node = None
-    for node in sdfg.all_nodes_recursive():
-        if type(node[0]) is MapEntry:
-            map_node = node[0]
-            break
-
-    for nsdfg in sdfg.sdfg_list:
-        if nsdfg != sdfg:
-            for state in nsdfg.states():
-                nsdfg.remove_node(state)
-            set_zero_state = nsdfg.add_state(label="set_all_to_zero", is_start_state=True)
-            for name, array in arrays:
-                tasklet = set_zero_state.add_tasklet(name, None, None, f"{name}=0")
-                access = set_zero_state.add_write(name)
-                set_zero_state.add_edge(tasklet, "out", access, "in", dace.memlet.Memlet())
-
-
 def convert_to_seconds(value: Number, unit: str) -> float:
     """
     Converts a given value into seconds
@@ -412,7 +382,7 @@ def convert_to_seconds(value: Number, unit: str) -> float:
     factors = {
             'second': 1,
             'msecond': 1000,
-            'usecond': 100000
+            'usecond': 1000000
             }
     if unit in factors:
         return float(value) / float(factors[unit])
