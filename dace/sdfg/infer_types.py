@@ -123,7 +123,9 @@ def infer_connector_types(sdfg: SDFG):
 # Default schedule and storage type inference
 
 
-def set_default_schedule_and_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
+def set_default_schedule_and_storage_types(sdfg: SDFG,
+                                           toplevel_schedule: dtypes.ScheduleType,
+                                           use_parent_schedule: bool = False):
     """ 
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces `ScheduleType.Default` and `StorageType.Default`
@@ -138,8 +140,10 @@ def set_default_schedule_and_storage_types(sdfg: SDFG, toplevel_schedule: dtypes
     :param sdfg: The SDFG to infer.
     :param toplevel_schedule: The default top-level schedule for "global" nodes
                               (without parent scope nodes).
+    :param use_parent_schedule: If True, uses the parent scope's schedule type
+                                directly, instead of the default schedule type
     """
-    _set_default_schedule_types(sdfg, toplevel_schedule)
+    _set_default_schedule_types(sdfg, toplevel_schedule, use_parent_schedule)
     _set_default_storage_types(sdfg, toplevel_schedule)
 
 
