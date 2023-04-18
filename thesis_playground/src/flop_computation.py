@@ -213,24 +213,24 @@ def get_double_accessed(params: Dict[str, Number], program: str, variable: str) 
         ],
         'cloudsc_class1_670':
         [
+            {'variables': ['ZQX', 'ZQX0'], 'size': (params['NCLV']-1)*(KLEV)*(KFDIA-KIDIA+1), 'action': 'w'},
             {
-                'variables': ['PCLV', 'tendency_tmp_cld'], 
+                'variables': ['PCLV', 'tendency_tmp_cld'],
                 'size': (params['NCLV']-1)*(KLEV)*(KFDIA-KIDIA+1),
                 'action': 'r'
-                },
-            {'variables': ['ZQX ', 'ZQX0'], 'size': (params['NCLV']-1)*(KLEV)*(KFDIA-KIDIA+1), 'action': 'w'},
+            },
 
         ],
         'cloudsc_class1_2783':
         [
             {'variables': ['ZPFPLSX'], 'size': 4*(KLEV+1)*(KFDIA-KIDIA+1), 'action': 'r'},
-            {'variables': ['PFPLSL ', 'PFPLSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
+            {'variables': ['PFPLSL', 'PFPLSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
 
         ],
         'cloudsc_class1_2857':
         [
             {'variables': ['PFPLSL', 'PFPLSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'r'},
-            {'variables': ['PFHPSL ', 'PFHPSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
+            {'variables': ['PFHPSL', 'PFHPSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
 
         ],
         'cloudsc_class2_781':
@@ -295,6 +295,7 @@ def get_double_accessed(params: Dict[str, Number], program: str, variable: str) 
     }
 
     for entry in iteration_shapes[program]:
+        # print(program, variable, entry['variables'], variable in entry['variables'])
         if variable in entry['variables']:
             return entry['size']
     print(f"ERROR: could not find iteration shape for variable {variable} in program {program}")
