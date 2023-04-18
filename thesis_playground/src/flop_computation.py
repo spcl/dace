@@ -23,6 +23,7 @@ class FlopCount:
         self.roots = roots
 
     def get_total_flops(self) -> int:
+        # TODO: How to count min/max and powers?
         return self.adds + self.muls + self.divs + 13*self.roots
 
     def __mul__(self, a: Number):
@@ -83,7 +84,30 @@ def get_number_of_flops(
     NCLDTOP = params['NCLDTOP']
     KIDIA = params['KIDIA']
     KFDIA = params['KFDIA']
-    if program == 'cloudsc_class3_691':
+    if program == 'cloudsc_class1_658':
+        return KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=5, muls=5)
+    elif program == 'cloudsc_class1_670':
+        return (params['NCLV']-1) * KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=2, muls=2)
+    elif program == 'cloudsc_class1_2783':
+        return (KLEV+1) * (KFDIA-KIDIA+1) * FlopCount(adds=2)
+    elif program == 'cloudsc_class1_2857':
+        return (KLEV+1) * (KFDIA-KIDIA+1) * FlopCount(adds=2, muls=2)
+    elif program == 'cloudsc_class2_781':
+        number_formula = np.count_nonzero(outputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['RLMIN'])
+        return number_formula * FlopCount(adds=1, divs=1) + KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=1, minmax=2)
+    elif program == 'cloudsc_class2_1516':
+        number_formula_1 = np.count_nonzero(
+                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-2:KLEV-1] < inputs['RCLDTOPCF']) &
+                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] >= inputs['RCLDTOPCF']))
+        number_formula_2 = np.count_nonzero(
+                (inputs['ZTP1'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] < inputs['RTT']) &
+                (outputs['ZQXFG2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']] > inputs['RLMIN']))
+        return number_formula_1 * FlopCount(adds=1, divs=1, muls=1) + \
+            number_formula_2 * FlopCount(adds=17, muls=22, divs=11, powers=3, minmax=3)
+    elif program == 'cloudsc_class2_1762':
+        number_formula = np.count_nonzero(inputs['ZQPRETOT2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['ZEPSEC'])
+        return number_formula * FlopCount(adds=4, muls=1, divs=3, minmax=5)
+    elif program == 'cloudsc_class3_691':
         zqx_ql_qi = outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQI']] + \
                     outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQL']]
         number_iterations = np.count_nonzero(
@@ -122,15 +146,9 @@ def get_number_of_flops(
             number_if_iterations * FlopCount(adds=8, muls=15, divs=6, minmax=5, abs=1, powers=1, roots=1)
     elif program == 'my_roofline_test':
         return KLEV * (KFDIA-KIDIA+1) * FlopCount(muls=1, minmax=1, adds=0)
-    # How to compute the number of flop here?
-    elif program == 'cloudsc_class2_1516':
-        number_formula = np.count_nonzero(
-                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-2:KLEV-1] < inputs['RCLDTOPCF']) &
-                (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] >= inputs['RCLDTOPCF']))
-        # TODO: Continue
-    elif program == 'cloudsc_class2_1762':
-        number_formula = np.count_nonzero(inputs['ZQPRETOT2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['ZEPSEC'])
-        return number_formula * FlopCount(adds=4, muls=1, divs=3, minmax=5)
+    else:
+        print(f"ERROR: No flop count available for program {program}")
+        return None
 
 
 # Length of a double in bytes
@@ -181,6 +199,66 @@ def get_double_accessed(params: Dict[str, Number], program: str, variable: str) 
     KIDIA = params['KIDIA']
     KFDIA = params['KFDIA']
     iteration_shapes = {
+        'cloudsc_class1_658': [
+            {
+                'variables': ['tendency_tmp_t', 'tendency_tmp_q', 'tendency_tmp_a', 'PT', 'PQ', 'PA'],
+                'size': KLEV*(KFDIA-KIDIA+1),
+                'action': 'r'
+            },
+            {
+                'variables': ['ZTP1', 'ZQX', 'ZQX0', 'ZA', 'ZAORIG'],
+                'size': KLEV*(KFDIA-KIDIA+1),
+                'action': 'w'
+            }
+        ],
+        'cloudsc_class1_670':
+        [
+            {
+                'variables': ['PCLV', 'tendency_tmp_cld'], 
+                'size': (params['NCLV']-1)*(KLEV)*(KFDIA-KIDIA+1),
+                'action': 'r'
+                },
+            {'variables': ['ZQX ', 'ZQX0'], 'size': (params['NCLV']-1)*(KLEV)*(KFDIA-KIDIA+1), 'action': 'w'},
+
+        ],
+        'cloudsc_class1_2783':
+        [
+            {'variables': ['ZPFPLSX'], 'size': 4*(KLEV+1)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['PFPLSL ', 'PFPLSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
+
+        ],
+        'cloudsc_class1_2857':
+        [
+            {'variables': ['PFPLSL', 'PFPLSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['PFHPSL ', 'PFHPSN'], 'size': (KLEV+1)*(KFDIA-KIDIA+1), 'action': 'w'},
+
+        ],
+        'cloudsc_class2_781':
+        [
+            {'variables': ['ZQX'], 'size': 2*(KLEV)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZA', 'ZLI'], 'size': (KLEV)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZLIQFRAC', 'ZICEFRAC'], 'size': (KLEV)*(KFDIA-KIDIA+1), 'action': 'w'},
+
+        ],
+        'cloudsc_class2_1516':
+        [
+            {'variables': ['ZA'], 'size': (KLEV-NCLDTOP+1)*(KFDIA-KIDIA+2), 'action': 'r'},
+            # Technically, it is only w for one branch
+            {'variables': ['ZCLDTOPDIST2'], 'size': 2*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'rw'},
+            {'variables': ['ZDP', 'ZRHO', 'ZFOKOOP', 'ZICECLD'], 'size': (KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZTP1', 'PAP'], 'size': (KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZSOLQA2', 'ZQXFG2'], 'size': 2*2*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'rw'},
+
+        ],
+        'cloudsc_class2_1762':
+        [
+            {'variables': ['ZQXFG'], 'size': 2*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZA'], 'size': (KLEV)*(KFDIA-KIDIA+2), 'action': 'r'},
+            {'variables': ['ZQPRETOT2'], 'size': (KLEV)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {'variables': ['ZCOVPTOT2', 'ZCOVPMAX2'], 'size': 2*(KLEV)*(KFDIA-KIDIA+1), 'action': 'rw'},
+            {'variables': ['ZCOVPCLR2', 'ZRAINCLD2', 'ZSNOWCLD2'], 'size': (KLEV)*(KFDIA-KIDIA+1), 'action': 'w'},
+
+        ],
         'cloudsc_class3_691':
         [
             {'variables': ['tendency_loc_q', 'tendency_loc_T', 'ZA'], 'size': 2*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), },
