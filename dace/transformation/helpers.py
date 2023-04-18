@@ -1366,12 +1366,19 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
 
     # Compute the union of the destination subsets of the edges that write to `access.`
     in_union = None
+    map_dependency = False
     for e in state.in_edges(access):
         subset = e.data.get_dst_subset(e, state)
+        if any(str(s) in map_exit.map.params for s in subset.free_symbols):
+            map_dependency = True
         if in_union is None:
             in_union = subset
         else:
             in_union = in_union.union(subset)
+
+    # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
+    if not map_dependency:
+        return
 
     # Check if the union covers the output edges of `access.`
     covers_out = True
