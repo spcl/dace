@@ -161,9 +161,8 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
                 has_tb_map = True
                 break
             elif isinstance(node, nodes.NestedSDFG):
-                for n in node.sdfg.all_nodes_recursive():
-                    if isinstance(node,
-                                  nodes.EntryNode) and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                for n, _ in node.sdfg.all_nodes_recursive():
+                    if isinstance(n, nodes.EntryNode) and n.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
                                                                          dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
                         has_tb_map = True
                         break
