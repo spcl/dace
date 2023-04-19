@@ -254,8 +254,7 @@ def parse_dace_program(name: str,
     except Exception:
         # Print the offending line causing the exception
         li = visitor.current_lineinfo
-        print('Exception raised while parsing DaCe program:\n'
-              f'  in File "{li.filename}", line {li.start_line}')
+        print('Exception raised while parsing DaCe program:\n' f'  in File "{li.filename}", line {li.start_line}')
         lines = preprocessed_ast.src.split('\n')
         lineid = li.start_line - preprocessed_ast.src_line - 1
         if lineid >= 0 and lineid < len(lines):
@@ -602,7 +601,6 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
-
     def __init__(self,
                  visitor,
                  defined,
@@ -1793,7 +1791,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         if candidate in self.variables and self.variables[candidate] in self.sdfg.arrays:
                             candidate = self.variables[candidate]
 
-                        if candidate in self.sdfg.arrays and isinstance(self.sdfg.arrays[candidate], data.Scalar):
+                        if candidate in self.sdfg.arrays and (isinstance(self.sdfg.arrays[candidate], data.Scalar) or
+                                                              (isinstance(self.sdfg.arrays[candidate], data.Array)
+                                                               and self.sdfg.arrays[candidate].shape == (1, ))):
                             newvar = '__%s_%s%d' % (name, vid, ctr)
                             repldict[atomstr] = newvar
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
@@ -4804,7 +4804,6 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
-
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
