@@ -4,6 +4,7 @@ import dace as dc
 import numpy as np
 import os
 import sys
+import timeit
 from dace.sdfg.utils import load_precompiled_sdfg
 
 from mpi4py import MPI
@@ -78,6 +79,10 @@ def init_data(N, datatype):
     return A, B
 
 
+def time_to_ms(raw):
+    return int(round(raw * 1000))
+
+
 if __name__ == "__main__":
 
     # Initialization
@@ -104,10 +109,33 @@ if __name__ == "__main__":
         build_folder = dc.Config.get('default_build_folder')
         mpi_func = load_precompiled_sdfg(os.path.join(build_folder, jacobi_1d_dist.name))
 
+    ldict = locals()
+
+    comm.Barrier()
+
     mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, lN=lN, rank=rank, size=size)
 
+    comm.Barrier()
+
+    stmt = ("mpi_func(A=A, B=B, TSTEPS=TSTEPS, N=N, "
+            "lN=lN, rank=rank, size=size)")
+    setup = "A, B = init_data(N, np.float64); comm.Barrier()"
+    repeat = 10
+
+    raw_time_list = timeit.repeat(stmt, setup=setup, repeat=repeat, number=1, globals=ldict)
+    raw_time = np.median(raw_time_list)
+
+    comm.Barrier()
+
     if rank == 0:
+        ms_time = time_to_ms(raw_time)
+        print("Median is {}ms".format(ms_time))
+
         refA, refB = init_data(N, np.float64)
-        jacobi_1d_shared(TSTEPS, refA, refB)
+        shared_sdfg = jacobi_1d_shared.compile()
+        shared_sdfg(A=refA, B=refB, TSTEPS=TSTEPS, N=N)
+
+        print("=======Validation=======")
         assert (np.allclose(A, refA))
         assert (np.allclose(B, refB))
+        print("OK")
