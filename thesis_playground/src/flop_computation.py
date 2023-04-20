@@ -23,8 +23,7 @@ class FlopCount:
         self.roots = roots
 
     def get_total_flops(self) -> int:
-        # TODO: How to count min/max and powers?
-        return self.adds + self.muls + self.divs + 13*self.roots
+        return self.adds + self.muls + 15*self.divs + 13*self.roots + 117*self.powers
 
     def __mul__(self, a: Number):
         return FlopCount(
@@ -145,7 +144,7 @@ def get_number_of_flops(
         return (KLEV-NCLDTOP+1) * (KFDIA-KIDIA+1) * FlopCount(adds=5, muls=2, divs=2, minmax=6) + \
             number_if_iterations * FlopCount(adds=8, muls=15, divs=6, minmax=5, abs=1, powers=1, roots=1)
     elif program == 'my_roofline_test':
-        return KLEV * (KFDIA-KIDIA+1) * FlopCount(muls=1, minmax=1, adds=0)
+        return KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=1, roots=1)
     else:
         print(f"ERROR: No flop count available for program {program}")
         return None

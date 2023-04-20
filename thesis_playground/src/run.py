@@ -154,14 +154,12 @@ def main():
             run([*command_nsys, *command_program], capture_output=True)
 
         if args.ncu_report:
-            print_with_time("Create ncu reports")
-            ncu_command = ['ncu', '--set', 'full', '--force-overwrite']
+            filename = f"report_{program}.ncu-rep"
             if args.output is not None:
-                ncu_command.append('--export')
-                ncu_command.append(f"report_{''.join(args.output.split('.')[:-1])}_{program}.ncu-rep")
-            else:
-                ncu_command.append('--export')
-                ncu_command.append(f"report_{program}.ncu-rep")
+                filename = f"report_{''.join(args.output.split('.')[:-1])}_{program}.ncu-rep"
+            filename = os.path.join('ncu-reports', filename)
+            print_with_time(f"Create ncu report and save it into {filename}")
+            ncu_command = ['ncu', '--set', 'full', '--force-overwrite', '--export', filename]
             run([*ncu_command, *command_program], capture_output=True)
 
         run_data.add_program_data(program_data)

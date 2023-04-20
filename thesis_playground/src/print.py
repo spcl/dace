@@ -3,7 +3,7 @@ import json
 import os
 
 from utils import get_results_dir
-from print_utils import print_results_v2, print_performance
+from print_utils import print_results_v2, print_performance, print_flop_counts
 from measurement_data import MeasurementRun
 from flop_computation import read_roofline_data
 
@@ -12,6 +12,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument('file', type=str, help="Path to the json files to read")
     parser.add_argument('--roofline', type=str, default=None, help="Path to roofline data file")
+    parser.add_argument('--detail', default=False, action='store_true')
     hardware_filename = 'nodes.json'
 
     args = parser.parse_args()
@@ -25,6 +26,8 @@ def main():
                 roofline_data = read_roofline_data(os.path.join(get_results_dir(), args.roofline))
                 gpu = node_data['ault_nodes'][run_data.node]['GPU']
                 print_performance(roofline_data, run_data, hardware_dict=node_data['GPUs'][gpu])
+                if args.detail:
+                    print_flop_counts(roofline_data)
 
 
 if __name__ == '__main__':

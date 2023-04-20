@@ -389,3 +389,30 @@ def convert_to_seconds(value: Number, unit: str) -> float:
     else:
         print(f"ERROR: No factor recorded for {unit}")
         return None
+
+
+def convert_to_bytes(value: Number, unit: str) -> float:
+    """
+    Converts a given value into bytes
+
+    :param value: The value given
+    :type value: Number
+    :param unit: The unit in which the value is given as a string
+    :type unit: str
+    :return: The given value in seconds
+    :rtype: float
+    """
+    factors = {
+            'byte': 1,
+            'Kbyte': 1e3,
+            'Mbyte': 1e6,
+            'Gbyte': 1e9,
+            'KB': 1e3,
+            'MB': 1e6,
+            'GB': 1e9,
+            }
+    if unit in factors:
+        return float(value) * float(factors[unit])
+    else:
+        print(f"ERROR: No factor recorded for {unit}")
+        return None

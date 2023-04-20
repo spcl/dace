@@ -1,35 +1,15 @@
 from argparse import ArgumentParser
 import json
-import csv
 from os import path
 from typing import Dict, Tuple, Optional
 from numbers import Number
 import matplotlib.pyplot as plt
 import matplotlib
 import math
-from subprocess import run
 
 from utils import get_results_dir, convert_to_seconds
 from measurement_data import MeasurementRun, Measurement
 from flop_computation import FlopCount, read_roofline_data
-
-
-def extract_roofline_data_from_ncu(filename: str):
-    csv_stdout = run(['ncu', '--import', filename, '--csv', '--section', 'MemoryWorkloadAnalysis_Tables', '--page',
-    'details', '--details-all'], capture_output=True)
-    reader = csv.reader(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-
-    # create dict where key is header name and value the index/column of it
-    header = {}
-    for index, key in enumerate(next(reader)):
-        header[key] = index
-
-    Q = 0
-    for row in reader:
-        if row[header['Metric Name']] == 'dram__bytes_write.sum':
-            Q = convert_to_bytes(row[header['Metric Value']], row[header['Metric Unit']])
-        # if row
-        # How to get the number of flops=?
 
 
 def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwidth: float, max_bandwidth_unit: str,
