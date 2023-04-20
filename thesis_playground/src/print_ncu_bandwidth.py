@@ -9,7 +9,6 @@ def main():
     parser.add_argument('ncureport')
 
     args = parser.parse_args()
-    print(args)
 
     action = get_action(args.ncureport)
 
@@ -22,12 +21,14 @@ def main():
 
     print(tabulate(
         [
-            ['Cycles', int(cycles)],
-            ['Q [byte]', int(Q)],
-            ['beta [byte/cycle]', Q / cycles],
-            ['beta / peak_beta [%]', Q / cycles / peak_beta * 100],
-            ['beta_pct [%]', beta_pct]
-        ], floatfmt='.1f'))
+            ['Cycles', int(cycles), 'gpc__cycles_elapsed.max'],
+            ['Q [byte]', int(Q), 'dram__bytes_write.sum + dram__bytes_read.sum'],
+            ['beta [byte/cycle]', Q / cycles, 'Q / cycles'],
+            ['beta / peak_beta [%]', Q / cycles / peak_beta * 100, 'beta / dram__bytes.sum.peak_sustained'],
+            ['beta_pct [%]', beta_pct, 'dram__bytes_read.sum.pct_of_peak_sustained_elapsed + dram__bytes_write.sum.pct_of_peak_sustained_elapsed']
+        ], 
+        headers=['Name', 'Value', 'formula'],
+        floatfmt='.1f'))
 
 
 if __name__ == '__main__':
