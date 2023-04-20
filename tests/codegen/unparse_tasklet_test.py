@@ -1,5 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import numpy as np
 
 
 def test_integer_power():
@@ -46,7 +47,22 @@ def test_equality():
     program.to_sdfg(simplify=False).compile()
 
 
+def test_pow_with_implicit_casting():
+
+    @dace.program
+    def f32_pow_failure(array):
+        return array**3.3
+
+    rng = np.random.default_rng(42)
+    arr = rng.random((10, ), dtype=np.float32)
+    ref = f32_pow_failure.f(arr)
+    val = f32_pow_failure(arr)
+    assert np.allclose(ref, val)
+    assert ref.dtype == val.dtype
+
+
 if __name__ == '__main__':
     test_integer_power()
     test_integer_power_constant()
     test_equality()
+    test_pow_with_implicit_casting()
