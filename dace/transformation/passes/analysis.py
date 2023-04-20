@@ -324,12 +324,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
     def _find_dominating_write(
         self, desc: str, state: SDFGState, read: Union[nd.AccessNode, InterstateEdge],
         access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]],
-        state_idom: Dict[SDFGState, SDFGState], access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]]
+        state_idom: Dict[SDFGState, SDFGState], access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]],
+        no_self_shadowing: bool = False
     ) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
         if isinstance(read, nd.AccessNode):
             # If the read is also a write, it shadows itself.
             iedges = state.in_edges(read)
-            if len(iedges) > 0 and any(not e.data.is_empty() for e in iedges):
+            if len(iedges) > 0 and any(not e.data.is_empty() for e in iedges) and not no_self_shadowing:
                 return (state, read)
 
             # Find a dominating write within the same state.
@@ -337,7 +338,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
             closest_candidate = None
             write_nodes = access_nodes[desc][state][1]
             for cand in write_nodes:
-                if nxsp.has_path(state._nx, cand, read):
+                if cand != read and nxsp.has_path(state._nx, cand, read):
                     if closest_candidate is None or nxsp.has_path(state._nx, closest_candidate, cand):
                         closest_candidate = cand
             if closest_candidate is not None:
@@ -411,6 +412,15 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                     desc, state, oedge.data, access_nodes, idom, access_sets
                                 )
                                 result[desc][write].add((state, oedge.data))
+                # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
+                # dominating any reads and are thus not part of the results yet.
+                for state in desc_states_with_nodes:
+                    for write_node in access_nodes[desc][state][1]:
+                        if not (state, write_node) in result[desc]:
+                            write = self._find_dominating_write(
+                                desc, state, write_node, access_nodes, idom, access_sets, no_self_shadowing=True
+                            )
+                            result[desc][write].add((state, write_node))
 
                 # If any write A is dominated by another write B and any reads in B's scope are also reachable by A,
                 # then merge A and its scope into B's scope.

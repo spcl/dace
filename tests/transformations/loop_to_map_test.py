@@ -166,6 +166,7 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 
 def test_output_copy():
+
     @dace.program
     def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -185,6 +186,7 @@ def test_output_copy():
 
 
 def test_output_accumulate():
+
     @dace.program
     def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -242,6 +244,7 @@ def test_specialize():
 
 
 def test_empty_loop():
+
     @dace.program
     def empty_loop():
         for i in range(10):
@@ -344,6 +347,7 @@ def test_need_for_transient():
         start = i * 10
         assert np.array_equal(B[i], np.arange(start + 9, start - 1, -1, dtype=np.int32))
 
+
 def test_iteration_variable_used_outside():
     N = dace.symbol("N", dace.int32)
 
@@ -427,6 +431,7 @@ def test_symbol_array_mix(overwrite):
 
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
+
 @pytest.mark.parametrize('parallel', (False, True))
 def test_symbol_array_mix_2(parallel):
     sdfg = dace.SDFG('tester')
@@ -495,8 +500,8 @@ def test_shared_local_transient_single_state():
     sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (10,), dace.int32, transient=True)
-    sdfg.add_array('__return', (10,), dace.int32)
+    sdfg.add_array('A', (10, ), dace.int32, transient=True)
+    sdfg.add_array('__return', (10, ), dace.int32)
 
     t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
     anode = body.add_access('A')
@@ -533,8 +538,8 @@ def test_thread_local_transient_single_state():
     sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (i+1,), dace.int32, transient=True)
-    sdfg.add_array('__return', (10,), dace.int32)
+    sdfg.add_array('A', (i + 1, ), dace.int32, transient=True)
+    sdfg.add_array('__return', (10, ), dace.int32)
 
     t1 = body.add_tasklet('t1', {}, {'__out'}, '__out = 5 + j')
     anode = body.add_access('A')
@@ -570,8 +575,8 @@ def test_shared_local_transient_multi_state():
     sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (10,), dace.int32, transient=True)
-    sdfg.add_array('__return', (10,), dace.int32)
+    sdfg.add_array('A', (10, ), dace.int32, transient=True)
+    sdfg.add_array('__return', (10, ), dace.int32)
 
     t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
     anode0 = body0.add_access('A')
@@ -611,8 +616,8 @@ def test_thread_local_transient_multi_state():
     sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    sdfg.add_array('A', (i+1,), dace.int32, transient=True)
-    sdfg.add_array('__return', (10,), dace.int32)
+    sdfg.add_array('A', (i + 1, ), dace.int32, transient=True)
+    sdfg.add_array('__return', (10, ), dace.int32)
 
     t1 = body0.add_tasklet('t1', {}, {'__out'}, '__out = 5 + i + 1')
     anode0 = body0.add_access('A')
@@ -642,7 +647,7 @@ def test_nested_loops():
 
     ref = np.arange(1000, dtype=np.int32).reshape(10, 10, 10)
     nested_loops.f(ref, 5)
-    
+
     sdfg = nested_loops.to_sdfg()
 
     def find_loop(sdfg: dace.SDFG, itervar: str) -> Tuple[dace.SDFGState, dace.SDFGState, dace.SDFGState]:
@@ -683,6 +688,40 @@ def test_nested_loops():
     assert np.allclose(ref, val)
 
 
+def test_internal_write():
+
+    @dace.program
+    def internal_write(inp0: dace.int32[10], inp1: dace.int32[10], out: dace.int32[10]):
+        tmp = np.ndarray((10, ), dtype=np.int32)
+        for i in range(10):
+            tmp[i] = inp0[i] + 5
+            out[i] = inp1[i] + tmp[i]
+
+    sdfg = internal_write.to_sdfg(simplify=False)
+    from dace.transformation.pass_pipeline import Pipeline
+    from dace.transformation.passes import FuseStates
+    mypass = Pipeline([FuseStates()])
+    mypass.apply_pass(sdfg, {})
+    sdfg.apply_transformations_repeated(LoopToMap)
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode):
+            if isinstance(node.desc(state.parent), dace.data.Scalar) and any(e.data.wcr is None
+                                                                             for e in state.in_edges(node)):
+                continue
+            assert state.scope_dict()[node] is None
+
+    rng = np.random.default_rng(42)
+    inp0 = rng.integers(0, 100, size=10, dtype=np.int32)
+    inp1 = rng.integers(0, 100, size=10, dtype=np.int32)
+    ref = np.empty((10, ), dtype=np.int32)
+    val = np.empty((10, ), dtype=np.int32)
+
+    internal_write.f(inp0, inp1, ref)
+    internal_write(inp0, inp1, val)
+
+    assert np.array_equal(val, ref)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -717,3 +756,4 @@ if __name__ == "__main__":
     test_shared_local_transient_multi_state()
     test_thread_local_transient_multi_state()
     test_nested_loops()
+    test_internal_write()

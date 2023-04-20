@@ -8,6 +8,7 @@ import copy
 import functools
 import itertools
 import math
+import numbers
 import warnings
 
 import sympy as sp
@@ -641,7 +642,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+            if ((re - rb) >= m[a] * step) != False:
                 continue
 
             m = re.match(a * itersym + b)
@@ -1251,12 +1252,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if isinstance(node.op, ast.Pow):
             from dace.frontend.python import astutils
             try:
-                unparsed = symbolic.pystr_to_symbolic(
-                    astutils.evalnode(node.right, {
-                        **self.constants, 'dace': dace,
-                        'math': math
-                    }))
-                evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants), cpp_mode=True)
+                evaluated_node = astutils.evalnode(node.right, {**self.constants, 'dace': dace,'math': math})
+                unparsed = symbolic.pystr_to_symbolic(evaluated_node)
+                evaluated_constant = symbolic.evaluate(unparsed, self.constants)
+                evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
+                value = ast.parse(evaluated).body[0].value
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.n:
+                    raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)
