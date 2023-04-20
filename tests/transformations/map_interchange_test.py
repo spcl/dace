@@ -69,7 +69,7 @@ def test_map_interchange_with_dynamic_map_inputs():
                     kD = j * D2_dimension + k
                     A_vals[kB] = A_vals[kB] + (B_vals[kB] * C_vals[jC]) * D_vals[kD]
 
-    sdfg = sched_sddmm0compute.to_sdfg()
+    sdfg = sched_sddmm0compute.to_sdfg(simplify=True)
 
     # Find MapEntries of Maps over 'j' and 'kB'
     ome, ime = None, None
