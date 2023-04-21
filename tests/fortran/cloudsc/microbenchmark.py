@@ -255,10 +255,10 @@ if __name__ == "__main__":
         csdfg = sdfg.compile()
         print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
 
-    if args.loop in ['3', 'all']:
+    if args.loop in ['2', 'all']:
         csdfg = sdfg2.compile()
         print(benchmark(func, (inp2_dev, val2_dev), n_repeat=10, n_warmup=10))
 
-    if args.loop in ['2', 'all']:
+    if args.loop in ['3', 'all']:
         csdfg = sdfg3.compile()
         print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
