@@ -1677,6 +1677,7 @@ def normalize_offsets(sdfg: SDFG):
                         subscript: ast.Subscript = ast.parse(str(m)).body[0].value
                         assert isinstance(node.value, ast.Name) and node.value.id == m.data
                         node.slice = ast.copy_location(subscript.slice, node.slice)
+                e.data._cond_sympy = None
                 for k, v in e.data.assignments.items():
                     vast = ast.parse(v)
                     for node in ast.walk(vast):
@@ -1749,3 +1750,41 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                         node.map.range.replace(repl_dict)
                         state.scope_subgraph(node).replace_dict(repl_dict)
                         propagation.propagate_memlets_scope(sd, state, state.scope_tree()[node])
+
+
+def get_thread_local_data(sdfg: SDFG) -> List[str]:
+    """ Returns a list of all data that are thread-local in the SDFG.
+
+    This method DOES NOT apply recursively to nested SDFGs. It is also does not take into account outer Maps.
+    
+    :param sdfg: The SDFG to check.
+    :return: A list of the names of all data that are thread-local in the SDFG.
+    """
+    # NOTE: We could exclude non-transient data here, but it is interesting to see if we find any non-transient data
+    # only inside a Map.
+    data_to_check = {name: None for name in sdfg.arrays.keys()}
+    for state in sdfg.nodes():
+        scope_dict = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, nd.AccessNode):
+                # If the data was already removed from the candidated, continue
+                if node.data not in data_to_check:
+                    continue
+                # If the data is not in a scope, i.e., cannot be thread-local, remove it from the candidates
+                if scope_dict[node] is None:
+                    del data_to_check[node.data]
+                    continue
+                # If the data is in a Map ...
+                if isinstance(scope_dict[node], nd.MapEntry):
+                    # ... if we haven't seen the data yet, note down the scope
+                    if data_to_check[node.data] is None:
+                        data_to_check[node.data] = scope_dict[node]
+                    # ... if we have seen the data before, but in a different scope, remove it from the candidates
+                    elif data_to_check[node.data] != scope_dict[node]:
+                        del data_to_check[node.data]
+    
+    result = list(data_to_check.keys())
+    for name in result:
+        if not sdfg.arrays[name].transient:
+            warnings.warn(f'Found thread-local data "{name}" that is not transient.')
+    return result

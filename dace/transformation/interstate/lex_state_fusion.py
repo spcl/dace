@@ -5,7 +5,7 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, dtypes, registry, sdfg, subsets
+from dace import data as dt, dtypes, registry, sdfg, subsets, memlet
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -15,7 +15,6 @@ from dace.transformation import transformation
 
 # Helper class for finding connected component correspondences
 class CCDesc:
-
     def __init__(self, first_input_nodes: Set[nodes.AccessNode], first_output_nodes: Set[nodes.AccessNode],
                  second_input_nodes: Set[nodes.AccessNode], second_output_nodes: Set[nodes.AccessNode]) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
@@ -32,14 +31,14 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-class StateFusion(transformation.MultiStateTransformation):
+class StateFusionLex(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 
         State-fusion takes two states that are connected through a single edge,
         and fuses them into one state. If permissive, also applies if potential memory
         access hazards are created.
     """
-
+    connections_to_make = []
     first_state = transformation.PatternNode(sdfg.SDFGState)
     second_state = transformation.PatternNode(sdfg.SDFGState)
 
@@ -137,7 +136,8 @@ class StateFusion(transformation.MultiStateTransformation):
                 if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
                     return True
         # Path not found, check memlets
-        if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second, second_read):
+        if StateFusionLex.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
+                                            second_read):
             return False
         return True
 
@@ -162,8 +162,8 @@ class StateFusion(transformation.MultiStateTransformation):
 
         # Check for intersection (if None, fusion is ok)
         if fail or not path_found:
-            if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
-                                             second_read):
+            if StateFusionLex.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
+                                                second_read):
                 return False
         return True
 
@@ -302,8 +302,8 @@ class StateFusion(transformation.MultiStateTransformation):
 
             # Recreate fused connected component correspondences, and then
             # check for hazards
-            resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
-                                                                            second_cc_input, second_cc_output)
+            resulting_ccs: List[CCDesc] = StateFusionLex.find_fused_components(first_cc_input, first_cc_output,
+                                                                               second_cc_input, second_cc_output)
 
             # Check for data races
             for fused_cc in resulting_ccs:
@@ -382,15 +382,17 @@ class StateFusion(transformation.MultiStateTransformation):
                             # Read-Write race
                             if d in fused_cc.first_inputs:
                                 nodes_first = [n for n in first_input if n.data == d]
-                                if StateFusion.memlets_intersect(first_state, nodes_first, True, second_state,
-                                                                 nodes_second, False):
-                                    return False
+                                if StateFusionLex.memlets_intersect(first_state, nodes_first, True, second_state,
+                                                                    nodes_second, False):
+                                    self.connections_to_make.append([nodes_first, nodes_second])
+                                    #return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
-                                if StateFusion.memlets_intersect(first_state, nodes_first, False, second_state,
-                                                                 nodes_second, False):
-                                    return False
+                                if StateFusionLex.memlets_intersect(first_state, nodes_first, False, second_state,
+                                                                    nodes_second, False):
+                                    self.connections_to_make.append([nodes_first, nodes_second])
+                                    #return False
                     # End of data race check
 
                 # Read-after-write dependencies: if there is an output of the
@@ -431,8 +433,8 @@ class StateFusion(transformation.MultiStateTransformation):
                         for outnode in fused_cc.first_output_nodes:
                             if outnode.data != inpnode.data:
                                 continue
-                            if StateFusion.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
-                                                             True):
+                            if StateFusionLex.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
+                                                                True):
                                 # If found more than once, either there is a
                                 # path from one to another or it is ambiguous
                                 if found is not None:
@@ -514,7 +516,22 @@ class StateFusion(transformation.MultiStateTransformation):
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
                 node.sdfg.parent = first_state
-            first_state.add_node(node)
+            try:
+                first_state.add_node(node)
+            except:
+                print("Tried to add duplicate node")
+            for conn in self.connections_to_make:
+                if node in conn[1]:
+                    for i in top2:
+                        if i not in [nodex for nodex in second_state.source_nodes()]:
+                            continue
+                        paths = second_state.all_nodes_between(i, node)
+                        direct_edges = second_state.edges_between(i, node)
+
+                        if ((paths != None and len(paths) > 0) or len(direct_edges) > 0):
+                            for j in conn[0]:
+                                if j in first_output:
+                                    first_state.add_nedge(j, i, memlet.Memlet())
         for src, src_conn, dst, dst_conn, data in second_state.edges():
             first_state.add_edge(src, src_conn, dst, dst_conn, data)
 
@@ -528,13 +545,13 @@ class StateFusion(transformation.MultiStateTransformation):
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes and x in first_state.nodes()]
+            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
             if not source_node:
                 for cand in candidates:
-                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                    if StateFusionLex.memlets_intersect(first_state, [cand], False, second_state, [node], True):
                         if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
                             continue
                         sdutil.change_edge_src(first_state, cand, node)
@@ -549,7 +566,7 @@ class StateFusion(transformation.MultiStateTransformation):
             else:
                 # Choose first candidate that intersects memlets
                 for cand in candidates:
-                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                    if StateFusionLex.memlets_intersect(first_state, [cand], False, second_state, [node], True):
                         n = cand
                         break
                 else:

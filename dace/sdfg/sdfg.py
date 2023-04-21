@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import collections
 import copy
@@ -214,7 +214,31 @@ class InterstateEdge(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
-        return self.read_symbols() - set(self.assignments.keys())
+        # NOTE: The former algorithm for computing an edge's free symbols was:
+        #       `self.read_symbols() - set(self.assignments.keys())`
+        #       The issue with the above algorithm is that any symbols that are first read and then assigned will not
+        #       be considered free symbols. For example, the former algorithm will fail for the following edges:
+        #       - assignments = {'i': 'i + 1'}
+        #       - condition = 'i < 10', assignments = {'i': '3'}
+        #       - assignments = {'j': 'i + 1', 'i': '3'}
+        #       The new algorithm below addresses the issue by iterating over the edge's condition and assignments and
+        #       exlcuding keys from being considered "defined" if they have been already read.
+
+        # Symbols in conditions are always free, because the condition is executed before the assignments
+        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        # Symbols in assignment keys are candidate defined symbols
+        lhs_symbols = set()
+        # Symbols in assignment values are candidate free symbols
+        rhs_symbols = set()
+        for lhs, rhs in self.assignments.items():
+            # Always add LHS symbols to the set of candidate free symbols
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
+            # This also solves the ordering issue that may arise in cases like the 3rd example above
+            if lhs not in cond_symbols and lhs not in rhs_symbols:
+                lhs_symbols.add(lhs)
+        # Return the set of candidate free symbols minus the set of candidate defined symbols
+        return (cond_symbols | rhs_symbols) - lhs_symbols
 
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
@@ -1298,8 +1322,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
             # Add free inter-state symbols
             for e in self.out_edges(state):
-                defined_syms |= set(e.data.assignments.keys())
+                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
+                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
+                # compute the symbols that are used before being assigned.
                 efsyms = e.data.free_symbols
+                defined_syms |= set(e.data.assignments.keys()) - efsyms
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
 

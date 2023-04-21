@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.interstate import MoveLoopIntoMap
+from dace.transformation.dataflow import MapCollapse
+from dace.transformation.interstate import LoopToMap, MoveLoopIntoMap
 import unittest
 import numpy as np
 
@@ -268,6 +269,36 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         sdfg.add_loop(None, body, None, '_', '0', '_ < 10', '_ + 1')
         count = sdfg.apply_transformations(MoveLoopIntoMap)
         self.assertFalse(count > 0)
+    
+    def test_pseudo_dependence(self):
+        """ Tests the case where the data read/written have separate indices for the Map and loop parameters, but there
+        are RW and WR dependencies over the loop index.
+        """
+
+        @dace.program
+        def pseudo_dependence(A: dace.int32[10, 10, 5]):
+            for k in range(4):
+                for j in range(10):
+                    for i in range(10):
+                        A[i, j, 4] = A[i, j, 4] + A[i, j, k]
+                        A[i, j, k] = 0
+        
+        sdfg = pseudo_dependence.to_sdfg(simplify=True)
+        for itervar in ('i', 'j'):
+            sdfg.apply_transformations(LoopToMap, {'itervar': itervar}, permissive=True)
+        sdfg.simplify()
+        sdfg.apply_transformations(MapCollapse)
+        sdfg.apply_transformations(MoveLoopIntoMap)
+
+        ref = np.arange(500, dtype=np.int32).reshape(10, 10, 5)
+        val = np.copy(ref)
+
+        pseudo_dependence.f(ref)
+        pseudo_dependence(A=val)
+
+        assert np.array_equal(val, ref)
+
+        
 
 
 if __name__ == '__main__':

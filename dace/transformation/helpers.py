@@ -818,7 +818,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      use_src_subset: bool = False,
                      use_dst_subset: bool = False,
                      internal_offset: Tuple[int] = None,
-                     external_offset: Tuple[int] = None) -> Memlet:
+                     external_offset: Tuple[int] = None,
+                     map: nodes.Map = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
@@ -828,6 +829,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
         :param internal_offset: The internal memlet's data descriptor offset.
         :param external_offset: The external memlet's data descriptor offset.
+        :param map: The map node that contains the internal memlet. If provided, it is used to solve ambiguous cases.
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
@@ -856,7 +858,31 @@ def unsqueeze_memlet(internal_memlet: Memlet,
             external_subset = external_memlet.subset.offset_new(external_offset, False)
             to_unsqueeze = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
         if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
-            raise NotImplementedError
+            if map is not None:
+                # Try to solve ambiguous cases by using the map
+                to_unsqueeze = []
+                for i, sbs in enumerate(external_memlet.subset):
+                    fsymbols = sbs[0].free_symbols
+                    if not (fsymbols and any(str(s) in map.params for s in fsymbols)):
+                        to_unsqueeze.append(i)
+                # if len(internal_subset) + len(to_unsqueeze) > len(external_memlet.subset):
+                #     try:
+                #         for i in list(to_unsqueeze):
+                #             extsbs = external_memlet.subset[i]
+                #             for intsbs in internal_memlet.subset:
+                #                 if extsbs == intsbs:
+                #                     to_unsqueeze.remove(i)
+                #                     if len(internal_subset) + len(to_unsqueeze) == len(external_memlet.subset):
+                #                         raise StopIteration
+                #     except StopIteration:
+                #         pass
+                assert len(internal_subset) + len(to_unsqueeze) == len(external_memlet.subset)
+            else:
+                if not to_unsqueeze:
+                    # If there are no ones, try to unsqueeze the last dimensions
+                    to_unsqueeze = list(range(len(internal_subset), len(external_memlet.subset)))
+                else:
+                    raise NotImplementedError
 
         result.subset.unsqueeze(to_unsqueeze)
         internal_offset = list(internal_offset)
@@ -1469,6 +1495,9 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
     if isinstance(access.desc(sdfg), data.Scalar):
         if any(e.data.wcr is None for e in state.in_edges(access)):
             return
+    # Ignore views
+    if isinstance(access.desc(sdfg), data.View):
+        return
 
     # Compute the union of the destination subsets of the edges that write to `access.`
     in_union = None
@@ -1498,12 +1527,24 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
         else:
             name, _ = sdfg.add_array(access.data, shape, access.desc(sdfg).dtype, transient=True, find_new_name=True)
         new_n = state.add_access(name)
+        visited = set()
         for e in state.in_edges(access):
+            if e in visited:
+                continue
+            offset = e.data.get_dst_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                dst = new_n if e2.dst is access else e2.dst
+                state.add_edge(
+                    e2.src, e2.src_conn, dst, e2.dst_conn,
+                    Memlet(data=name, subset=dst_subset.offset_new(offset, negative=True), other_subset=src_subset))
             src_subset = e.data.get_src_subset(e, state)
             dst_subset = e.data.get_dst_subset(e, state)
-            state.add_edge(
-                e.src, e.src_conn, new_n, None,
-                Memlet(data=name, subset=dst_subset.offset_new(dst_subset, negative=True), other_subset=src_subset))
             state.add_memlet_path(new_n,
                                   map_exit,
                                   sink,
@@ -1511,15 +1552,22 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                                                 subset=copy.deepcopy(dst_subset),
                                                 other_subset=dst_subset.offset_new(dst_subset, negative=True)))
         for e in state.out_edges(access):
-            src_subset = e.data.get_src_subset(e, state)
-            dst_subset = e.data.get_dst_subset(e, state)
-            state.add_edge(new_n,
-                           None,
-                           e.dst,
-                           e.dst_conn,
-                           memlet=Memlet(data=name,
-                                         subset=src_subset.offset(src_subset, negative=True),
-                                         other_subset=dst_subset))
+            if e in visited:
+                continue
+            offset = e.data.get_src_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                src = new_n if e2.src is access else e2.src
+                state.add_edge(
+                    src, e2.src_conn, e2.dst, e2.dst_conn,
+                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset))
+        for e in visited:
+            state.remove_edge(e)
         state.remove_node(access)
     # Otherwise, we only add a memlet path to the sink.
     else:

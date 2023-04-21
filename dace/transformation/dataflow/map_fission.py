@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Map Fission transformation. """
 
+import warnings
+
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt, symbolic
@@ -11,7 +13,7 @@ from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class MapFission(transformation.SingleStateTransformation):
@@ -253,6 +255,8 @@ class MapFission(transformation.SingleStateTransformation):
             #     edge = nsdfg_node.sdfg.edges_between(pre_init_state, init_state)[0]
             #     edge.data.assignments.update({str(k): str(v) for k, v in to_remove.items()})
 
+        unsqueeze_info: Dict[str, Tuple[Dict[int, int], List[Any]]] = dict()
+
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
             sources = subgraph.source_nodes()
@@ -297,6 +301,14 @@ class MapFission(transformation.SingleStateTransformation):
 
             # Collect all border arrays and code->code edges
             arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
+
+            # Collect intermediate nodes in dataflow Map bodies
+            intermediate_nodes = []
+            if self.expr_index == 0:
+                for node in subgraph.nodes():
+                    if isinstance(node, nodes.AccessNode) and node.data in arrays:
+                        intermediate_nodes.append(node)
+
             scalars = defaultdict(list)
             for _, component_out in components:
                 for e in subgraph.out_edges(component_out):
@@ -445,38 +457,126 @@ class MapFission(transformation.SingleStateTransformation):
                         scope_dict[k] = k
 
                 to_correct = ([(e, e.src) for e in external_edges_entry] + [(e, e.dst) for e in external_edges_exit])
+
+                # NOTE: There can be multiple nodes to the same data. Therefore, we need to ensure that we update their
+                # descriptors only once. We need to also ensure that we keep track of the indices needed for
+                # unsqueezing their memlets
+
+                # `unsqueeze_info` match the name of an inner descriptor with (1) a dictionary matching its extents to
+                # those of the corresponding outer descriptor, and (2) a template range that can be used to unsqueeze
+                # the inner memlets.
+                # unsqueeze_info: Dict[str, Tuple[Dict[int, int], List[Any]]] = dict()
+
+                for edge, node in to_correct:
+                    if node.data in unsqueeze_info:
+                        continue
+
+                    outer_edge = edge_to_outer[edge]
+                    desc = parent.arrays[node.data]
+
+                    # Modify shape of internal array to match outer one
+                    outer_desc = sdfg.arrays[outer_edge.data.data]
+
+                    # Find the extra dimensions in the outer array
+                    # NOTE: We assume that inner array is a subset of outer array, i.e., there are not extra
+                    # unitary dimensions in the inner array.
+                    # NOTE: Extents (lengths of dimensions) can be deceptive. It is better to use strides.
+                    common_dims = dict()
+                    exclusive_inner_dims = []
+                    exclusive_outer_dims = set(range(len(outer_desc.shape)))
+                    for i, inner_stride in enumerate(desc.strides):
+                        try:
+                            inner_extent = desc.shape[i]
+                            extents_match = False
+                            start = 0
+                            while not extents_match:
+                                j = outer_desc.strides.index(inner_stride, start)
+                                outer_extent = outer_desc.shape[j]
+                                extents_match = (inner_extent == outer_extent)
+                                start = j + 1
+                            common_dims[i] = j
+                            exclusive_outer_dims.remove(j)
+                        except ValueError:
+                            exclusive_inner_dims.append(i)
+                    assert len(common_dims) == len(desc.shape) - len(exclusive_inner_dims)
+
+                    map_params = list(map_entry.map.params)
+                    map_ranges = list(map_entry.map.range.ranges)
+                    exclusive_outer_dims = list(sorted(exclusive_outer_dims))
+                    template_rng = []
+                    for i in range(len(outer_desc.shape)):
+                        if i in common_dims.values():
+                            template_rng.append(None)
+                        # elif map_params:
+                        #     param = map_params.pop(0)
+                        #     rng = map_ranges.pop(0)
+                        #     template_rng.append((f"{param} - {rng[0]}", f"{param} - {rng[0]}", 1))
+                        elif i in exclusive_outer_dims:
+                            # template_rng.append((0, outer_desc.shape[i] - 1
+                            # template_rng.append((0, 0, 1))
+                            template_rng.append(outer_edge.data.subset[i])
+                            warnings.warn(f"MapFission: Added range from outer subset ({outer_edge.data.subset[i]}) to {node.data} for dimension {i}")
+                        else:
+                            raise NotImplementedError
+                    
+                    unsqueeze_info[node.data] = (common_dims, template_rng)
+
+                    if isinstance(desc, dt.Scalar):
+                        parent.arrays[node.data] = dcpy(outer_desc)
+                        desc = parent.arrays[node.data]
+                        desc.transient = False
+                    elif isinstance(desc, dt.Array):
+                        desc.shape = outer_desc.shape
+                        desc.strides = outer_desc.strides
+                        desc.total_size = outer_desc.total_size
+                    
+                    if isinstance(desc, dt.Array):
+                        desc.offset = outer_desc.offset
+
+
                 corrected_nodes = set()
+                corrected_edges = set()
                 for edge, node in to_correct:
                     if isinstance(node, nodes.AccessNode):
                         if node in corrected_nodes:
                             continue
                         corrected_nodes.add(node)
 
-                        outer_edge = edge_to_outer[edge]
-                        desc = parent.arrays[node.data]
+                        # # Get Map
+                        # if isinstance(outer_edge.src, nodes.MapEntry):
+                        #     scope_map = outer_edge.src.map
+                        # elif isinstance(outer_edge.dst, nodes.MapExit):
+                        #     scope_map = outer_edge.dst.map
+                        # else:
+                        #     scope_map = None
 
-                        # Modify shape of internal array to match outer one
-                        outer_desc = sdfg.arrays[outer_edge.data.data]
-                        if isinstance(desc, dt.Scalar):
-                            parent.arrays[node.data] = dcpy(outer_desc)
-                            desc = parent.arrays[node.data]
-                            desc.transient = False
-                        elif isinstance(desc, dt.Array):
-                            desc.shape = outer_desc.shape
-                            desc.strides = outer_desc.strides
-                            desc.total_size = outer_desc.total_size
+                        desc = parent.arrays[node.data]
+                        common_dims, template_rng = unsqueeze_info[node.data]
 
                         # Inside the nested SDFG, offset all memlets to include
                         # the offsets from within the map.
                         # NOTE: Relies on propagation to fix outer memlets
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
+                                if e in corrected_edges:
+                                    continue
+                                corrected_edges.add(e)
                                 if e.data.is_empty():
                                     continue
-                                e.data.subset = helpers.unsqueeze_memlet(e.data,
-                                                                         outer_edge.data,
-                                                                         internal_offset=desc.offset,
-                                                                         external_offset=outer_desc.offset).subset
+                                subset = e.data.subset if e.data.data == node.data else e.data.other_subset
+                                new_subset = dcpy(template_rng)
+                                for i, j in common_dims.items():
+                                    new_subset[j] = subset[i]
+                                new_subset = subsets.Range(new_subset)
+                                if e.data.data == node.data:
+                                    e.data.subset = new_subset
+                                else:
+                                    e.data.other_subset = new_subset
+                                # e.data.subset = helpers.unsqueeze_memlet(e.data,
+                                #                                          outer_edge.data,
+                                #                                          internal_offset=desc.offset,
+                                #                                          external_offset=outer_desc.offset,
+                                #                                          map=scope_map).subset
                                 # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
                                 # needed for edges directly connecting AccessNodes, because the standard memlet
                                 # propagation will stop at the first AccessNode outside the Map scope. For example, see
@@ -484,10 +584,9 @@ class MapFission(transformation.SingleStateTransformation):
                                 if not (scope_dict[e.src] and scope_dict[e.dst]):
                                     e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
 
-                        # Only after offsetting memlets we can modify the
-                        # overall offset
-                        if isinstance(desc, dt.Array):
-                            desc.offset = outer_desc.offset
+                        # # Only after offsetting memlets we can modify the overall offset
+                        # if isinstance(desc, dt.Array):
+                        #     desc.offset = outer_desc.offset
 
             # Fill in memlet trees for border transients
             # NOTE: Memlet propagation should run to correct the outer edges
@@ -534,6 +633,26 @@ class MapFission(transformation.SingleStateTransformation):
                 # Find matching edge inside map
                 for inner_edge in graph.in_edges_by_connector(map_exit, f"IN_{edge.src_conn[4:]}"):
                     graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
+        else:
+            # In dataflow bodies, reconnect intermediate nodes to subgraphs outside of the (original) Map
+            for node in intermediate_nodes:
+                full_memlet = mm.Memlet.from_array(node.data, sdfg.arrays[node.data])
+                for edge in graph.edges_between(map_entry, node):
+                    path = graph.memlet_path(edge)
+                    if len(path) > 1:
+                        outer_edge = path[-2]
+                        src_subset = outer_edge.data.get_src_subset(outer_edge, graph)
+                        dst_subset = full_memlet.subset.compose(src_subset)
+                        mem = mm.Memlet(data=outer_edge.data.data, subset=src_subset, other_subset=dst_subset)
+                        graph.add_edge(outer_edge.src, outer_edge.src_conn, node, edge.dst_conn, mem)
+                for edge in graph.edges_between(node, map_exit):
+                    path = graph.memlet_path(edge)
+                    if len(path) > 1:
+                        outer_edge = path[1]
+                        dst_subset = outer_edge.data.get_dst_subset(outer_edge, graph)
+                        src_subset = full_memlet.subset.compose(dst_subset)
+                        mem = mm.Memlet(data=outer_edge.data.data, subset=dst_subset, other_subset=src_subset)
+                        graph.add_edge(node, edge.src_conn, outer_edge.dst, outer_edge.dst_conn, mem)
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
