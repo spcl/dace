@@ -629,7 +629,8 @@ class ExpandTransformation(PatternTransformation):
 
         # Fix nested schedules
         if isinstance(expansion, nd.NestedSDFG):
-            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, expansion.schedule, True)
+            # TODO(later): Pass in all parent schedules too?
+            infer_types.set_default_schedule_and_storage_types(expansion.sdfg, [expansion.schedule], True)
 
         expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
