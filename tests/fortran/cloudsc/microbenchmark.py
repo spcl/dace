@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 import copy
 import cupy as cp
 import cupyx as cpx
@@ -31,14 +32,14 @@ def map_loop(inp: dtype[NBLOCKS, KLEV], out: dtype[NBLOCKS, KLEV]):
 
 @dace.program
 def map_loop2(inp: dtype[KLEV, NBLOCKS], out: dtype[KLEV, NBLOCKS]):
-    tmp = np.zeros(([KLEV, NBLOCKS]), dtype=ntype)
+    tmp = np.zeros(([3, NBLOCKS]), dtype=ntype)
     # tmp = dace.define_local([KLEV, NBLOCKS], dtype)
     for i in dace.map[0:NBLOCKS]:
         # tmp[0, i] = inp[0, i]
         # tmp[1, i] = (inp[0, i] + inp[1, i]) * 2
         for j in range(2, KLEV):
-            tmp[j, i] = (inp[j, i] + inp[j - 1, i] + inp[j - 2, i]) * 3
-            out[j, i] = (tmp[j, i] + tmp[j - 1, i] + tmp[j - 2, i]) * 3
+            tmp[j % 3, i] = (inp[j, i] + inp[j - 1, i] + inp[j - 2, i]) * 3
+            out[j, i] = (tmp[j % 3, i] + tmp[(j - 1) % 3, i] + tmp[(j - 2) % 3, i]) * 3
 
 
 def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str] = None) -> Dict[str, int]:
@@ -63,21 +64,6 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
         permutation[name] = klev_idx
 
         is_fortran = (desc.strides[0] == 1)
-
-        # old_shape = list(desc.shape)
-        # if is_fortran:
-        #     new_shape = old_shape[:klev_idx] + old_shape[klev_idx + 1:] + [old_shape[klev_idx]]
-        #     new_strides = [1]
-        #     for idx in range(len(new_shape) - 1):
-        #         new_strides.append(new_strides[-1] * new_shape[idx])
-        # else:
-        #     new_shape = [old_shape[klev_idx]] + old_shape[:klev_idx] + old_shape[klev_idx + 1:]
-        #     new_strides = [1]
-        #     for idx in range(len(new_shape) - 1, 0, - 1):
-        #         new_strides.append(new_strides[-1] * new_shape[idx])
-        #         new_strides = new_strides[::-1]
-        # desc.shape = tuple(new_shape)
-        # desc.strides = tuple(new_strides)
 
         # Update the strides
         new_strides = list(desc.strides)
@@ -110,7 +96,7 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
                     continue
                 if ndesc.transient:
                     continue
-                
+
                 nsdfg_node = sd.parent_nsdfg_node
                 is_input = True
                 edges = list(sd.parent.in_edges_by_connector(nsdfg_node, nname))
@@ -136,35 +122,6 @@ def change_strides(sdfg: dace.SDFG, klev_vals: Tuple[int], syms_to_add: Set[str]
                 nnew_strides = [new_strides[i] for i in rem_idx]
                 ndesc.strides = tuple(nnew_strides)
 
-                # ndesc = sd.arrays[name]
-                # shape_str = [str(s) for s in ndesc.shape]
-                # nklev_idx = None
-                # ndivisor = None
-                # for v in klev_vals:
-                #     if str(v) in shape_str:
-                #         nklev_idx = shape_str.index(str(v))
-                #         ndivisor = v
-                #         break
-                # if nklev_idx is None:
-                #     raise ValueError
-                # assert nklev_idx == klev_idx
-                # assert divisor == ndivisor
-
-                # nis_fortrant = (ndesc.strides[0] == 1)
-                # assert nis_fortrant == is_fortran
-
-                # # Update the strides
-                # new_strides = list(ndesc.strides)
-                # if is_fortran:
-                #     for idx in range(klev_idx, len(ndesc.shape)):
-                #         assert desc.shape[idx] == ndesc.shape[idx]
-                #         new_strides[idx] = desc.strides[idx]
-                # else:
-                #     for idx in range(klev_idx + 1):
-                #         assert desc.shape[idx] == ndesc.shape[idx]
-                #         new_strides[idx] = desc.strides[idx]
-                # ndesc.strides = tuple(new_strides)
-    
     return permutation
 
 
@@ -182,6 +139,7 @@ def permute(input: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any
         else:
             permuted[name] = arr
     return permuted
+
 
 def unpermute(output: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any]:
     unpermuted = dict()
@@ -201,6 +159,11 @@ def unpermute(output: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, 
 
 if __name__ == "__main__":
 
+    parser = ArgumentParser()
+    parser.add_argument('--loop', choices=['1', '2', '3', 'all'], default='all')
+    parser.add_argument('--skip-test', action='store_true', default=False)
+    args = parser.parse_args()
+
     rng = np.random.default_rng(42)
 
     if issubclass(ntype, np.integer):
@@ -210,16 +173,17 @@ if __name__ == "__main__":
     ref = np.zeros((NBLOCKS, KLEV), ntype)
     val = np.zeros((NBLOCKS, KLEV), ntype)
 
-    map_loop.f(inp, ref)
-    map_loop(inp=inp, out=val)
-
-    assert np.allclose(ref, val)
-
     inp2 = np.transpose(inp).copy()
-    val2 = np.zeros((KLEV, NBLOCKS), ntype)
-    map_loop2.f(inp2, val2)
+    if not args.skip_test:
+        map_loop.f(inp, ref)
+        map_loop(inp=inp, out=val)
 
-    assert np.allclose(np.transpose(ref), val2)
+        assert np.allclose(ref, val)
+
+        val2 = np.zeros((KLEV, NBLOCKS), ntype)
+        map_loop2.f(inp2, val2)
+
+        assert np.allclose(np.transpose(ref), val2)
 
     sdfg = map_loop.to_sdfg(simplify=True)
     sdfg.arrays['inp'].storage = dace.StorageType.GPU_Global
@@ -232,9 +196,10 @@ if __name__ == "__main__":
     ref_dev = cp.asarray(ref)
     val_dev = cp.zeros_like(inp_dev)
 
-    sdfg(inp=inp_dev, out=val_dev)
+    if not args.skip_test:
+        sdfg(inp=inp_dev, out=val_dev)
 
-    assert cp.allclose(ref_dev, val_dev)
+        assert cp.allclose(ref_dev, val_dev)
 
     sdfg2 = map_loop2.to_sdfg(simplify=True)
     sdfg2.arrays['inp'].storage = dace.StorageType.GPU_Global
@@ -246,9 +211,10 @@ if __name__ == "__main__":
     inp2_dev = cp.asarray(inp2)
     val2_dev = cp.zeros_like(inp2_dev)
 
-    sdfg2(inp=inp2_dev, out=val2_dev)
+    if not args.skip_test:
+        sdfg2(inp=inp2_dev, out=val2_dev)
 
-    assert cp.allclose(cp.transpose(ref_dev), val2_dev)
+        assert cp.allclose(cp.transpose(ref_dev), val2_dev)
 
     sdfg3 = map_loop.to_sdfg(simplify=True)
     sdfg3.name = 'map_loop3'
@@ -264,30 +230,35 @@ if __name__ == "__main__":
     inp_dev = cp.asarray(inp3)
     val_dev = cp.zeros_like(inp_dev)
 
-    sdfg3(inp=inp_dev, out=val_dev)
+    if not args.skip_test:
+        sdfg3(inp=inp_dev, out=val_dev)
 
-    value3 = {'out': val_dev}
-    val3 = unpermute(value3, perm)['out']
+        value3 = {'out': val_dev}
+        val3 = unpermute(value3, perm)['out']
 
-    print(f"Reference input: \n{inp}\n")
-    print(f"Transposed input: \n{inp2}\n")
-    print(f"Result input: \n{inp3}\n")
+        # print(f"Reference input: \n{inp}\n")
+        # print(f"Transposed input: \n{inp2}\n")
+        # print(f"Result input: \n{inp3}\n")
 
-    print(f"Reference: \n{ref_dev}\n")
-    print(f"Transposed result: \n{val2_dev}\n")
-    print(f"Result: \n{val_dev}\n")
+        # print(f"Reference: \n{ref_dev}\n")
+        # print(f"Transposed result: \n{val2_dev}\n")
+        # print(f"Result: \n{val_dev}\n")
 
-    assert cp.allclose(ref_dev, val3)
+        assert cp.allclose(ref_dev, val3)
 
     # Benchmark
-    csdfg = sdfg.compile()
     def func(*args):
         inp_dev, val_dev = args
         csdfg(inp=inp_dev, out=val_dev)
-    print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
 
-    csdfg = sdfg2.compile()
-    print(benchmark(func, (inp2_dev, val2_dev), n_repeat=10, n_warmup=10))
+    if args.loop in ['1', 'all']:
+        csdfg = sdfg.compile()
+        print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
 
-    csdfg = sdfg3.compile()
-    print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
+    if args.loop in ['3', 'all']:
+        csdfg = sdfg2.compile()
+        print(benchmark(func, (inp2_dev, val2_dev), n_repeat=10, n_warmup=10))
+
+    if args.loop in ['2', 'all']:
+        csdfg = sdfg3.compile()
+        print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
