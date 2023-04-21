@@ -181,11 +181,10 @@ class TilingType(aenum.AutoNumberEnum):
 
 
 # Maps from ScheduleType to default StorageType
+# If mapped to None or does not exist in this dictionary,
+# the surrounding schedule will be used.
 SCOPEDEFAULT_STORAGE = {
-    ScheduleType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
-    ScheduleType.Sequential: StorageType.Register,
-    ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
@@ -198,23 +197,27 @@ SCOPEDEFAULT_STORAGE = {
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
+# If mapped to None or does not exist in this dictionary,
+# storage will be used to define the schedule (see ``STORAGEDEFAULT_SCHEDULE``).
 SCOPEDEFAULT_SCHEDULE = {
-    ScheduleType.Default: ScheduleType.Default,
-    None: ScheduleType.CPU_Multicore,
-    ScheduleType.Sequential: ScheduleType.Sequential,
-    ScheduleType.MPI: ScheduleType.CPU_Multicore,
-    ScheduleType.CPU_Multicore: ScheduleType.Sequential,
-    ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
-    ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
-    ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
-    ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch
+}
+
+# Maps from StorageType to a preferred ScheduleType for helping determine schedules.
+# If mapped to None or does not exist in this dictionary, does not affect decision.
+# Scalar data containers also do not affect this decision.
+STORAGEDEFAULT_SCHEDULE = {
+    StorageType.CPU_Heap: ScheduleType.CPU_Multicore,
+    StorageType.GPU_Global: ScheduleType.GPU_Device,
+    StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
+    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
+    StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
 
 # Translation of types to C types

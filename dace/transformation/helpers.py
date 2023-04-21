@@ -1179,9 +1179,6 @@ def gpu_map_has_explicit_threadblocks(state: SDFGState, entry: nodes.EntryNode) 
     if any(m.schedule in (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic)
            for _, m in internal_maps):
         return True
-    imm_maps = get_internal_scopes(state, entry, immediate=True)
-    if any(m.schedule == dtypes.ScheduleType.Default for _, m in imm_maps):
-        return True
 
     return False
 
