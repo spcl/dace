@@ -25,7 +25,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
     register_trans = Property(desc="Make all transients inside GPU maps registers", dtype=bool, default=False)
 
-    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
+    sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=True)
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
