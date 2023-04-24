@@ -52,6 +52,7 @@ class StructTransformer(ast.NodeTransformer):
     A Python AST transformer that replaces ``Call`` nodes to create structs with
     the custom ``StructInitializer`` AST node.
     """
+
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -597,6 +598,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
                 # From this point on, any failure will result in a callback
                 newnode = ast.Name(id=cbname, ctx=ast.Load())
+                if isinstance(parent_node, ast.Call):
+                    newnode.oldnode = parent_node.func
 
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
@@ -748,7 +751,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
-        from dace.frontend.python.interface import in_program  # Avoid import loop
+        from dace.frontend.python.interface import in_program, inline  # Avoid import loop
 
         if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
             # Skip already-parsed calls
@@ -760,6 +763,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             # Built-in functions are resolved directly
             if global_func is in_program:
                 return self.global_value_to_node(True, parent_node=node, qualname=astutils.unparse(node), recurse=True)
+            # Inline contents are kept as-is
+            if global_func is inline:
+                return node
 
             if self.resolve_functions:
                 global_val = astutils.evalnode(node, self.globals)
@@ -787,6 +793,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                                                 detect_callables=callables)
             if newnode is not None:
                 node.func = newnode
+                if hasattr(newnode, 'oldnode'):
+                    node.oldnode = newnode.oldnode
                 return self.generic_visit(node)
         return self.generic_visit(node)
 
@@ -1206,6 +1214,63 @@ class LoopUnroller(ast.NodeTransformer):
         return self.visit_For(node)
 
 
+class ExpressionInliner(ast.NodeTransformer):
+    """
+    Replaces dace.inline() expressions by their bodies if they can be
+    compile-time evaluated.
+    """
+
+    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+        super().__init__()
+        self.globals = globals
+        self.filename = filename
+        self.resolver = closure_resolver
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        # Avoid import loop
+        from dace.frontend.python.interface import inline
+
+        node = self.generic_visit(node)
+
+        try:
+            nfunc = astutils.evalnode(node.func, self.globals)
+        except SyntaxError:
+            nfunc = None
+
+        if nfunc is not inline:
+            return node
+
+        if len(node.args) != 1:
+            raise DaceSyntaxError(None, node, 'dace.inline must be called with one argument')
+
+        # Try to inline the expression on the current AST
+        try:
+            contents = astutils.evalnode(node.args[0], self.globals)
+        except SyntaxError:
+            raise DaceSyntaxError(
+                None, node, 'Cannot inline expression with dace.inline, it '
+                'cannot be evaluated at compile time.')
+
+        ##########################################
+
+        # Already AST
+        def _convert_to_ast(contents: Any):
+            if isinstance(contents, ast.AST):
+                newnode = contents
+            elif isinstance(contents, (numbers.Number, str)):
+                # Compatibility check since Python changed their AST nodes
+                newnode = astutils.create_constant(contents)
+            elif isinstance(contents, (list, tuple, set)):
+                newnode = ast.copy_location(ast.Tuple(elts=[_convert_to_ast(c) for c in contents], ctx=ast.Load()),
+                                            node)
+            else:
+                # Augment closure with new value
+                newnode = self.resolver.global_value_to_node(e, node, f'inlined_{id(contents)}', True, keep_object=True)
+            return newnode
+
+        return _convert_to_ast(contents)
+
+
 class CallTreeResolver(ast.NodeVisitor):
 
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
@@ -1525,6 +1590,7 @@ def preprocess_dace_program(f: Callable[..., Any],
             src_ast = closure_resolver.visit(src_ast)
             DisallowedAssignmentChecker(src_file).visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
+            src_ast = ExpressionInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
