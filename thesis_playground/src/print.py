@@ -3,7 +3,7 @@ import json
 import os
 
 from utils import get_results_dir
-from print_utils import print_results_v2, print_performance, print_flop_counts
+from print_utils import print_results_v2, print_performance, print_flop_counts, print_memory_details
 from measurement_data import MeasurementRun
 from flop_computation import read_roofline_data
 
@@ -25,9 +25,16 @@ def main():
                 node_data = json.load(hardware_file)
                 roofline_data = read_roofline_data(os.path.join(get_results_dir(), args.roofline))
                 gpu = node_data['ault_nodes'][run_data.node]['GPU']
+                print()
+                print('Performance')
                 print_performance(roofline_data, run_data, hardware_dict=node_data['GPUs'][gpu])
                 if args.detail:
+                    print()
+                    print("Work details")
                     print_flop_counts(roofline_data)
+                    print()
+                    print("Memory details")
+                    print_memory_details(run_data)
 
 
 if __name__ == '__main__':

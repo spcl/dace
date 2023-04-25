@@ -1,4 +1,4 @@
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 import sys
 sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
 import ncu_report
@@ -21,6 +21,45 @@ def get_action(filename: str) -> ncu_report.IAction:
         print(f"WARNING: More than one action found in {filename} only taking the first")
     my_action = my_range.action_by_idx(0)
     return my_action
+
+
+def get_all_actions(filename: str) -> List[ncu_report.IAction]:
+    """
+    Gets all the actions inside the given ncu-rep file. Assumes there is only one range
+
+    :param filename: The path/filename of the ncu-report
+    :type filename: str
+    """
+    actions = []
+    my_context = ncu_report.load_report(filename)
+    num_ranges = my_context.num_ranges()
+    if num_ranges > 1:
+        print(f"WARNING: More than one range found in {filename} only taking the first")
+    my_range = my_context.range_by_idx(0)
+    num_actions = my_range.num_actions()
+    for idx in range(num_actions):
+        actions.append(my_range.action_by_idx(idx))
+    return actions
+
+
+def action_list_to_dict(actions: List[ncu_report.IAction]) -> Dict[str, List[ncu_report.IAction]]:
+    """
+    Converts the given list of actions into a dictionary. The keys are the action names, the values are a list of all
+    actions with the same name
+
+    :param actions: The list of actions
+    :type actions: List[ncu_report.IAction]
+    :return: The dictionary with the actions
+    :rtype: Dict[str, List[ncu_report.IAction]]
+    """
+    action_dict = {}
+    for action in actions:
+        name = action.name()
+        if name in action_dict:
+            action_dict[name].append(action)
+        else:
+            action_dict[name] = [action]
+    return action_dict
 
 
 def get_peak_performance(action: ncu_report.IAction) -> Tuple[float, float]:

@@ -5,6 +5,11 @@ import copy
 import json
 
 
+
+# Length of a double in bytes
+BYTES_DOUBLE = 8
+
+
 class FlopCount:
     adds: int
     muls: int
@@ -150,10 +155,6 @@ def get_number_of_flops(
         return None
 
 
-# Length of a double in bytes
-BYTES_DOUBLE = 8
-
-
 def get_number_of_bytes_rough(
         params: Dict[str, Number],
         inputs: Dict[str, Union[Number, np.ndarray]],
@@ -180,18 +181,14 @@ def get_number_of_bytes_rough(
     return int(bytes)
 
 
-def get_double_accessed(params: Dict[str, Number], program: str, variable: str) -> Number:
+def get_data_ranges(params: Dict[str, Number]) -> Dict[str, Dict]:
     """
-    Get the number doubles access (read & writes) for the given variable in the given program
+    Get detailed information about all data ranges of all programs
 
-    :param params: The parameters used for the given program
+    :param params: The parameters used to compute sizes
     :type params: Dict[str, Number]
-    :param program: The name of the program
-    :type program: str
-    :param variable: The name of the variable accessed
-    :type variable: str
-    :return: The number of doubles accessed
-    :rtype: Number
+    :return: Dictionary with a dictionary for each program
+    :rtype: Dict[str, Dict]
     """
     KLEV = params['KLEV']
     NCLDTOP = params['NCLDTOP']
@@ -280,18 +277,41 @@ def get_double_accessed(params: Dict[str, Number], program: str, variable: str) 
         ],
         'cloudsc_class3_2120':
         [
-            {'variables': ['ZA', 'ZQSLIQ', 'PAP'], 'size': 1*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), },
-            {'variables': ['ZQX'], 'size': 1*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), },
-            {'variables': ['ZCOVPCLR', 'ZDTGDP', 'ZCORQSLIQ', 'ZCOVPMAX', 'ZDP'], 'size': 1*(KFDIA-KIDIA+1), },
-            {'variables': ['PAPH'], 'size': 1*(KLEV-NCLDTOP+1), },
-            {'variables': ['ZSOLQA2'], 'size': 4*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), },
-            {'variables': ['ZCOVPTOT2', 'ZQXFG2'], 'size': 2*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), },
+            {'variables': ['ZA', 'ZQSLIQ', 'PAP'], 'size': 1*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'r'},
+            # is an NCLV array
+            {'variables': ['ZQX'], 'size': 1*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'r'},
+            {
+                'variables': ['ZCOVPCLR', 'ZDTGDP', 'ZCORQSLIQ', 'ZCOVPMAX', 'ZDP'],
+                'size': 1*(KFDIA-KIDIA+1),
+                'action':'r'
+            },
+            {'variables': ['PAPH'], 'size': 1*(KLEV-NCLDTOP+1), 'action': 'r'},
+            # is a NCLV, NCLV array
+            {'variables': ['ZSOLQA2'], 'size': 4*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'rw'},
+            {'variables': ['ZCOVPTOT2', 'ZQXFG2'], 'size': 2*(KLEV-NCLDTOP+1)*(KFDIA-KIDIA+1), 'action': 'rw'},
         ],
         'my_roofline_test':
         [
             {'variables': ['ARRAY_A', 'ARRAY_B', 'ARRAY_C'], 'size': (KLEV)*(KFDIA-KIDIA+1), },
         ],
     }
+    return iteration_shapes
+
+
+def get_double_accessed(params: Dict[str, Number], program: str, variable: str) -> Number:
+    """
+    Get the number doubles access (read & writes) for the given variable in the given program
+
+    :param params: The parameters used for the given program
+    :type params: Dict[str, Number]
+    :param program: The name of the program
+    :type program: str
+    :param variable: The name of the variable accessed
+    :type variable: str
+    :return: The number of doubles accessed
+    :rtype: Number
+    """
+    iteration_shapes = get_data_ranges(params)
 
     for entry in iteration_shapes[program]:
         # print(program, variable, entry['variables'], variable in entry['variables'])
@@ -322,7 +342,8 @@ def get_number_of_bytes(
     :rtype: Number
     """
 
-    bytes = BYTES_DOUBLE * len(params)
+    # inputs already includes parameters
+    bytes = 0
     for input in inputs:
         if isinstance(inputs[input], np.ndarray):
             bytes += BYTES_DOUBLE * get_double_accessed(params, program, input)
@@ -336,3 +357,47 @@ def get_number_of_bytes(
         #       f"precise: {get_double_accessed(params, program, output):,}")
 
     return int(bytes)
+
+
+def get_number_of_bytes_2(
+        params: Dict[str, Number],
+        program: str) -> Tuple[Number, Number, Number]:
+    """
+    Get number of bytes separated into read and write
+
+    :param params: The parameters used
+    :type params: Dict[str, Number]
+    :param program: The program name
+    :type program: str
+    :return: The total, read and written number of bytes
+    :rtype: Tuple[Number, Number, Number]
+    """
+
+    # Avoid circular imports
+    from data import get_program_parameters_data
+    from utils import get_programs_data
+
+    programs_data = get_programs_data()
+    # Get only the data, as we only need it to check if something is a scalar or not, we can do this independent of
+    # the precises parameters used
+    data = get_program_parameters_data(program)['data']
+    memory_data = get_data_ranges(params)[program]
+    read, written = 0, 0
+    # Add reading of parameters
+    read = BYTES_DOUBLE * len(programs_data['program_parameters'][program])
+    # Add reading of any scalar input
+    for inp in programs_data['program_inputs'][program]:
+        if data[inp] == (0, ):
+            read += BYTES_DOUBLE
+    for entry in memory_data:
+        if 'action' not in entry:
+            continue
+        if entry['action'] in ['r']:
+            read += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
+        if entry['action'] in ['w']:
+            written += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
+        if entry['action'] in ['rw']:
+            read += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
+            written += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
+
+    return (read+written, read, written)
