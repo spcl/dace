@@ -1,4 +1,4 @@
-PROGRAM vert_loop_
+PROGRAM vert_loop_1
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -87,54 +87,56 @@ SUBROUTINE vert_loop_1_routine(&
 
     ZSOLQB(:,:,:) = 0.0
     DO JKGLO=1,NGPTOT,NPROMA
-        DO JL=KIDIA,KFDIA
-            ZTMPA = 1.0/MAX(ZA(JL,JK),ZEPSEC)
-            ZLIQCLD(JL) = ZQX(JL,JK,NCLDQL)*ZTMPA
-            ZICECLD(JL) = ZQX(JL,JK,NCLDQI)*ZTMPA
-        ENDDO
-    
-        DO JL=KIDIA,KFDIA
-            ! Remove if/else here
-            ZCOVPTOT(JL) = 1.0 - ((1.0-ZCOVPTOT(JL))*&
-            &            (1.0 - MAX(ZA(JL,JK),ZA(JL,JK-1)))/&
-            &            (1.0 - MIN(ZA(JL,JK-1),1.0-1.E-06)) )  
-            ZCOVPTOT(JL) = MAX(ZCOVPTOT(JL),RCOVPMIN)
-            ! to here
-        ENDDO
-          
-        DO JL=KIDIA,KFDIA
-            IF(ZTP1(JL,JK) <= RTT) THEN
-                IF (ZICECLD(JL)>ZEPSEC) THEN
-                    ZZCO=PTSPHY*RSNOWLIN1*EXP(RSNOWLIN2*(ZTP1(JL,JK)-RTT))
-                    ! Removed if here
-                    ZLCRIT=RLCRITSNOW
-                    ! to here
-                    ZSNOWAUT(JL)=ZZCO*(1.0-EXP(-(ZICECLD(JL)/ZLCRIT)**2))
-                    ZSOLQB(JL,NCLDQS,NCLDQI)=ZSOLQB(JL,NCLDQS,NCLDQI)+ZSNOWAUT(JL)
-                ENDIF
-            ENDIF 
-          
-            IF (ZLIQCLD(JL)>ZEPSEC) THEN
-                ZZCO=RKCONV*PTSPHY
-                ! Removed some ifs around ZLCRIT
-                ZLCRIT = RCLCRIT_SEA  ! ocean
-                ZPRECIP=(ZPFPLSX(JL,JK,NCLDQS)+ZPFPLSX(JL,JK,NCLDQR))/MAX(ZEPSEC,ZCOVPTOT(JL))
-                ZCFPR=1.0 + RPRC1*SQRT(MAX(ZPRECIP,0.0))
-                ZLCRIT=ZLCRIT/MAX(ZCFPR,ZEPSEC)
-          
-                IF(ZLIQCLD(JL)/ZLCRIT < 20.0 )THEN ! Security for exp for some compilers
-                    ZRAINAUT(JL)=ZZCO*(1.0-EXP(-(ZLIQCLD(JL)/ZLCRIT)**2))
-                ELSE
-                    ZRAINAUT(JL)=ZZCO
-                ENDIF
-
-                ! rain freezes instantly
+        DO JK=NCLDTOP,KLEV
+            DO JL=KIDIA,KFDIA
+                ZTMPA = 1.0/MAX(ZA(JL,JK),ZEPSEC)
+                ZLIQCLD(JL) = ZQX(JL,JK,NCLDQL)*ZTMPA
+                ZICECLD(JL) = ZQX(JL,JK,NCLDQI)*ZTMPA
+            ENDDO
+        
+            DO JL=KIDIA,KFDIA
+                ! Remove if/else here
+                ZCOVPTOT(JL) = 1.0 - ((1.0-ZCOVPTOT(JL))*&
+                &            (1.0 - MAX(ZA(JL,JK),ZA(JL,JK-1)))/&
+                &            (1.0 - MIN(ZA(JL,JK-1),1.0-1.E-06)) )  
+                ZCOVPTOT(JL) = MAX(ZCOVPTOT(JL),RCOVPMIN)
+                ! to here
+            ENDDO
+              
+            DO JL=KIDIA,KFDIA
                 IF(ZTP1(JL,JK) <= RTT) THEN
-                    ZSOLQB(JL,NCLDQS,NCLDQL)=ZSOLQB(JL,NCLDQS,NCLDQL)+ZRAINAUT(JL)
-                ELSE
-                    ZSOLQB(JL,NCLDQR,NCLDQL)=ZSOLQB(JL,NCLDQR,NCLDQL)+ZRAINAUT(JL)
+                    IF (ZICECLD(JL)>ZEPSEC) THEN
+                        ZZCO=PTSPHY*RSNOWLIN1*EXP(RSNOWLIN2*(ZTP1(JL,JK)-RTT))
+                        ! Removed if here
+                        ZLCRIT=RLCRITSNOW
+                        ! to here
+                        ZSNOWAUT(JL)=ZZCO*(1.0-EXP(-(ZICECLD(JL)/ZLCRIT)**2))
+                        ZSOLQB(JL,NCLDQS,NCLDQI)=ZSOLQB(JL,NCLDQS,NCLDQI)+ZSNOWAUT(JL)
+                    ENDIF
+                ENDIF 
+              
+                IF (ZLIQCLD(JL)>ZEPSEC) THEN
+                    ZZCO=RKCONV*PTSPHY
+                    ! Removed some ifs around ZLCRIT
+                    ZLCRIT = RCLCRIT_SEA  ! ocean
+                    ZPRECIP=(ZPFPLSX(JL,JK,NCLDQS)+ZPFPLSX(JL,JK,NCLDQR))/MAX(ZEPSEC,ZCOVPTOT(JL))
+                    ZCFPR=1.0 + RPRC1*SQRT(MAX(ZPRECIP,0.0))
+                    ZLCRIT=ZLCRIT/MAX(ZCFPR,ZEPSEC)
+              
+                    IF(ZLIQCLD(JL)/ZLCRIT < 20.0 )THEN ! Security for exp for some compilers
+                        ZRAINAUT(JL)=ZZCO*(1.0-EXP(-(ZLIQCLD(JL)/ZLCRIT)**2))
+                    ELSE
+                        ZRAINAUT(JL)=ZZCO
+                    ENDIF
+
+                    ! rain freezes instantly
+                    IF(ZTP1(JL,JK) <= RTT) THEN
+                        ZSOLQB(JL,NCLDQS,NCLDQL)=ZSOLQB(JL,NCLDQS,NCLDQL)+ZRAINAUT(JL)
+                    ELSE
+                        ZSOLQB(JL,NCLDQR,NCLDQL)=ZSOLQB(JL,NCLDQR,NCLDQL)+ZRAINAUT(JL)
+                    ENDIF
                 ENDIF
-            ENDIF
+            ENDDO
         ENDDO
     ENDDO
 
