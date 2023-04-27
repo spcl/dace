@@ -199,7 +199,7 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
         # Get list of all possible transformations
         transformations = [xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap])]
 
-        # Find the transformation which as applied to the outermost loop
+        # Find the transformation which is applied to the outermost loop
         for xform in transformations:
             is_outside_loop = True
             # Check if it is the outermoost loop by checking if the loop guard is in any of the loop states of the other
@@ -207,16 +207,17 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
             for other_form in transformations:
                 if other_form != xform:
                     other_states: List[SDFGState] = list(
-                        sdutil.dfs_conditional(sdfg.sdfg_list[xform.sdfg_id], [other_form.loop_begin],
+                        sdutil.dfs_conditional(sdfg.sdfg_list[other_form.sdfg_id], [other_form.loop_begin],
                                                lambda _, c: c is not other_form.loop_guard))
                     if xform.loop_guard in other_states:
                         is_outside_loop = False
             if is_outside_loop:
                 outside_loop_transformations.append(xform)
 
-        # Apply the found transformations
-        number_of_transformations_performed = len(outside_loop_transformations)
-        for xform in outside_loop_transformations:
+        # Apply the first of the found transformations
+        number_of_transformations_performed = min(len(outside_loop_transformations), 1.0)
+        if len(outside_loop_transformations) > 0:
+            xform = outside_loop_transformations[0]
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
 
