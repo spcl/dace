@@ -16,7 +16,9 @@ parameters = {
     'NCLDQS': 6,
     'NCLDQV': 7,
     'NCLDTOP': 2,
-    'NSSOPT': 1
+    'NSSOPT': 1,
+    'NPROMA': 1,
+    'NBLOCKS': 10000,
 }
 
 # changes from the parameters dict for certrain programs
@@ -72,6 +74,13 @@ custom_parameters = {
         'KIDIA': 1,
         'KFDIA': 10000,
     },
+    'cloudsc_vert_loop_2':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'NPROMA': 1,
+        'NBLOCKS': 10000
+    }
 }
 
 # changes from the parameters dict for testing
@@ -124,11 +133,14 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZQTMST': (0, ),
         'ZVPICE': (0, ),
         'ZVPLIQ': (0, ),
+        'ZALFAW': (0, ),
         'ARRAY_A': (params['KLON'], params['KLEV']),
         'ARRAY_B': (params['KLON'], params['KLEV']),
         'ARRAY_C': (params['KLON'], params['KLEV']),
         'IPHASE': (params['NCLV'], ),
+        'LDCUM': (params['KLON'], params['NBLOCKS']),
         'PAPH': (params['KLON'], params['KLEV'] + 1),
+        'PAPH_N': (params['KLON'], params['KLEV'] + 1, params['NBLOCKS']),
         'PAP': (params['KLON'], params['KLEV']),
         'PCOVPTOT': (params['KLON'], params['KLEV']),
         'PFCQLNG': (params['KLON'], params['KLEV'] + 1),
@@ -145,8 +157,11 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'PFSQLTUR': (params['KLON'], params['KLEV'] + 1),
         'PFSQRF': (params['KLON'], params['KLEV'] + 1),
         'PFSQSF': (params['KLON'], params['KLEV'] + 1),
-        'PLUDE': (params['KLON'], params['KLEV']),
+        'PLU': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PLUDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PSUPSAT': (params['KLON'], params['KLEV']),
+        'PSUPSAT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PSNDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PVFI': (params['KLON'], params['KLEV']),
         'PVFL': (params['KLON'], params['KLEV']),
         'tendency_loc_a': (params['KLON'], params['KLEV']),
@@ -154,6 +169,7 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'tendency_loc_q': (params['KLON'], params['KLEV']),
         'tendency_loc_T': (params['KLON'], params['KLEV']),
         'tendency_tmp_t': (params['KLON'], params['KLEV']),
+        'tendency_tmp_t_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'tendency_tmp_q': (params['KLON'], params['KLEV']),
         'tendency_tmp_a': (params['KLON'], params['KLEV']),
         'tendency_tmp_cld': (params['KLON'], params['KLEV'], params['NCLV']),
@@ -212,9 +228,11 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
         'ZSUPSAT': (params['KLON'], ),
         'ZTP1': (params['KLON'], params['KLEV']),
         'PT': (params['KLON'], params['KLEV']),
+        'PT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PQ': (params['KLON'], params['KLEV']),
         'PA': (params['KLON'], params['KLEV']),
         'PCLV': (params['KLON'], params['KLEV'], params['NCLV']),
+        'PCLV_N': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
     }
 
 
@@ -413,7 +431,10 @@ def set_input_pattern(
         elif program == 'cloudsc_class2_1762':
             inputs['ZEPSEC'] = 10.0
         elif program == 'cloudsc_class2_1516':
-            print(f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516")
+            print(f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516 for first loop, only possible for "
+                  f"second")
+            inputs['RTT'] = 0.0
+            inputs['RLMIN'] = 10.0
         elif program == 'my_test_routine':
             inputs['ARRAY_B'] = np.zeros_like(inputs['ARRAY_B'])
         elif program == 'cloudsc_class3_691':
@@ -435,6 +456,8 @@ def set_input_pattern(
             inputs['ZEPSEC'] = 0.0
         elif program == 'cloudsc_class2_1516':
             inputs['ZA'] = np.ones_like(inputs['ZA'])
+            inputs['RTT'] = 10.0
+            inputs['RLMIN'] = 0.0
         elif program == 'my_test_routine':
             inputs['ARRAY_B'] = np.ones_like(inputs['ARRAY_B'])
         elif program == 'cloudsc_class3_691':
