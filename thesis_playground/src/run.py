@@ -18,25 +18,26 @@ from flop_computation import save_roofline_data
 def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
     for data in ncu_data:
         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
-        id_triplet = tuple([int(id) for id in match.group(1).split('_')])
-        time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
-        cycles_measurement = program_measurement.get_measurement('Kernel Cycles', kernel=str(id_triplet))
-        if time_measurement is None:
-            program_measurement.add_measurement('Kernel Time',
-                                                data.durations_unit,
-                                                data=data.durations,
-                                                kernel_name=str(id_triplet))
-        else:
-            for value in data.durations:
-                time_measurement.add_value(value)
-        if cycles_measurement is None:
-            program_measurement.add_measurement('Kernel Cycles',
-                                                data.cycles_unit,
-                                                data=data.cycles,
-                                                kernel_name=str(id_triplet))
-        else:
-            for value in data.cycles:
-                cycles_measurement.add_value(value)
+        if match is not None:
+            id_triplet = tuple([int(id) for id in match.group(1).split('_')])
+            time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
+            cycles_measurement = program_measurement.get_measurement('Kernel Cycles', kernel=str(id_triplet))
+            if time_measurement is None:
+                program_measurement.add_measurement('Kernel Time',
+                                                    data.durations_unit,
+                                                    data=data.durations,
+                                                    kernel_name=str(id_triplet))
+            else:
+                for value in data.durations:
+                    time_measurement.add_value(value)
+            if cycles_measurement is None:
+                program_measurement.add_measurement('Kernel Cycles',
+                                                    data.cycles_unit,
+                                                    data=data.cycles,
+                                                    kernel_name=str(id_triplet))
+            else:
+                for value in data.cycles:
+                    cycles_measurement.add_value(value)
 
 
 def main():

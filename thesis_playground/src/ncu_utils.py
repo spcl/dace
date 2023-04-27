@@ -15,10 +15,16 @@ def get_action(filename: str) -> ncu_report.IAction:
     num_ranges = my_context.num_ranges()
     if num_ranges > 1:
         print(f"WARNING: More than one range found in {filename} only taking the first")
+    if num_ranges == 0:
+        print(f"ERROR: There are no ranges in {filename}")
+        return None
     my_range = my_context.range_by_idx(0)
     num_actions = my_range.num_actions()
     if num_actions > 1:
         print(f"WARNING: More than one action found in {filename} only taking the first")
+    if num_actions == 0:
+        print(f"ERROR: There are no actions in {filename}")
+        return None
     my_action = my_range.action_by_idx(0)
     return my_action
 

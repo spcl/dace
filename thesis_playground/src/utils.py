@@ -100,7 +100,10 @@ def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = F
         if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
-            inp_data[inp] = np.asfortranarray(rng.random(shape))
+            if inp in ['LDCUM']:
+                inp_data[inp] = np.asfortranarray(rng.random(shape) > 0.5)
+            else:
+                inp_data[inp] = np.asfortranarray(rng.random(shape))
     return inp_data
 
 

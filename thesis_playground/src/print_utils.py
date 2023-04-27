@@ -4,7 +4,7 @@ from numbers import Number
 from tabulate import tabulate
 
 from measurement_data import MeasurementRun
-from flop_computation import FlopCount
+from flop_computation import FlopCount, get_number_of_bytes_2
 
 
 def print_with_time(text: str):
@@ -111,6 +111,20 @@ def print_flop_counts(roofline_data: Dict[str, Tuple[FlopCount, Number]]):
         flat_data.append([program, Q, W, W/Q,
                          flop_data.adds, flop_data.muls, flop_data.divs, flop_data.minmax, flop_data.abs,
                          flop_data.powers, flop_data.roots])
+
+    sort_by_program_number(flat_data)
+    print(tabulate(flat_data, headers=headers, intfmt=",", floatfmt=".2E"))
+
+
+def print_memory_details(run_data: MeasurementRun):
+    headers = ["program", "Q [byte]", "read [byte]", "written [byte]"]
+    flat_data = []
+
+    for program_measurement in run_data.data:
+        program = program_measurement.program
+        params = program_measurement.parameters
+        total, read, written = get_number_of_bytes_2(params, program)
+        flat_data.append([program, read + written, read, written])
 
     sort_by_program_number(flat_data)
     print(tabulate(flat_data, headers=headers, intfmt=",", floatfmt=".2E"))
