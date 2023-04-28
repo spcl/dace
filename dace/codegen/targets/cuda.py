@@ -1961,6 +1961,8 @@ void  *{kname}_args[] = {{ {kargs} }};
         # generator)
         callsite_stream.write('{', sdfg, state_id, scope_entry)
 
+        open_if = False
+
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
                 raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
@@ -1973,8 +1975,8 @@ void  *{kname}_args[] = {{ {kargs} }};
                     raise ValueError('Block size has to be constant for block-wide dynamic map schedule (got %s)' %
                                      str(bdim))
                 total_block_size *= bdim
-            if _expr(scope_map.range[0][2]) != 1:
-                raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
+            # if _expr(scope_map.range[0][2]) != 1:
+            #     raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
 
             ##### TODO (later): Generalize
             # Find thread-block param map and its name
@@ -2000,20 +2002,42 @@ void  *{kname}_args[] = {{ {kargs} }};
                 'if ({} < {}) {{'.format(outer_scope.map.params[0],
                                          _topy(subsets.Range(outer_scope.map.range[::-1]).max_element()[0] + 1)), sdfg,
                 state_id, scope_entry)
+            open_if = True
 
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
                                                         e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
 
+            dynmap_var = scope_map.params[0]
+            dynmap_begin = scope_map.range[0][0]
+            dynmap_end = scope_map.range[0][1] + 1
+            dynmap_step = scope_map.range[0][2]
+            if dynmap_step != 1:
+                dynmap_var = f'{dynmap_var}_idx'
+                dynmap_begin = 0
+                dynmap_end = f'int_ceil({dynmap_end - dynmap_begin}, {dynmap_step})'
+            # callsite_stream.write(
+            #     '__dace_dynmap_begin = {begin};\n'
+            #     '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0], end=scope_map.range[0][1] + 1), sdfg,
+            #     state_id, scope_entry)
             callsite_stream.write(
                 '__dace_dynmap_begin = {begin};\n'
-                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0], end=scope_map.range[0][1] + 1), sdfg,
+                '__dace_dynmap_end = {end};'.format(begin=dynmap_begin, end=dynmap_end), sdfg,
                 state_id, scope_entry)
 
             # close if
             callsite_stream.write('}', sdfg, state_id, scope_entry)
 
+            # callsite_stream.write(
+            #     'dace::DynamicMap<{fine_grained}, {bsize}>::'
+            #     'schedule(dace_dyn_map_shared, __dace_dynmap_begin, '
+            #     '__dace_dynmap_end, {kmapIdx}, [&](auto {kmapIdx}, '
+            #     'auto {param}) {{'.format(fine_grained=('true' if Config.get_bool(
+            #         'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
+            #                               bsize=total_block_size,
+            #                               kmapIdx=outer_scope.map.params[0],
+            #                               param=scope_map.params[0]), sdfg, state_id, scope_entry)
             callsite_stream.write(
                 'dace::DynamicMap<{fine_grained}, {bsize}>::'
                 'schedule(dace_dyn_map_shared, __dace_dynmap_begin, '
@@ -2022,7 +2046,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                     'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
                                           bsize=total_block_size,
                                           kmapIdx=outer_scope.map.params[0],
-                                          param=scope_map.params[0]), sdfg, state_id, scope_entry)
+                                          param=dynmap_var), sdfg, state_id, scope_entry)
+            
+            if dynmap_step != 1:
+                callsite_stream.write(f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', sdfg, state_id, scope_entry)
 
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
