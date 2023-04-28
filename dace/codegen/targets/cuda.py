@@ -1600,6 +1600,10 @@ void  *{kname}_args[] = {{ {kargs} }};
             (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
             scope_entry)
 
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             if hasattr(e, '_cuda_event'):
@@ -1618,6 +1622,10 @@ void  *{kname}_args[] = {{ {kargs} }};
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
                                       for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
             scope_entry)
+
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('}', sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
