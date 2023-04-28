@@ -439,7 +439,7 @@ def set_input_pattern(
             inputs['ARRAY_B'] = np.zeros_like(inputs['ARRAY_B'])
         elif program == 'cloudsc_class3_691':
             inputs['RAMIN'] = 0.0
-            inputs['RLMIN'] = 0.0
+            inputs['RLMIN'] = 10.0
         elif program == 'cloudsc_class3_965':
             inputs['RLMIN'] = 0.0
         elif program == 'cloudsc_class3_1985':

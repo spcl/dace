@@ -14,7 +14,9 @@
         "cloudsc_class3_2120": "rain_evaporation",
         "mwe_test": "mwe_test",
         "my_roofline_test": "my_roofline_test",
-        "cloudsc_vert_loop_2": "vert_loop_2"
+        "cloudsc_vert_loop_2": "vert_loop_2",
+        "cloudsc_vert_loop_3": "vert_loop_3",
+        "cloudsc_vert_loop_4": "vert_loop_4"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -28,11 +30,16 @@
         "cloudsc_class2_1516": ["KLON", "KLEV", "KIDIA", "KFDIA", "NCLV", "NCLDTOP", "NCLDQL", "NCLDQI"],
         "cloudsc_class3_691": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQI", "NCLDQL"],
         "cloudsc_class3_965": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQI", "NCLDQL", "NCLDTOP"],
-        "cloudsc_class3_1985": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQS","NCLDQI", "NCLDQL", "NCLDTOP"],
+        "cloudsc_class3_1985": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQS","NCLDQI", "NCLDQL",
+                                "NCLDTOP"],
         "cloudsc_class3_2120": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQR", "NCLDTOP"],
         "mwe_test": ["KLON", "KLEV", "KIDIA", "KFDIA", "NCLV", "NCLDQV"],
         "my_roofline_test": ["KLON", "KLEV", "KIDIA", "KFDIA"],
         "cloudsc_vert_loop_2": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
+                                "NPROMA", "NBLOCKS"],
+        "cloudsc_vert_loop_3": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
+                                "NPROMA", "NBLOCKS"],
+        "cloudsc_vert_loop_4": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NPROMA", "NBLOCKS"]
     },
     "program_inputs": {
@@ -56,6 +63,9 @@
         "mwe_test":  ["ZQX"],
         "my_roofline_test": ["ARRAY_B", "ARRAY_C"],
         "cloudsc_vert_loop_2": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
+                                "PAPH_N", "PSUPSAT_N", "PCLV_N", "PT_N", "tendency_tmp_t_N"],
+        "cloudsc_vert_loop_3": [],
+        "cloudsc_vert_loop_4": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
                                 "PAPH_N", "PSUPSAT_N", "PCLV_N", "PT_N", "tendency_tmp_t_N"]
 
     },
@@ -74,7 +84,9 @@
         "cloudsc_class3_2120": ["ZSOLQA2", "ZCOVPTOT2", "ZQXFG2"],
         "mwe_test": ["ZFOKOOP", "ZSUPSAT"],
         "my_roofline_test": ["ARRAY_A"],
-        "cloudsc_vert_loop_2": ["PLUDE"]
+        "cloudsc_vert_loop_2": ["PLUDE"],
+        "cloudsc_vert_loop_3": ["PLUDE"],
+        "cloudsc_vert_loop_4": ["PLUDE"]
 
     }
 }
