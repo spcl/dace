@@ -82,6 +82,10 @@ def main():
                         help='Pattern for in and output')
     parser.add_argument('--ncu-report', default=False, action='store_true',
                         help='Create a full ncu report and save it')
+    parser.add_argument('--ncu-report-folder', default='ncu-reports',
+                        help='Folder where the ncu report is stored (default is "ncu-reports")')
+    parser.add_argument('--results-folder', default='results',
+                        help='Folder where the results json file are stored (default is "results")')
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
@@ -158,7 +162,7 @@ def main():
             filename = f"report_{program}.ncu-rep"
             if args.output is not None:
                 filename = f"report_{''.join(args.output.split('.')[:-1])}_{program}.ncu-rep"
-            filename = os.path.join('ncu-reports', filename)
+            filename = os.path.join(get_results_dir(args.ncu_report_folder), filename)
             print_with_time(f"Create ncu report and save it into {filename}")
             ncu_command = ['ncu', '--set', 'full', '--force-overwrite', '--export', filename]
             run([*ncu_command, *command_program], capture_output=True)
@@ -170,7 +174,7 @@ def main():
             roofline_data[program] = get_roofline_data(program, pattern=args.pattern)
 
     if args.output is not None:
-        filename = os.path.join(get_results_dir(), args.output)
+        filename = os.path.join(get_results_dir(args.results_folder), args.output)
         if not (args.no_total and args.no_ncu):
             print_with_time(f"Save results into {filename}")
             with open(filename, 'w') as file:

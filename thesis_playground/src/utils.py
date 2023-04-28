@@ -192,14 +192,16 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-def get_results_dir() -> str:
+def get_results_dir(folder_name: str = 'results') -> str:
     """
     Returns path to the directory where the results are stored
 
+    :param folder_name: Name of the folder
+    :type folder_name: str
     :return: Path to the directory
     :rtype: str
     """
-    return os.path.join(os.path.split(os.path.dirname(__file__))[0], 'results')
+    return os.path.join(os.path.split(os.path.dirname(__file__))[0], folder_name)
 
 
 counter = 0
