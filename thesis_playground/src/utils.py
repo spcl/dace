@@ -208,7 +208,11 @@ graphs_dir = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'sdfg_gra
 
 def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
     global counter
-    filename = os.path.join(graphs_dir, f"{prefix}{program}_{counter}_{name}.sdfg")
+    if prefix != "":
+        prefix = f"{prefix}_"
+    if not os.path.exists(os.path.join(graphs_dir, program)):
+        os.mkdir(os.path.join(graphs_dir, program))
+    filename = os.path.join(graphs_dir, program, f"{prefix}{counter}_{name}.sdfg")
     sdfg.save(filename)
     print(f"Saved graph to {filename}")
     counter = counter + 1
