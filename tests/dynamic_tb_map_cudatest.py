@@ -66,10 +66,90 @@ def test_dynamic_map():
     assert diff <= 1e-5
 
 
-def _copy_to_gpu(sdfg):
-    for k, v in sdfg.arrays.items():
-        if not v.transient and isinstance(v, dace.data.Array):
-            v.storage = dace.dtypes.StorageType.GPU_Global
+@pytest.mark.gpu
+def test_dynamic_maps():
+    """ Tests the case of multiple dynamic maps in a row that share dynamic inputs."""
+
+    W = dace.symbol('W')
+    H = dace.symbol('H')
+    nnz = dace.symbol('nnz')
+
+    @dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H],
+                  dace.float32[H])
+    def spmv_2x(A_row, A_col, A_val, x, b, c):
+
+        for i in range(H):
+            row_start = A_row[i]
+            row_end = A_row[i + 1]
+            for j in dace.map[row_start:row_end]:
+                b[i] += A_val[j] * x[A_col[j]]
+            for j in dace.map[row_start:row_end]:
+                c[i] += A_val[j] * x[A_col[j]]
+
+    height = 1024
+    width = 1024
+
+    # Prepare spmv SDFG for GPU
+    sdfg = spmv_2x.to_sdfg()
+    # Rename dynamic inputs to cause name clashes
+    main_entry = None
+    main_dict = {}
+    for node, state in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.sdfg.nodes.MapEntry):
+            if main_entry is None:
+                main_entry = node
+                for e in dace.sdfg.dynamic_map_inputs(state, node):
+                    main_dict[e.data.data] = e.dst_conn
+            else:
+                repl_dict = {}
+                for e in dace.sdfg.dynamic_map_inputs(state, node):
+                    node.remove_in_connector(e.dst_conn)
+                    node.add_in_connector(main_dict[e.data.data])
+                    repl_dict[e.dst_conn] = main_dict[e.data.data]
+                    e._dst_conn = main_dict[e.data.data]
+                node.map.range.replace(repl_dict)
+
+    sdfg.apply_gpu_transformations()
+
+    for node in sdfg.all_nodes_recursive():
+        if isinstance(node[0], dace.sdfg.nodes.MapEntry) \
+                and node[0].schedule == dace.dtypes.ScheduleType.Sequential:
+            node[0].schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock_Dynamic
+
+    # Fill input data
+    # each row has up (including) 256 elements
+    A_row = np.random.randint(257, size=height + 1, dtype=dace.uint32.type)
+    A_row[0] = 0
+    A_row = np.cumsum(A_row, dtype=dace.uint32.type)
+
+    # Column data
+    A_col = dace.ndarray([A_row[height]], dtype=dace.uint32)
+    for i in range(height):
+        A_col[A_row[i]:A_row[i + 1]] = np.sort(np.random.choice(width, A_row[i + 1] - A_row[i], replace=False))
+
+    # values
+    A_val = np.random.rand(A_row[height]).astype(dace.float32.type)
+
+    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row), dtype=dace.float32.type, shape=(1024, 1024))
+
+    x = np.random.rand(width).astype(dace.float32.type)
+    b = np.zeros(height, dtype=dace.float32.type)
+    c = np.zeros(height, dtype=dace.float32.type)
+
+    sdfg(A_row=A_row,
+         A_col=A_col,
+         A_val=A_val,
+         x=x,
+         b=b,
+         c=c,
+         H=A_sparse.shape[0],
+         W=A_sparse.shape[1],
+         nnz=A_sparse.nnz)
+
+    diff0 = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
+    diff1 = np.linalg.norm(A_sparse.dot(x) - c) / float(height)
+    assert diff0 <= 1e-5
+    assert diff1 <= 1e-5
 
 
 @pytest.mark.gpu
@@ -214,5 +294,6 @@ def test_dynamic_map_with_step():
 
 if __name__ == '__main__':
     test_dynamic_map()
+    test_dynamic_maps()
     test_nested_dynamic_map()
     test_dynamic_map_with_step()
