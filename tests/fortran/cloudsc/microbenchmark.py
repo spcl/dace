@@ -8,15 +8,19 @@ import numpy as np
 from cupyx.profiler import benchmark
 from dace.data import _prod
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.sdfg.nodes import MapEntry
 from typing import Any, Dict, Set, Tuple
 
 
-NBLOCKS = 65536
+NBLOCKS = 6553*32
 NPROMA = 1
 KLEV = 137
+n_repeat = 10
+n_warmup = 10
 
 dtype = dace.float64
 ntype = np.float64
+
 
 @dace.program
 def map_loop(inp: dtype[NBLOCKS, KLEV], out: dtype[NBLOCKS, KLEV]):
@@ -135,6 +139,7 @@ def permute(input: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, Any
                 order = list(range(klev_idx)) + list(range(klev_idx + 1, len(arr.shape))) + [klev_idx]
             else:
                 order = [klev_idx] + list(range(klev_idx)) + list(range(klev_idx + 1, len(arr.shape)))
+            print(f"Permute array {name} using {order}")
             permuted[name] = arr.transpose(order).copy()
         else:
             permuted[name] = arr
@@ -160,7 +165,7 @@ def unpermute(output: Dict[str, Any], permutation: Dict[str, int]) -> Dict[str, 
 if __name__ == "__main__":
 
     parser = ArgumentParser()
-    parser.add_argument('--loop', choices=['1', '2', '3', 'all'], default='all')
+    parser.add_argument('--loop', choices=['1', '2', '3', 'all', 'none'], default='all')
     parser.add_argument('--skip-test', action='store_true', default=False)
     args = parser.parse_args()
 
@@ -192,11 +197,16 @@ if __name__ == "__main__":
     # auto_optimize(sdfg, dace.DeviceType.GPU)
     sdfg.apply_gpu_transformations()
 
+    for node in sdfg.all_nodes_recursive():
+        if isinstance(node[0], MapEntry):
+            node[0].label = f"v1_{node[0].label}"
+
     inp_dev = cp.asarray(inp)
     ref_dev = cp.asarray(ref)
     val_dev = cp.zeros_like(inp_dev)
 
     if not args.skip_test:
+        print(f"v1 inp shape: {inp_dev.shape}")
         sdfg(inp=inp_dev, out=val_dev)
 
         assert cp.allclose(ref_dev, val_dev)
@@ -208,10 +218,15 @@ if __name__ == "__main__":
     # auto_optimize(sdfg2, dace.DeviceType.GPU)
     sdfg2.apply_gpu_transformations()
 
+    for node in sdfg2.all_nodes_recursive():
+        if isinstance(node[0], MapEntry):
+            node[0].label = f"v2_{node[0].label}"
+
     inp2_dev = cp.asarray(inp2)
     val2_dev = cp.zeros_like(inp2_dev)
 
     if not args.skip_test:
+        print(f"v2 inp shape: {inp2_dev.shape}")
         sdfg2(inp=inp2_dev, out=val2_dev)
 
         assert cp.allclose(cp.transpose(ref_dev), val2_dev)
@@ -219,11 +234,16 @@ if __name__ == "__main__":
     sdfg3 = map_loop.to_sdfg(simplify=True)
     sdfg3.name = 'map_loop3'
     perm = change_strides(sdfg3, (KLEV, KLEV+1))
+    print(f"change strides: {perm}")
     sdfg3.arrays['inp'].storage = dace.StorageType.GPU_Global
     sdfg3.arrays['tmp'].storage = dace.StorageType.GPU_Global
     sdfg3.arrays['out'].storage = dace.StorageType.GPU_Global
     # auto_optimize(sdfg3, dace.DeviceType.GPU)
     sdfg3.apply_gpu_transformations()
+
+    for node in sdfg3.all_nodes_recursive():
+        if isinstance(node[0], MapEntry):
+            node[0].label = f"v3_{node[0].label}"
 
     input3 = {'inp': inp}
     inp3 = permute(input3, perm)['inp']
@@ -231,6 +251,7 @@ if __name__ == "__main__":
     val_dev = cp.zeros_like(inp_dev)
 
     if not args.skip_test:
+        print(f"v3 inp shape: {inp_dev.shape}")
         sdfg3(inp=inp_dev, out=val_dev)
 
         value3 = {'out': val_dev}
@@ -253,12 +274,12 @@ if __name__ == "__main__":
 
     if args.loop in ['1', 'all']:
         csdfg = sdfg.compile()
-        print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
+        print(benchmark(func, (inp_dev, val_dev), n_repeat=n_repeat, n_warmup=n_warmup))
 
     if args.loop in ['2', 'all']:
         csdfg = sdfg2.compile()
-        print(benchmark(func, (inp2_dev, val2_dev), n_repeat=10, n_warmup=10))
+        print(benchmark(func, (inp2_dev, val2_dev), n_repeat=n_repeat, n_warmup=n_warmup))
 
     if args.loop in ['3', 'all']:
         csdfg = sdfg3.compile()
-        print(benchmark(func, (inp_dev, val_dev), n_repeat=10, n_warmup=10))
+        print(benchmark(func, (inp_dev, val_dev), n_repeat=n_repeat, n_warmup=n_warmup))
