@@ -1961,8 +1961,6 @@ void  *{kname}_args[] = {{ {kargs} }};
         # generator)
         callsite_stream.write('{', sdfg, state_id, scope_entry)
 
-        open_if = False
-
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
                 raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
@@ -2004,6 +2002,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                 state_id, scope_entry)
             open_if = True
 
+            # NOTE: Dynamic map inputs must be defined both outside and inside the dynamic Map schedule.
+            # They define inside the schedule the bounds of the any nested Maps.
+            # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
+            # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
@@ -2047,6 +2049,11 @@ void  *{kname}_args[] = {{ {kargs} }};
                                           bsize=total_block_size,
                                           kmapIdx=outer_scope.map.params[0],
                                           param=dynmap_var), sdfg, state_id, scope_entry)
+            
+            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                callsite_stream.write(
+                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
             
             if dynmap_step != 1:
                 callsite_stream.write(f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', sdfg, state_id, scope_entry)
