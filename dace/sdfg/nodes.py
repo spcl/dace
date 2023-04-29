@@ -904,15 +904,15 @@ class ForLoopEntry(EntryNode):
         super(ForLoopEntry, self).__init__(dynamic_inputs or set())
         if map is None:
             raise ValueError("ForLoop for ForLoopEntry can not be None.")
-        self._loop = loop
+        self._map = loop
 
     @staticmethod
-    def loop_type():
+    def map_type():
         return ForLoop
 
     @classmethod
     def from_json(cls, json_obj, context=None):
-        l = cls.loop_type()("", [], [])
+        l = cls.map_type()("", [], [])
         ret = cls(loop=l)
 
         try:
@@ -927,7 +927,7 @@ class ForLoopEntry(EntryNode):
 
             if nid is not None:
                 exit_node = context['sdfg_state'].node(nid)
-                exit_node.loop = l
+                exit_node.map = l
         except graph.NodeNotFoundError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
@@ -936,27 +936,27 @@ class ForLoopEntry(EntryNode):
         return ret
 
     @property
-    def loop(self):
-        return self._loop
+    def map(self):
+        return self._map
 
     @map.setter
-    def loop(self, val):
-        self._loop = val
+    def map(self, val):
+        self._map = val
 
     def __str__(self):
-        return str(self.loop)
+        return str(self.map)
 
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        return set(k for k in self._loop.range.free_symbols if k not in dyn_inputs)
+        return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
 
         result = {}
         # Add loop params
-        for p, rng in zip(self._loop.params, self._loop.range):
+        for p, rng in zip(self._map.params, self._map.range):
             result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
 
         # Add dynamic inputs
@@ -981,10 +981,10 @@ class ForLoopExit(ExitNode):
         super(ForLoopExit, self).__init__()
         if loop is None:
             raise ValueError("ForLoop for ForLoopExit can not be None.")
-        self._loop = loop
+        self._map = loop
 
     @staticmethod
-    def loop_type():
+    def map_type():
         return ForLoop
 
     @classmethod
@@ -993,38 +993,38 @@ class ForLoopExit(ExitNode):
             # Set map reference to map entry
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
-            ret = cls(loop=entry_node.loop)
+            ret = cls(loop=entry_node.map)
         except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
-            ret = cls(cls.loop_type()('_', [], []))
+            ret = cls(cls.map_type()('_', [], []))
 
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 
     @property
-    def loop(self):
-        return self._loop
+    def map(self):
+        return self._map
 
     @map.setter
-    def loop(self, val):
-        self._loop = val
+    def map(self, val):
+        self._map = val
 
     @property
     def schedule(self):
-        return self._loop.schedule
+        return self._map.schedule
 
     @schedule.setter
     def schedule(self, val):
-        self._loop.schedule = val
+        self._map.schedule = val
 
     @property
     def label(self):
-        return self._loop.label
+        return self._map.label
 
     def __str__(self):
-        return str(self.loop)
+        return str(self.map)
 
 
 @make_properties
@@ -1080,9 +1080,9 @@ class ForLoop(object):
                  label,
                  params,
                  ndrange,
-                 schedule=dtypes.ScheduleType.Default,
+                 schedule=dtypes.ScheduleType.Sequential,
                  unroll=False,
-                 collapse=1,
+                #  collapse=1,
                  fence_instrumentation=False,
                  debuginfo=None):
         super(ForLoop, self).__init__()
@@ -1091,7 +1091,7 @@ class ForLoop(object):
         self.label = label
         self.schedule = schedule
         self.unroll = unroll
-        self.collapse = 1
+        # self.collapse = 1
         self.params = params
         self.range = ndrange
         self.debuginfo = debuginfo
@@ -1115,7 +1115,7 @@ class ForLoop(object):
 
 
 # Indirect Map properties to MapEntry and MapExit
-ForLoopEntry = indirect_properties(ForLoop, lambda obj: obj.loop)(ForLoopEntry)
+ForLoopEntry = indirect_properties(ForLoop, lambda obj: obj.map)(ForLoopEntry)
 
 # ------------------------------------------------------------------------------
 
