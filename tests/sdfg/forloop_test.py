@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests ForLoop, ForLoopEntry, and ForLoopExit nodes in SDFGs."""
+""" Tests ForLoop, ForLoopEntry, and ForLoopExit nodes in SDFGs. """
+
 import dace
 import numpy as np
 
