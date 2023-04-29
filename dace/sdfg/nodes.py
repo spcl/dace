@@ -894,6 +894,233 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 
 
 @dace.serialize.serializable
+class ForLoopEntry(EntryNode):
+    """ Node that opens ForLoop scope.
+        
+        :see: ForLoop
+    """
+
+    def __init__(self, loop: 'ForLoop', dynamic_inputs=None):
+        super(ForLoopEntry, self).__init__(dynamic_inputs or set())
+        if map is None:
+            raise ValueError("ForLoop for ForLoopEntry can not be None.")
+        self._loop = loop
+
+    @staticmethod
+    def loop_type():
+        return ForLoop
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        l = cls.loop_type()("", [], [])
+        ret = cls(loop=l)
+
+        try:
+            # Connection of the scope nodes
+            try:
+                nid = int(json_obj['scope_exit'])
+            except KeyError:
+                # Backwards compatibility
+                nid = int(json_obj['scope_exits'][0])
+            except TypeError:
+                nid = None
+
+            if nid is not None:
+                exit_node = context['sdfg_state'].node(nid)
+                exit_node.loop = l
+        except graph.NodeNotFoundError:  # Exit node has a higher node ID
+            # Connection of the scope nodes handled in MapExit
+            pass
+
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
+    @property
+    def loop(self):
+        return self._loop
+
+    @map.setter
+    def loop(self, val):
+        self._loop = val
+
+    def __str__(self):
+        return str(self.loop)
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        return set(k for k in self._loop.range.free_symbols if k not in dyn_inputs)
+
+    def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
+        from dace.codegen.tools.type_inference import infer_expr_type
+
+        result = {}
+        # Add loop params
+        for p, rng in zip(self._loop.params, self._loop.range):
+            result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
+
+        # Add dynamic inputs
+        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+
+        # Try to get connector type from connector
+        for e in state.in_edges(self):
+            if e.dst_conn in dyn_inputs:
+                result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
+
+        return result
+
+
+@dace.serialize.serializable
+class ForLoopExit(ExitNode):
+    """ Node that closes a ForLoop scope.
+        
+        :see: ForLoop
+    """
+
+    def __init__(self, loop: 'ForLoop'):
+        super(ForLoopExit, self).__init__()
+        if loop is None:
+            raise ValueError("ForLoop for ForLoopExit can not be None.")
+        self._loop = loop
+
+    @staticmethod
+    def loop_type():
+        return ForLoop
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        try:
+            # Set map reference to map entry
+            entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
+
+            ret = cls(loop=entry_node.loop)
+        except (IndexError, TypeError, graph.NodeNotFoundError):
+            # Entry node has a higher ID than exit node
+            # Connection of the scope nodes handled in MapEntry
+            ret = cls(cls.loop_type()('_', [], []))
+
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    @property
+    def loop(self):
+        return self._loop
+
+    @map.setter
+    def loop(self, val):
+        self._loop = val
+
+    @property
+    def schedule(self):
+        return self._loop.schedule
+
+    @schedule.setter
+    def schedule(self, val):
+        self._loop.schedule = val
+
+    @property
+    def label(self):
+        return self._loop.label
+
+    def __str__(self):
+        return str(self.loop)
+
+
+@make_properties
+class ForLoop(object):
+    """ A ForLoop is a two-node representation of parametric graphs, containing an integer set by which the contents
+        (nodes dominated by an entry node and post-dominated by an exit node) are replicated sequentially, following
+        the order of the integer set.
+
+        TODO: Are there any schedules, other than the Sequential schedule, that can be used for ForLoops?
+        ForLoops contain a `schedule` property, which specifies how the scope should be scheduled (execution order).
+        Code generators can use the schedule property to generate appropriate code, e.g., GPU kernels.
+    """
+
+    # List of (editable) properties
+    label = Property(dtype=str, desc="Label of the ForLoop")
+    params = ListProperty(element_type=str, desc="ForLoop parameters")
+    range = RangeProperty(desc="Ranges of ForLoop parameters", default=sbs.Range([]))
+    schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="ForLoop schedule", default=dtypes.ScheduleType.Sequential)
+    unroll = Property(dtype=bool, desc="ForLoop unrolling")
+    # TODO: Does collapse make sense for ForLoops?
+    # collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
+    debuginfo = DebugInfoProperty()
+    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
+
+    # omp_num_threads = Property(dtype=int,
+    #                            default=0,
+    #                            desc="Number of OpenMP threads executing the Map",
+    #                            optional=True,
+    #                            optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+    # omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
+    #                             default=dtypes.OMPScheduleType.Default,
+    #                             desc="OpenMP schedule {static, dynamic, guided}",
+    #                             optional=True,
+    #                             optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+    # omp_chunk_size = Property(dtype=int,
+    #                           default=0,
+    #                           desc="OpenMP schedule chunk size",
+    #                           optional=True,
+    #                           optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+
+    # gpu_block_size = ListProperty(element_type=int,
+    #                               default=None,
+    #                               allow_none=True,
+    #                               desc="GPU kernel block size",
+    #                               optional=True,
+    #                               optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
+    def __init__(self,
+                 label,
+                 params,
+                 ndrange,
+                 schedule=dtypes.ScheduleType.Default,
+                 unroll=False,
+                 collapse=1,
+                 fence_instrumentation=False,
+                 debuginfo=None):
+        super(ForLoop, self).__init__()
+
+        # Assign properties
+        self.label = label
+        self.schedule = schedule
+        self.unroll = unroll
+        self.collapse = 1
+        self.params = params
+        self.range = ndrange
+        self.debuginfo = debuginfo
+        self._fence_instrumentation = fence_instrumentation
+
+    def __str__(self):
+        return self.label + "[" + ", ".join(
+            ["{}={}".format(i, r)
+             for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]) + "]"
+
+    def __repr__(self):
+        return type(self).__name__ + ' (' + self.__str__() + ')'
+
+    def validate(self, sdfg, state, node):
+        if not dtypes.validate_name(self.label):
+            raise NameError('Invalid ForLoop name "%s"' % self.label)
+
+    def get_param_num(self):
+        """ Returns the number of ForLoop dimension parameters/symbols. """
+        return len(self.params)
+
+
+# Indirect Map properties to MapEntry and MapExit
+ForLoopEntry = indirect_properties(ForLoop, lambda obj: obj.loop)(ForLoopEntry)
+
+# ------------------------------------------------------------------------------
+
+
+@dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         
