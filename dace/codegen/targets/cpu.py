@@ -1802,6 +1802,26 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(outer_stream.getvalue())
 
         callsite_stream.write('}', sdfg, state_id, node)
+    
+    def _generate_ForLoopEntry(self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.ForLoopEntry,
+        function_stream,
+        callsite_stream,
+    ):
+        self._generate_MapEntry(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+    
+    def _generate_ForLoopExit(self,
+        sdfg,
+        dfg,
+        state_id,
+        node: nodes.ForLoopExit,
+        function_stream,
+        callsite_stream,
+    ):
+        self._generate_MapExit(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def _generate_ConsumeEntry(
         self,
