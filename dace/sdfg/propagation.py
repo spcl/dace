@@ -1337,7 +1337,7 @@ def propagate_memlet(dfg_state,
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset
-    if isinstance(entry_node, nodes.MapEntry):
+    if isinstance(entry_node, (nodes.MapEntry, nodes.ForLoopEntry)):
         mapnode = entry_node.map
         return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
 
