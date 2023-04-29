@@ -1199,6 +1199,31 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         map_exit = nd.MapExit(map)
         self.add_nodes_from([map_entry, map_exit])
         return map_entry, map_exit
+    
+    def add_forloop(
+        self,
+        name,
+        ndrange: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
+        schedule=dtypes.ScheduleType.Sequential,
+        unroll=False,
+        debuginfo=None,
+    ) -> Tuple[nd.ForLoopEntry, nd.ForLoopExit]:
+        """ Adds a ForLoopEntry and ForLoopExit.
+
+            :param name:      ForLoop label
+            :param ndrange:   Mapping between range variable names and their
+                              subsets (parsed from strings)
+            :param schedule:  Map schedule type
+            :param unroll:    True if should unroll the map in code generation
+
+            :return: (forloop_entry, forloop_exit) node 2-tuple
+        """
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
+        forloop = nd.ForLoop(name, *_make_iterators(ndrange), schedule=schedule, unroll=unroll, debuginfo=debuginfo)
+        forloop_entry = nd.ForLoopEntry(forloop)
+        forloop_exit = nd.ForLoopExit(forloop)
+        self.add_nodes_from([forloop_entry, forloop_exit])
+        return forloop_entry, forloop_exit
 
     def add_consume(self,
                     name,
@@ -1393,6 +1418,163 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             edge.data.try_initialize(self.parent, self, edge)
 
         return tasklet, map_entry, map_exit
+    
+    def add_forlooped_tasklet(self,
+                           name: str,
+                           loop_ranges: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str,
+                                                                                                      sbs.Subset]]]],
+                           inputs: Dict[str, mm.Memlet],
+                           code: str,
+                           outputs: Dict[str, mm.Memlet],
+                           schedule=dtypes.ScheduleType.Sequential,
+                           unroll_loop=False,
+                           location=None,
+                           language=dtypes.Language.Python,
+                           debuginfo=None,
+                           external_edges=False,
+                           input_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+                           output_nodes: Optional[Dict[str, nd.AccessNode]] = None,
+                           propagate=True) -> Tuple[nd.Tasklet, nd.ForLoopEntry, nd.ForLoopExit]:
+        """ Convenience function that adds a ForLoopEntry, tasklet, ForLoopExit,
+            and the respective edges to external arrays.
+
+            :param name:       Tasklet (and wrapping map) name
+            :param loop_ranges: Mapping between variable names and their
+                               subsets
+            :param inputs:     Mapping between input local variable names and
+                               their memlets
+            :param code:       Code (written in `language`)
+            :param outputs:    Mapping between output local variable names and
+                               their memlets
+            :param schedule:   ForLoop schedule
+            :param unroll_loop: True if ForLoop should be unrolled in code
+                               generation
+            :param location:   Execution location indicator.
+            :param language:   Programming language in which the code is
+                               written
+            :param debuginfo:  Source line information
+            :param external_edges: Create external access nodes and connect
+                                   them with memlets automatically
+            :param input_nodes: Mapping between data names and corresponding
+                                input nodes to link to, if external_edges is
+                                True.
+            :param output_nodes: Mapping between data names and corresponding
+                                 output nodes to link to, if external_edges is
+                                 True.
+            :param propagate: If True, computes outer memlets via propagation.
+                              False will run faster but the SDFG may not be
+                              semantically correct.
+            :return: tuple of (tasklet, forloop_entry, forloop_exit)
+        """
+        loop_name = name + "_forloop"
+        debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
+
+        # Create appropriate dictionaries from inputs
+        tinputs = {k: None for k, v in inputs.items()}
+        toutputs = {k: None for k, v in outputs.items()}
+
+        tasklet = nd.Tasklet(
+            name,
+            tinputs,
+            toutputs,
+            code,
+            language=language,
+            location=location,
+            debuginfo=debuginfo,
+        )
+        forloop = nd.ForLoop(loop_name, *_make_iterators(loop_ranges), schedule=schedule, unroll=unroll_loop, debuginfo=debuginfo)
+        forloop_entry = nd.ForLoopEntry(forloop)
+        forloop_exit = nd.ForLoopExit(forloop)
+        self.add_nodes_from([forloop_entry, tasklet, forloop_exit])
+
+        # Create access nodes
+        inpdict = {}
+        outdict = {}
+        if external_edges:
+            input_nodes = input_nodes or {}
+            output_nodes = output_nodes or {}
+            input_data = dtypes.deduplicate([memlet.data for memlet in inputs.values()])
+            output_data = dtypes.deduplicate([memlet.data for memlet in outputs.values()])
+            for inp in sorted(input_data):
+                if inp in input_nodes:
+                    inpdict[inp] = input_nodes[inp]
+                else:
+                    inpdict[inp] = self.add_read(inp)
+            for out in sorted(output_data):
+                if out in output_nodes:
+                    outdict[out] = output_nodes[out]
+                else:
+                    outdict[out] = self.add_write(out)
+
+        edges = []
+
+        # Connect inputs from map to tasklet
+        tomemlet = {}
+        for name, memlet in sorted(inputs.items()):
+            # Set memlet local name
+            memlet.name = name
+            # Add internal memlet edge
+            edges.append(self.add_edge(forloop_entry, None, tasklet, name, memlet))
+            tomemlet[memlet.data] = memlet
+
+        # If there are no inputs, add empty memlet
+        if len(inputs) == 0:
+            self.add_edge(forloop_entry, None, tasklet, None, mm.Memlet())
+
+        if external_edges:
+            for inp, inpnode in sorted(inpdict.items()):
+                # Add external edge
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[inp], forloop_entry, True)
+                else:
+                    outer_memlet = tomemlet[inp]
+                edges.append(self.add_edge(inpnode, None, forloop_entry, "IN_" + inp, outer_memlet))
+
+                # Add connectors to internal edges
+                for e in self.out_edges(forloop_entry):
+                    if e.data.data == inp:
+                        e._src_conn = "OUT_" + inp
+
+                # Add connectors to map entry
+                forloop_entry.add_in_connector("IN_" + inp)
+                forloop_entry.add_out_connector("OUT_" + inp)
+
+        # Connect outputs from tasklet to map
+        tomemlet = {}
+        for name, memlet in sorted(outputs.items()):
+            # Set memlet local name
+            memlet.name = name
+            # Add internal memlet edge
+            edges.append(self.add_edge(tasklet, name, forloop_exit, None, memlet))
+            tomemlet[memlet.data] = memlet
+
+        # If there are no outputs, add empty memlet
+        if len(outputs) == 0:
+            self.add_edge(tasklet, None, forloop_exit, None, mm.Memlet())
+
+        if external_edges:
+            for out, outnode in sorted(outdict.items()):
+                # Add external edge
+                if propagate:
+                    outer_memlet = propagate_memlet(self, tomemlet[out], forloop_exit, True)
+                else:
+                    outer_memlet = tomemlet[out]
+                edges.append(self.add_edge(forloop_exit, "OUT_" + out, outnode, None, outer_memlet))
+
+                # Add connectors to internal edges
+                for e in self.in_edges(forloop_exit):
+                    if e.data.data == out:
+                        e._dst_conn = "IN_" + out
+
+                # Add connectors to map entry
+                forloop_exit.add_in_connector("IN_" + out)
+                forloop_exit.add_out_connector("OUT_" + out)
+
+        # Try to initialize memlets
+        for edge in edges:
+            edge.data.try_initialize(self.parent, self, edge)
+
+        return tasklet, forloop_entry, forloop_exit
 
     def add_reduce(
         self,
