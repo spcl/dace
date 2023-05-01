@@ -607,7 +607,8 @@ class ExpandTransformation(PatternTransformation):
                                               node.out_connectors,
                                               name=node.name,
                                               schedule=node.schedule,
-                                              debuginfo=node.debuginfo)
+                                              debuginfo=node.debuginfo,
+                                              device=node.device)
         elif isinstance(expansion, nd.CodeNode):
             expansion.debuginfo = node.debuginfo
             if isinstance(expansion, nd.NestedSDFG):
@@ -618,12 +619,15 @@ class ExpandTransformation(PatternTransformation):
                 nsdfg.update_sdfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
 
-                # Update schedule to match library node schedule
+                # Update device and schedule to match library node schedule
+                nsdfg.device = node.device
                 nsdfg.schedule = node.schedule
 
             elif isinstance(expansion, (nd.EntryNode, nd.LibraryNode)):
-                if expansion.schedule is ScheduleType.Default:
+                if expansion.schedule == ScheduleType.Default:
                     expansion.schedule = node.schedule
+                if isinstance(expansion, nd.LibraryNode):
+                    expansion.device = node.device
         else:
             raise TypeError("Node expansion must be a CodeNode or an SDFG")
 

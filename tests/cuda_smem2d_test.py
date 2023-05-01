@@ -74,7 +74,7 @@ def test_gpu_2localstorage():
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_smem2d_gpu_localstorage"
     assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage, InLocalStorage],
-                                      options=[{}, {
+                                      options=[{'sequential_innermaps': False}, {
                                           'array': 'gpu_A'
                                       }, {
                                           'array': 'gpu_B'
@@ -115,6 +115,7 @@ def test_gpu_2shared_for():
             break
     transformation = GPUTransformMap()
     transformation.setup_match(sdfg, 0, 0, {GPUTransformMap.map_entry: map_entry}, 0)
+    transformation.sequential_innermaps = False
     transformation.apply(state, sdfg)
 
     A = np.random.rand(128, 64)

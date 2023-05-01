@@ -897,6 +897,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
+            # Set SDFG default device
+            sdfg.device = self.device
+
             # TODO: Add to parsed SDFG cache
 
             # Set regenerate and recompile flags

@@ -1117,6 +1117,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         schedule=dtypes.ScheduleType.Default,
         location=None,
         debuginfo=None,
+        device=None,
     ):
         """ Adds a nested SDFG to the SDFG state. """
         if name is None:
@@ -1147,6 +1148,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.add_node(s)
 
         sdfg.parent_nsdfg_node = s
+
+        if device is not None:
+            sdfg.device = device
 
         # Add "default" undefined symbols if None are given
         symbols = sdfg.free_symbols

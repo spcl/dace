@@ -65,8 +65,6 @@ class ScheduleType(aenum.AutoNumberEnum):
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
-    #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
-    GPU_Default = ()
     GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
@@ -185,7 +183,6 @@ class TilingType(aenum.AutoNumberEnum):
 # the surrounding schedule will be used.
 SCOPEDEFAULT_STORAGE = {
     ScheduleType.CPU_Multicore: StorageType.Register,
-    ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
@@ -194,12 +191,20 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
-DEFAULT_TOPLEVEL_STORAGE = StorageType.CPU_Heap
+
+# Maps from DeviceType to its default top-level storage type
+DEFAULT_TOPLEVEL_STORAGE = {
+    DeviceType.CPU: StorageType.CPU_Heap,
+    DeviceType.GPU: StorageType.GPU_Global,
+    DeviceType.FPGA: StorageType.FPGA_Global,
+    DeviceType.Snitch: StorageType.Snitch_TCDM,
+}
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
 # If mapped to None or does not exist in this dictionary,
 # storage will be used to define the schedule (see ``STORAGEDEFAULT_SCHEDULE``).
 SCOPEDEFAULT_SCHEDULE = {
+    ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
@@ -209,7 +214,14 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch
 }
-DEFAULT_TOPLEVEL_SCHEDULE = ScheduleType.CPU_Multicore
+
+# Default top-level schedule type for each device type
+DEFAULT_TOPLEVEL_SCHEDULE = {
+    DeviceType.CPU: ScheduleType.CPU_Multicore,
+    DeviceType.GPU: ScheduleType.GPU_Device,
+    DeviceType.FPGA: ScheduleType.FPGA_Device,
+    DeviceType.Snitch: ScheduleType.Snitch_Multicore,
+}
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
 # If mapped to None or does not exist in this dictionary, does not affect decision.
@@ -349,6 +361,7 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -589,6 +602,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -623,6 +637,7 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -666,6 +681,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -723,6 +739,7 @@ class stringtype(pointer):
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
 
@@ -742,6 +759,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -834,6 +852,7 @@ class pyobject(opaque):
     It cannot be used inside a DaCe program, but can be passed back to other Python callbacks.
     Use with caution, and ensure the value is not removed by the garbage collector or the program will crash.
     """
+
     def __init__(self):
         super().__init__('pyobject')
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
@@ -867,6 +886,7 @@ class compiletime:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
         raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
@@ -889,6 +909,7 @@ class callback(typeclass):
     """
     Looks like ``dace.callback([None, <some_native_type>], *types)``
     """
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -1328,6 +1349,7 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
+
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1371,6 +1393,7 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data
@@ -1421,7 +1444,6 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Persistent,
             ScheduleType.GPU_ThreadBlock,
             ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
     elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
@@ -1451,21 +1473,16 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     """
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
-        return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
-        ]
+        return schedule in [ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
-        return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
-        ]
+        return schedule in [ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI]
 
     # FPGA-global memory
     if storage is StorageType.FPGA_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device
         ]
 
     # FPGA-local memory
@@ -1476,7 +1493,7 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     if storage == StorageType.GPU_Shared:
         return schedule in [
             ScheduleType.GPU_Device, ScheduleType.GPU_ThreadBlock, ScheduleType.GPU_ThreadBlock_Dynamic,
-            ScheduleType.GPU_Persistent, ScheduleType.GPU_Default
+            ScheduleType.GPU_Persistent
         ]
 
     # The rest (Registers) can be allocated everywhere

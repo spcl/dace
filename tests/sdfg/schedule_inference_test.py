@@ -34,6 +34,21 @@ def test_gpu_schedule_autodetect():
             assert node.schedule == dace.ScheduleType.GPU_Device
 
 
+def test_gpu_default_device():
+
+    @dace.program(device=dace.DeviceType.GPU)
+    def add(a: dace.float32[10, 10], b: dace.float32[10, 10]):
+        return a + b @ b
+
+    sdfg = add.to_sdfg()
+    set_default_schedule_and_storage_types(sdfg, None)
+    for array in sdfg.arrays.values():
+        assert array.storage == dace.StorageType.GPU_Global
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, (dace.nodes.LibraryNode, dace.nodes.MapEntry)):
+            assert node.schedule == dace.ScheduleType.GPU_Device
+
+
 def test_gpu_schedule_scalar_autodetect():
 
     @dace.program
@@ -177,6 +192,7 @@ def test_semi_ambiguous_schedule():
 if __name__ == '__main__':
     test_default_schedule_autodetect()
     test_gpu_schedule_autodetect()
+    test_gpu_default_device()
     test_gpu_schedule_scalar_autodetect()
     test_gpu_schedule_scalar_autodetect_2()
     test_nested_kernel_computation()

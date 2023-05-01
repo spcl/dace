@@ -367,6 +367,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                        from_json=_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
+    device = EnumProperty(dtype=dtypes.DeviceType,
+                          desc="Default device type to use in top-level schedule and storage. If None, uses parent "
+                          "SDFG's device or CPU if top-level.",
+                          default=None,
+                          allow_none=True)
+
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)

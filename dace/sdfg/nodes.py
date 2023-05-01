@@ -1223,8 +1223,12 @@ class LibraryNode(CodeNode):
                                                    allow_none=True,
                                                    desc=("Which implementation this library node will expand into."
                                                          "Must match a key in the list of possible implementations."))
-    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+    device = EnumProperty(dtype=dtypes.DeviceType,
                             desc="If set, determines the default device mapping of "
+                            "the node upon expansion, if expanded to a nested SDFG.",
+                            default=None, allow_none=True)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="If set, determines the default schedule mapping of "
                             "the node upon expansion, if expanded to a nested SDFG.",
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty()

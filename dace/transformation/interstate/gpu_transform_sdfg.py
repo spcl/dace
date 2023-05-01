@@ -299,9 +299,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
+                if isinstance(node, nodes.LibraryNode):
+                    node.device = dtypes.DeviceType.GPU
+                elif isinstance(node, nodes.NestedSDFG):
+                    node.sdfg.device = dtypes.DeviceType.GPU
+
                 if sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
+                        node.schedule = dtypes.ScheduleType.Default
                         gpu_nodes.add((state, node))
                     elif isinstance(node, nodes.EntryNode):
                         node.schedule = dtypes.ScheduleType.GPU_Device
@@ -313,6 +318,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         for nnode, _ in node.sdfg.all_nodes_recursive():
                             if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
                                 nnode.schedule = dtypes.ScheduleType.Sequential
+                            if isinstance(node, nodes.LibraryNode):
+                                node.device = dtypes.DeviceType.GPU
+                            elif isinstance(node, nodes.NestedSDFG):
+                                node.sdfg.device = dtypes.DeviceType.GPU
 
         # NOTE: The outputs of LibraryNodes, NestedSDFGs and Map that have GPU schedule must be moved to GPU memory.
         # TODO: Also use GPU-shared and GPU-register memory when appropriate.
@@ -364,7 +373,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
                             if (not scalar_output
                                     or (csdfg.parent is not None
-                                        and csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
+                                        and csdfg.device == dtypes.DeviceType.GPU)):
                                 global_code_nodes[state].append(node)
                                 gpu_scalars.update({k: None for k in scalars})
                                 changed = True

@@ -142,6 +142,10 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
     is superseded if the schedule is specified in ``dtypes.SCOPEDEFAULT_SCHEDULE`` (e.g.,
     a map nested in a CPU multi-core map will by default run within a single thread).
 
+    If no default schedule is found while traversing the parent scopes, the chosen schedule will be
+    determined based on the SDFG's device, as specified in ``dtypes.DEFAULT_TOPLEVEL_STORAGE`` and
+    ``dtypes.DEFAULT_TOPLEVEL_SCHEDULE``.
+
     May raise ``InvalidSDFGNodeError`` if a default scope is ambiguous based on surrounding
     storage types.
 
@@ -160,6 +164,13 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
     """
     parent_schedules = parent_schedules or [None]
     if isinstance(scope, SDFG):
+        # Set device for default top-level schedules and storages
+        if scope.device is None:
+            if scope.parent_sdfg is not None and scope.parent_sdfg.device is not None:
+                scope.device = scope.parent_sdfg.device
+            else:
+                scope.device = dtypes.DeviceType.CPU
+
         for state in scope.nodes():
             set_default_schedule_and_storage_types(state,
                                                    parent_schedules,
@@ -267,7 +278,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
 
     # If no valid schedules are found and there are no conflicts with storage, use default top-level schedule
     if child_schedule is None:
-        child_schedule = dtypes.DEFAULT_TOPLEVEL_SCHEDULE
+        child_schedule = dtypes.DEFAULT_TOPLEVEL_SCHEDULE[sdfg.device]
 
     return child_schedule
 
@@ -319,11 +330,11 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
             parent_schedules = parent_schedules + [dtypes.ScheduleType.GPU_ThreadBlock]
     # End of special case
 
+    sdfg = state.parent
     child_storage = _determine_child_storage(parent_schedules)
     if child_storage is None:
-        child_storage = dtypes.DEFAULT_TOPLEVEL_STORAGE
+        child_storage = dtypes.DEFAULT_TOPLEVEL_STORAGE[sdfg.device]
 
-    sdfg = state.parent
     exit_nodes = [state.exit_node(n) for n in child_nodes[parent_node] if isinstance(n, nodes.EntryNode)]
     scope_subgraph = SubgraphView(state, child_nodes[parent_node] + exit_nodes)
 
