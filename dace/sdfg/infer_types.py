@@ -201,7 +201,8 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
         else:
             nscope = nnode
         set_default_schedule_and_storage_types(nscope,
-                                               parent_schedules + [nnode.schedule],
+                                               parent_schedules +
+                                               ([nnode.schedule] if not isinstance(nnode, nodes.NestedSDFG) else []),
                                                use_parent_schedule=False,
                                                state=state,
                                                child_nodes=child_nodes)
@@ -228,7 +229,7 @@ def _determine_child_storage(parent_schedules: List[dtypes.ScheduleType]) -> Opt
 def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Optional[dtypes.ScheduleType]:
     child_schedule = None
     memlets: Set[str] = set()
-    if node is None:  # State
+    if node is None or isinstance(node, nodes.NestedSDFG):  # State or nested SDFG
         pass
     elif isinstance(node, nodes.EntryNode):
         # Test for storage of the scope by collecting all neighboring memlets
@@ -259,14 +260,14 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     elif len(constraints) > 1:
         raise validation.InvalidSDFGNodeError(
             f'Cannot determine default schedule for node {node}. '
-            'Multiple arrays that point to it say that it should be the following schedules:'
+            'Multiple arrays that point to it say that it should be the following schedules: '
             f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 
-    # If no valid schedules are found and there are no conflicts with storage, use Sequential
+    # If no valid schedules are found and there are no conflicts with storage, use default top-level schedule
     if child_schedule is None:
-        child_schedule = dtypes.ScheduleType.Sequential
+        child_schedule = dtypes.DEFAULT_TOPLEVEL_SCHEDULE
 
     return child_schedule
 
@@ -320,25 +321,55 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
 
     child_storage = _determine_child_storage(parent_schedules)
     if child_storage is None:
-        child_storage = dtypes.StorageType.Register
+        child_storage = dtypes.DEFAULT_TOPLEVEL_STORAGE
 
     sdfg = state.parent
-    scope_subgraph = SubgraphView(state, child_nodes[parent_node])
+    exit_nodes = [state.exit_node(n) for n in child_nodes[parent_node] if isinstance(n, nodes.EntryNode)]
+    scope_subgraph = SubgraphView(state, child_nodes[parent_node] + exit_nodes)
 
     # Loop over access nodes
     for node in scope_subgraph.nodes():
         if not isinstance(node, nodes.AccessNode):
             continue
         desc = node.desc(sdfg)
-        if desc.storage == dtypes.StorageType.Default:
+        # If not transient in a nested SDFG, take storage from parent, regardless of current type
+        if not desc.transient and sdfg.parent is not None:
+            desc.storage = _get_storage_from_parent(node.data, sdfg)
+        elif desc.storage == dtypes.StorageType.Default:
             desc.storage = child_storage
 
     # Take care of code->code edges that do not have access nodes
     for edge in scope_subgraph.edges():
         if not edge.data.is_empty():
             desc = sdfg.arrays[edge.data.data]
-            if desc.storage == dtypes.StorageType.Default:
+            # If not transient in a nested SDFG, take storage from parent, regardless of current type
+            if not desc.transient and sdfg.parent is not None:
+                desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
+            elif desc.storage == dtypes.StorageType.Default:
                 desc.storage = child_storage
+
+
+def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
+    """
+    Retrieves the storage type of an array from its parent SDFG.
+
+    :param data_name: The name of the data descriptor.
+    :param sdfg: The parent SDFG.
+    :return: The storage type of the data descriptor.
+    """
+    nsdfg_node = sdfg.parent_nsdfg_node
+    parent_state = sdfg.parent
+    parent_sdfg = parent_state.parent
+
+    # Find data descriptor in parent SDFG
+    if data_name in nsdfg_node.in_connectors:
+        e = next(iter(parent_state.in_edges_by_connector(nsdfg_node, data_name)))
+        return parent_sdfg.arrays[e.data.data].storage
+    elif data_name in nsdfg_node.out_connectors:
+        e = next(iter(parent_state.out_edges_by_connector(nsdfg_node, data_name)))
+        return parent_sdfg.arrays[e.data.data].storage
+
+    raise ValueError(f'Could not find data descriptor {data_name} in parent SDFG')
 
 
 def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:

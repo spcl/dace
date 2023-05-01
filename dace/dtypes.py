@@ -184,7 +184,6 @@ class TilingType(aenum.AutoNumberEnum):
 # If mapped to None or does not exist in this dictionary,
 # the surrounding schedule will be used.
 SCOPEDEFAULT_STORAGE = {
-    None: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
@@ -195,6 +194,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
     ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
+DEFAULT_TOPLEVEL_STORAGE = StorageType.CPU_Heap
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
 # If mapped to None or does not exist in this dictionary,
@@ -208,12 +208,14 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch
 }
+DEFAULT_TOPLEVEL_SCHEDULE = ScheduleType.CPU_Multicore
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.
 # If mapped to None or does not exist in this dictionary, does not affect decision.
 # Scalar data containers also do not affect this decision.
 STORAGEDEFAULT_SCHEDULE = {
     StorageType.CPU_Heap: ScheduleType.CPU_Multicore,
+    StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
     StorageType.GPU_Global: ScheduleType.GPU_Device,
     StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
     StorageType.FPGA_Global: ScheduleType.FPGA_Device,
