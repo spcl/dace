@@ -24,7 +24,8 @@ from data import get_program_parameters_data, get_testing_parameters_data, get_i
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
 def read_source(filename: str, extension: str = 'f90') -> str:
     source = None
-    with open(os.path.join(os.path.split(os.path.dirname(__file__))[0], 'fortran_programs', f'{filename}.{extension}'),
+    with open(os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], 'fortran_programs',
+                           f'{filename}.{extension}'),
               'r') as file:
         source = file.read()
     assert source
@@ -182,7 +183,7 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     :return: Dictionary with information about programs
     :rtype: Dict[str, Dict]
     """
-    programs_file = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'programs.json')
+    programs_file = os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], 'programs.json')
     with open(programs_file) as file:
         programs_data = json.load(file)
 
@@ -201,11 +202,11 @@ def get_results_dir(folder_name: str = 'results') -> str:
     :return: Path to the directory
     :rtype: str
     """
-    return os.path.join(os.path.split(os.path.dirname(__file__))[0], folder_name)
+    return os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], folder_name)
 
 
 counter = 0
-graphs_dir = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'sdfg_graphs')
+graphs_dir = os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], 'sdfg_graphs')
 
 
 def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
@@ -344,6 +345,11 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :param use_my_auto_opt: Flag to control if my custon auto_opt should be used, defaults to True
     :type use_my_auto_opt: bool, optional
     """
+
+    for k, v in sdfg.arrays.items():
+        if not v.transient and type(v) == dace.data.Array:
+            v.storage = dace.dtypes.StorageType.GPU_Global
+
     # avoid cyclic dependency
     from my_auto_opt import auto_optimize as my_auto_optimize
     if device == dace.DeviceType.GPU:
@@ -351,10 +357,6 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
             my_auto_optimize(sdfg, device)
         else:
             dace_auto_optimize(sdfg, device)
-
-    for k, v in sdfg.arrays.items():
-        if not v.transient and type(v) == dace.data.Array:
-            v.storage = dace.dtypes.StorageType.GPU_Global
 
     return sdfg
 

@@ -7,9 +7,10 @@ import json
 
 import dace
 
-from utils import get_programs_data, get_results_dir, use_cache, get_program_parameters_data
-from print_utils import print_with_time, print_results_v2, print_performance
-from execute_utils import test_program, profile_program, get_roofline_data
+from utils.general import get_programs_data, get_results_dir, use_cache, get_program_parameters_data
+from utils.print import print_with_time, print_results_v2, print_performance
+from utils.execute_dace import test_program, profile_program, get_roofline_data
+from utils.ncu import get_all_actions, action_list_to_dict, get_runtime, get_cycles
 from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
 from flop_computation import save_roofline_data
@@ -142,14 +143,19 @@ def main():
                     print(ncu_output.stdout.decode('UTF-8'))
                     print(ncu_output.stderr.decode('UTF-8'))
                 else:
-                    csv_stdout = run(['ncu', '--import', '/tmp/profile.ncu-rep', '--csv'], capture_output=True)
-                    if csv_stdout.returncode != 0:
-                        print("Failed to read the ncu report")
-                        print(csv_stdout.stdout.decode('UTF-8'))
-                        print(csv_stdout.stderr.decode('UTF-8'))
-                    else:
-                        ncu_data = read_csv(csv_stdout.stdout.decode('UTF-8').split('\n')[:-1])
-                        convert_ncu_data_into_program_measurement(ncu_data, program_data)
+                    actions = action_list_to_dict(get_all_actions('/tmp/profile.ncu-rep'))
+                    for name, action in actions.items():
+                        match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", name)
+                        if match is not None:
+                            id_triplet = tuple([int(id) for id in match.group(1).split('_')])
+                            time_measurement = program_data.get_measurement('Kernel Time', kernel=str(id_triplet))
+                            cycles_measurement = program_data.get_measurement('Kernel Cycles', kernel=str(id_triplet))
+                            if time_measurement is None:
+                                program_data.add_measurement('Kernel Time', 'seconds', kernel_name=str(id_triplet))
+                            if cycles_measurement is None:
+                                program_data.add_measurement('Kernel Cycles', 'cycles', kernel_name=str(id_triplet))
+                            time_measurement.add_value(get_runtime(action))
+                            cycles_measurement.add_value(get_cycles(action))
 
         if args.nsys:
             print_with_time("Create nsys report")

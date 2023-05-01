@@ -6,12 +6,12 @@ from typing import Tuple, Optional
 import dace
 
 from data import get_program_parameters_data, set_input_pattern
-from utils import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
-                  compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
-                  print_non_zero_percentage
+from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
+                          compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
+                          print_non_zero_percentage
 from flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurement_data import ProgramMeasurement
-from print_utils import print_with_time
+from utils.print import print_with_time
 
 RNG_SEED = 42
 
@@ -62,7 +62,7 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
 
     print_with_time(f"{program} ({program_name}) on {device} with"
                     f"{' ' if normalize_memlets else 'out '}normalize memlets")
-    outputs_d = copy_to_host(outputs_d_device)
+    outputs_d = outputs_d_device
     passes_test = compare_output(outputs_f, outputs_d, program)
     # passes_test = compare_output_all(outputs_f, outputs_d)
 

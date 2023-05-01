@@ -2,8 +2,8 @@ from argparse import ArgumentParser
 import json
 import os
 
-from utils import get_results_dir
-from print_utils import print_results_v2, print_performance, print_flop_counts, print_memory_details
+from utils.general import get_results_dir
+from utils.print import print_results_v2, print_performance, print_flop_counts, print_memory_details
 from measurement_data import MeasurementRun
 from flop_computation import read_roofline_data
 

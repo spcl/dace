@@ -191,7 +191,7 @@ SUBROUTINE inner_loops(&
                 ZSOLQA(JL,NCLDQI,NCLDQI) = ZSOLQA(JL,NCLDQI,NCLDQI)+ZCONVSRCE(JL,NCLDQI)
             ELSE
 
-            PLUDE(JL,JK)=0.0
+                PLUDE(JL,JK)=0.0
 
             ENDIF
             ! *convective snow detrainment source

@@ -3,7 +3,7 @@ import json
 import os
 import re
 
-from ncu_utils import get_achieved_bytes, get_all_actions, get_achieved_performance, get_peak_performance, \
+from utils.ncu import get_achieved_bytes, get_all_actions, get_achieved_performance, get_peak_performance, \
                       action_list_to_dict
 from flop_computation import get_number_of_bytes_2
 from measurement_data import MeasurementRun

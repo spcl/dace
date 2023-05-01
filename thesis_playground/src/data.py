@@ -2,7 +2,7 @@ import copy
 from typing import Dict, Union, Tuple, List
 import numpy as np
 from numbers import Number
-from print_utils import print_with_time
+from utils.print import print_with_time
 
 parameters = {
     'KLON': 10000,
@@ -80,11 +80,18 @@ custom_parameters = {
         'KLON': 1,
         'NPROMA': 1,
         'NBLOCKS': 10000
+    },
+    'cloudsc_vert_loop_4':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'NPROMA': 1,
+        'NBLOCKS': 1000
     }
 }
 
 # changes from the parameters dict for testing
-testing_parameters = {'KLON': 10, 'KLEV': 10, 'KFDIA': 8}
+testing_parameters = {'KLON': 10, 'KLEV': 10, 'KFDIA': 8, 'NBLOCKS': 10}
 
 
 def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
@@ -397,6 +404,13 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'end': (params['KFDIA'], params['KLEV'])
                 }
             ],
+            'cloudsc_vert_loop_4': [
+                {
+                    'variables': ['PLUDE'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
+                }
+            ]
     }
     return ranges[program]
 

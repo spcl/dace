@@ -2,8 +2,8 @@ from argparse import ArgumentParser
 
 import dace
 
-from utils import get_programs_data
-from test import compile_for_profile
+from utils.general import get_programs_data
+from utils.execute_date import compile_for_profile
 
 
 def main():

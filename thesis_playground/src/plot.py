@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import List, Callable
 
-from utils import get_results_dir
+from utils.general import get_results_dir
 from measurement_data import MeasurementRun
 
 

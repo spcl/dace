@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 from tabulate import tabulate
 
-from ncu_utils import get_action
+from utils.ncu import get_action
 
 
 def main():

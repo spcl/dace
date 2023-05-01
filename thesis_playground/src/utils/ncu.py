@@ -103,7 +103,7 @@ def get_achieved_work(action: ncu_report.IAction) -> Dict[str, int]:
     fadds = action.metric_by_name('smsp__sass_thread_inst_executed_op_fadd_pred_on.sum.per_cycle_elapsed').as_double()
     fmuls = action.metric_by_name('smsp__sass_thread_inst_executed_op_fmul_pred_on.sum.per_cycle_elapsed').as_double()
     ffmas = action.metric_by_name('smsp__sass_thread_inst_executed_op_ffma_pred_on.sum.per_cycle_elapsed').as_double()
-    cycles = action.metric_by_name('gpc__cycles_elapsed.max').as_double()
+    cycles = float(get_cycles(action))
     dadds = int(dadds * cycles)
     dmuls = int(dmuls * cycles)
     dfmas = int(dfmas * cycles)
@@ -138,3 +138,27 @@ def get_achieved_performance(action: ncu_report.IAction) -> Tuple[float, float]:
     # assume here that the unit is always nseconds
     runtime = action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
     return (W / runtime, Q / runtime)
+
+
+def get_runtime(action: ncu_report.IAction) -> float:
+    """
+    Returns the runtime in seconds
+
+    :param action: The ncu actio object
+    :type action: ncu_report.IAction
+    :return: The runtime in seconds
+    :rtype: float
+    """
+    return action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
+
+
+def get_cycles(action: ncu_report.IAction) -> int:
+    """
+    Return the number of elapsed GPU cycles
+
+    :param action: The ncu action object
+    :type action: ncu_report.IAction
+    :return: The number of cycles
+    :rtype: int
+    """
+    return action.metric_by_name('gpc__cycles_elapsed.max').as_uint64()

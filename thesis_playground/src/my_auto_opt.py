@@ -15,7 +15,7 @@ from dace.transformation.dataflow import TrivialMapElimination, MapCollapse
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf
 from dace.transformation import helpers as xfh
 
-from utils import save_graph
+from utils.general import save_graph
 
 
 def auto_optimize(sdfg: SDFG,

@@ -2,8 +2,8 @@ from argparse import ArgumentParser
 
 import dace
 
-from utils import use_cache, enable_debug_flags
-from execute_utils import run_program, test_program
+from utils.general import use_cache, enable_debug_flags
+from utils.execute_dace import run_program, test_program
 
 
 def main():

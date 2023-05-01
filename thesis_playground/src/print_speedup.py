@@ -5,7 +5,7 @@ from typing import Tuple, List, Union, Optional
 from numbers import Number
 from tabulate import tabulate
 
-from utils import get_results_dir
+from utils.general import get_results_dir
 from measurement_data import MeasurementRun, ProgramMeasurement, Measurement
 
 
