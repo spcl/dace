@@ -8,6 +8,7 @@ import pytest
 
 
 def test_default_schedule_autodetect():
+
     @dace.program
     def add(a: dace.float32[10, 10], b: dace.float32[10, 10]):
         return a + b @ b
@@ -20,6 +21,7 @@ def test_default_schedule_autodetect():
 
 
 def test_gpu_schedule_autodetect():
+
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
             b: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
@@ -33,6 +35,7 @@ def test_gpu_schedule_autodetect():
 
 
 def test_gpu_schedule_scalar_autodetect():
+
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
             b: dace.float32[10, 10] @ dace.StorageType.GPU_Global, c: dace.float32[10] @ dace.StorageType.CPU_Heap):
@@ -46,6 +49,7 @@ def test_gpu_schedule_scalar_autodetect():
 
 
 def test_gpu_schedule_scalar_autodetect_2():
+
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global, b: dace.float32):
         return a + b
@@ -58,6 +62,7 @@ def test_gpu_schedule_scalar_autodetect_2():
 
 
 def test_nested_kernel_computation():
+
     @dace.program
     def nested(a, b):
         return a @ b
@@ -77,6 +82,7 @@ def test_nested_kernel_computation():
 
 
 def test_nested_map_in_loop_schedule():
+
     @dace.program
     def top(a: dace.float64[20, 20], b: dace.float64[20, 20], c: dace.float64[20, 20]):
         for i in dace.map[0:20] @ dace.ScheduleType.GPU_Device:
@@ -94,7 +100,51 @@ def test_nested_map_in_loop_schedule():
                 assert node.schedule == dace.ScheduleType.Sequential
 
 
+def test_nested_storage():
+
+    @dace.program
+    def nested(a: dace.float64[20, 20], b: dace.float64[20, 20]):
+        tmp = dace.define_local([20, 20], dace.float64)
+        tmp[:] = a
+        b[:] = tmp
+
+    @dace.program
+    def top(a: dace.float64[20, 20], b: dace.float64[20, 20]):
+        nested(a, b)
+
+    sdfg = top.to_sdfg(simplify=False)
+
+    set_default_schedule_and_storage_types(sdfg, None)
+    for node, state in sdfg.all_nodes_recursive():
+        nsdfg = state.parent
+        if isinstance(node, dace.nodes.AccessNode):
+            assert node.desc(nsdfg).storage == dace.StorageType.CPU_Heap
+
+
+def test_nested_storage_equivalence():
+
+    @dace.program
+    def nested(a: dace.float64[20, 20], b: dace.float64[20, 20]):
+        b[:] = a
+
+    @dace.program
+    def top(a: dace.float64[20, 20] @ dace.StorageType.CPU_Heap, b: dace.float64[20, 20] @ dace.StorageType.CPU_Pinned):
+        nested(a, b)
+
+    sdfg = top.to_sdfg(simplify=False)
+
+    set_default_schedule_and_storage_types(sdfg, None)
+    for node, state in sdfg.all_nodes_recursive():
+        nsdfg = state.parent
+        if isinstance(node, dace.nodes.AccessNode):
+            if state.out_degree(node) > 0:  # Check for a in external and internal scopes
+                assert node.desc(nsdfg).storage == dace.StorageType.CPU_Heap
+            elif state.in_degree(node) > 0:  # Check for b in external and internal scopes
+                assert node.desc(nsdfg).storage == dace.StorageType.CPU_Pinned
+
+
 def test_ambiguous_schedule():
+
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global, b: dace.float32[10, 10]):
         return a + b
@@ -105,6 +155,7 @@ def test_ambiguous_schedule():
 
 
 def test_semi_ambiguous_schedule():
+
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
             b: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
@@ -130,5 +181,7 @@ if __name__ == '__main__':
     test_gpu_schedule_scalar_autodetect_2()
     test_nested_kernel_computation()
     test_nested_map_in_loop_schedule()
+    test_nested_storage()
+    test_nested_storage_equivalence()
     test_ambiguous_schedule()
     test_semi_ambiguous_schedule()
