@@ -540,6 +540,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 # Scalars written without WCR must be thread-local
                 if isinstance(node.desc(sdfg), dt.Scalar) and any(e.data.wcr is None for e in body.in_edges(node)):
                     continue
+                # Arrays written with subsets that do not depend on the loop variable must be thread-local
+                map_dependency = False
+                for e in state.in_edges(node):
+                    subset = e.data.get_dst_subset(e, state)
+                    if any(str(s) == itervar for s in subset.free_symbols):
+                        map_dependency = True
+                        break
+                if not map_dependency:
+                    continue
                 intermediate_nodes.append(node)
 
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])

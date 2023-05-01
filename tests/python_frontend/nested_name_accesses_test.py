@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dc
 import numpy as np
+import os
 
 N = dc.symbol('N')
 
@@ -138,6 +139,49 @@ def test_nested_dec_offset_access_dappy():
     assert (np.allclose(out, ref))
 
 
+def test_nested_offset_access_nested_dependency():
+    @dc.program
+    def nested_offset_access_nested_dep(inp: dc.float64[6, 5, 5]):
+        out = np.zeros((5, 5, 5), np.float64)
+        for i, j in dc.map[0:5, 0:5]:
+            out[i, j, 0] = 0.25 * (inp[i + 1, j, 1] + inp[i, j, 1])
+            for k in range(1, 4):
+                for l in range(k, 5):
+                    out[i, j, k] = 0.25 * (inp[i + 1, j, l - k + 1] + inp[i, j, l - k + 1])
+        return out
+
+    inp = np.reshape(np.arange(6 * 5 * 5, dtype=np.float64), (6, 5, 5)).copy()
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
+    with dc.config.set_temporary('testing', 'serialization', value=False):
+        out = nested_offset_access_nested_dep(inp)
+    os.environ['DACE_testing_serialization'] = last_value
+    ref = nested_offset_access_nested_dep.f(inp)
+    assert (np.allclose(out, ref))
+
+
+def test_nested_offset_access_nested_dependency_dappy():
+    @dc.program
+    def nested_offset_access_nested_dep(inp: dc.float64[6, 5, 10]):
+        out = np.zeros((5, 5, 10), np.float64)
+        for i, j in dc.map[0:5, 0:5]:
+            out[i, j, 0] = 0.25 * (inp[i + 1, j, 1] + inp[i, j, 1])
+            for k in range(1, 5):
+                for l in range(k, 4):
+                    with dc.tasklet():
+                        in1 << inp[i + 1, j, k + l + 1]
+                        in2 << inp[i, j, k + l + 1]
+                        out1 >> out[i, j, k + l]
+                        out1 = 0.25 * (in1 + in2)
+        return out
+
+    inp = np.reshape(np.arange(6 * 5 * 10, dtype=np.float64), (6, 5, 10)).copy()
+    out = nested_offset_access_nested_dep(inp)
+    ref = nested_offset_access_nested_dep.f(inp)
+    assert (np.allclose(out, ref))
+
+
+
 if __name__ == "__main__":
     test_nested_name_accesses()
     test_nested_offset_access()
@@ -146,3 +190,5 @@ if __name__ == "__main__":
     test_nested_multi_offset_access_dappy()
     test_nested_dec_offset_access()
     test_nested_dec_offset_access_dappy()
+    test_nested_offset_access_nested_dependency()
+    test_nested_offset_access_nested_dependency_dappy()
