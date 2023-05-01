@@ -9,7 +9,7 @@ import networkx as nx
 import numpy as np
 
 import dace
-from dace import config, data, dtypes
+from dace import config, data, dtypes, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
@@ -521,8 +521,17 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     continue
 
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                arrsize = desc.total_size
+                arrsize_bytes = 0
+                if not isinstance(desc.dtype, dtypes.opaque):
+                    arrsize_bytes = arrsize * desc.dtype.bytes
 
-                if desc.storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
+                # Special case for registers with static size
+                if (desc.storage == dtypes.StorageType.Register
+                        and not ((symbolic.issymbolic(arrsize, sdfg.constants)) or
+                                 ((arrsize_bytes > config.Config.get("compiler", "max_stack_array_size")) == True))):
+                    self.statestruct.append(f'{desc.dtype.ctype} __{sdfg.sdfg_id}_{name}[{sym2cpp(arrsize)}];')
+                elif desc.storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
                     self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))

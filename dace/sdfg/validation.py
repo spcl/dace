@@ -69,11 +69,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
-            # Allocation lifetime checks
-            if (desc.lifetime is dtypes.AllocationLifetime.Persistent and desc.storage is dtypes.StorageType.Register):
-                raise InvalidSDFGError(
-                    "Array %s cannot be both persistent and use Register as "
-                    "storage type. Please use a different storage location." % name, sdfg, None)
 
             # Check for valid bank assignments
             try:

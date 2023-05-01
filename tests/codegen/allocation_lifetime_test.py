@@ -122,7 +122,7 @@ def test_persistent_gpu_copy_regression():
                     lifetime=dace.AllocationLifetime.Persistent)
     nsdfg.add_array("noutput", [2, 2],
                     dace.float64,
-                    storage=dace.dtypes.StorageType.CPU_Heap,
+                    storage=dace.StorageType.CPU_Heap,
                     lifetime=dace.AllocationLifetime.Persistent)
 
     a_trans = nstate.add_access("transient_heap")
@@ -159,25 +159,6 @@ def test_persistent_gpu_transpose_regression():
     A = np.random.rand(5, 3)
     result = sdfg(A=A)
     assert np.allclose(np.transpose(A), result)
-
-
-def test_alloc_persistent_register():
-    """ Tries to allocate persistent register array. Should fail. """
-
-    @dace.program
-    def lifetimetest(input: dace.float64[N]):
-        tmp = dace.ndarray([1], input.dtype)
-        return tmp + 1
-
-    sdfg: dace.SDFG = lifetimetest.to_sdfg()
-    sdfg.arrays['tmp'].storage = dace.StorageType.Register
-    sdfg.arrays['tmp'].lifetime = dace.AllocationLifetime.Persistent
-
-    try:
-        sdfg.validate()
-        raise AssertionError('SDFG should not be valid')
-    except dace.sdfg.InvalidSDFGError:
-        print('Exception caught, test passed')
 
 
 def test_alloc_persistent():
@@ -326,25 +307,32 @@ def test_nested_view_samename():
     assert np.allclose(b, ref.reshape(10, 2) + 1)
 
 
-def test_nested_persistent():
+@pytest.mark.parametrize(["register", "symbolic"], [(False, False), (True, False), (True, True)])
+def test_nested_persistent(register, symbolic):
+    N = dace.symbol('N') if symbolic else 20
 
     @dace.program
     def nestpers(a):
-        tmp = np.ndarray([20], np.float64)
+        tmp = np.ndarray([N], np.float64)
         tmp[:] = a + 1
         return tmp
 
     @dace.program
-    def toppers(a: dace.float64[20]):
+    def toppers(a: dace.float64[N]):
         return nestpers(a)
 
     sdfg = toppers.to_sdfg(simplify=False)
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient:
+            if register:
+                arr.storage = dace.StorageType.Register
             arr.lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(20)
-    b = sdfg(a)
+    if not symbolic:
+        b = sdfg(a)
+    else:
+        b = sdfg(a, N=20)
     assert np.allclose(b, a + 1)
 
 
@@ -566,13 +554,14 @@ if __name__ == '__main__':
     test_determine_alloc_global()
     test_persistent_gpu_copy_regression()
     test_persistent_gpu_transpose_regression()
-    test_alloc_persistent_register()
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()
     test_alloc_persistent_threadlocal_naming()
     test_alloc_multistate()
     test_nested_view_samename()
-    test_nested_persistent()
+    test_nested_persistent(False, False)
+    test_nested_persistent(True, False)
+    test_nested_persistent(True, True)
     test_persistent_scalar()
     test_persistent_scalar_in_map()
     test_persistent_array_access()
