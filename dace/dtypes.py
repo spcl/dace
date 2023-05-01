@@ -200,6 +200,7 @@ DEFAULT_TOPLEVEL_STORAGE = StorageType.CPU_Heap
 # If mapped to None or does not exist in this dictionary,
 # storage will be used to define the schedule (see ``STORAGEDEFAULT_SCHEDULE``).
 SCOPEDEFAULT_SCHEDULE = {
+    ScheduleType.GPU_Device: ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,

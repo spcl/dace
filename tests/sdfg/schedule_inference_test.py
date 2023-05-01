@@ -78,7 +78,7 @@ def test_nested_kernel_computation():
     set_default_schedule_and_storage_types(sdfg, None)
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.LibraryNode):
-            assert node.schedule == dace.ScheduleType.GPU_Device
+            assert node.schedule == dace.ScheduleType.GPU_ThreadBlock
 
 
 def test_nested_map_in_loop_schedule():
@@ -97,7 +97,7 @@ def test_nested_map_in_loop_schedule():
             if get_parent_map(state, node) is None:
                 assert node.schedule == dace.ScheduleType.GPU_Device
             else:
-                assert node.schedule == dace.ScheduleType.Sequential
+                assert node.schedule == dace.ScheduleType.GPU_ThreadBlock
 
 
 def test_nested_storage():
