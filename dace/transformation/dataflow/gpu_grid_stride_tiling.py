@@ -251,7 +251,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         # from tile_inner map entry to inner map entry to facilitate MapInterchange.
         # Because we brute-forcely did sdutil.change_edge_dest(graph, i_entry, tile_i_entry)
         # TODO: what about map exit connectors?
-        data_dict = {}  # map data array to memlet
+        data_dict = {}  # map data array to new edge
         for e in graph.edges_between(o_entry, tile_i_entry):
             if e.dst_conn is not None and e.dst_conn[:3] != 'IN_' and e.src_conn[:4] == 'OUT_':
                 # trim edges
@@ -273,12 +273,6 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                 # trim connectors
                 tile_i_entry.remove_in_connector(e.dst_conn)
 
-        for e in graph.edges_between(tile_i_entry, i_entry) + graph.edges_between(o_entry, tile_i_entry):
-            # propogate edge memlet
-            path = graph.memlet_path(e)
-            edge_to_propogate = next(edge for edge in path if e is edge)
-            if edge_to_propogate is not None:
-                e.data.subset = propagate_memlet(graph, edge_to_propogate.data, tile_i_entry, True).subset
 
         # Interchange middle two maps
         MapInterchange.apply_to(sdfg, outer_map_entry=o_entry, inner_map_entry=tile_i_entry)

@@ -1,13 +1,8 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
-from numpy.random import default_rng
 from typing import List, Tuple
-from copy import deepcopy
-import numpy as np
-import cupy as cp
 import dace
-from dace.transformation.dataflow import MapInterchange, StripMining, MapReduceFusion, MapExpansion, MapToForLoop, TrivialTaskletElimination, GPUGridStridedTiling
-from dace.transformation.interstate import GPUTransformSDFG
+from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
 
 
 def copy_to_gpu(sdfg):
@@ -59,6 +54,7 @@ def test_gpu_grid_stride_tiling():
             e.data.wcr_nonatomic = True
 
     sdfg.validate()
+    sdfg.compile()
 
 
 def test_gpu_grid_stride_tiling_with_indirection():
@@ -88,6 +84,7 @@ def test_gpu_grid_stride_tiling_with_indirection():
             e.data.wcr_nonatomic = True
 
     sdfg.validate()
+    sdfg.compile()
 
 
 if __name__ == '__main__':
