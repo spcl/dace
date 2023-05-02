@@ -1,17 +1,17 @@
 from typing import Tuple, Dict, List
-import sys
-sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
-import ncu_report
+# import sys
+# sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
+from .ncu_report import IAction, load_report
 
 
-def get_action(filename: str) -> ncu_report.IAction:
+def get_action(filename: str) -> IAction:
     """
     Gets the action inside the given ncu-rep file. Assumes there is only one range and action
 
     :param filename: The path/filename of the ncu-report
     :type filename: str
     """
-    my_context = ncu_report.load_report(filename)
+    my_context = load_report(filename)
     num_ranges = my_context.num_ranges()
     if num_ranges > 1:
         print(f"WARNING: More than one range found in {filename} only taking the first")
@@ -29,7 +29,7 @@ def get_action(filename: str) -> ncu_report.IAction:
     return my_action
 
 
-def get_all_actions(filename: str) -> List[ncu_report.IAction]:
+def get_all_actions(filename: str) -> List[IAction]:
     """
     Gets all the actions inside the given ncu-rep file. Assumes there is only one range
 
@@ -37,7 +37,7 @@ def get_all_actions(filename: str) -> List[ncu_report.IAction]:
     :type filename: str
     """
     actions = []
-    my_context = ncu_report.load_report(filename)
+    my_context = load_report(filename)
     num_ranges = my_context.num_ranges()
     if num_ranges > 1:
         print(f"WARNING: More than one range found in {filename} only taking the first")
@@ -48,15 +48,15 @@ def get_all_actions(filename: str) -> List[ncu_report.IAction]:
     return actions
 
 
-def action_list_to_dict(actions: List[ncu_report.IAction]) -> Dict[str, List[ncu_report.IAction]]:
+def action_list_to_dict(actions: List[IAction]) -> Dict[str, List[IAction]]:
     """
     Converts the given list of actions into a dictionary. The keys are the action names, the values are a list of all
     actions with the same name
 
     :param actions: The list of actions
-    :type actions: List[ncu_report.IAction]
+    :type actions: List[IAction]
     :return: The dictionary with the actions
-    :rtype: Dict[str, List[ncu_report.IAction]]
+    :rtype: Dict[str, List[IAction]]
     """
     action_dict = {}
     for action in actions:
@@ -68,12 +68,12 @@ def action_list_to_dict(actions: List[ncu_report.IAction]) -> Dict[str, List[ncu
     return action_dict
 
 
-def get_peak_performance(action: ncu_report.IAction) -> Tuple[float, float]:
+def get_peak_performance(action: IAction) -> Tuple[float, float]:
     """
     Gets the peak performance given the ncu action.
 
     :param action: The ncu action object
-    :type action: ncu_report.IAction
+    :type action: IAction
     :return: The peak performance and bandwidth in flop/s and byte/s
     :rtype: Tuple[float, float]
     """
@@ -88,12 +88,12 @@ def get_peak_performance(action: ncu_report.IAction) -> Tuple[float, float]:
     return (pi * gpu_frequency, peak_beta * memory_frequency)
 
 
-def get_achieved_work(action: ncu_report.IAction) -> Dict[str, int]:
+def get_achieved_work(action: IAction) -> Dict[str, int]:
     """
     Returns the amount of work achieved as a dictionary containg the amount of double and single precision adds, muls,
     fmas and work (dW, fW)
     :param action: The ncu action object
-    :type action: ncu_report.IAction
+    :type action: IAction
     :return: Dictionary with all data, keys are: dadds, dmuls, dfmas, fadds, fmuls, ffmas, dW, fW. Values are in flop
     :rtype: Dict[str, int]
     """
@@ -116,18 +116,18 @@ def get_achieved_work(action: ncu_report.IAction) -> Dict[str, int]:
             'fW': fW}
 
 
-def get_achieved_bytes(action: ncu_report.IAction) -> int:
+def get_achieved_bytes(action: IAction) -> int:
     Q = action.metric_by_name('dram__bytes_write.sum').as_uint64()
     Q += action.metric_by_name('dram__bytes_read.sum').as_uint64()
     return Q
 
 
-def get_achieved_performance(action: ncu_report.IAction) -> Tuple[float, float]:
+def get_achieved_performance(action: IAction) -> Tuple[float, float]:
     """
     Gets the achieved performance given the ncu action.
 
     :param action: The ncu action object
-    :type action: ncu_report.IAction
+    :type action: IAction
     :return: The achieved performance and bandwidth in flop/s and byte/s
     :rtype: Tuple[float, float]
     """
@@ -140,24 +140,24 @@ def get_achieved_performance(action: ncu_report.IAction) -> Tuple[float, float]:
     return (W / runtime, Q / runtime)
 
 
-def get_runtime(action: ncu_report.IAction) -> float:
+def get_runtime(action: IAction) -> float:
     """
     Returns the runtime in seconds
 
     :param action: The ncu actio object
-    :type action: ncu_report.IAction
+    :type action: IAction
     :return: The runtime in seconds
     :rtype: float
     """
     return action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
 
 
-def get_cycles(action: ncu_report.IAction) -> int:
+def get_cycles(action: IAction) -> int:
     """
     Return the number of elapsed GPU cycles
 
     :param action: The ncu action object
-    :type action: ncu_report.IAction
+    :type action: Action
     :return: The number of cycles
     :rtype: int
     """

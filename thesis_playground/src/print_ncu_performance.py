@@ -1,19 +1,11 @@
 from argparse import ArgumentParser
-from subprocess import run
-import csv
 import os
-from typing import Dict
 from tabulate import tabulate
-import sys
 import re
 
-from utils.general import convert_to_bytes
 from utils.print import sort_by_program_number
 from utils.ncu import get_all_actions, get_achieved_performance, get_achieved_work, get_achieved_bytes, \
                       get_peak_performance, action_list_to_dict
-
-sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
-import ncu_report
 
 
 def main():

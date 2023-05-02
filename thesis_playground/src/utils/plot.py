@@ -7,10 +7,7 @@ from .general import convert_to_seconds
 from measurement_data import MeasurementRun, Measurement
 from flop_computation import FlopCount, read_roofline_data
 from .ncu import get_achieved_bytes, get_achieved_work, get_runtime
-
-import sys
-sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
-import ncu_report
+from utils.ncu_report import IAction
 
 
 def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwidth: float, max_bandwidth_unit: str,
@@ -30,12 +27,12 @@ def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwid
             rotation_mode='anchor', transform_rotates_text=True)
 
 
-def draw_ncu_points(action: ncu_report.IAction, label: str, ax: matplotlib.axis.Axis):
+def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis):
     """
     Draws points onto the given axis. Uses the Q, W and T data from the given ncu_report action object
 
     :param action: The ncu action object
-    :type action: ncu_report.IAction
+    :type action: Action
     :param label: The label of the measurement
     :type label: str
     :param ax: The axis
@@ -149,7 +146,7 @@ def plot_roofline_cycles(run_data: MeasurementRun, roofline_data: Dict[str, Tupl
 
 def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tuple[FlopCount, Number]],
                           hardware_data: Dict, ax: matplotlib.axis.Axis, points_only: bool = False,
-                          actions: Optional[Dict[str, ncu_report.IAction]] = None):
+                          actions: Optional[Dict[str, IAction]] = None):
     peak_performance = hardware_data['flop_per_second']['theoretical']
 
     ax.set_xlabel("Operational Intensity")
