@@ -39,6 +39,30 @@ def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg
 
 
 def test_gpu_grid_stride_tiling():
+    M = dace.symbol('M')
+    N = dace.symbol('N')
+
+    @dace.program
+    def dummy(A: dace.float32[M, N], B: dace.float32[M, N]):
+        for i in dace.map[1:M:2]:
+            for j in dace.map[3:N:4]:
+                A[i, j] = B[i, j] + 1.0
+
+    sdfg = dummy.to_sdfg()
+    sdfg.simplify()
+    ime, jme = find_map_entry(sdfg, ["i", "j"])
+    sdfg.apply_transformations_repeated(TrivialTaskletElimination)
+    copy_to_gpu(sdfg)
+    GPUGridStridedTiling.apply_to(sdfg, outer_map_entry=ime, inner_map_entry=jme)
+    for e, _ in sdfg.all_edges_recursive():
+        if isinstance(e.data, dace.Memlet) and e.data.wcr:
+            e.data.wcr_nonatomic = True
+
+    sdfg.validate()
+    sdfg.view()
+
+
+def test_gpu_grid_stride_tiling_with_indirection():
 
     M = dace.symbol('M')
     N = dace.symbol('N')
@@ -55,17 +79,11 @@ def test_gpu_grid_stride_tiling():
                     D_vals[j] += A_vals[j] * B[i, k] * C[k, A2_crd[j]]
 
     sdfg = sddmm.to_sdfg()
-
     sdfg.simplify()
-
     ime, jme, _ = find_map_entry(sdfg, ["i", "j", "k"])
-
     sdfg.apply_transformations_repeated(TrivialTaskletElimination)
-
     copy_to_gpu(sdfg)
     GPUGridStridedTiling.apply_to(sdfg, outer_map_entry=ime, inner_map_entry=jme)
-    sdfg.view()
-
     for e, _ in sdfg.all_edges_recursive():
         if isinstance(e.data, dace.Memlet) and e.data.wcr:
             e.data.wcr_nonatomic = True
@@ -75,3 +93,4 @@ def test_gpu_grid_stride_tiling():
 
 if __name__ == '__main__':
     test_gpu_grid_stride_tiling()
+    test_gpu_grid_stride_tiling_with_indirection()

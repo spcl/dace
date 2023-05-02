@@ -13,6 +13,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapInterchange
 from dace.transformation.dataflow.strip_mining import calc_set_image, calc_set_union
+from dace.sdfg.propagation import propagate_memlet
 import sympy
 
 
@@ -250,36 +251,38 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         # from tile_inner map entry to inner map entry to facilitate MapInterchange.
         # Because we brute-forcely did sdutil.change_edge_dest(graph, i_entry, tile_i_entry)
         # TODO: what about map exit connectors?
-        data_dict: Dict[str, dace.Memlet] = {}  # map data array to memlet
+        data_dict = {}  # map data array to memlet
         for e in graph.edges_between(o_entry, tile_i_entry):
             if e.dst_conn is not None and e.dst_conn[:3] != 'IN_' and e.src_conn[:4] == 'OUT_':
                 # trim edges
                 graph.remove_edge(e)
                 # add edges between tile_i_entry and i_entry
+                tile_i_entry.add_out_connector(e.src_conn)
+                i_entry.add_in_connector(e.dst_conn)
                 graph.add_edge(tile_i_entry, e.src_conn, i_entry, e.dst_conn, dcpy(e.data))
 
                 # add edges between o_entry and tile_i_entry
                 if e.data.data not in data_dict.keys():
                     # new edge data, add to data_dict
-                    data_dict[e.data.data] = dcpy(e.data)
                     in_conn = 'IN_' + e.src_conn[4:]
                     assert e.src_conn[4:] == e.data.data
-                    graph.add_edge(o_entry, e.src_conn, tile_i_entry, in_conn, data_dict[e.data.data])
-                else:
-                    # already added edge data, just add edge volume
-                    # TODO: how to add subset?
-                    data_dict[e.data.data].volume += e.data.volume
+                    o_entry.add_out_connector(e.src_conn)
+                    tile_i_entry.add_in_connector(in_conn)
+                    data_dict[e.data.data] = graph.add_edge(o_entry, e.src_conn, tile_i_entry, in_conn, dcpy(e.data))
 
                 # trim connectors
                 tile_i_entry.remove_in_connector(e.dst_conn)
 
-                # TODO: fix missing added connectors
-
-        # sdfg.view()
+        for e in graph.edges_between(tile_i_entry, i_entry) + graph.edges_between(o_entry, tile_i_entry):
+            # propogate edge memlet
+            path = graph.memlet_path(e)
+            edge_to_propogate = next(edge for edge in path if e is edge)
+            if edge_to_propogate is not None:
+                e.data.subset = propagate_memlet(graph, edge_to_propogate.data, tile_i_entry, True).subset
 
         # Interchange middle two maps
         MapInterchange.apply_to(sdfg, outer_map_entry=o_entry, inner_map_entry=tile_i_entry)
 
     @staticmethod
     def annotates_memlets():
-        return True
+        return False
