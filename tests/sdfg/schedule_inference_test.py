@@ -54,7 +54,7 @@ def test_gpu_schedule_scalar_autodetect():
     @dace.program
     def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
             b: dace.float32[10, 10] @ dace.StorageType.GPU_Global, c: dace.float32[10] @ dace.StorageType.CPU_Heap):
-        return a + b @ b + c
+        return a + b @ b + c[0]
 
     sdfg = add.to_sdfg()
     set_default_schedule_and_storage_types(sdfg, None)
@@ -169,6 +169,18 @@ def test_ambiguous_schedule():
         set_default_schedule_and_storage_types(sdfg, None)
 
 
+def test_ambiguous_schedule_2():
+
+    @dace.program
+    def add(a: dace.float32[10, 10] @ dace.StorageType.GPU_Global,
+            b: dace.float32[10, 10] @ dace.StorageType.GPU_Global, c: dace.float32[10] @ dace.StorageType.CPU_Heap):
+        return a + b @ b + c
+
+    with pytest.raises(InvalidSDFGNodeError):
+        sdfg = add.to_sdfg()
+        set_default_schedule_and_storage_types(sdfg, None)
+
+
 def test_semi_ambiguous_schedule():
 
     @dace.program
@@ -200,4 +212,5 @@ if __name__ == '__main__':
     test_nested_storage()
     test_nested_storage_equivalence()
     test_ambiguous_schedule()
+    test_ambiguous_schedule_2()
     test_semi_ambiguous_schedule()

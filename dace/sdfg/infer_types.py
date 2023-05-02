@@ -305,13 +305,17 @@ def _set_default_schedule_in_scope(state: SDFGState,
                 # If parent schedules do not determine child schedule,
                 # test for storage of the scope by collecting all neighboring memlets
                 if child_schedule is None:
-                    child_schedule = _determine_schedule_from_storage(state, node)
-                node.schedule = child_schedule
+                    local_child_schedule = _determine_schedule_from_storage(state, node)
+                else:
+                    local_child_schedule = child_schedule
+                node.schedule = local_child_schedule
         elif getattr(node, 'schedule', False) and not isinstance(node, nodes.ExitNode):
             if node.schedule == dtypes.ScheduleType.Default:
                 if child_schedule is None:
-                    child_schedule = _determine_schedule_from_storage(state, node)
-                node.schedule = child_schedule
+                    local_child_schedule = _determine_schedule_from_storage(state, node)
+                else:
+                    local_child_schedule = child_schedule
+                node.schedule = local_child_schedule
 
     return nested_scopes
 
