@@ -334,6 +334,16 @@ def nounroll(generator):
     yield from generator
 
 
+def inline(expression):
+    """
+    Explicitly annotates that an expression should be evaluated and inlined during parsing.
+
+    :param expression: The expression to evaluate.
+    :note: Only use with stateless and compile-time evaluateable expressions!
+    """
+    return expression
+
+
 def in_program() -> bool:
     """
     Returns True if in a DaCe program parsing context. This function can be used to test whether the current

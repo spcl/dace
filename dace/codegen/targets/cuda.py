@@ -1600,6 +1600,10 @@ void  *{kname}_args[] = {{ {kargs} }};
             (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
             scope_entry)
 
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             if hasattr(e, '_cuda_event'):
@@ -1618,6 +1622,10 @@ void  *{kname}_args[] = {{ {kargs} }};
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
                                       for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
             scope_entry)
+
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('}', sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
@@ -1973,8 +1981,6 @@ void  *{kname}_args[] = {{ {kargs} }};
                     raise ValueError('Block size has to be constant for block-wide dynamic map schedule (got %s)' %
                                      str(bdim))
                 total_block_size *= bdim
-            if _expr(scope_map.range[0][2]) != 1:
-                raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
 
             ##### TODO (later): Generalize
             # Find thread-block param map and its name
@@ -2001,15 +2007,26 @@ void  *{kname}_args[] = {{ {kargs} }};
                                          _topy(subsets.Range(outer_scope.map.range[::-1]).max_element()[0] + 1)), sdfg,
                 state_id, scope_entry)
 
+            # NOTE: Dynamic map inputs must be defined both outside and inside the dynamic Map schedule.
+            # They define inside the schedule the bounds of the any nested Maps.
+            # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
+            # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
                                                         e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
 
+            dynmap_var = scope_map.params[0]
+            dynmap_begin = scope_map.range[0][0]
+            dynmap_end = scope_map.range[0][1] + 1
+            dynmap_step = scope_map.range[0][2]
+            if dynmap_step != 1:
+                dynmap_var = f'{dynmap_var}_idx'
+                dynmap_begin = 0
+                dynmap_end = f'int_ceil({dynmap_end - dynmap_begin}, {dynmap_step})'
             callsite_stream.write(
                 '__dace_dynmap_begin = {begin};\n'
-                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0], end=scope_map.range[0][1] + 1), sdfg,
-                state_id, scope_entry)
+                '__dace_dynmap_end = {end};'.format(begin=dynmap_begin, end=dynmap_end), sdfg, state_id, scope_entry)
 
             # close if
             callsite_stream.write('}', sdfg, state_id, scope_entry)
@@ -2022,7 +2039,17 @@ void  *{kname}_args[] = {{ {kargs} }};
                     'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
                                           bsize=total_block_size,
                                           kmapIdx=outer_scope.map.params[0],
-                                          param=scope_map.params[0]), sdfg, state_id, scope_entry)
+                                          param=dynmap_var), sdfg, state_id, scope_entry)
+
+            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                callsite_stream.write(
+                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
+
+            if dynmap_step != 1:
+                callsite_stream.write(
+                    f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', sdfg,
+                    state_id, scope_entry)
 
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)

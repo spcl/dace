@@ -1336,3 +1336,115 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
     return True
+
+
+def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
+                                     sink: nodes.AccessNode):
+    """
+    Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
+    Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
+    transient.
+
+    :param sdfg: The SDFG in which the Access node resides.
+    :param state: The State in which the Access node resides.
+    :param map_exit: The exit node of the Map.
+    :param access: The Access node being written inside the Map.
+    :param sink: The Access node to be written outside the Map.
+    """
+
+    # Special case for scalars: if there is no write conflict resolution, then abort, since it is implied that the
+    # scalar is thread-local.
+    if isinstance(access.desc(sdfg), data.Scalar):
+        if any(e.data.wcr is None for e in state.in_edges(access)):
+            return
+    # Ignore views
+    if isinstance(access.desc(sdfg), data.View):
+        return
+
+    # Compute the union of the destination subsets of the edges that write to `access.`
+    in_union = None
+    map_dependency = False
+    for e in state.in_edges(access):
+        subset = e.data.get_dst_subset(e, state)
+        if any(str(s) in map_exit.map.params for s in subset.free_symbols):
+            map_dependency = True
+        if in_union is None:
+            in_union = subset
+        else:
+            in_union = in_union.union(subset)
+
+    # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
+    if not map_dependency:
+        return
+
+    # Check if the union covers the output edges of `access.`
+    covers_out = True
+    if in_union is None:
+        covers_out = False
+    else:
+        for e in state.out_edges(access):
+            subset = e.data.get_src_subset(e, state)
+            if not in_union.covers(subset):
+                covers_out = False
+                break
+
+    # If the union covers the output edges of `access`, then we can remove `access` and replace it with a transient.
+    if covers_out:
+        shape = in_union.size()
+        if shape == [1]:
+            name, _ = sdfg.add_scalar(access.data, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        else:
+            name, _ = sdfg.add_array(access.data, shape, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        new_n = state.add_access(name)
+        visited = set()
+        for e in state.in_edges(access):
+            if e in visited:
+                continue
+            offset = e.data.get_dst_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                dst = new_n if e2.dst is access else e2.dst
+                state.add_edge(
+                    e2.src, e2.src_conn, dst, e2.dst_conn,
+                    Memlet(data=name, subset=dst_subset.offset_new(offset, negative=True), other_subset=src_subset))
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(new_n,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(dst_subset),
+                                                other_subset=dst_subset.offset_new(dst_subset, negative=True)))
+        for e in state.out_edges(access):
+            if e in visited:
+                continue
+            offset = e.data.get_src_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                src = new_n if e2.src is access else e2.src
+                state.add_edge(
+                    src, e2.src_conn, e2.dst, e2.dst_conn,
+                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset))
+        for e in visited:
+            state.remove_edge(e)
+        state.remove_node(access)
+    # Otherwise, we only add a memlet path to the sink.
+    else:
+        for e in state.in_edges(access):
+            subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(access,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(subset),
+                                                other_subset=copy.deepcopy(subset)))
