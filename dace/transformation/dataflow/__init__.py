@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the dataflow transformations package. """
 
 # Map-related
@@ -22,6 +22,7 @@ from .tiling_with_overlap import MapTilingWithOverlap
 from .buffer_tiling import BufferTiling
 from .vectorization import Vectorization
 from .copy_to_map import CopyToMap
+from .gpu_grid_stride_tiling import GPUGridStridedTiling
 
 # Data-related
 from .stream_transient import StreamTransient, AccumulateTransient
