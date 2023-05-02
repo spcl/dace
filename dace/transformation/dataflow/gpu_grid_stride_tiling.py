@@ -265,14 +265,12 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
                 if e.data.data not in data_dict.keys():
                     # new edge data, add to data_dict
                     in_conn = 'IN_' + e.src_conn[4:]
-                    assert e.src_conn[4:] == e.data.data
                     o_entry.add_out_connector(e.src_conn)
                     tile_i_entry.add_in_connector(in_conn)
                     data_dict[e.data.data] = graph.add_edge(o_entry, e.src_conn, tile_i_entry, in_conn, dcpy(e.data))
 
                 # trim connectors
                 tile_i_entry.remove_in_connector(e.dst_conn)
-
 
         # Interchange middle two maps
         MapInterchange.apply_to(sdfg, outer_map_entry=o_entry, inner_map_entry=tile_i_entry)

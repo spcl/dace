@@ -1,14 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for GPU grid-strided tiling transformation."""
 from typing import List, Tuple
+import pytest
 import dace
 from dace.transformation.dataflow import TrivialTaskletElimination, GPUGridStridedTiling
-
-
-def copy_to_gpu(sdfg):
-    for k, v in sdfg.arrays.items():
-        if not v.transient and isinstance(v, dace.data.Array):
-            v.storage = dace.dtypes.StorageType.GPU_Global
+import numpy as np
+import scipy.sparse as sparse
 
 
 def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg.nodes.MapEntry]:
@@ -33,41 +30,52 @@ def find_map_entry(sdfg: dace.SDFG, map_name_list: List[str]) -> Tuple[dace.sdfg
         return tuple(ret_list)
 
 
+@pytest.mark.gpu
 def test_gpu_grid_stride_tiling():
-    M = dace.symbol('M')
-    N = dace.symbol('N')
+    M = 300
+    N = 300
 
     @dace.program
     def dummy(A: dace.float32[M, N], B: dace.float32[M, N]):
-        for i in dace.map[1:M:2]:
-            for j in dace.map[3:N:4]:
+        for i in dace.map[0:M]:
+            for j in dace.map[0:N]:
                 A[i, j] = B[i, j] + 1.0
 
     sdfg = dummy.to_sdfg()
     sdfg.simplify()
     ime, jme = find_map_entry(sdfg, ["i", "j"])
     sdfg.apply_transformations_repeated(TrivialTaskletElimination)
-    copy_to_gpu(sdfg)
+    sdfg.apply_gpu_transformations()
     GPUGridStridedTiling.apply_to(sdfg, outer_map_entry=ime, inner_map_entry=jme)
-    for e, _ in sdfg.all_edges_recursive():
-        if isinstance(e.data, dace.Memlet) and e.data.wcr:
-            e.data.wcr_nonatomic = True
 
     sdfg.validate()
-    sdfg.compile()
+
+    B = np.random.rand(M, N).astype(np.float32)
+    A_ref = np.zeros((M, N), dtype=np.float32)
+    A_test = np.zeros((M, N), dtype=np.float32)
+    A_ref = B + 1.0
+    sdfg(A=A_test, B=B)
+    assert np.allclose(A_ref, A_test)
 
 
+@pytest.mark.gpu
 def test_gpu_grid_stride_tiling_with_indirection():
 
-    M = dace.symbol('M')
-    N = dace.symbol('N')
-    K = dace.symbol('K')
-    nnz_A = dace.symbol('nnz_A')
-    nnz_D = dace.symbol('nnz_D')
+    M = 300
+    N = 300
+    K = 300
+    density = 0.01
+    dtype = np.float32
+    A = sparse.random(M, N, density=density, format='csr', dtype=dtype)
+    nnz = A.nnz
+    B = np.random.rand(M, K).astype(dtype)
+    C = np.random.rand(K, N).astype(dtype)
+    D_test = np.zeros_like(A.data)
+    D_ref = np.zeros_like(A.data)
 
     @dace.program
-    def sddmm(D_vals: dace.float32[nnz_D], A2_crd: dace.int32[nnz_A], A2_pos: dace.int32[M + 1],
-              A_vals: dace.float32[nnz_A], B: dace.float32[M, K], C: dace.float32[K, N]):
+    def sddmm(D_vals: dace.float32[nnz], A2_crd: dace.int32[nnz], A2_pos: dace.int32[M + 1], A_vals: dace.float32[nnz],
+              B: dace.float32[M, K], C: dace.float32[K, N]):
         for i in dace.map[0:M]:
             for j in dace.map[A2_pos[i]:A2_pos[i + 1]]:
                 for k in dace.map[0:K]:
@@ -77,14 +85,26 @@ def test_gpu_grid_stride_tiling_with_indirection():
     sdfg.simplify()
     ime, jme, _ = find_map_entry(sdfg, ["i", "j", "k"])
     sdfg.apply_transformations_repeated(TrivialTaskletElimination)
-    copy_to_gpu(sdfg)
+    sdfg.apply_gpu_transformations()
     GPUGridStridedTiling.apply_to(sdfg, outer_map_entry=ime, inner_map_entry=jme)
     for e, _ in sdfg.all_edges_recursive():
         if isinstance(e.data, dace.Memlet) and e.data.wcr:
             e.data.wcr_nonatomic = True
 
     sdfg.validate()
-    sdfg.compile()
+
+    # reference
+    for i in range(M):
+        for j in range(A.indptr[i], A.indptr[i + 1]):
+            D_ref[j] += A.data[j] * (B[i, :] @ C[:, A.indices[j]])
+
+    sdfg(A_vals=np.copy(A.data),
+         A2_crd=np.copy(A.indices),
+         A2_pos=A.indptr,
+         B=B,
+         C=C,
+         D_vals=D_test)
+    assert np.allclose(D_ref, D_test)
 
 
 if __name__ == '__main__':
