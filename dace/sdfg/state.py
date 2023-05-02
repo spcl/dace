@@ -994,7 +994,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         # Start with global symbols
         symbols = collections.OrderedDict(sdfg.symbols)
         for desc in sdfg.arrays.values():
-            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+            # symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+            symbols.update([(str(s), s.dtype) if isinstance(s, dace.symbol) else (str(s), dace.int32) for s in desc.free_symbols])
 
         # Add symbols from inter-state edges along the path to the state
         try:
