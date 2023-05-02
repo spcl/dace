@@ -59,7 +59,6 @@ def test_gpu_grid_stride_tiling():
             e.data.wcr_nonatomic = True
 
     sdfg.validate()
-    sdfg.view()
 
 
 def test_gpu_grid_stride_tiling_with_indirection():
