@@ -604,7 +604,7 @@ def auto_optimize(sdfg: SDFG,
 
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_and_storage_types(sdfg)
     sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization

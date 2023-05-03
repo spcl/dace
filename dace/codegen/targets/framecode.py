@@ -20,7 +20,6 @@ from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.transformation.passes.analysis import StateReachability
 
 

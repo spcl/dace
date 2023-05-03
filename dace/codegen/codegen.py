@@ -187,14 +187,14 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
 
     # Set default storage/schedule types in SDFG
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_and_storage_types(sdfg)
 
     # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 
     # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
-    infer_types.set_default_schedule_and_storage_types(sdfg, None)
+    infer_types.set_default_schedule_and_storage_types(sdfg)
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
