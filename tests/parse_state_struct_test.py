@@ -16,7 +16,9 @@ from dace.codegen import codeobject, targets, compiler, compiled_sdfg
 
 @pytest.fixture
 def cuda_helper():
+    return _cuda_helper()
 
+def _cuda_helper():
     helper_code = """
     #include <dace/dace.h>
     
@@ -89,3 +91,7 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     compiledsdfg(A=A, __return=result)
 
     assert np.allclose(result, A @ B)
+
+
+if __name__ == "__main__":
+    test_preallocate_transients_in_state_struct(_cuda_helper())

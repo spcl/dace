@@ -356,13 +356,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 for node in state.nodes():
                     # Handle NestedSDFGs later.
                     if isinstance(node, nodes.NestedSDFG):
-                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu(
                                 state.parent, state, node):
                             nsdfgs.append((node, state))
                     elif isinstance(node, nodes.Tasklet):
                         if node in global_code_nodes[state]:
                             continue
-                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu(
                                 state.parent, state, node):
                             scalars, scalar_output = _recursive_out_check(node, state, gpu_scalars)
                             sset, ssout = _recursive_in_check(node, state, gpu_scalars)

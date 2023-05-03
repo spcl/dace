@@ -1115,7 +1115,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 'Cannot use GPUAuto expansion: Input data does not reside on GPU. Falling back to Pure expansion')
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        if scope.is_devicelevel_gpu_kernel(sdfg, state, node):
+        if scope.is_devicelevel_gpu(sdfg, state, node):
             # Reduce node is already in a GPU kernel
             warnings.warn(
                 'Cannot use GPUAuto expansion: Node to expand is already inside a GPU kernel. Falling back to Pure expansion'

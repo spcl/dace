@@ -182,13 +182,14 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType, scope_b: NodeTy
 
 
 def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType,
-                schedules: List[dtypes.ScheduleType]) -> bool:
+                schedules: List[dtypes.ScheduleType], only_entrynodes: bool = True) -> bool:
     """ Tests whether a node in an SDFG is contained within a certain set of 
         scope schedules.
         
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
+        :param only_entrynodes: If True, only considers ``EntryNode``s as scopes.
         :return: True if node is in device-level code, False otherwise.
     """
     while sdfg is not None:
@@ -204,7 +205,7 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: Node
             parent = sdfg.parent_sdfg
             state = sdfg.parent
             node = sdfg.parent_nsdfg_node
-            if node.schedule in schedules:
+            if not only_entrynodes and node.schedule in schedules:
                 return True
         else:
             parent = sdfg.parent
@@ -228,22 +229,6 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', nod
     )
 
 
-def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
-    """ Tests whether a node in an SDFG is contained within an actual GPU kernel.
-        The main difference from :func:`is_devicelevel_gpu` is that it returns False for NestedSDFGs that have a GPU
-        device-level schedule, but are not within an actual GPU kernel.
-        :param sdfg: The SDFG in which the node resides.
-        :param state: The SDFG state in which the node resides.
-        :param node: The node in question
-        :return: True if node is in GPU kernel code, False otherwise.
-    """
-    is_parent_nested = (sdfg.parent is not None)
-    if is_parent_nested:
-        return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node)
-    else:
-        return is_devicelevel_gpu(state.parent, state, node)
-
-
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
     """ Tests whether a node in an SDFG is contained within FPGA device-level
         code.
@@ -254,7 +239,7 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', no
         :return: True if node is in device-level code, False otherwise.
     """
     from dace.sdfg.utils import is_fpga_kernel
-    return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
+    return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device], only_entrynodes=False)
             or (state and is_fpga_kernel(sdfg, state)))
 
 

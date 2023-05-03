@@ -7,7 +7,7 @@ from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-from dace.sdfg.scope import is_devicelevel_gpu_kernel
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List, Iterable, Dict
@@ -426,13 +426,13 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                     node.implementation = "pure"
                     continue
                 # use GPUAuto expansion if applicable
-                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                if ('GPUAuto' in node.implementations and not is_devicelevel_gpu(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'GPUAuto'
                     continue
                 # Use CUB for device-level reductions
                 if ('CUDA (device)' in node.implementations
-                        and not is_devicelevel_gpu_kernel(state.parent, state, node)
+                        and not is_devicelevel_gpu(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
 
