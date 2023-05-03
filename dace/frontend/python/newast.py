@@ -3645,7 +3645,22 @@ class ProgramVisitor(ExtNodeVisitor):
                     # If the symbol is a callback, but is not used in the nested SDFG, skip it
                     continue
 
-                outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
+                # First, we do an inverse lookup on the already added closure arrays for `arr`.
+                is_new_arr = True
+                for k, v in self.nested_closure_arrays.items():
+                    if arr is v[0]:
+                        is_new_arr = False
+                        break
+                # `arr` has not been added yet: add it with a (possibly) new name.
+                if is_new_arr:
+                    outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
+                # `arr` has already been added, but is not in the SDFG: add it with the same name.
+                # NOTE: This may occur when `arr` has already been added in a nested scope.
+                elif aname not in self.sdfg.arrays:
+                    outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=False)
+                # `arr` has already been added, and is in the SDFG: use the same name but don't add it again.
+                else:
+                    outer_name = aname
                 if not desc.transient:
                     self.nested_closure_arrays[outer_name] = (arr, desc)
                     # Add closure arrays as function arguments
