@@ -5,7 +5,7 @@ click==7.1.2
 cmake==3.18.2.post1
 decorator==4.4.2
 distro==1.5.0
-Flask==1.1.2
+Flask==2.3.2
 idna==2.10
 itsdangerous==2.0.0a1
 Jinja2==3.0.0a1
