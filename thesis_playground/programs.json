@@ -16,7 +16,8 @@
         "my_roofline_test": "my_roofline_test",
         "cloudsc_vert_loop_2": "vert_loop_2",
         "cloudsc_vert_loop_3": "vert_loop_3",
-        "cloudsc_vert_loop_4": "vert_loop_4"
+        "cloudsc_vert_loop_4": "vert_loop_4",
+        "cloudsc_vert_loop_5": "vert_loop_5"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -40,7 +41,9 @@
         "cloudsc_vert_loop_3": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NPROMA", "NBLOCKS"],
         "cloudsc_vert_loop_4": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
-                                "NPROMA", "NBLOCKS"]
+                                "NBLOCKS"],
+        "cloudsc_vert_loop_5": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
+                                "NBLOCKS"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -66,7 +69,9 @@
                                 "PAPH_N", "PSUPSAT_N", "PCLV_N", "PT_N", "tendency_tmp_t_N"],
         "cloudsc_vert_loop_3": [],
         "cloudsc_vert_loop_4": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
-                                "PAPH_N", "PSUPSAT_N", "PCLV_N", "PT_N", "tendency_tmp_t_N"]
+                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"],
+        "cloudsc_vert_loop_5": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW",
+                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"]
 
     },
     "program_outputs": {
@@ -86,7 +91,8 @@
         "my_roofline_test": ["ARRAY_A"],
         "cloudsc_vert_loop_2": ["PLUDE"],
         "cloudsc_vert_loop_3": ["PLUDE"],
-        "cloudsc_vert_loop_4": ["PLUDE"]
+        "cloudsc_vert_loop_4": ["PLUDE"],
+        "cloudsc_vert_loop_5": ["PLUDE"]
 
     }
 }
