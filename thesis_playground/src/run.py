@@ -2,43 +2,18 @@ from argparse import ArgumentParser
 import os
 from subprocess import run
 import re
-from typing import List
 import json
 
 import dace
 
 from utils.general import get_programs_data, get_results_dir, use_cache, get_program_parameters_data
 from utils.print import print_with_time, print_results_v2, print_performance
-from utils.execute_dace import test_program, profile_program, get_roofline_data
+from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
+                               gen_nsys_report
 from utils.ncu import get_all_actions, action_list_to_dict, get_runtime, get_cycles
-from parse_ncu import read_csv, Data
 from measurement_data import ProgramMeasurement, MeasurementRun
 from flop_computation import save_roofline_data
-
-
-def convert_ncu_data_into_program_measurement(ncu_data: List[Data], program_measurement: ProgramMeasurement):
-    for data in ncu_data:
-        match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", data.kernel_name)
-        if match is not None:
-            id_triplet = tuple([int(id) for id in match.group(1).split('_')])
-            time_measurement = program_measurement.get_measurement('Kernel Time', kernel=str(id_triplet))
-            cycles_measurement = program_measurement.get_measurement('Kernel Cycles', kernel=str(id_triplet))
-            if time_measurement is None:
-                program_measurement.add_measurement('Kernel Time',
-                                                    data.durations_unit,
-                                                    data=data.durations,
-                                                    kernel_name=str(id_triplet))
-            else:
-                for value in data.durations:
-                    time_measurement.add_value(value)
-            if cycles_measurement is None:
-                program_measurement.add_measurement('Kernel Cycles',
-                                                    data.cycles_unit,
-                                                    data=data.cycles,
-                                                    kernel_name=str(id_triplet))
-            else:
-                for value in data.cycles:
-                    cycles_measurement.add_value(value)
+from data import ParametersProvider
 
 
 def main():
@@ -90,6 +65,8 @@ def main():
 
     args = parser.parse_args()
     test_program_path = os.path.join(os.path.dirname(__file__), 'run_program.py')
+    run_config = RunConfig()
+    run_config.set_from_args(args)
 
     programs = get_programs_data()['programs']
     selected_programs = [] if args.programs is None else args.programs
@@ -112,20 +89,13 @@ def main():
                 return 1
 
         if not args.skip_test:
-            if not test_program(program, not args.use_dace_auto_opt, dace.DeviceType.GPU, normalize_memlets,
-                                pattern=args.pattern):
+            if not test_program(program, run_config):
                 continue
+        params = ParametersProvider(program)
         if not args.no_total:
-            program_data = profile_program(program, not args.use_dace_auto_opt, repetitions=args.repetitions,
-                                           normalize_memlets=normalize_memlets, pattern=args.pattern)
+            program_data = profile_program(program, run_config, params, repetitions=args.repetition)
         else:
-            program_data = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
-        command_ncu = [
-            'ncu',
-            '--force-overwrite',
-            '--export',
-            '/tmp/profile',
-        ]
+            program_data = ProgramMeasurement(program, params)
         command_program = ['python3', test_program_path, program, '--repetitions', '1']
         if normalize_memlets:
             command_program.append('--normalize-memlets')
@@ -137,12 +107,7 @@ def main():
         if not args.no_ncu:
             print_with_time("Measure kernel runtime")
             for _ in range(args.ncu_repetitions):
-                ncu_output = run([*command_ncu, *command_program], capture_output=True)
-                if ncu_output.returncode != 0:
-                    print("Failed to run the program with ncu")
-                    print(ncu_output.stdout.decode('UTF-8'))
-                    print(ncu_output.stderr.decode('UTF-8'))
-                else:
+                if gen_ncu_report(program, '/tmp/profile.ncu-rep', run_config):
                     actions = action_list_to_dict(get_all_actions('/tmp/profile.ncu-rep'))
                     for name, action in actions.items():
                         match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", name)
@@ -158,20 +123,14 @@ def main():
                             cycles_measurement.add_value(get_cycles(action))
 
         if args.nsys:
-            print_with_time("Create nsys report")
-            report_name = f"report_{program}.nsys-rep"
-            command_nsys = ['nsys', 'profile', '--force-overwrite', 'true', '--output', report_name]
-            print(f"Save nsys report into {report_name}")
-            run([*command_nsys, *command_program], capture_output=True)
+            gen_nsys_report(program, f"report_{program}.nsys-rep", run_config)
 
         if args.ncu_report:
             filename = f"report_{program}.ncu-rep"
             if args.output is not None:
                 filename = f"report_{''.join(args.output.split('.')[:-1])}_{program}.ncu-rep"
             filename = os.path.join(get_results_dir(args.ncu_report_folder), filename)
-            print_with_time(f"Create ncu report and save it into {filename}")
-            ncu_command = ['ncu', '--set', 'full', '--force-overwrite', '--export', filename]
-            run([*ncu_command, *command_program], capture_output=True)
+            gen_ncu_report(program, filename, run_config, ['--set', 'full'])
 
         run_data.add_program_data(program_data)
 

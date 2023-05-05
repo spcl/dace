@@ -1,9 +1,11 @@
 from argparse import ArgumentParser
 
 import dace
+import os
 
 from utils.general import use_cache, enable_debug_flags
-from utils.execute_dace import run_program, test_program
+from utils.execute_dace import RunConfig, run_program, test_program
+from data import ParametersProvider
 
 
 def main():
@@ -18,8 +20,13 @@ def main():
                         help='Use DaCes auto_opt instead of mine')
     parser.add_argument('--pattern', choices=['const', 'formula', 'worst'], type=str, default=None,
                         help='Pattern for in and output')
+    parser.add_argument('--NBLOCKS', type=int)
+    parser.add_argument('--KLEV', type=int)
+    parser.add_argument('--KLON', type=int)
 
     args = parser.parse_args()
+    run_config = RunConfig()
+    run_config.set_from_args(args)
 
     if args.debug:
         enable_debug_flags()
@@ -29,11 +36,12 @@ def main():
             return 1
 
     if args.only_test:
-        test_program(args.program, not args.use_dace_auto_opt, device=dace.DeviceType.GPU,
-                     normalize_memlets=args.normalize_memlets, pattern=args.pattern)
+        test_program(args.program, run_config)
     else:
-        run_program(args.program, not args.use_dace_auto_opt, repetitions=args.repetitions, device=dace.DeviceType.GPU,
-                    normalize_memlets=args.normalize_memlets, pattern=args.pattern)
+        params = ParametersProvider(args.program)
+        params.update_from_args(args)
+        print(params)
+        run_program(args.program, run_config, params, repetitions=args.repetitions)
 
 
 if __name__ == '__main__':

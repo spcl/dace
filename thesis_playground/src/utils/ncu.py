@@ -1,7 +1,6 @@
 from typing import Tuple, Dict, List
-# import sys
-# sys.path.insert(0, '/apps/ault/spack/opt/spack/linux-centos8-zen/gcc-8.4.1/cuda-11.8.0-fjdnxm6yggxxp75sb62xrxxmeg4s24ml/nsight-compute-2022.3.0/extras/python/')
 from .ncu_report import IAction, load_report
+from math import isnan
 
 
 def get_action(filename: str) -> IAction:
@@ -104,14 +103,14 @@ def get_achieved_work(action: IAction) -> Dict[str, int]:
     fmuls = action.metric_by_name('smsp__sass_thread_inst_executed_op_fmul_pred_on.sum.per_cycle_elapsed').as_double()
     ffmas = action.metric_by_name('smsp__sass_thread_inst_executed_op_ffma_pred_on.sum.per_cycle_elapsed').as_double()
     cycles = float(get_cycles(action))
-    dadds = int(dadds * cycles)
-    dmuls = int(dmuls * cycles)
-    dfmas = int(dfmas * cycles)
-    fadds = int(fadds * cycles)
-    fmuls = int(fmuls * cycles)
-    ffmas = int(ffmas * cycles)
-    dW = dadds + dmuls + 2*dfmas
-    fW = fadds + fmuls + 2*ffmas
+    dadds = int(dadds * cycles) if not isnan(dadds) and not isnan(cycles) else None
+    dmuls = int(dmuls * cycles) if not isnan(dmuls) and not isnan(cycles) else None
+    dfmas = int(dfmas * cycles) if not isnan(dfmas) and not isnan(cycles) else None
+    fadds = int(fadds * cycles) if not isnan(fadds) and not isnan(cycles) else None
+    fmuls = int(fmuls * cycles) if not isnan(fmuls) and not isnan(cycles) else None
+    ffmas = int(ffmas * cycles) if not isnan(ffmas) and not isnan(cycles) else None
+    dW = dadds + dmuls + 2*dfmas if dadds is not None and dmuls is not None and dfmas is not None else None
+    fW = fadds + fmuls + 2*ffmas if fadds is not None and fmuls is not None and ffmas is not None else None
     return {'dadds': dadds, 'dmuls': dmuls, 'dfmas': dfmas, 'fadds': fadds, 'fmuls': fmuls, 'ffmas': ffmas, 'dW': dW,
             'fW': fW}
 
@@ -132,12 +131,16 @@ def get_achieved_performance(action: IAction) -> Tuple[float, float]:
     :rtype: Tuple[float, float]
     """
     # total bytes written and read
-    Q = float(get_achieved_bytes(action))
+    Q = get_achieved_bytes(action)
+    Q = float(Q) if Q is not None else Q
     # total double flop
-    W = float(get_achieved_work(action)['dW'])
+    W = get_achieved_work(action)['dW']
+    W = float(W) if W is not None else W
     # assume here that the unit is always nseconds
     runtime = action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
-    return (W / runtime, Q / runtime)
+    performance = W / runtime if W is not None else None
+    memory = Q / runtime if Q is not None else None
+    return (performance, memory)
 
 
 def get_runtime(action: IAction) -> float:
@@ -162,3 +165,4 @@ def get_cycles(action: IAction) -> int:
     :rtype: int
     """
     return action.metric_by_name('gpc__cycles_elapsed.max').as_uint64()
+

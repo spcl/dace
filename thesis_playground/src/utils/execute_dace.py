@@ -1,11 +1,14 @@
 import numpy as np
 import copy
 from numbers import Number
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
+import os
+from subprocess import run
+from argparse import Namespace
 
 import dace
 
-from data import get_program_parameters_data, set_input_pattern
+from data import ParametersProvider, set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                           compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
                           print_non_zero_percentage
@@ -16,42 +19,61 @@ from utils.print import print_with_time
 RNG_SEED = 42
 
 
+class RunConfig:
+    pattern: str
+    use_dace_auto_opt: bool
+    normalize_memlets: bool
+    device: dace.DeviceType
+
+    def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False, normalize_memlets: bool = True, device:
+                 dace.DeviceType = dace.DeviceType.GPU):
+        self.pattern = pattern
+        self.use_dace_auto_opt = use_dace_auto_opt
+        self.normalize_memlets = normalize_memlets
+        self.device = device
+
+    def set_from_args(self, args: Namespace):
+        self.pattern = args.pattern
+        self.use_dace_auto_opt = args.use_dace_auto_opt
+        self.normalize_memlets = args.normalize_memlets
+
+    def __len__(self):
+        return len(self.pattern)
+
+
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, normalize_memlets: bool,
-                 pattern: Optional[str] = None) -> bool:
+def test_program(program: str, run_config: RunConfig) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
 
     :param program: The program name
     :type program: str
-    :param use_my_auto_opt: Flag to control if my custon auto_opt should be used
-    :type use_my_auto_opt: bool
-    :param device: The deive
-    :type device: dace.DeviceType
-    :param normalize_memlets: If memlets should be normalized
-    :type normalize_memlets: bool
-    :param pattern: Name of pattern to apply to in- and output. If empty none will be applied. defaults to None,
-    optional
-    :type pattern: Optional[str]
+    :param run_config: Configuration how to run it
+    :type run_config: RunConfig
     :return: True if test passes, False otherwise
     :rtype: bool
     """
-    assert device == dace.DeviceType.GPU
+    assert run_config.device == dace.DeviceType.GPU
 
     programs_data = get_programs_data()
     fsource = read_source(program)
     program_name = programs_data['programs'][program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
-    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
+    sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
+    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
 
     rng = np.random.default_rng(RNG_SEED)
-    inputs = get_inputs(program, rng, testing_dataset=True)
-    outputs_f = get_outputs(program, rng, testing_dataset=True)
-    if pattern is not None:
-        set_input_pattern(inputs, outputs_f, program, pattern)
+    params = ParametersProvider(program, testing=True)
+    inputs = get_inputs(program, rng, params)
+    outputs_f = get_outputs(program, rng, params)
+    np.set_printoptions(precision=3)
+    # print(f"LDCUM:\n{inputs['LDCUM'].transpose()}")
+    # print(f"PLUDE:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
+    # print(f"PLU:\n{inputs['PLU'][:,:,0].transpose()}")
+    if run_config.pattern is not None:
+        set_input_pattern(inputs, outputs_f, program, params, run_config.pattern)
     outputs_d_device = copy_to_device(copy.deepcopy(outputs_f))
     sdfg.validate()
     sdfg.simplify(validate_all=True)
@@ -60,10 +82,13 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     inputs_device = copy_to_device(inputs)
     sdfg(**inputs_device, **outputs_d_device)
 
-    print_with_time(f"{program} ({program_name}) on {device} with"
-                    f"{' ' if normalize_memlets else 'out '}normalize memlets")
+    # print(f"PLUDE DaCe:\n{outputs_d_device['PLUDE'][:,:,0].transpose()}")
+    # print(f"PLUDE Fortran:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
+
+    print_with_time(f"{program} ({program_name}) on {run_config.device} with"
+                    f"{' ' if run_config.normalize_memlets else 'out '}normalize memlets")
     outputs_d = outputs_d_device
-    passes_test = compare_output(outputs_f, outputs_d, program)
+    passes_test = compare_output(outputs_f, outputs_d, program, params)
     # passes_test = compare_output_all(outputs_f, outputs_d)
 
     if passes_test:
@@ -73,54 +98,72 @@ def test_program(program: str, use_my_auto_opt: bool, device: dace.DeviceType, n
     return passes_test
 
 
-def run_program(program: str, use_my_auto_opt: bool, repetitions: int = 1, device=dace.DeviceType.GPU,
-                normalize_memlets=False, pattern: Optional[str] = None):
+def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
+                sdfg_file: str = None):
+    """
+    Runs Programs
+
+    :param program: Name of the program
+    :type program: str
+    :param run_config: Configuration how to run it
+    :type run_config: RunConfig
+    :param parameters: The parameters to use.
+    :type parameters: ParametersProvider
+    :param repetitions: The number of repetitions to run the program, defaults to 1
+    :type repetitions: int, optional
+    :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
+    :type sdfg_file: str, optional
+    """
     programs = get_programs_data()['programs']
-    print(f"Run {program} ({programs[program]}) for {repetitions} time on device {device}")
+    print(f"Run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
     fsource = read_source(program)
     program_name = programs[program]
-    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
+    if sdfg_file is None:
+        sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
+        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+    else:
+        print(f"Reading SDFG from {sdfg_file} and compile it")
+        sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
+        sdfg.compile()
 
     rng = np.random.default_rng(RNG_SEED)
-    inputs = copy_to_device(get_inputs(program, rng))
-    outputs = copy_to_device(get_outputs(program, rng))
-    if pattern is not None:
-        set_input_pattern(inputs, outputs, program, pattern)
+    inputs = copy_to_device(get_inputs(program, rng, params))
+    outputs = copy_to_device(get_outputs(program, rng, params))
+    if run_config.pattern is not None:
+        set_input_pattern(inputs, outputs, program, params, run_config.pattern)
 
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
 
 
-def compile_for_profile(program: str, use_my_auto_opt: bool, device: dace.DeviceType,
-                        normalize_memlets: bool) -> dace.SDFG:
+def compile_for_profile(program: str, run_config: RunConfig) -> dace.SDFG:
     programs = get_programs_data()['programs']
     fsource = read_source(program)
     program_name = programs[program]
-    sdfg = get_sdfg(fsource, program_name, normalize_memlets)
-    optimize_sdfg(sdfg, device, use_my_auto_opt=use_my_auto_opt)
+    sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
+    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
 
     sdfg.instrument = dace.InstrumentationType.Timer
     sdfg.compile()
     return sdfg
 
 
-def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, normalize_memlets=False,
-                    repetitions=10, pattern: Optional[str] = None) -> ProgramMeasurement:
+def profile_program(program: str, run_config: RunConfig, params: ParametersProvider,
+                    repetitions=10) -> ProgramMeasurement:
 
-    results = ProgramMeasurement(program, get_program_parameters_data(program)['parameters'])
+    results = ProgramMeasurement(program, params)
 
     programs = get_programs_data()['programs']
     print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
     routine_name = f"{programs[program]}_routine"
 
-    sdfg = compile_for_profile(program, use_my_auto_opt, device, normalize_memlets)
+    sdfg = compile_for_profile(program, run_config)
 
     rng = np.random.default_rng(RNG_SEED)
-    inputs = get_inputs(program, rng)
-    outputs = get_outputs(program, rng)
-    if pattern is not None:
-        set_input_pattern(inputs, outputs, program, pattern)
+    inputs = get_inputs(program, rng, params)
+    outputs = get_outputs(program, rng, params)
+    if run_config.pattern is not None:
+        set_input_pattern(inputs, outputs, program, params, run_config.pattern)
 
     sdfg.clear_instrumentation_reports()
     print_with_time("Measure total runtime")
@@ -146,14 +189,91 @@ def profile_program(program: str, use_my_auto_opt, device=dace.DeviceType.GPU, n
     return results
 
 
-def get_roofline_data(program: str, pattern: Optional[str] = None) -> Tuple[FlopCount, Number]:
+def get_roofline_data(program: str, params: ParametersProvider,
+                      pattern: Optional[str] = None) -> Tuple[FlopCount, Number]:
     rng = np.random.default_rng(RNG_SEED)
-    params_data = get_program_parameters_data(program)
-    params = params_data['parameters']
-    inputs = get_inputs(program, rng)
-    outputs = get_outputs(program, rng)
+    inputs = get_inputs(program, rng, params)
+    outputs = get_outputs(program, rng, params)
     if pattern is not None:
-        set_input_pattern(inputs, outputs, program, pattern)
+        set_input_pattern(inputs, outputs, params, program, pattern)
     flop_count = get_number_of_flops(params, inputs, outputs, program)
     bytes = get_number_of_bytes(params, inputs, outputs, program)
     return (flop_count, bytes)
+
+
+def get_command_args_single_run(program: str, run_config: RunConfig) -> List[str]:
+    """
+    Gets the commands required to run the given program with the given config once.
+
+    :param program: The name of the program
+    :type program: str
+    :param run_config: The desired config to run it with
+    :type run_config: RunConfig
+    :return: List of commands, as required to subprocess.run
+    :rtype: List[str]
+    """
+    test_program_path = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'run_program.py')
+    command_program = ['python3', test_program_path, program, '--repetitions', '1']
+    if run_config.normalize_memlets:
+        command_program.append('--normalize-memlets')
+    if run_config.use_dace_auto_opt:
+        command_program.append('--use-dace-auto-opt')
+    if run_config.pattern is not None:
+        command_program.extend(['--pattern', run_config.pattern])
+    return command_program
+
+
+def gen_ncu_report(program: str, report_filename: str, run_config: RunConfig, ncu_args: List[str] = [],
+                   program_args: List[str] = []) -> bool:
+    """
+    Generates a ncu report into the given report filename using the given additional ncu arguments
+
+    :param program: The name of the program to profile using ncu
+    :type program: str
+    :param report_filename: The path to where the report should be save
+    :type report_filename: str
+    :param run_config: The config to run the given program with
+    :type run_config: RunConfig
+    :param ncu_args: Any additional arguments for ncu, optional
+    :type ncu_args: List[str]
+    :param program_args: Any additional arguments for the program, optional
+    :type program_args: List[str]
+    :return: True if ncu report was successfully created, False otherwise
+    :rtype: bool
+    """
+    print_with_time(f"Create ncu report and save it into {report_filename}")
+    command_program = get_command_args_single_run(program, run_config)
+    command_program.extend(program_args)
+    ncu_command = ['ncu', '--force-overwrite', '--export', report_filename, *ncu_args]
+    ncu_output = run([*ncu_command, *command_program], capture_output=True)
+    if ncu_output.returncode != 0:
+        print("Failed to run the program with ncu")
+        print(ncu_output.stdout.decode('UTF-8'))
+        print(ncu_output.stderr.decode('UTF-8'))
+        return False
+    return True
+
+
+def gen_nsys_report(program: str, report_filename: str, run_config: RunConfig) -> bool:
+    """
+    Generates a nsys report and saves it into the given report filename.
+
+    :param program: The name of the program to profile using ncu
+    :type program: str
+    :param report_filename: The path to where the report should be save
+    :type report_filename: str
+    :param run_config: The config to run the given program with
+    :type run_config: RunConfig
+    :return: True if ncu report was successfully created, False otherwise
+    :rtype: bool
+    """
+    print_with_time(f"Create nsys report and save it into {report_filename}")
+    command_nsys = ['nsys', 'profile', '--force-overwrite', 'true', '--output', report_filename]
+    command_program = get_command_args_single_run(program, run_config)
+    nsys_output = run([*command_nsys, *command_program], capture_output=True)
+    if nsys_output.returncode != 0:
+        print("Failed to run the program with nsys")
+        print(nsys_output.stdout.decode('UTF-8'))
+        print(nsys_output.stderr.decode('UTF-8'))
+        return False
+    return True

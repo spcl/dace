@@ -6,6 +6,8 @@ from subprocess import run
 from os import path
 from datetime import datetime
 
+from parameters import ParametersProvider
+
 
 class Measurement:
     """
@@ -95,16 +97,16 @@ class ProgramMeasurement:
     """
     measurements: Dict[str, List[Measurement]]
     program: str
-    parameters: Dict[str, Number]
+    parameters: ParametersProvider
 
-    def __init__(self, program: str, parameters: Dict, measurements: Dict = None):
+    def __init__(self, program: str, parameters: ParametersProvider, measurements: Dict = None):
         """
         Constructs the class.
 
         :param program: The name of the program
         :type program: str
         :param parameters: The parameters used
-        :type parameters: Dict
+        :type parameters: ParametersProvider
         :param measurements: The measurements. Key is the measurement name, value the Measurement object,
                              defaults to None
         :type measurements: Dict, optional
@@ -166,13 +168,13 @@ class ProgramMeasurement:
                 "__ProgramMeasurement__": True,
                 "measurements": msr_dict,
                 "program": measurement.program,
-                "parameters": measurement.parameters,
+                "parameters": ParametersProvider.to_json(measurement.parameters),
                 }
 
     @staticmethod
     def from_json(dict: Dict) -> 'ProgramMeasurement':
         if '__ProgramMeasurement__' in dict:
-            return ProgramMeasurement(dict['program'], dict['parameters'],
+            return ProgramMeasurement(dict['program'], ParametersProvider.from_json(dict['parameters']),
                                       measurements=dict['measurements'])
         elif '__Measurement__' in dict:
             return Measurement.from_json(dict)

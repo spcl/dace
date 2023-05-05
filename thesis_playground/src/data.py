@@ -2,104 +2,17 @@ import copy
 from typing import Dict, Union, Tuple, List
 import numpy as np
 from numbers import Number
+
 from utils.print import print_with_time
-
-parameters = {
-    'KLON': 10000,
-    'KLEV': 10000,
-    'KIDIA': 2,
-    'KFDIA': 9998,
-    'NCLV': 10,
-    'NCLDQI': 3,
-    'NCLDQL': 4,
-    'NCLDQR': 5,
-    'NCLDQS': 6,
-    'NCLDQV': 7,
-    'NCLDTOP': 2,
-    'NSSOPT': 1,
-    'NPROMA': 1,
-    'NBLOCKS': 10000,
-}
-
-# changes from the parameters dict for certrain programs
-custom_parameters = {
-    'cloudsc_class1_658': {
-        'KLON': 5000,
-        'KLEV': 5000,
-        'KFDIA': 4998,
-    },
-    'cloudsc_class1_670': {
-        'KLON': 1000,
-        'KLEV': 1000,
-        'KFDIA': 998,
-    },
-    'cloudsc_class2_781': {
-        'KLON': 5000,
-        'KLEV': 5000,
-        'KFDIA': 4998
-    },
-    'my_test': {
-        'KLON': 100000000
-    },
-    'cloudsc_class2_1516':
-    {
-        'KLON': 3000,
-        'KLEV': 3000,
-        'KFDIA': 2998
-    },
-    'cloudsc_class3_691': {
-        'KLON': 3000,
-        'KLEV': 3000,
-        'KFDIA': 2998
-    },
-    'cloudsc_class3_965': {
-        'KLON': 3000,
-        'KLEV': 3000,
-        'KFDIA': 2998
-    },
-    'cloudsc_class3_1985': {
-        'KLON': 3000,
-        'KLEV': 3000,
-        'KFDIA': 2998
-    },
-    'cloudsc_class3_2120': {
-        'KLON': 3000,
-        'KLEV': 3000,
-        'KFDIA': 2998
-    },
-    'my_roofline_test':
-    {
-        'KLON': 10000,
-        'KLEV': 10000,
-        'KIDIA': 1,
-        'KFDIA': 10000,
-    },
-    'cloudsc_vert_loop_2':
-    {
-        'KLEV': 137,
-        'KLON': 1,
-        'NPROMA': 1,
-        'NBLOCKS': 10000
-    },
-    'cloudsc_vert_loop_4':
-    {
-        'KLEV': 137,
-        'KLON': 1,
-        'NPROMA': 1,
-        'NBLOCKS': 1000
-    }
-}
-
-# changes from the parameters dict for testing
-testing_parameters = {'KLON': 10, 'KLEV': 10, 'KFDIA': 8, 'NBLOCKS': 10}
+from parameters import ParametersProvider
 
 
-def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
+def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
     """
     Returns the data dict given the parameters dict
 
     :param params: The parameters dict
-    :type params: Dict[str, int]
+    :type params: ParameterProvider
     :return: The data dict
     :rtype: Dict[str, Tuple]
     """
@@ -243,12 +156,12 @@ def get_data(params: Dict[str, int]) -> Dict[str, Tuple]:
     }
 
 
-def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
+def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]:
     """
     Returns the iteration ranges for the returned variables given the program
 
     :param params: The parameters used
-    :type params: Dict[str, int]
+    :type params: ParametersProvider
     :param program: The program name
     :type program: str
     :return: List of dictionaries. Each dictionary has an entry 'variables' listing all variable names which have the
@@ -410,6 +323,13 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
                     'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
                     'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
                 }
+            ],
+            'cloudsc_vert_loop_5': [
+                {
+                    'variables': ['PLUDE'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
+                }
             ]
     }
     return ranges[program]
@@ -418,6 +338,7 @@ def get_iteration_ranges(params: Dict[str, int], program: str) -> List[Dict]:
 def set_input_pattern(
         inputs: Dict[str, Union[Number, np.ndarray]],
         outputs: Dict[str, Union[Number, np.ndarray]],
+        params: ParametersProvider,
         program: str, pattern: str):
     """
     Sets a specific pattern into the given input data depending on the program. Used to trigger certain pattern for
@@ -434,11 +355,12 @@ def set_input_pattern(
     :type inputs: Dict[str, Union[Number, np.ndarray]]
     :param program: The program name
     :type program: str
+    :param params: The parameters used
+    :type params: ParametersProvider
     :param pattern: The pattern name
     :type pattern: str
     """
     print_with_time(f"Set input pattern {pattern} for {program}")
-    params = get_program_parameters_data(program)['parameters']
     if pattern == 'const':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 10.0
@@ -514,42 +436,3 @@ def set_input_pattern(
             print(f"ERROR: Pattern {pattern} does not exists for {program}")
     else:
         print(f"ERROR: Unknown pattern {pattern}")
-
-
-def get_program_parameters_data(program: str) -> Dict[str, Dict[str, Union[int, Tuple]]]:
-    """
-    Gets program parameters and program data according for the specific program
-
-    :param program: The name of the program/file
-    :type program: str
-    :return: Dict with two entries: 'parameters' and 'data'. Each containing a dict with the parameters/data
-    :rtype: Dict[str, Dict[str, Union[int, Tuple]]]
-    """
-    global parameters, custom_parameters
-    params_data = {}
-    params_data['parameters'] = copy.deepcopy(parameters)
-
-    if program in custom_parameters:
-        for parameter in custom_parameters[program]:
-            params_data['parameters'][parameter] = custom_parameters[program][parameter]
-
-    params_data['data'] = get_data(params_data['parameters'])
-    return params_data
-
-
-def get_testing_parameters_data() -> Dict[str, Dict[str, Union[int, Tuple]]]:
-    """
-    Gets the parameters and data used for testing. Does not take custom_parameters into account.
-
-    :return: Dict with two entries: 'parameters' and 'data'. Each containing a dict with the parameters/data
-    :rtype: Dict[str, Dict[str, Union[int, Tuple]]]
-    """
-    global parameters
-    params_data = {}
-    params_data['parameters'] = copy.deepcopy(parameters)
-
-    for parameter in testing_parameters:
-        params_data['parameters'][parameter] = testing_parameters[parameter]
-
-    params_data['data'] = get_data(params_data['parameters'])
-    return params_data

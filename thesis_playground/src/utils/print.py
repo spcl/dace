@@ -48,7 +48,7 @@ def print_performance(roofline_data: Dict[str, Tuple[FlopCount, Number]], run_da
                       hardware_dict: Optional[Dict] = None):
 
     # Avoid circular import
-    from utils import convert_to_seconds
+    from utils.general import convert_to_seconds
     if hardware_dict is not None:
         headers = ["program",
                    "P [flop/cycle]", "P [flop/sec.]",

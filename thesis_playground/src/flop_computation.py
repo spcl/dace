@@ -4,6 +4,8 @@ import numpy as np
 import copy
 import json
 
+from parameters import ParametersProvider
+
 
 # Length of a double in bytes
 BYTES_DOUBLE = 8
@@ -79,7 +81,7 @@ def read_roofline_data(filename: str) -> Dict[str, Tuple[FlopCount, Number]]:
 
 
 def get_number_of_flops(
-        params: Dict[str, Number],
+        params: ParametersProvider,
         inputs: Dict[str, Union[Number, np.ndarray]],
         outputs: Dict[str, Union[Number, np.ndarray]],
         program: str) -> FlopCount:
@@ -127,7 +129,7 @@ def get_number_of_flops(
 
 
 def get_number_formula_iteration(
-        params: Dict[str, Number],
+        params: ParametersProvider,
         inputs: Dict[str, Union[Number, np.ndarray]],
         outputs: Dict[str, Union[Number, np.ndarray]],
         program: str) -> Tuple[Number]:
@@ -135,7 +137,7 @@ def get_number_formula_iteration(
     Returns the number of iterations for loops inside the given program given in and output
 
     :param params: [TODO:description]
-    :type params: Dict[str, Number]
+    :type params: ParametersProvider
     :param inputs: [TODO:description]
     :type inputs: Dict[str, Union[Number, np.ndarray]]
     :param outputs: [TODO:description]
@@ -199,7 +201,7 @@ def get_number_formula_iteration(
 
 
 def get_number_of_bytes_rough(
-        params: Dict[str, Number],
+        params: ParametersProvider,
         inputs: Dict[str, Union[Number, np.ndarray]],
         outputs: Dict[str, Union[Number, np.ndarray]],
         program: str) -> Number:
@@ -208,7 +210,7 @@ def get_number_of_bytes_rough(
     arrays twice (copy in and copyout) and input only as once
 
     :param params: The parameters used for the given program
-    :type params: Dict[str, Number]
+    :type params: ParametersProvider
     :param inputs: The inputs used for the given program
     :type inputs: Dict[str, Union[Number, np.ndarray]]
     :param outputs: The outputs used for the given program
@@ -225,12 +227,14 @@ def get_number_of_bytes_rough(
 
 
 def get_data_ranges(
-        params: Dict[str, Number]) -> Dict[str, Dict]:
+        params: Dict[str, Number], temp_arrays: bool = False) -> Dict[str, Dict]:
     """
     Get detailed information about all data ranges of all programs
 
     :param params: The parameters used to compute sizes
     :type params: Dict[str, Number]
+    :param temp_arrays: Wether to include temp arrays, defaults to False
+    :type temp_arrays: False
     :return: Dictionary with a dictionary for each program
     :rtype: Dict[str, Dict]
     """
@@ -238,6 +242,9 @@ def get_data_ranges(
     NCLDTOP = params['NCLDTOP']
     KIDIA = params['KIDIA']
     KFDIA = params['KFDIA']
+    if 'NBLOCKS' in params:
+        NBLOCKS = params['NBLOCKS']
+    NCLV = params['NCLV']
 
     iteration_shapes = {
         'cloudsc_class1_658': [
@@ -341,16 +348,53 @@ def get_data_ranges(
         [
             {'variables': ['ARRAY_A', 'ARRAY_B', 'ARRAY_C'], 'size': (KLEV)*(KFDIA-KIDIA+1), },
         ],
+        'cloudsc_vert_loop_4':
+        [
+                {'variables': ['PLU'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['LDCUM'], 'size': (KFDIA-KIDIA+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PSNDE'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {
+                    'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
+                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'action': 'r'
+                },
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+        ],
+        'cloudsc_vert_loop_5':
+        [
+                {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {
+                    'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
+                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'action': 'r'
+                },
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+        ],
     }
+
+    if temp_arrays:
+        iteration_shapes['cloudsc_vert_loop_4'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['cloudsc_vert_loop_5'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ])
     return iteration_shapes
 
 
-def get_double_accessed(params: Dict[str, Number], program: str, variable: str) -> Number:
+def get_double_accessed(params: ParametersProvider, program: str, variable: str) -> Number:
     """
     Get the number doubles access (read & writes) for the given variable in the given program
 
     :param params: The parameters used for the given program
-    :type params: Dict[str, Number]
+    :type params: ParametersProvider
     :param program: The name of the program
     :type program: str
     :param variable: The name of the variable accessed
@@ -369,7 +413,7 @@ def get_double_accessed(params: Dict[str, Number], program: str, variable: str) 
 
 
 def get_number_of_bytes(
-        params: Dict[str, Number],
+        params: ParametersProvider,
         inputs: Dict[str, Union[Number, np.ndarray]],
         outputs: Dict[str, Union[Number, np.ndarray]],
         program: str) -> Number:
@@ -378,7 +422,7 @@ def get_number_of_bytes(
     arrays twice (copy in and copyout) and input only as once
 
     :param params: The parameters used for the given program
-    :type params: Dict[str, Number]
+    :type params: ParametersProvider
     :param inputs: The inputs used for the given program
     :type inputs: Dict[str, Union[Number, np.ndarray]]
     :param outputs: The outputs used for the given program
@@ -407,28 +451,30 @@ def get_number_of_bytes(
 
 
 def get_number_of_bytes_2(
-        params: Dict[str, Number],
-        program: str) -> Tuple[Number, Number, Number]:
+        params: ParametersProvider,
+        program: str, temp_arrays: bool = False) -> Tuple[Number, Number, Number]:
     """
     Get number of bytes separated into read and write
 
     :param params: The parameters used
-    :type params: Dict[str, Number]
+    :type params: ParametersProvider
     :param program: The program name
     :type program: str
+    :param temp_arrays: Wether to include temp arrays, defaults to False
+    :type temp_arrays: False
     :return: The total, read and written number of bytes
     :rtype: Tuple[Number, Number, Number]
     """
 
     # Avoid circular imports
     from data import get_program_parameters_data
-    from utils import get_programs_data
+    from utils.general import get_programs_data
 
     programs_data = get_programs_data()
     # Get only the data, as we only need it to check if something is a scalar or not, we can do this independent of
     # the precises parameters used
     data = get_program_parameters_data(program)['data']
-    memory_data = get_data_ranges(params)[program]
+    memory_data = get_data_ranges(params, temp_arrays)[program]
     read, written = 0, 0
     # Add reading of parameters
     read = BYTES_DOUBLE * len(programs_data['program_parameters'][program])

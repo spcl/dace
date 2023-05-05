@@ -18,7 +18,7 @@ from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
-from data import get_program_parameters_data, get_testing_parameters_data, get_iteration_ranges
+from data import ParametersProvider, get_iteration_ranges, get_data
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -77,7 +77,7 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) ->
 
 
 # Copied from tests/fortran/cloudsc.py
-def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
+def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvider) \
         -> Dict[str, Union[Number, np.ndarray]]:
     """
     Returns dict with the input data for the requested program
@@ -86,23 +86,24 @@ def get_inputs(program: str, rng: np.random.Generator, testing_dataset: bool = F
     :type program: str
     :param rng: The random number generator to use
     :type rng: np.random.Generator
-    :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
-    :type testing_dataset: bool, optional
+    :param parameters: The parameters to use.
+    :type parameters: ParametersProvider
     :return: Dictionary with the input data
     :rtype: Dict[str, Union[Number, np.ndarray]]
     """
-    params_data = get_testing_parameters_data() if testing_dataset else get_program_parameters_data(program)
+    data = get_data(params)
     programs_data = get_programs_data()
     inp_data = dict()
     for p in programs_data['program_parameters'][program]:
-        inp_data[p] = params_data['parameters'][p]
+        inp_data[p] = params[p]
     for inp in programs_data['program_inputs'][program]:
-        shape = params_data['data'][inp]
+        shape = data[inp]
         if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
             if inp in ['LDCUM']:
-                inp_data[inp] = np.asfortranarray(rng.random(shape) > 0.5)
+                # Random ints in range [0,1]
+                inp_data[inp] = np.asfortranarray(rng.integers(0, 2, shape, dtype=np.int32))
             else:
                 inp_data[inp] = np.asfortranarray(rng.random(shape))
     return inp_data
@@ -145,7 +146,7 @@ def copy_to_host(device_data: Dict[str, Union[Number, cp.ndarray]]) -> Dict[str,
 
 
 # Copied from tests/fortran/cloudsc.py
-def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = False) \
+def get_outputs(program: str, rng: np.random.Generator, params: ParametersProvider) \
         -> Dict[str, Union[Number, np.ndarray]]:
     """
     Returns dict with the output data for the requested program
@@ -154,16 +155,16 @@ def get_outputs(program: str, rng: np.random.Generator, testing_dataset: bool = 
     :type program: str
     :param rng: The random number generator to use
     :type rng: np.random.Generator
-    :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
-    :type testing_dataset: bool, optional
+    :param parameters: The parameters to use.
+    :type parameters: ParametersProvider
     :return: Dictionary with the output data
     :rtype: Dict[str, Union[Number, np.ndarray]]
     """
-    params_data = get_testing_parameters_data() if testing_dataset else get_program_parameters_data(program)
+    data = get_data(params)
     programs_data = get_programs_data()
     out_data = dict()
     for out in programs_data['program_outputs'][program]:
-        shape = params_data['data'][out]
+        shape = data[out]
         if shape == (0, ):  # Scalar
             raise NotImplementedError
         else:
@@ -249,7 +250,7 @@ def use_cache(program: str) -> bool:
     return True
 
 
-def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
+def compare_output(output_a: Dict, output_b: Dict, program: str, params: ParametersProvider) -> bool:
     """
     Compares two outputs. Outputs are dictionaries where key is the variable name and value a n-dimensional matrix. They
     are compared based on the ranges given by get_iteration_ranges for the given program
@@ -260,10 +261,11 @@ def compare_output(output_a: Dict, output_b: Dict, program: str) -> bool:
     :type output_b: Dict
     :param program: The program name
     :type program: str
+    :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
+    :type testing_dataset: bool, optional
     :return: True if the outputs are equal, false otherwise
     :rtype: bool
     """
-    params = get_testing_parameters_data()['parameters']
     ranges = get_iteration_ranges(params, program)
     same = True
     range_keys = []
@@ -318,7 +320,7 @@ def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection):
             print(f"       {output_a:.3f}", end="   ")
         else:
             print(f"{output_a:.3f}!={output_b:.3f}", end="   ")
-            print(output_a-output_b)
+            # print(output_a-output_b)
     else:
         for elem_a, elem_b in zip(output_a, output_b):
             print_compare_matrix(elem_a, elem_b, selection[1:])
