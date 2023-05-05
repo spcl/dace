@@ -957,6 +957,64 @@ class Indices(Subset):
             return self
         return None
 
+class Subsetlist(Subset):
+
+    def __init__(self, subset_list: list[Subset]):
+        self.subset_list = subset_list
+
+
+    def covers(self, other):
+        """ Returns True if this Subsetlist covers another
+            subset. If other is another SubsetList then self and other will
+            only return true if self is other. If other is a different type of subset
+            true is returned when one of the subsets in self is equal to other """
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            try:
+                # TODO: Fix in symbol definition, not here
+                for sym in list(expr.free_symbols):
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+                return expr
+            except AttributeError:  # No free_symbols in expr
+                return expr
+
+        if isinstance(other, Subsetlist):
+            for subset in other.subset_list:
+                if subset not in self.subset_list:
+                    return False
+            return True
+        else:
+            return other in self.subset_list
+
+    def __repr__(self):
+        return '%s (%s)' % (type(self).__name__, self.__str__())
+
+    def offset(self, other, negative, indices=None):
+        raise NotImplementedError
+
+    def offset_new(self, other, negative, indices=None):
+        raise NotImplementedError
+
+    def union(self, other: Subset):
+        """In place union of self with another Subset"""
+        try:
+            if isinstance(other, Subsetlist):
+                self.subset_list += other.subset_list
+            elif isinstance(other, Indices) or isinstance(other, Range):
+                self.subset_list.append(other)
+            else:
+                warnings.warn('Unrecognized Subset type %s in union, degenerating to'
+                            ' bounding box' % type(other).__name__)
+                return None
+        except TypeError:  # cannot determine truth value of Relational
+            return None
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of undefined symbols in this subset. """
+        raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
+
+
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
@@ -1020,6 +1078,8 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
         result.append((minrb, maxre, 1))
 
     return Range(result)
+
+
 
 
 def union(subset_a: Subset, subset_b: Subset) -> Subset:
