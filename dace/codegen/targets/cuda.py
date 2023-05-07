@@ -808,9 +808,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if not hasattr(e.dst, '_cs_childpath'):
                     e.dst._cs_childpath = False
                 if isinstance(e.dst, nodes.NestedSDFG):
-                    if e.dst.schedule not in dtypes.GPU_SCHEDULES:
-                        max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream,
-                                                                            max_events + 1)
+                    max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream,
+                                                                        max_events + 1)
 
             state_streams.append(max_streams if concurrent_streams == 0 else concurrent_streams)
             state_subsdfg_events.append(max_events)
