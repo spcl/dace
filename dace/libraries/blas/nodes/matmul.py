@@ -143,6 +143,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = node.beta
             cin = True
+            if '_cin' not in node.in_connectors:
+                cin = False
             if c[0].data.wcr:
                 from dace.frontend import operations
                 redtype = operations.detect_reduction_type(c[0].data.wcr)

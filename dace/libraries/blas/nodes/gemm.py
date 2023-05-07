@@ -87,7 +87,7 @@ class ExpandGemmPure(ExpandTransformation):
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if node.beta != 0 and node.beta != 1:
+        if '_cin' in node.in_connectors:
             sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
@@ -993,7 +993,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
         super().__init__(name,
                          location=location,
-                         inputs=({"_a", "_b", "_cin"} if beta != 0 and beta != 1 and cin else {"_a", "_b"}),
+                         inputs=({"_a", "_b", "_cin"} if beta != 0 and cin else {"_a", "_b"}),
                          outputs={"_c"})
         self.transA = True if transA else False
         self.transB = True if transB else False
@@ -1050,7 +1050,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemv_libnode(pv: 'ProgramVisitor',
+def gemm_libnode(pv: 'ProgramVisitor',
                  sdfg: SDFG,
                  state: SDFGState,
                  A,
