@@ -29,7 +29,7 @@ from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, dynamic_map_inputs, has_dynamic_map_inputs,
                        is_array_stream_view, is_devicelevel_gpu, nodes, scope_contains_scope)
-from dace.sdfg import utils as sdutil
+from dace.sdfg import scope as sdscope, utils as sdutil
 from dace.transformation import helpers as xfh
 from dace.transformation.passes import analysis as ap
 
@@ -808,8 +808,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if not hasattr(e.dst, '_cs_childpath'):
                     e.dst._cs_childpath = False
                 if isinstance(e.dst, nodes.NestedSDFG):
-                    max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream,
-                                                                        max_events + 1)
+                    max_streams, max_events = self._compute_cudastreams(e.dst.sdfg, e.dst._cuda_stream, max_events + 1)
 
             state_streams.append(max_streams if concurrent_streams == 0 else concurrent_streams)
             state_subsdfg_events.append(max_events)
@@ -1262,13 +1261,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
         if self._kernel_schedule == dtypes.ScheduleType.GPU_Device:
-            state_id = next(i for i, s in enumerate(sdfg.nodes()) if s == state)
-            for node in state.nodes():
-                if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
-                        and state.in_degree(node) == 0 and state.out_degree(node) > 0):
-                    if not self._scope_has_collaborative_copy:
-                        callsite_stream.write('__syncthreads();', sdfg, state_id)
-                    break
+            # If we are inside a thread-block map, we do not need to synchronize
+            if not sdscope.is_in_scope(
+                    sdfg, state, None,
+                [dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic]):
+                state_id = next(i for i, s in enumerate(sdfg.nodes()) if s == state)
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
+                            and state.in_degree(node) == 0 and state.out_degree(node) > 0):
+                        if not self._scope_has_collaborative_copy:
+                            callsite_stream.write('__syncthreads();', sdfg, state_id)
+                        break
 
         # In GPU_Persistent scopes, states need global barriers between them,
         # the DFGs inside of a state are independent, so they don't need

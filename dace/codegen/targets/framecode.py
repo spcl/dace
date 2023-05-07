@@ -421,8 +421,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         cstate = scope if isinstance(scope, SDFGState) else state
         csdfg = scope if isinstance(scope, SDFG) else sdfg
 
-        in_gpu = sdscope.is_devicelevel_gpu(csdfg, cstate, node)
-        in_fpga = sdscope.is_devicelevel_fpga(csdfg, cstate, node)
+        if isinstance(node, nodes.EntryNode) and node.schedule == dtypes.ScheduleType.GPU_Device:
+            in_gpu = True
+        else:
+            in_gpu = sdscope.is_devicelevel_gpu(csdfg, cstate, node)
+        if isinstance(node, nodes.EntryNode) and node.schedule == dtypes.ScheduleType.FPGA_Device:
+            in_fpga = True
+        else:
+            in_fpga = sdscope.is_devicelevel_fpga(csdfg, cstate, node)
 
         if desc.storage in dtypes.FPGA_STORAGES:
             return in_fpga
