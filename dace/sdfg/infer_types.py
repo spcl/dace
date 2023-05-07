@@ -179,8 +179,12 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                                                    child_nodes=state.scope_children())
 
         # Take care of remaining scalars without access nodes
-        for desc in scope.arrays.values():
-            if ((desc.transient or scope.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
+        for aname, desc in scope.arrays.items():
+            # If not transient in a nested SDFG, take storage from parent, regardless of current type
+            if not desc.transient and scope.parent_sdfg is not None:
+                desc.storage = _get_storage_from_parent(aname, scope)
+            elif ((desc.transient or scope.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
+                # Indeterminate storage type, set to register
                 desc.storage = dtypes.StorageType.Register
         return
 
