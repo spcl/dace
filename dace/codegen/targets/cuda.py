@@ -80,7 +80,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
-        self._toplevel_schedule = None
+        self._kernel_schedule = None
         self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
         # Keep track of current "scope entry/exit" code streams for extra
@@ -443,7 +443,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
         return False
 
     def state_dispatch_predicate(self, sdfg, state):
-        if self._toplevel_schedule in dtypes.GPU_SCHEDULES:
+        if self._kernel_schedule in dtypes.GPU_SCHEDULES:
             return True
         for node in state.sink_nodes():
             if hasattr(node, '_cuda_stream'):
@@ -1261,7 +1261,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Special case: if this is a GPU grid state and something is reading
         # from a possible result of a collaborative write, sync first
-        if self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
+        if self._kernel_schedule == dtypes.ScheduleType.GPU_Device:
             state_id = next(i for i, s in enumerate(sdfg.nodes()) if s == state)
             for node in state.nodes():
                 if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.GPU_Shared
@@ -1275,7 +1275,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # synchronization. DFGs in a GPU_Persistent scope are per se executed
         # by a single thread only. (Device) Maps however can be distributed
         # across multiple threads
-        elif self._toplevel_schedule == dtypes.ScheduleType.GPU_Persistent:
+        elif self._kernel_schedule == dtypes.ScheduleType.GPU_Persistent:
 
             # reset streams in GPU persistent maps if the lifetime is scope,
             # otherwise streams do not behave as expected becasue they are
@@ -1883,6 +1883,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Dispatch internal code
         assert CUDACodeGen._in_device_code is False
         CUDACodeGen._in_device_code = True
+        self._kernel_schedule = node.schedule
         self._kernel_map = node
         self._kernel_state = sdfg.node(state_id)
         self._block_dims = block_dims
@@ -1932,6 +1933,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._block_dims = None
         self._kernel_map = None
         self._kernel_state = None
+        self._kernel_schedule = None
         CUDACodeGen._in_device_code = False
         self._grid_dims = None
 
@@ -2420,15 +2422,12 @@ void  *{kname}_args[] = {{ {kargs} }};
         return result
 
     def _generate_NestedSDFG(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        old_schedule = self._toplevel_schedule
-        self._toplevel_schedule = node.schedule
         old_codegen = self._cpu_codegen.calling_codegen
         self._cpu_codegen.calling_codegen = self
 
         self._cpu_codegen._generate_NestedSDFG(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
         self._cpu_codegen.calling_codegen = old_codegen
-        self._toplevel_schedule = old_schedule
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if node.map.schedule == dtypes.ScheduleType.GPU_Device:
