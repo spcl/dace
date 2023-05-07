@@ -1504,8 +1504,11 @@ def is_fpga_kernel(sdfg, state):
     if len(data_nodes) == 0:
         return False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
     return True
 
