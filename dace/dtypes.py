@@ -95,6 +95,14 @@ FPGA_STORAGES = [
     StorageType.FPGA_ShiftRegister,
 ]
 
+# Storage types that can only be allocated on the host
+HOST_ALLOCATED_STORAGES = [
+    StorageType.CPU_Pinned,
+    StorageType.CPU_Heap,
+    StorageType.CPU_ThreadLocal,
+    StorageType.GPU_Global,
+    StorageType.FPGA_Global,
+]
 
 @undefined_safe_enum
 class ReductionType(aenum.AutoNumberEnum):

@@ -414,39 +414,24 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         return states_generated
 
-    def _get_schedule(self, scope: Union[nodes.EntryNode, SDFGState, SDFG]) -> dtypes.ScheduleType:
-        TOP_SCHEDULE = dtypes.ScheduleType.Sequential
-        if scope is None:
-            return TOP_SCHEDULE
-        elif isinstance(scope, nodes.EntryNode):
-            return scope.schedule
-        elif isinstance(scope, (SDFGState, SDFG)):
-            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
-            if sdfg.parent_nsdfg_node is None:
-                return TOP_SCHEDULE
-            return (sdfg.parent_nsdfg_node.schedule or TOP_SCHEDULE)
-        else:
-            raise TypeError
-
     def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
                                                                                         SDFG]) -> bool:
-        schedule = self._get_schedule(scope)
-        # if not dtypes.can_allocate(desc.storage, schedule):
-        #     return False
-        if dtypes.can_allocate(desc.storage, schedule):
-            return True
-
         # Check for device-level memory recursively
         node = scope if isinstance(scope, nodes.EntryNode) else None
         cstate = scope if isinstance(scope, SDFGState) else state
         csdfg = scope if isinstance(scope, SDFG) else sdfg
 
-        if desc.storage in dtypes.FPGA_STORAGES:
-            return sdscope.is_devicelevel_fpga(csdfg, cstate, node)
-        elif desc.storage in dtypes.GPU_STORAGES:
-            return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
+        in_gpu = sdscope.is_devicelevel_gpu(csdfg, cstate, node)
+        in_fpga = sdscope.is_devicelevel_fpga(csdfg, cstate, node)
 
-        return False
+        if desc.storage in dtypes.FPGA_STORAGES:
+            return in_fpga
+        elif desc.storage in dtypes.GPU_STORAGES:
+            return in_gpu
+        elif desc.storage in dtypes.HOST_ALLOCATED_STORAGES:
+            return not (in_gpu or in_fpga)
+
+        return True
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """
