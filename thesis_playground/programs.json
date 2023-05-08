@@ -19,7 +19,8 @@
         "cloudsc_vert_loop_4": "vert_loop_4",
         "cloudsc_vert_loop_5": "vert_loop_5",
         "cloudsc_vert_loop_6": "vert_loop_6",
-        "cloudsc_vert_loop_mwe": "vert_loop_mwe"
+        "cloudsc_vert_loop_mwe": "vert_loop_mwe",
+        "cloudsc_vert_loop_mwe_no_klon": "vert_loop_mwe_no_klon"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -48,7 +49,8 @@
                                 "NBLOCKS"],
         "cloudsc_vert_loop_6": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NBLOCKS"],
-        "cloudsc_vert_loop_mwe": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"]
+        "cloudsc_vert_loop_mwe": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"],
+        "cloudsc_vert_loop_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -79,7 +81,8 @@
                                 "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"],
         "cloudsc_vert_loop_6": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU_NF", "LDCUM_NF", "PSNDE_NF",
                                 "PAPH_NF", "PSUPSAT_NF", "PT_NF", "tendency_tmp_t_NF"],
-        "cloudsc_vert_loop_mwe": ["PTSPHY", "PAPH_NF"]
+        "cloudsc_vert_loop_mwe": ["PTSPHY", "PAPH_NF"],
+        "cloudsc_vert_loop_mwe_no_klon": ["PTSPHY", "PAPH_NFS"]
 
     },
     "program_outputs": {
@@ -102,7 +105,8 @@
         "cloudsc_vert_loop_4": ["PLUDE"],
         "cloudsc_vert_loop_5": ["PLUDE"],
         "cloudsc_vert_loop_6": ["PLUDE_NF"],
-        "cloudsc_vert_loop_mwe": ["PLUDE_NF"]
+        "cloudsc_vert_loop_mwe": ["PLUDE_NF"],
+        "cloudsc_vert_loop_mwe_no_klon": ["PLUDE_NFS"]
 
     }
 }

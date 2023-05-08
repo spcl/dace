@@ -62,6 +62,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PAPH': (params['KLON'], params['KLEV'] + 1),
         'PAPH_N': (params['KLON'], params['KLEV'] + 1, params['NBLOCKS']),
         'PAPH_NF': (params['NBLOCKS'], params['KLON'], params['KLEV'] + 1),
+        'PAPH_NFS': (params['NBLOCKS'], params['KLEV'] + 1),
         'PAP': (params['KLON'], params['KLEV']),
         'PCOVPTOT': (params['KLON'], params['KLEV']),
         'PFCQLNG': (params['KLON'], params['KLEV'] + 1),
@@ -82,6 +83,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PLU_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PLUDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PLUDE_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
+        'PLUDE_NFS': (params['NBLOCKS'], params['KLEV']),
         'PSUPSAT': (params['KLON'], params['KLEV']),
         'PSUPSAT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PSUPSAT_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
@@ -350,6 +352,13 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'variables': ['PLUDE_NF'],
                     'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_mwe_no_klon': [
+                {
+                    'variables': ['PLUDE_NFS'],
+                    'start': (0, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KLEV'])
                 }
             ],
     }
