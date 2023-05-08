@@ -1,4 +1,3 @@
-import copy
 from typing import Dict, Union, Tuple, List
 import numpy as np
 from numbers import Number
@@ -59,8 +58,10 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'ARRAY_C': (params['KLON'], params['KLEV']),
         'IPHASE': (params['NCLV'], ),
         'LDCUM': (params['KLON'], params['NBLOCKS']),
+        'LDCUM_NF': (params['NBLOCKS'], params['KLON']),
         'PAPH': (params['KLON'], params['KLEV'] + 1),
         'PAPH_N': (params['KLON'], params['KLEV'] + 1, params['NBLOCKS']),
+        'PAPH_NF': (params['NBLOCKS'], params['KLON'], params['KLEV'] + 1),
         'PAP': (params['KLON'], params['KLEV']),
         'PCOVPTOT': (params['KLON'], params['KLEV']),
         'PFCQLNG': (params['KLON'], params['KLEV'] + 1),
@@ -78,10 +79,14 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PFSQRF': (params['KLON'], params['KLEV'] + 1),
         'PFSQSF': (params['KLON'], params['KLEV'] + 1),
         'PLU': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PLU_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PLUDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PLUDE_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PSUPSAT': (params['KLON'], params['KLEV']),
         'PSUPSAT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PSUPSAT_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PSNDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PSNDE_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PVFI': (params['KLON'], params['KLEV']),
         'PVFL': (params['KLON'], params['KLEV']),
         'tendency_loc_a': (params['KLON'], params['KLEV']),
@@ -90,6 +95,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'tendency_loc_T': (params['KLON'], params['KLEV']),
         'tendency_tmp_t': (params['KLON'], params['KLEV']),
         'tendency_tmp_t_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'tendency_tmp_t_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'tendency_tmp_q': (params['KLON'], params['KLEV']),
         'tendency_tmp_a': (params['KLON'], params['KLEV']),
         'tendency_tmp_cld': (params['KLON'], params['KLEV'], params['NCLV']),
@@ -149,6 +155,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'ZTP1': (params['KLON'], params['KLEV']),
         'PT': (params['KLON'], params['KLEV']),
         'PT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'PT_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PQ': (params['KLON'], params['KLEV']),
         'PA': (params['KLON'], params['KLEV']),
         'PCLV': (params['KLON'], params['KLEV'], params['NCLV']),
@@ -330,7 +337,21 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
                     'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
                 }
-            ]
+            ],
+            'cloudsc_vert_loop_6': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_mwe': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
     }
     return ranges[program]
 

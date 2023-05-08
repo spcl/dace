@@ -17,7 +17,9 @@
         "cloudsc_vert_loop_2": "vert_loop_2",
         "cloudsc_vert_loop_3": "vert_loop_3",
         "cloudsc_vert_loop_4": "vert_loop_4",
-        "cloudsc_vert_loop_5": "vert_loop_5"
+        "cloudsc_vert_loop_5": "vert_loop_5",
+        "cloudsc_vert_loop_6": "vert_loop_6",
+        "cloudsc_vert_loop_mwe": "vert_loop_mwe"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -43,7 +45,10 @@
         "cloudsc_vert_loop_4": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NBLOCKS"],
         "cloudsc_vert_loop_5": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
-                                "NBLOCKS"]
+                                "NBLOCKS"],
+        "cloudsc_vert_loop_6": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
+                                "NBLOCKS"],
+        "cloudsc_vert_loop_mwe": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -71,7 +76,10 @@
         "cloudsc_vert_loop_4": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
                                 "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"],
         "cloudsc_vert_loop_5": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW",
-                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"]
+                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N"],
+        "cloudsc_vert_loop_6": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU_NF", "LDCUM_NF", "PSNDE_NF",
+                                "PAPH_NF", "PSUPSAT_NF", "PT_NF", "tendency_tmp_t_NF"],
+        "cloudsc_vert_loop_mwe": ["PTSPHY", "PAPH_NF"]
 
     },
     "program_outputs": {
@@ -92,7 +100,9 @@
         "cloudsc_vert_loop_2": ["PLUDE"],
         "cloudsc_vert_loop_3": ["PLUDE"],
         "cloudsc_vert_loop_4": ["PLUDE"],
-        "cloudsc_vert_loop_5": ["PLUDE"]
+        "cloudsc_vert_loop_5": ["PLUDE"],
+        "cloudsc_vert_loop_6": ["PLUDE_NF"],
+        "cloudsc_vert_loop_mwe": ["PLUDE_NF"]
 
     }
 }
