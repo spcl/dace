@@ -57,15 +57,24 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
+        arglist = dict(self._frame.arglist)
         for name, arg_type in self._frame.arglist.items():
-            if isinstance(arg_type, data.Scalar):
+            if isinstance(arg_type, data.Structure):
+                desc = sdfg.arrays[name]
+                for attr in dir(desc):
+                    value = getattr(desc, attr)
+                    if isinstance(value, data.Data):
+                        arglist[f"{name}.{attr}"] = value
+
+        for name, arg_type in arglist.items():
+            if isinstance(arg_type, (data.Scalar, data.Structure)):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
                     self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
                     continue
 
-                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype) 
             elif isinstance(arg_type, data.Array):
                 self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
             elif isinstance(arg_type, data.Stream):
