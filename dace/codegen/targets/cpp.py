@@ -254,7 +254,10 @@ def emit_memlet_reference(dispatcher,
         we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
-    desc = sdfg.arrays[memlet.data]
+    tokens = memlet.data.split('.', 1)
+    desc = sdfg.arrays[tokens[0]]
+    if len(tokens) > 1:
+        desc = getattr(desc, tokens[1])
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
