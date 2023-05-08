@@ -1,4 +1,5 @@
-from os.path import join, dirname, split, abspath, getcwd
+from os.path import join, dirname, split, abspath
+from os import getcwd
 
 
 def get_results_dir(folder_name: str = 'results') -> str:
