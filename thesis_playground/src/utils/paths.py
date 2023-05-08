@@ -1,4 +1,4 @@
-from os.path import join, dirname, split, abspath
+from os.path import join, dirname, split, abspath, getcwd
 
 
 def get_results_dir(folder_name: str = 'results') -> str:
@@ -20,7 +20,7 @@ def get_dacecache() -> str:
     :return: The path to the .dacecache folder
     :rtype: str
     """
-    return join(os.getcwd(), '.dacecache')
+    return join(getcwd(), '.dacecache')
 
 
 def get_default_sdfg_file(program: str) -> str:
@@ -56,3 +56,14 @@ def get_complete_results_dir() -> str:
     :rtype: str
     """
     return join(get_thesis_playground_root_dir(), 'complete_results')
+
+
+def get_verbose_graphs_dir() -> str:
+    """
+    Gets path to the directory where all the SDFGs are stored when SDGFs are generated verbosly (e.g. not for compiling
+            afterwares
+
+    :return: Path to the dir
+    :rtype: str
+    """
+    return join(get_thesis_playground_root_dir(), 'sdfg_graphs')

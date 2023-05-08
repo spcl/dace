@@ -19,7 +19,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 from data import ParametersProvider, get_iteration_ranges, get_data
-from utils.paths import get_dacecache
+from utils.paths import get_dacecache, get_verbose_graphs_dir
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -197,26 +197,25 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-
-
 counter = 0
-graphs_dir = os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], 'sdfg_graphs')
 
 
 def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
     global counter
     if prefix != "":
         prefix = f"{prefix}_"
-    if not os.path.exists(os.path.join(graphs_dir, program)):
-        os.mkdir(os.path.join(graphs_dir, program))
-    filename = os.path.join(graphs_dir, program, f"{prefix}{counter}_{name}.sdfg")
+    if not os.path.exists(get_verbose_graphs_dir()):
+        os.mkdir(get_verbose_graphs_dir())
+    if not os.path.exists(os.path.join(get_verbose_graphs_dir(), program)):
+        os.mkdir(os.path.join(get_verbose_graphs_dir(), program))
+    filename = os.path.join(get_verbose_graphs_dir(), program, f"{prefix}{counter}_{name}.sdfg")
     sdfg.save(filename)
     print(f"Saved graph to {filename}")
     counter = counter + 1
 
 
 def reset_graph_files(program: str):
-    for file in glob(os.path.join(graphs_dir, f"*{program}_*.sdfg")):
+    for file in glob(os.path.join(get_verbose_graphs_dir(), program, "*.sdfg")):
         os.remove(file)
 
 
