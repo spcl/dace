@@ -22,7 +22,7 @@ def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   program: str = None,
                   validate: bool = True,
-                  validate_all: bool = False,
+                  validate_all: bool = True,
                   symbols: Dict[str, int] = None) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
@@ -67,17 +67,18 @@ def auto_optimize(sdfg: SDFG,
                                                    validate=False,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
-
-    if program is not None:
-        save_graph(sdfg, program, "after_loop_to_map")
+        if program is not None:
+            save_graph(sdfg, program, "after_loop_to_map")
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
     if program is not None:
-        save_graph(sdfg, program, "after_simplify")
+        save_graph(sdfg, program, "after_simplify_and_collapse")
 
     # fuse subgraphs greedily
     sdfg.simplify()
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
