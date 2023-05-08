@@ -4,7 +4,7 @@ import ctypes
 import functools
 import re
 from numbers import Number
-from typing import Any, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, Optional, Sequence, Set, Tuple, Union
 
 import numpy
 import sympy as sp
@@ -17,9 +17,9 @@ except (ModuleNotFoundError, ImportError):
 import dace.dtypes as dtypes
 from dace import serialize, symbolic
 from dace.codegen import cppunparse
-from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty, Property,
-                             ReferenceProperty, ShapeProperty, SubsetProperty, SymbolicProperty, TypeClassProperty,
-                             make_properties)
+from dace.properties import (CodeProperty, DataClassProperty, DebugInfoProperty, DictProperty, EnumProperty,
+                             ListProperty, Property, ReferenceProperty, ShapeProperty, SubsetProperty, SymbolicProperty,
+                             TypeClassProperty, make_properties)
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -179,6 +179,12 @@ class Data:
     """
 
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
+    # ddtype = DataClassProperty(default=None, allow_none=True)
+    # datatype = Property(dtype=int, default=0, choices=(0, 1))
+    # dtype = Property(dtype=Property,
+    #                  default=TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses),
+    #                  choices=(TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses),
+    #                           DataClassProperty(default=None, allow_none=True)))
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
     storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
@@ -341,6 +347,87 @@ class Data:
         new_desc.storage = storage
         return new_desc
 
+
+class Structure(Data):
+    """ Base class for structures. """
+
+    def __init__(self,
+                #  dtype: dtypes.typeclass = None,
+                 shape: Iterable[Union[int, symbolic.SymbolicType]] = None,
+                 transient: bool = False,
+                 storage: dtypes.StorageType = dtypes.StorageType.Default,
+                 location: Dict[str, str] = None,
+                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 debuginfo: dtypes.DebugInfo = None):
+        fields = {
+            attr: getattr(self, attr)
+            for attr in dir(self) if (
+                not attr in dir(Data) and
+                not attr.startswith("_") and
+                not attr in ('total_size', 'offset', 'start_offset', 'strides'))}
+        fields_and_types = dict()
+        symbols = set()
+        for attr in dir(self):
+            if (attr in dir(Data) or attr.startswith("__") or
+                    attr in ('total_size', 'offset', 'start_offset', 'strides')):
+                continue
+            value = getattr(self, attr)
+            if isinstance(value, Array):
+                symbols |= value.free_symbols
+                fields_and_types[attr] = (dtypes.pointer(value.dtype), str(_prod(value.shape)))
+            elif isinstance(value, Scalar):
+                symbols |= value.free_symbols
+                fields_and_types[attr] = value.dtype
+            elif isinstance(value, symbolic.SymbolicType):
+                symbols |= value.free_symbols
+                fields_and_types[attr] = symbolic.symtype(value)
+            elif isinstance(value, (int, numpy.integer)):
+                fields_and_types[attr] = dtypes.typeclass(type(value))
+            else:
+                raise TypeError(f"Attribute {attr}'s value {value} has unsupported type: {type(value)}")
+        for s in symbols:
+            if str(s) in fields_and_types:
+                continue
+            if hasattr(s, "dtype"):
+                fields_and_types[str(s)] = s.dtype
+            else:
+                fields_and_types[str(s)] = dtypes.int32
+        dtype = dtypes.struct(self.__class__.__name__, **fields_and_types)
+        shape = shape or (1,)
+        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+    
+    @property
+    def total_size(self):
+        return -1
+    
+    @property
+    def offset(self):
+        return [0]
+
+    @property
+    def start_offset(self):
+        return 0
+    
+    @property
+    def strides(self):
+        return [1]
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
+    
+    def __getitem__(self, s):
+        """ This is syntactic sugar that allows us to define an array type
+            with the following syntax: ``Structure[N,M]``
+
+            :return: A ``data.Array`` data descriptor.
+        """
+        if isinstance(s, list) or isinstance(s, tuple):
+            return StructArray(self, tuple(s))
+        return StructArray(self, (s, ))
 
 @make_properties
 class Scalar(Data):
@@ -900,6 +987,36 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+
+@make_properties
+class StructArray(Array):
+    """ Array of Structures. """
+
+    stype = DataClassProperty(allow_none=True, default=None)
+
+    def __init__(self,
+                 stype,
+                 shape,
+                 transient=False,
+                 allow_conflicts=False,
+                 storage=dtypes.StorageType.Default,
+                 location=None,
+                 strides=None,
+                 offset=None,
+                 may_alias=False,
+                 lifetime=dtypes.AllocationLifetime.Scope,
+                 alignment=0,
+                 debuginfo=None,
+                 total_size=-1,
+                 start_offset=None,
+                 optional=None,
+                 pool=False):
+    
+        self.stype = stype
+        dtype = stype.dtype
+        super(StructArray, self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset,
+                                          may_alias, lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
 
 
 @make_properties
