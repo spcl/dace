@@ -190,7 +190,7 @@ class Range(Subset):
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
         result = Range([(0, s - 1, 1) for s in array.shape])
-        if any(o != 0 for o in array.offset):
+        if hasattr(array, 'offset') and any(o != 0 for o in array.offset):
             result.offset(array.offset, True)
         return result
 
