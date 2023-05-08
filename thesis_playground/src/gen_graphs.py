@@ -9,7 +9,6 @@ from my_auto_opt import auto_optimize
 def main():
     parser = ArgumentParser()
     parser.add_argument('program', type=str, help='Name of the program to generate the SDFGs of')
-    parser.add_argument('--normalize-memlets', action='store_true', default=False)
     parser.add_argument(
         '--only-graph',
         action='store_true',
@@ -27,7 +26,7 @@ def main():
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)
     program_name = programs[args.program]
-    sdfg = get_sdfg(fsource, program_name, args.normalize_memlets)
+    sdfg = get_sdfg(fsource, program_name)
 
     for k, v in sdfg.arrays.items():
         if not v.transient and type(v) == dace.data.Array:

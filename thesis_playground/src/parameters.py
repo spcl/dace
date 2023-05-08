@@ -98,12 +98,21 @@ custom_parameters = {
         'KFDIA': 1,
         'KIDIA': 1,
         'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_6':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
     }
 }
 
 
 # changes from the parameters dict for testing
-testing_parameters = {'KLON': 10, 'KLEV': 10, 'KFDIA': 8, 'NBLOCKS': 10}
+# testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
+testing_parameters = {'KLON': 1, 'KLEV': 13, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 20}
 
 
 class ParametersProvider:
@@ -113,7 +122,10 @@ class ParametersProvider:
     def __init__(self, program: str, testing: bool = False, update: Optional[Dict[str, Number]] = None):
         self.program = program
         self.parameters = copy.deepcopy(parameters)
-        self.parameters.update(custom_parameters[program])
+        if testing:
+            self.parameters.update(testing_parameters)
+        else:
+            self.parameters.update(custom_parameters[program])
         if update is not None:
             self.parameters.update(update)
 
@@ -134,7 +146,9 @@ class ParametersProvider:
 
     @staticmethod
     def to_json(params: 'ParametersProvider') -> Dict:
-        return copy.deepcopy(params.parameters).update({'__ParametersProvider__': True, 'program': params.program})
+        dict = copy.deepcopy(params.parameters)
+        dict.update({'__ParametersProvider__': True, 'program': params.program})
+        return dict
 
     @staticmethod
     def from_json(dict: Dict) -> 'ParametersProvider':

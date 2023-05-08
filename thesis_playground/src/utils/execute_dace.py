@@ -16,33 +16,33 @@ from flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurement_data import ProgramMeasurement
 from utils.print import print_with_time
 
-RNG_SEED = 42
+RNG_SEED = 424388
 
 
 class RunConfig:
     pattern: str
     use_dace_auto_opt: bool
-    normalize_memlets: bool
     device: dace.DeviceType
 
-    def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False, normalize_memlets: bool = True, device:
+    def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,device:
                  dace.DeviceType = dace.DeviceType.GPU):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
-        self.normalize_memlets = normalize_memlets
         self.device = device
 
     def set_from_args(self, args: Namespace):
-        self.pattern = args.pattern
-        self.use_dace_auto_opt = args.use_dace_auto_opt
-        self.normalize_memlets = args.normalize_memlets
+        keys = ['pattern', 'use_dace_auto_opt']
+        args_dict = vars(args)
+        for key in args_dict:
+            if key in keys:
+                setattr(self, key, args_dict[key])
 
     def __len__(self):
         return len(self.pattern)
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, run_config: RunConfig) -> bool:
+def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] = None) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -51,6 +51,8 @@ def test_program(program: str, run_config: RunConfig) -> bool:
     :type program: str
     :param run_config: Configuration how to run it
     :type run_config: RunConfig
+    :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
+    :type sdfg_file: str, optional
     :return: True if test passes, False otherwise
     :rtype: bool
     """
@@ -61,19 +63,25 @@ def test_program(program: str, run_config: RunConfig) -> bool:
     program_name = programs_data['programs'][program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
-    sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
-    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+    if sdfg_file is None:
+        sdfg = get_sdfg(fsource, program_name)
+        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+    else:
+        print(f"Reading SDFG from {sdfg_file} and compile it")
+        sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
+        sdfg.compile()
 
     rng = np.random.default_rng(RNG_SEED)
     params = ParametersProvider(program, testing=True)
     inputs = get_inputs(program, rng, params)
     outputs_f = get_outputs(program, rng, params)
+    outputs_original = copy.deepcopy(outputs_f)
     np.set_printoptions(precision=3)
-    # print(f"LDCUM:\n{inputs['LDCUM'].transpose()}")
+    # print(f"LDCUM:\n{inputs['LDCUM_NF'].transpose()}")
     # print(f"PLUDE:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
     # print(f"PLU:\n{inputs['PLU'][:,:,0].transpose()}")
     if run_config.pattern is not None:
-        set_input_pattern(inputs, outputs_f, program, params, run_config.pattern)
+        set_input_pattern(inputs, outputs_f, params, program, run_config.pattern)
     outputs_d_device = copy_to_device(copy.deepcopy(outputs_f))
     sdfg.validate()
     sdfg.simplify(validate_all=True)
@@ -85,10 +93,16 @@ def test_program(program: str, run_config: RunConfig) -> bool:
     # print(f"PLUDE DaCe:\n{outputs_d_device['PLUDE'][:,:,0].transpose()}")
     # print(f"PLUDE Fortran:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
 
-    print_with_time(f"{program} ({program_name}) on {run_config.device} with"
-                    f"{' ' if run_config.normalize_memlets else 'out '}normalize memlets")
+    print_with_time(f"{program} ({program_name}) on {run_config.device}")
     outputs_d = outputs_d_device
     passes_test = compare_output(outputs_f, outputs_d, program, params)
+    if compare_output_all(outputs_f, outputs_original, print_if_differ=False):
+        print_with_time("!!! Fortran has not change any output values !!!")
+        passes_test = False
+    if compare_output_all(outputs_d, outputs_original, print_if_differ=False):
+        print_with_time("!!! DaCe has not change any output values !!!")
+        passes_test = False
+
     # passes_test = compare_output_all(outputs_f, outputs_d)
 
     if passes_test:
@@ -99,7 +113,7 @@ def test_program(program: str, run_config: RunConfig) -> bool:
 
 
 def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
-                sdfg_file: str = None):
+                sdfg_file: Optional[str] = None):
     """
     Runs Programs
 
@@ -119,7 +133,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     fsource = read_source(program)
     program_name = programs[program]
     if sdfg_file is None:
-        sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
+        sdfg = get_sdfg(fsource, program_name)
         optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
@@ -130,7 +144,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     inputs = copy_to_device(get_inputs(program, rng, params))
     outputs = copy_to_device(get_outputs(program, rng, params))
     if run_config.pattern is not None:
-        set_input_pattern(inputs, outputs, program, params, run_config.pattern)
+        set_input_pattern(inputs, outputs, params, program, run_config.pattern)
 
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
@@ -140,7 +154,7 @@ def compile_for_profile(program: str, run_config: RunConfig) -> dace.SDFG:
     programs = get_programs_data()['programs']
     fsource = read_source(program)
     program_name = programs[program]
-    sdfg = get_sdfg(fsource, program_name, run_config.normalize_memlets)
+    sdfg = get_sdfg(fsource, program_name)
     optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
 
     sdfg.instrument = dace.InstrumentationType.Timer
@@ -163,7 +177,7 @@ def profile_program(program: str, run_config: RunConfig, params: ParametersProvi
     inputs = get_inputs(program, rng, params)
     outputs = get_outputs(program, rng, params)
     if run_config.pattern is not None:
-        set_input_pattern(inputs, outputs, program, params, run_config.pattern)
+        set_input_pattern(inputs, outputs, params, program, run_config.pattern)
 
     sdfg.clear_instrumentation_reports()
     print_with_time("Measure total runtime")
@@ -214,8 +228,6 @@ def get_command_args_single_run(program: str, run_config: RunConfig) -> List[str
     """
     test_program_path = os.path.join(os.path.split(os.path.dirname(__file__))[0], 'run_program.py')
     command_program = ['python3', test_program_path, program, '--repetitions', '1']
-    if run_config.normalize_memlets:
-        command_program.append('--normalize-memlets')
     if run_config.use_dace_auto_opt:
         command_program.append('--use-dace-auto-opt')
     if run_config.pattern is not None:

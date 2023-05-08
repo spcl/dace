@@ -1,12 +1,11 @@
 from argparse import ArgumentParser
 import os
-from subprocess import run
 import re
 import json
 
-import dace
 
-from utils.general import get_programs_data, get_results_dir, use_cache, get_program_parameters_data
+from utils.paths import get_results_dir
+from utils.general import get_programs_data, use_cache
 from utils.print import print_with_time, print_results_v2, print_performance
 from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
                                gen_nsys_report
@@ -17,7 +16,6 @@ from data import ParametersProvider
 
 
 def main():
-    normalize_memlets = True
     parser = ArgumentParser(
         description='Test and profiles the given programs. Results are saved into the results folder')
     parser.add_argument('-p',
@@ -93,12 +91,10 @@ def main():
                 continue
         params = ParametersProvider(program)
         if not args.no_total:
-            program_data = profile_program(program, run_config, params, repetitions=args.repetition)
+            program_data = profile_program(program, run_config, params, repetitions=args.repetitions)
         else:
             program_data = ProgramMeasurement(program, params)
         command_program = ['python3', test_program_path, program, '--repetitions', '1']
-        if normalize_memlets:
-            command_program.append('--normalize-memlets')
         if args.use_dace_auto_opt:
             command_program.append('--use-dace-auto-opt')
         if args.pattern is not None:

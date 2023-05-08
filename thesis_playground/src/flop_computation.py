@@ -371,6 +371,19 @@ def get_data_ranges(
                 },
                 {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
         ],
+        'cloudsc_vert_loop_6':
+        [
+                {'variables': ['PLU'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['LDCUM'], 'size': (KFDIA-KIDIA+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PSNDE'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {
+                    'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
+                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'action': 'r'
+                },
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+        ],
     }
 
     if temp_arrays:
@@ -381,6 +394,12 @@ def get_data_ranges(
             {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
             ])
         iteration_shapes['cloudsc_vert_loop_5'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['cloudsc_vert_loop_6'].extend([
             {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
@@ -467,13 +486,13 @@ def get_number_of_bytes_2(
     """
 
     # Avoid circular imports
-    from data import get_program_parameters_data
+    from data import get_data
     from utils.general import get_programs_data
 
     programs_data = get_programs_data()
     # Get only the data, as we only need it to check if something is a scalar or not, we can do this independent of
     # the precises parameters used
-    data = get_program_parameters_data(program)['data']
+    data = get_data(params)
     memory_data = get_data_ranges(params, temp_arrays)[program]
     read, written = 0, 0
     # Add reading of parameters

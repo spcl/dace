@@ -1,6 +1,7 @@
 from typing import Tuple, Dict, List
 from .ncu_report import IAction, load_report
 from math import isnan
+import re
 
 
 def get_action(filename: str) -> IAction:
@@ -20,7 +21,8 @@ def get_action(filename: str) -> IAction:
     my_range = my_context.range_by_idx(0)
     num_actions = my_range.num_actions()
     if num_actions > 1:
-        print(f"WARNING: More than one action found in {filename} only taking the first")
+        print(f"WARNING: More than one action found in {filename} only taking the first {my_range.action_by_idx(0)}"
+              f"of {num_actions}")
     if num_actions == 0:
         print(f"ERROR: There are no actions in {filename}")
         return None
@@ -44,6 +46,22 @@ def get_all_actions(filename: str) -> List[IAction]:
     num_actions = my_range.num_actions()
     for idx in range(num_actions):
         actions.append(my_range.action_by_idx(idx))
+    return actions
+
+
+def get_all_actions_filtered(filename: str, ignore_re: str) -> List[IAction]:
+    """
+    Gets all the actions inside the given ncu-rep file which do not match the given regex.
+    Assumes there is only one range
+
+    :param filename: The path/filename of the ncu-report
+    :type filename: str
+    :param ignore_re: The regex of any action names to ignore
+    :type ignore_re: str
+    :return: List of actions
+    :rtype: List[IAction]
+    """
+    actions = [a for a in get_all_actions(filename) if not re.match(ignore_re, a.name())]
     return actions
 
 

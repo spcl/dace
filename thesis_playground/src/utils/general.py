@@ -19,6 +19,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 from data import ParametersProvider, get_iteration_ranges, get_data
+from utils.paths import get_dacecache
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -45,9 +46,11 @@ def get_fortran(source: str, program_name: str, subroutine_name: str, fortran_ex
         return function
 
 
-def get_sdfg(source: str, program_name: str, normalize_offsets: bool = False) -> dace.SDFG:
+def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> dace.SDFG:
 
     intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
+    if not normalize_offsets:
+        print("WARNING: Not normalizing offsets")
 
     # Find first NestedSDFG
     sdfg = None
@@ -101,7 +104,7 @@ def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvide
         if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
-            if inp in ['LDCUM']:
+            if inp in ['LDCUM', 'LDCUM_NF']:
                 # Random ints in range [0,1]
                 inp_data[inp] = np.asfortranarray(rng.integers(0, 2, shape, dtype=np.int32))
             else:
@@ -194,16 +197,6 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
     return programs_data
 
 
-def get_results_dir(folder_name: str = 'results') -> str:
-    """
-    Returns path to the directory where the results are stored
-
-    :param folder_name: Name of the folder
-    :type folder_name: str
-    :return: Path to the directory
-    :rtype: str
-    """
-    return os.path.join(os.path.split(os.path.split(os.path.dirname(__file__))[0])[0], folder_name)
 
 
 counter = 0
@@ -241,7 +234,7 @@ def use_cache(program: str) -> bool:
     os.putenv('DACE_compiler_use_cache', '1')
     print("Build it without regenerating the code")
     build = run(['make'],
-                cwd=os.path.join(os.getcwd(), '.dacecache', f"{programs[program]}_routine", 'build'),
+                cwd=os.path.join(get_dacecache(), f"{programs[program]}_routine", 'build'),
                 capture_output=True)
     if build.returncode != 0:
         print("ERROR: Error encountered while building")
@@ -290,7 +283,7 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
                     atol=10e-5)
             if not this_same:
                 print(f"{key} is not the same for range {selection}")
-                # print_compare_matrix(output_a[key][selection], output_b[key][selection], selection)
+                print_compare_matrix(output_a[key][selection], output_b[key][selection], selection)
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
@@ -303,12 +296,12 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
     return same
 
 
-def compare_output_all(output_a: Dict, output_b: Dict) -> bool:
+def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = True) -> bool:
     same = True
     for key in output_a.keys():
         local_same = np.allclose(output_a[key], output_b[key])
         same = same and local_same
-        if not local_same:
+        if not local_same and print_if_differ:
             print(f"Variable {key} differs")
     return same
 
@@ -356,7 +349,9 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     from my_auto_opt import auto_optimize as my_auto_optimize
     if device == dace.DeviceType.GPU:
         if use_my_auto_opt:
+            print("Use my auto opt")
             my_auto_optimize(sdfg, device)
+            print("Done using my auto opt")
         else:
             dace_auto_optimize(sdfg, device)
 
