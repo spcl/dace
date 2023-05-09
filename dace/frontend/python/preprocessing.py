@@ -936,7 +936,8 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
                                  'evaluatable context managers are supported.')
 
             # Create manager as part of closure
-            mgr_name = f'__with_{node.lineno}_{i}' if len(node.items) > 1 else f'__with_{node.lineno}'
+            mgr_id = id(ctxmgr)
+            mgr_name = f'__with_{node.lineno}_{i}_{mgr_id}' if len(node.items) > 1 else f'__with_{node.lineno}_{mgr_id}'
             mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
             ctx_mgr_names.append((mgr.id, ctxmgr))
 
