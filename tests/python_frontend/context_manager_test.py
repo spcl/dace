@@ -38,8 +38,8 @@ def test_context_manager_decorator():
 
 def test_ctxmgr_name_clash():
     
-    from context_managers.context_a import my_dace_ctxmgr_program as prog_a, ctx as ctx_a
-    from context_managers.context_b import my_dace_ctxmgr_program as prog_b, ctx as ctx_b
+    from context_managers.context_a import my_dace_ctxmgr_program as prog_a
+    from context_managers.context_b import my_dace_ctxmgr_program as prog_b
 
     rng = np.random.default_rng(42)
 
@@ -51,7 +51,16 @@ def test_ctxmgr_name_clash():
         return rng.integers(0, 2)
 
     @dace.program
-    def ctxmgr_name_clashing():
+    def ctxmgr_name_clashing_0():
+        i: dace.int64 = randint()
+        if i == 0:
+            prog_a()
+        else:
+            prog_b()
+        return i
+
+    @dace.program
+    def ctxmgr_name_clashing_1():
         i: dace.int64 = randint()
         if i == 0:
             prog_a()
@@ -59,23 +68,22 @@ def test_ctxmgr_name_clash():
             prog_b()
         return i
     
-    a_count = 0
-    b_count = 0
-    sdfg = ctxmgr_name_clashing.to_sdfg(simplify=True)
-    func = sdfg.compile()
-    for _ in range(100):
-        res = func(__with_32___enter__=ctx_a.__enter__,
-                   __with_32___exit__=ctx_a.__exit__,
-                   __with_32___enter___0=ctx_b.__enter__,
-                   __with_32___exit___0=ctx_b.__exit__,
-                   print=print,
-                   print_0=print,
-                   randint=randint)
-        if res[0] == 0:
-            a_count += 1
-        else:
-            b_count += 1
-    assert a_count > 0 and b_count > 0
+    sdfg = ctxmgr_name_clashing_0.to_sdfg()
+    
+    for i, f in enumerate([ctxmgr_name_clashing_0, ctxmgr_name_clashing_1]):
+
+        if i > 0:
+            f.load_precompiled_sdfg(sdfg.build_folder)
+
+        a_count = 0
+        b_count = 0
+        for _ in range(100):
+            res = f()
+            if res[0] == 0:
+                a_count += 1
+            else:
+                b_count += 1
+        assert a_count > 0 and b_count > 0
 
 
 if __name__ == '__main__':
