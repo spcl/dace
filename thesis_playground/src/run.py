@@ -9,7 +9,7 @@ from utils.general import get_programs_data, use_cache
 from utils.print import print_with_time, print_results_v2, print_performance
 from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
                                gen_nsys_report
-from utils.ncu import get_all_actions, action_list_to_dict, get_runtime, get_cycles
+from utils.ncu import get_all_actions_matching_re, action_list_to_dict, get_runtime, get_cycles
 from measurement_data import ProgramMeasurement, MeasurementRun
 from flop_computation import save_roofline_data
 from data import ParametersProvider
@@ -104,19 +104,30 @@ def main():
             print_with_time("Measure kernel runtime")
             for _ in range(args.ncu_repetitions):
                 if gen_ncu_report(program, '/tmp/profile.ncu-rep', run_config):
-                    actions = action_list_to_dict(get_all_actions('/tmp/profile.ncu-rep'))
-                    for name, action in actions.items():
-                        match = re.match(r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)\(", name)
+                    regex_str = r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)"
+                    all_actions = action_list_to_dict(get_all_actions_matching_re('/tmp/profile.ncu-rep', regex_str))
+                    print(all_actions)
+                    for name, actions in all_actions.items():
+                        if len(actions) > 1:
+                            print(f"WARNING: Multiple actions found, taking only the frist: "
+                                  f"{[a.name for a in actions]}")
+                        action = actions[0]
+                        match = re.match(regex_str, name)
+                        print(name, match)
                         if match is not None:
                             id_triplet = tuple([int(id) for id in match.group(1).split('_')])
                             time_measurement = program_data.get_measurement('Kernel Time', kernel=str(id_triplet))
                             cycles_measurement = program_data.get_measurement('Kernel Cycles', kernel=str(id_triplet))
                             if time_measurement is None:
                                 program_data.add_measurement('Kernel Time', 'seconds', kernel_name=str(id_triplet))
+                                time_measurement = program_data.get_measurement('Kernel Time', kernel=str(id_triplet))
                             if cycles_measurement is None:
                                 program_data.add_measurement('Kernel Cycles', 'cycles', kernel_name=str(id_triplet))
+                                cycles_measurement = program_data.get_measurement('Kernel Cycles', kernel=str(id_triplet))
                             time_measurement.add_value(get_runtime(action))
                             cycles_measurement.add_value(get_cycles(action))
+                            print(f"time: {get_runtime(action)}")
+                            print(f"cycles: {get_cycles(action)}")
 
         if args.nsys:
             gen_nsys_report(program, f"report_{program}.nsys-rep", run_config)
@@ -132,7 +143,7 @@ def main():
 
         if args.roofline:
             print_with_time("Compute roofline data")
-            roofline_data[program] = get_roofline_data(program, pattern=args.pattern)
+            roofline_data[program] = get_roofline_data(program, params, pattern=args.pattern)
 
     if args.output is not None:
         filename = os.path.join(get_results_dir(args.results_folder), args.output)

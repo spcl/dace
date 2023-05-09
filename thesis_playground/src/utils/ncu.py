@@ -65,6 +65,22 @@ def get_all_actions_filtered(filename: str, ignore_re: str) -> List[IAction]:
     return actions
 
 
+def get_all_actions_matching_re(filename: str, re_str: str) -> List[IAction]:
+    """
+    Gets all the actions inside the given ncu-rep file which match the given regex.
+    Assumes there is only one range
+
+    :param filename: The path/filename of the ncu-report
+    :type filename: str
+    :param re_str: The regex all action names need to match against
+    :type re_str: str
+    :return: List of actions
+    :rtype: List[IAction]
+    """
+    actions = [a for a in get_all_actions(filename) if re.match(re_str, a.name())]
+    return actions
+
+
 def action_list_to_dict(actions: List[IAction]) -> Dict[str, List[IAction]]:
     """
     Converts the given list of actions into a dictionary. The keys are the action names, the values are a list of all
@@ -170,6 +186,7 @@ def get_runtime(action: IAction) -> float:
     :return: The runtime in seconds
     :rtype: float
     """
+    print(f"[get_runtime] {type(action)}")
     return action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
 
 

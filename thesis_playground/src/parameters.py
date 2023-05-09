@@ -123,7 +123,7 @@ class ParametersProvider:
         self.parameters = copy.deepcopy(parameters)
         if testing:
             self.parameters.update(testing_parameters)
-        else:
+        elif program in custom_parameters:
             self.parameters.update(custom_parameters[program])
         if update is not None:
             self.parameters.update(update)
