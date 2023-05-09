@@ -36,5 +36,40 @@ def test_context_manager_decorator():
     assert ctx.should_pass
 
 
+def test_ctxmgr_name_clash():
+    
+    from context_managers.context_a import my_dace_ctxmgr_program as prog_a
+    from context_managers.context_b import my_dace_ctxmgr_program as prog_b
+
+    rng = np.random.default_rng(42)
+
+    def dace_blocker(f):
+        return f
+    
+    @dace_blocker
+    def randint():
+        return rng.integers(0, 2)
+
+    @dace.program(auto_optimize=True)
+    def ctxmgr_name_clashing():
+        i: dace.int64 = randint()
+        if i == 0:
+            prog_a()
+        else:
+            prog_b()
+        return i
+    
+    a_count = 0
+    b_count = 0
+    for _ in range(100):
+        res = ctxmgr_name_clashing()
+        if res[0] == 0:
+            a_count += 1
+        else:
+            b_count += 1
+    assert a_count > 0 and b_count > 0
+
+
 if __name__ == '__main__':
     test_context_manager_decorator()
+    test_ctxmgr_name_clash()
