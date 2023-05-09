@@ -2,7 +2,6 @@ from typing import Dict, Optional
 from numbers import Number
 import copy
 from argparse import Namespace
-import json
 
 
 parameters = {
@@ -143,6 +142,9 @@ class ParametersProvider:
 
     def __str__(self) -> str:
         return ' '.join([f"{key}: {value}" for key, value in self.parameters.items()])
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.parameters
 
     @staticmethod
     def to_json(params: 'ParametersProvider') -> Dict:
