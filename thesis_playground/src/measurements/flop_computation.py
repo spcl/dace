@@ -63,6 +63,14 @@ class FlopCount:
 
 
 def save_roofline_data(data: Dict[str, Tuple[FlopCount, Number]], filename: str):
+    """
+    Saves the given roofline data into the given file in json format
+
+    :param data: The Data, keys are program names, values are tuple of FlopCount and byte count
+    :type data: Dict[str, Tuple[FlopCount, Number]]
+    :param filename: The path of the file to store it in
+    :type filename: str
+    """
     all_dict = copy.deepcopy(data)
     for program in all_dict:
         all_dict[program] = (all_dict[program][0].to_dict(), all_dict[program][1])
@@ -73,6 +81,14 @@ def save_roofline_data(data: Dict[str, Tuple[FlopCount, Number]], filename: str)
 
 
 def read_roofline_data(filename: str) -> Dict[str, Tuple[FlopCount, Number]]:
+    """
+    Reads the roofline data from the given json file
+
+    :param filename: The path to the json file
+    :type filename: str
+    :return: Dictionary, keys are program names, values are tuples of FlopCount and byte count
+    :rtype: Dict[str, Tuple[FlopCount, Number]]
+    """
     with open(filename, 'r') as file:
         all_dict = json.load(file)
         for program in all_dict:
@@ -486,7 +502,7 @@ def get_number_of_bytes_2(
     """
 
     # Avoid circular imports
-    from data import get_data
+    from execute.data import get_data
     from utils.general import get_programs_data
 
     programs_data = get_programs_data()
