@@ -1,5 +1,6 @@
-from os.path import join, dirname, split, abspath
-from os import getcwd
+from typing import List
+from os.path import join, dirname, split, abspath, exists
+from os import getcwd, listdir
 
 
 def get_results_dir(folder_name: str = 'results') -> str:
@@ -57,6 +58,20 @@ def get_complete_results_dir() -> str:
     :rtype: str
     """
     return join(get_thesis_playground_root_dir(), 'complete_results')
+
+
+def get_list_of_complete_results_name() -> List[str]:
+    """
+    Lists all folder with data (which contain an info.json) in the complete results folder.
+
+    :return: List of names/folders inside the complete results folder (no paths given)
+    :rtype: List[str]
+    """
+    names = []
+    for name in listdir(get_complete_results_dir()):
+        if exists(join(get_complete_results_dir(), name, 'info.json')):
+            names.append(name)
+    return names
 
 
 def get_verbose_graphs_dir() -> str:

@@ -9,7 +9,7 @@ import numpy as np
 from typing import List, Callable
 
 from utils.general import get_results_dir
-from measurement_data import MeasurementRun
+from measurements.data import MeasurementRun
 
 
 def create_plot_grid(

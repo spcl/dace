@@ -8,12 +8,12 @@ from argparse import Namespace
 
 import dace
 
-from data import ParametersProvider, set_input_pattern
+from execute.data import ParametersProvider, set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                           compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
                           print_non_zero_percentage
-from flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
-from measurement_data import ProgramMeasurement
+from measurements.flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
+from measurements.data import ProgramMeasurement
 from utils.print import print_with_time
 
 RNG_SEED = 424388

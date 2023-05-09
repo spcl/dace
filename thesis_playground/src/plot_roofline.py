@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 
 from utils.paths import get_results_dir
 from utils.plot import plot_roofline_cycles, plot_roofline_seconds
-from measurement_data import MeasurementRun
-from flop_computation import read_roofline_data
+from measurements.data import MeasurementRun
+from measurements.flop_computation import read_roofline_data
 
 
 def main():

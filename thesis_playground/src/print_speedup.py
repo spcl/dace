@@ -6,7 +6,7 @@ from numbers import Number
 from tabulate import tabulate
 
 from utils.general import get_results_dir
-from measurement_data import MeasurementRun, ProgramMeasurement, Measurement
+from measurements.data import MeasurementRun, ProgramMeasurement, Measurement
 
 
 def find_program_measurement_in_run(run: MeasurementRun, program_name: str) -> Optional[ProgramMeasurement]:

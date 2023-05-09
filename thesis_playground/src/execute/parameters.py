@@ -135,13 +135,17 @@ class ParametersProvider:
                 self.parameters[key] = args_dict[key]
 
     def __getitem__(self, key: str) -> Number:
-        return self.parameters[key]
+        if key in self.parameters:
+            return self.parameters[key]
+        else:
+            print(f"WARNING: key {key} not in parameters, returned 1 instead")
+            return 1
 
     def __len__(self) -> int:
         return len(self.parameters)
 
     def __str__(self) -> str:
-        return ' '.join([f"{key}: {value}" for key, value in self.parameters.items()])
+        return 'ParametersProvider with: ' + ' '.join([f"{key}: {value}" for key, value in self.parameters.items()])
 
     def __contains__(self, key: str) -> bool:
         return key in self.parameters

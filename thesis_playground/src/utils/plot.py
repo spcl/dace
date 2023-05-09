@@ -1,13 +1,15 @@
 from typing import Dict, Tuple, Optional
 from numbers import Number
 import matplotlib
+import matplotlib.pyplot as plt
 import math
 
-from .general import convert_to_seconds
-from measurement_data import MeasurementRun, Measurement
-from flop_computation import FlopCount, read_roofline_data
-from .ncu import get_achieved_bytes, get_achieved_work, get_runtime
+from utils.general import convert_to_seconds
+from measurements.data import MeasurementRun, Measurement
+from measurements.flop_computation import FlopCount
+from utils.ncu import get_achieved_bytes, get_achieved_work, get_runtime
 from utils.ncu_report import IAction
+from utils.general import get_programs_data
 
 
 def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwidth: float, max_bandwidth_unit: str,
@@ -27,7 +29,8 @@ def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwid
             rotation_mode='anchor', transform_rotates_text=True)
 
 
-def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis):
+def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis, program: Optional[str] = None,
+                    marker: str = "x"):
     """
     Draws points onto the given axis. Uses the Q, W and T data from the given ncu_report action object
 
@@ -37,18 +40,27 @@ def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis):
     :type label: str
     :param ax: The axis
     :type ax: matplotlib.axis.Axis
+    :param program: Name of the program of the measurement. If given will color all points of the same program in the
+    same color
+    :type program: Optional[str]
+    :param marker: Marker for the points as passed to matplotlib, defaults to "x"
+    :type marker: str
     """
     bytes_count = get_achieved_bytes(action)
     flop = get_achieved_work(action)['dW']
     time = get_runtime(action)
     performance = flop / time
     intensity = flop / bytes_count
-    ax.scatter(intensity, performance, label=label)
+    if program is None:
+        ax.scatter(intensity, performance, label=label, marker=marker)
+    else:
+        ax.scatter(intensity, performance, label=label, marker=marker, color=get_color_from_program_name(program))
     return intensity
 
 
 def draw_program_points(measurement: Measurement, label: str, ax: matplotlib.axis.Axis,
-                        flop_count: FlopCount, byte_count: Number) -> Number:
+                        flop_count: FlopCount, byte_count: Number, program: Optional[str] = None,
+                        marker: str = ".") -> Number:
     """
     Draws point of the given measurement onto the given axis
 
@@ -62,6 +74,11 @@ def draw_program_points(measurement: Measurement, label: str, ax: matplotlib.axi
     :type flop_count: FlopCount
     :param byte_count: The number of bytes transferred
     :type byte_count: Number
+    :param program: Name of the program of the measurement. If given will color all points of the same program in the
+    same color
+    :type program: Optional[str]
+    :param marker: Marker for the points as passed to matplotlib, defaults to "."
+    :type marker: str
     :return: The operational intensity
     :rtype: Number
     """
@@ -71,8 +88,26 @@ def draw_program_points(measurement: Measurement, label: str, ax: matplotlib.axi
     flops = flop_count.get_total_flops()
     performance = flops / time
     intensity = flops / byte_count
-    ax.scatter(intensity, performance, label=label)
+    if program is None:
+        ax.scatter(intensity, performance, label=label, marker=marker)
+    else:
+        ax.scatter(intensity, performance, label=label, marker=marker, color=get_color_from_program_name(program))
     return intensity
+
+
+def get_color_from_program_name(program: str):
+    """
+    Gets the color as used by matplotlib given the program name
+
+    :param program: The name of the program
+    :type program: str
+    """
+    programs = list(get_programs_data()['programs'].keys())
+    index = programs.index(program)
+    # normalized_index = float(index) / float(len(programs))
+    cmap = plt.get_cmap('tab10')
+    normalized_index = float(index % cmap.N) / float(cmap.N)
+    return cmap(normalized_index)
 
 
 def update_min_max(value: Number, min_value: Optional[Number] = None,
@@ -144,10 +179,46 @@ def plot_roofline_cycles(run_data: MeasurementRun, roofline_data: Dict[str, Tupl
     ax.grid()
 
 
+def draw_rooflines_seconds(ax: matplotlib.axis.Axis, hardware_data: Dict, min_intensity: float, max_intensity: float):
+    """
+    Draw the rooflines using units based on seconds
+
+    :param ax: The axis to plot it on
+    :type ax: matplotlib.axis.Axis
+    :param hardware_data: The dicionary with the hardware data
+    :type hardware_data: Dict
+    :param min_intensity: The min intensity, defines length on x-axis
+    :type min_intensity: float
+    :param max_intensity: The max intensity, defines length on x-axis
+    :type max_intensity: float
+    """
+    peak_performance = hardware_data['flop_per_second']['theoretical']
+    draw_roofline(ax, peak_performance,
+                  hardware_data['bytes_per_second']['global']['measured'],
+                  'bytes / second',
+                  min_intensity, max_intensity, color='black',
+                  bandwidth_label="Global, Measured")
+    # Using here the higher max graphics clock. Don't quite know if this is correct
+    draw_roofline(ax, peak_performance,
+                  hardware_data['bytes_per_second']['shared']['measured'],
+                  'bytes / second',
+                  min_intensity, max_intensity, color='black',
+                  bandwidth_label="Shared, Measured")
+    draw_roofline(ax, peak_performance,
+                  hardware_data['bytes_per_second']['l2']['measured'],
+                  'bytes / second',
+                  min_intensity, max_intensity, color='black',
+                  bandwidth_label="L2, Measured")
+    draw_roofline(ax, peak_performance,
+                  hardware_data['bytes_per_cycle']['l1']['measured'] * hardware_data['graphics_clock'],
+                  'bytes / second',
+                  min_intensity, max_intensity, color='black',
+                  bandwidth_label="L1, Measured")
+
+
 def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tuple[FlopCount, Number]],
                           hardware_data: Dict, ax: matplotlib.axis.Axis, points_only: bool = False,
                           actions: Optional[Dict[str, IAction]] = None):
-    peak_performance = hardware_data['flop_per_second']['theoretical']
 
     ax.set_xlabel("Operational Intensity")
     ax.set_ylabel("Performance [flop/seconds]")
@@ -166,27 +237,7 @@ def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tup
                                                               min_intensity, max_intensity)
 
     if not points_only:
-        # Draw rooflines
-        draw_roofline(ax, peak_performance,
-                      hardware_data['bytes_per_second']['global']['measured'],
-                      'bytes / second',
-                      min_intensity, max_intensity, color='black',
-                      bandwidth_label="Global, Measured")
-        # Using here the higher max graphics clock. Don't quite know if this is correct
-        draw_roofline(ax, peak_performance,
-                      hardware_data['bytes_per_second']['shared']['measured'],
-                      'bytes / second',
-                      min_intensity, max_intensity, color='black',
-                      bandwidth_label="Shared, Measured")
-        draw_roofline(ax, peak_performance,
-                      hardware_data['bytes_per_second']['l2']['measured'],
-                      'bytes / second',
-                      min_intensity, max_intensity, color='black',
-                      bandwidth_label="L2, Measured")
-        draw_roofline(ax, peak_performance,
-                      hardware_data['bytes_per_cycle']['l1']['measured'] * hardware_data['graphics_clock'],
-                      'bytes / second',
-                      min_intensity, max_intensity, color='black',
-                      bandwidth_label="L1, Measured")
+        draw_rooflines_seconds()
+
     ax.legend()
     ax.grid()

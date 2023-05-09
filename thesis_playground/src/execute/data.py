@@ -3,7 +3,7 @@ import numpy as np
 from numbers import Number
 
 from utils.print import print_with_time
-from parameters import ParametersProvider
+from execute.parameters import ParametersProvider
 
 
 def get_data(params: ParametersProvider) -> Dict[str, Tuple]:

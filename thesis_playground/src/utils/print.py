@@ -3,8 +3,8 @@ from typing import Dict, Tuple, Optional, List
 from numbers import Number
 from tabulate import tabulate
 
-from measurement_data import MeasurementRun
-from flop_computation import FlopCount, get_number_of_bytes_2
+from measurements.data import MeasurementRun
+from measurements.flop_computation import FlopCount, get_number_of_bytes_2
 
 
 def print_with_time(text: str):

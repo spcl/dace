@@ -1,0 +1,6 @@
+{
+    "classes": [1, 2, 3],
+    "description_short": "My optimsations for class 1 & 2",
+    "description_long": "Outside loops get transformed to maps first and move const assignments outside of ifs",
+    "additional_run_flags": ["--pattern", "formula"]
+}

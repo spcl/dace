@@ -1,0 +1,6 @@
+{
+    "classes": [2, 3],
+    "description_short": "Baseline",
+    "description_long": "Baseline using DaCe auto opt",
+    "additional_run_flags": ["--pattern", "formula", "--use-dace-auto-opt"]
+}

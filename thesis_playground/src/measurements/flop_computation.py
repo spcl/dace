@@ -4,7 +4,7 @@ import numpy as np
 import copy
 import json
 
-from parameters import ParametersProvider
+from execute.parameters import ParametersProvider
 
 
 # Length of a double in bytes
@@ -493,6 +493,7 @@ def get_number_of_bytes_2(
     # Get only the data, as we only need it to check if something is a scalar or not, we can do this independent of
     # the precises parameters used
     data = get_data(params)
+
     memory_data = get_data_ranges(params, temp_arrays)[program]
     read, written = 0, 0
     # Add reading of parameters

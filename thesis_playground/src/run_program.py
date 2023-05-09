@@ -1,12 +1,9 @@
 from argparse import ArgumentParser
 
-import dace
-import os
-
 from utils.paths import get_default_sdfg_file
 from utils.general import use_cache, enable_debug_flags
 from utils.execute_dace import RunConfig, run_program, test_program
-from data import ParametersProvider
+from execute.parameters import ParametersProvider
 
 
 def main():

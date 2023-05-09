@@ -10,9 +10,9 @@ from utils.print import print_with_time, print_results_v2, print_performance
 from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
                                gen_nsys_report
 from utils.ncu import get_all_actions_matching_re, action_list_to_dict, get_runtime, get_cycles
-from measurement_data import ProgramMeasurement, MeasurementRun
-from flop_computation import save_roofline_data
-from data import ParametersProvider
+from measurements.data import ProgramMeasurement, MeasurementRun
+from measurements.flop_computation import save_roofline_data
+from execute.parameters import ParametersProvider
 
 
 def main():
@@ -123,11 +123,10 @@ def main():
                                 time_measurement = program_data.get_measurement('Kernel Time', kernel=str(id_triplet))
                             if cycles_measurement is None:
                                 program_data.add_measurement('Kernel Cycles', 'cycles', kernel_name=str(id_triplet))
-                                cycles_measurement = program_data.get_measurement('Kernel Cycles', kernel=str(id_triplet))
+                                cycles_measurement = program_data.get_measurement('Kernel Cycles',
+                                                                                  kernel=str(id_triplet))
                             time_measurement.add_value(get_runtime(action))
                             cycles_measurement.add_value(get_cycles(action))
-                            print(f"time: {get_runtime(action)}")
-                            print(f"cycles: {get_cycles(action)}")
 
         if args.nsys:
             gen_nsys_report(program, f"report_{program}.nsys-rep", run_config)

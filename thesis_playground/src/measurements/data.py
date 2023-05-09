@@ -6,7 +6,7 @@ from subprocess import run
 from os import path
 from datetime import datetime
 
-from parameters import ParametersProvider
+from execute.parameters import ParametersProvider
 
 
 class Measurement:

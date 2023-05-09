@@ -18,7 +18,8 @@ from dace.sdfg import utils, SDFG
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
-from data import ParametersProvider, get_iteration_ranges, get_data
+
+from execute.data import ParametersProvider, get_iteration_ranges, get_data
 from utils.paths import get_dacecache, get_verbose_graphs_dir
 
 
@@ -345,12 +346,10 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
             v.storage = dace.dtypes.StorageType.GPU_Global
 
     # avoid cyclic dependency
-    from my_auto_opt import auto_optimize as my_auto_optimize
+    from execute.my_auto_opt import auto_optimize as my_auto_optimize
     if device == dace.DeviceType.GPU:
         if use_my_auto_opt:
-            print("Use my auto opt")
             my_auto_optimize(sdfg, device)
-            print("Done using my auto opt")
         else:
             dace_auto_optimize(sdfg, device)
 

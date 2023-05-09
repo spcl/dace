@@ -186,7 +186,6 @@ def get_runtime(action: IAction) -> float:
     :return: The runtime in seconds
     :rtype: float
     """
-    print(f"[get_runtime] {type(action)}")
     return action.metric_by_name('gpu__time_duration.sum').as_double() / 1e9
 
 
