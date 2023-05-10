@@ -608,6 +608,26 @@ namespace dace {
     };
 #endif
 
+#ifdef __HIPCC__
+    template <ReductionType REDTYPE, typename T>
+    struct warpReduce {
+        static DACE_DFI T reduce(T v)
+        {
+            for (int i = 1; i < warpSize; i = i * 2)
+                v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+            return v;
+        }
+
+        template<int NUM_MW>
+        static DACE_DFI T mini_reduce(T v)
+        {
+            for (int i = 1; i < NUM_MW; i = i * 2)
+                v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor(v, i));
+            return v;
+        }
+    };
+#endif
+
 }  // namespace dace
 
 
