@@ -487,7 +487,29 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
+                try:
+                    import torch
+
+                    # Set allocator to GPU
+                    def ndarray(*args, buffer=None, **kwargs):
+                        if buffer is None:
+                            raise NotImplementedError('When using torch, buffer must be provided')
+                        shape, dtype = args
+                        if 'strides' in kwargs:
+                            strides = tuple(s // dtype.itemsize for s in kwargs['strides'])
+                            if strides[-1] != 1:
+                                print(strides)
+                                raise NotImplementedError('Strides are unsupported in torch')
+                        else:
+                            strides = [1]
+                            for s in shape[:-1]:
+                                strides.prepend(strides[-1] * s)
+                        return torch.as_tensor(buffer, device=torch.device('cuda:0')).as_strided(size=shape, stride=strides)
+                    
+                    def zeros(size, dtype):
+                        return torch.empty(size, dtype=getattr(torch, dtype.name), device=torch.device('cuda:0'))
+                except (ImportError, ModuleNotFoundError):
+                    raise NotImplementedError('GPU return values are unsupported if cupy or torch is not installed')
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 
