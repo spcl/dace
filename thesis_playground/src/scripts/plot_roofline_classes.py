@@ -2,6 +2,8 @@ import os
 import json
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.lines as mlines
 from typing import Optional, List, Tuple
 
 from utils.paths import get_complete_results_dir
@@ -87,8 +89,29 @@ class PlotRooflineClasses(Script):
                           min_i, max_i, color='black',
                           bandwidth_label="Global, Measured")
 
-            ax.legend()
+            # Only use one legend entry per program
+            new_handles, new_labels = [], []
+            handles, labels = ax.get_legend_handles_labels()
+            for handle, label in zip(handles, labels):
+                program = label.split(' ')[0]
+                if program not in new_labels:
+                    color = handle.get_edgecolor()
+                    new_handles.append(mpatches.Patch(color=color, label=program))
+                    new_labels.append(program)
+
+            # sort by class and program number
+            new_handles.sort(key=lambda handle: int(handle.get_label().split('_')[1][-1])*10000 +
+                             int(handle.get_label().split('_')[2]))
+            # Add baseline and my improvements distinction
+            new_handles.append(mlines.Line2D([], [], marker='.', label="Baseline", markersize=15, color='w',
+                               markerfacecolor='k'))
+            new_handles.append(mlines.Line2D([], [], marker='x', label="My Improvements", markersize=10, color='k',
+                               lw=0))
+
+            ax.legend(handles=new_handles)
             dir = os.path.join(get_complete_results_dir(), "plots")
             if not os.path.exists(dir):
                 os.mkdir(dir)
-            plt.savefig(os.path.join(dir, "roofline_all.png"))
+            filename = os.path.join(dir, "roofline_all.png")
+            print(f"Save plot into {filename}")
+            plt.savefig(filename)

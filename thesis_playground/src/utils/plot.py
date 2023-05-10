@@ -102,12 +102,28 @@ def get_color_from_program_name(program: str):
     :param program: The name of the program
     :type program: str
     """
-    programs = list(get_programs_data()['programs'].keys())
-    index = programs.index(program)
-    # normalized_index = float(index) / float(len(programs))
-    cmap = plt.get_cmap('tab10')
-    normalized_index = float(index % cmap.N) / float(cmap.N)
-    return cmap(normalized_index)
+    # programs = list(get_programs_data()['programs'].keys())
+    # index = programs.index(program)
+    # # normalized_index = float(index) / float(len(programs))
+    # cmap = plt.get_cmap('tab10')
+    # normalized_index = float(index % cmap.N) / float(cmap.N)
+    # return cmap(normalized_index)
+
+    # TODO: Are these better colors?
+    colors = {
+            'cloudsc_class1_658': 'xkcd:purple',
+            'cloudsc_class1_670': 'xkcd:lavender',
+            'cloudsc_class1_2783': 'xkcd:blue',
+            'cloudsc_class1_2857': 'xkcd:light blue',
+            'cloudsc_class2_781': 'xkcd:red',
+            'cloudsc_class2_1516': 'xkcd:orange',
+            'cloudsc_class2_1762': 'xkcd:pink',
+            'cloudsc_class3_691': 'xkcd:green',
+            'cloudsc_class3_965': 'xkcd:lime green',
+            'cloudsc_class3_1985': 'xkcd:olive drab',
+            'cloudsc_class3_2120': 'xkcd:mustard',
+            }
+    return colors[program]
 
 
 def update_min_max(value: Number, min_value: Optional[Number] = None,
