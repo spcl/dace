@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from tabulate import tabulate
 
 from utils.ncu import get_achieved_bytes, get_achieved_performance, get_peak_performance
@@ -9,6 +10,9 @@ from scripts import Script
 class PrintMUE(Script):
     name = "print-mue"
     description = "Prints the MUE for the data in complete_results/all_frist_opt"
+
+    def add_args(self, parser: ArgumentParser):
+        parser.add_argument('--tablefmt', type=str, default="simple", help="Table format for tabulate to use")
 
     @staticmethod
     def action(args):
@@ -35,7 +39,8 @@ class PrintMUE(Script):
             mue = io_efficiency * bw_efficiency
             tabulate_data.append([program, ncuQ, myQ, io_efficiency, bw_efficiency, mue])
 
+        tabulate_data.sort(key=lambda row: int(row[0].split('_')[1][-1])*1000 + int(row[0].split('_')[2]))
         print(tabulate(tabulate_data,
                        headers=['program', 'measured bytes', 'theoretical bytes', 'I/O efficiency', 'BW efficiency',
                                 'MUE'],
-                       intfmt=',', floatfmt='.2f'))
+                       intfmt=',', floatfmt='.2f', tablefmt=args.tablefmt))

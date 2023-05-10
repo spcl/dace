@@ -8,7 +8,7 @@ from numbers import Number
 
 from measurements.data import MeasurementRun, ProgramMeasurement
 from measurements.flop_computation import FlopCount, read_roofline_data
-from utils.paths import get_complete_results_dir
+from utils.paths import get_complete_results_dir, get_thesis_playground_root_dir
 from utils.plot import update_min_max, draw_program_points, draw_roofline, draw_ncu_points
 from utils.ncu import get_all_actions_filtered
 from scripts import Script
@@ -107,7 +107,7 @@ def run_programs(info_data: Dict, raw_data_dir: str):
     :param raw_data_dir: Path to the directory containig all raw data
     :type raw_data_dir: str
     """
-    run_path = os.path.join(os.path.dirname(__file__), 'run.py')
+    run_path = os.path.join(get_thesis_playground_root_dir(), 'src', 'run.py')
     for class_number in info_data['classes']:
         run(['python3', run_path, '--class', str(class_number), '--ncu-report', '--roofline',
              '--ncu-report-folder', raw_data_dir, '--results-folder', raw_data_dir,

@@ -17,7 +17,7 @@ class PrintMUEVertLoop(Script):
     name = "print-mue-vert"
     description = "Print MUE for the vertical loop results"
 
-    @classmethod
+    @staticmethod
     def action(args):
         data = {}
         for file in os.listdir(folder):

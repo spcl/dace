@@ -106,14 +106,12 @@ def main():
                 if gen_ncu_report(program, '/tmp/profile.ncu-rep', run_config):
                     regex_str = r"[a-z_0-9]*_([0-9]*_[0-9]*_[0-9]*)"
                     all_actions = action_list_to_dict(get_all_actions_matching_re('/tmp/profile.ncu-rep', regex_str))
-                    print(all_actions)
                     for name, actions in all_actions.items():
                         if len(actions) > 1:
                             print(f"WARNING: Multiple actions found, taking only the frist: "
                                   f"{[a.name for a in actions]}")
                         action = actions[0]
                         match = re.match(regex_str, name)
-                        print(name, match)
                         if match is not None:
                             id_triplet = tuple([int(id) for id in match.group(1).split('_')])
                             time_measurement = program_data.get_measurement('Kernel Time', kernel=str(id_triplet))

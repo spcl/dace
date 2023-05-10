@@ -17,6 +17,8 @@ class FlopCount:
     divs: int
     minmax: int
     abs: int
+    powers: int
+    roots: int
 
     def __init__(self, adds: int = 0, muls: int = 0, divs: int = 0, minmax: int = 0, abs: int = 0, powers: int = 0,
                  roots: int = 0):
@@ -106,9 +108,11 @@ def get_number_of_flops(
     KIDIA = params['KIDIA']
     KFDIA = params['KFDIA']
     if program == 'cloudsc_class1_658':
-        return KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=5, muls=5)
+        # There are 5 lines with an FMA each, but only 3 distinct values
+        return KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=3, muls=3)
     elif program == 'cloudsc_class1_670':
-        return (params['NCLV']-1) * KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=2, muls=2)
+        # There are 2 lines with an FMA each, but only 1 distinct values
+        return (params['NCLV']-1) * KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=1, muls=1)
     elif program == 'cloudsc_class1_2783':
         return (KLEV+1) * (KFDIA-KIDIA+1) * FlopCount(adds=2)
     elif program == 'cloudsc_class1_2857':
