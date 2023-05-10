@@ -599,6 +599,7 @@ class opaque(typeclass):
 
         try:
             typeclass = json_to_typeclass(json_obj['ctype'], context)
+            return typeclass()
         except KeyError:
             typeclass = json_obj['ctype']
 
