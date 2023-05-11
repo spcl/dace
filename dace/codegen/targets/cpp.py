@@ -268,6 +268,22 @@ def emit_memlet_reference(dispatcher,
         if isinstance(desc, data.StructArray):
             desc = desc.stype
         desc = getattr(desc, tokens[1])
+    
+    prefix = ''
+    if is_write:
+        if isinstance(edge.dst, nodes.AccessNode) and edge.dst_conn == edge.data.data:
+            struct_desc = sdfg.arrays[edge.dst.data]
+            prefix = f"{edge.dst.data}"
+    else:
+        if isinstance(edge.src, nodes.AccessNode) and edge.src_conn == edge.data.data:
+            struct_desc = sdfg.arrays[edge.src.data]
+            prefix = f"{edge.src.data}"
+    if prefix:
+        if isinstance(struct_desc, data.View):
+            prefix += '->'
+        else:
+            prefix += '.'
+
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
@@ -303,6 +319,8 @@ def emit_memlet_reference(dispatcher,
 
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
+    
+    datadef = f"{prefix}{datadef}"
 
     def make_const(expr: str) -> str:
         # check whether const has already been added before
