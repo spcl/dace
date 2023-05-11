@@ -1100,6 +1100,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.materialized_views: Set[nodes.AccessNode] = set()
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1249,6 +1250,8 @@ class ProgramVisitor(ExtNodeVisitor):
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
+                if vnode in self.materialized_views:
+                    continue
                 if vnode.data in self.views:
                     if state.in_degree(vnode) == 0:
                         aname, m, conn = self.views[vnode.data]
@@ -4619,6 +4622,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
+            if not hasattr(arr, node.attr) and isinstance(arr, data.View):
+                varr = arr
+                vname = result
+                while isinstance(varr, data.View):
+                    vname = self.views[vname][0]
+                    varr = self.sdfg.arrays[vname]
+                arr = varr.stype
             attr = getattr(arr, node.attr)
             if issubclass(type(arr), data.Structure) and isinstance(attr, data.Data):
                 vname, vdesc = self.sdfg.add_view(node.attr,
@@ -4814,14 +4824,14 @@ class ProgramVisitor(ExtNodeVisitor):
             if not strides:
                 strides = None
 
-            if is_index:
+            if is_index and not isinstance(arrobj, (data.Structure, data.StructArray)):
                 tmp = self.sdfg.temp_data_name()
-                if isinstance(arrobj, data.StructArray):
-                    tmparr = copy.deepcopy(arrobj.stype())
-                    tmparr.transient = True
-                    self.sdfg.add_datadesc(tmp, tmparr)
-                else:
-                    tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
+                # if isinstance(arrobj, data.StructArray):
+                #     tmparr = copy.deepcopy(arrobj.stype())
+                #     tmparr.transient = True
+                #     self.sdfg.add_datadesc(tmp, tmparr)
+                # else:
+                tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
             else:
                 tmp, tmparr = self.sdfg.add_view(array,
                                                  other_subset.size(),
@@ -4829,16 +4839,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  storage=arrobj.storage,
                                                  strides=strides,
                                                  find_new_name=True)
-                self.views[tmp] = (array,
-                                   Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
-                                          wcr=expr.wcr),
-                                          None)
+                self.views[tmp] = (array, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
+                                                 wcr=expr.wcr), None)
             self.variables[tmp] = tmp
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
                 wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
-                self.last_state.add_nedge(
-                    rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+                self.last_state.add_edge(rnode, None, wnode, 'views',
+                                         Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+                # self.materialized_views.add(wnode)
+            
             return tmp
 
     def _parse_subscript_slice(self,

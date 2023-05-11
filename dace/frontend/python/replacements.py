@@ -4429,7 +4429,7 @@ def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, 
         raise NotImplementedError
 
     if arr_a.shape[0] != arr_b.shape[0]:
-        raise SyntaxError()
+        warnings.warn(f"Pontential mismatch in dot product dimensions, {arr_a.shape[0]} ?= {arr_b.shape[0]}")
 
     if op_out:
         if not isinstance(op_out, str) or not op_out in sdfg.arrays.keys():

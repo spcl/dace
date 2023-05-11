@@ -200,7 +200,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         name,
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=is_write,
+                                                        state=dfg,
+                                                        edge=edge)
         if not declared:
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype

@@ -595,6 +595,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             tokens = e.data.data.split('.', 1)
             desc = sdfg.arrays[tokens[0]]
             if len(tokens) > 1:
+                current_edge = e
+                while isinstance(desc, dt.View):
+                    src = state.memlet_path(current_edge)[0].src
+                    assert isinstance(src, nd.AccessNode)
+                    desc = sdfg.arrays[src.data]
+                    current_edge = next((edge for edge in state.in_edges_by_connector(src, 'views')), None)
+                if isinstance(desc, dt.StructArray):
+                    desc = desc.stype
                 desc = getattr(desc, tokens[1])
             if e.data.subset.dims() != len(desc.shape):
                 raise InvalidSDFGEdgeError(
