@@ -64,7 +64,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 for attr in dir(desc):
                     value = getattr(desc, attr)
                     if isinstance(value, data.Data):
-                        arglist[f"{name}.{attr}"] = value
+                        assert attr in sdfg.arrays
+                        arglist[attr] = value
+            elif isinstance(arg_type, data.StructArray):
+                desc = sdfg.arrays[name]
+                desc = desc.stype
+                for attr in dir(desc):
+                    value = getattr(desc, attr)
+                    if isinstance(value, data.Data):
+                        assert attr in sdfg.arrays
+                        arglist[attr] = value
 
         for name, arg_type in arglist.items():
             if isinstance(arg_type, (data.Scalar, data.Structure)):
