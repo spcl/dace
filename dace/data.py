@@ -378,7 +378,7 @@ class Structure(Data):
             elif isinstance(value, Scalar):
                 symbols |= value.free_symbols
                 fields_and_types[attr] = value.dtype
-            elif isinstance(value, symbolic.SymbolicType):
+            elif isinstance(value, (sp.Basic, symbolic.SymExpr)):
                 symbols |= value.free_symbols
                 fields_and_types[attr] = symbolic.symtype(value)
             elif isinstance(value, (int, numpy.integer)):
