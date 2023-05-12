@@ -20,7 +20,10 @@
         "cloudsc_vert_loop_5": "vert_loop_5",
         "cloudsc_vert_loop_6": "vert_loop_6",
         "cloudsc_vert_loop_mwe": "vert_loop_mwe",
-        "cloudsc_vert_loop_mwe_no_klon": "vert_loop_mwe_no_klon"
+        "cloudsc_vert_loop_mwe_no_klon": "vert_loop_mwe_no_klon",
+        "cloudsc_vert_loop_orig_mwe_no_klon": "vert_loop_orig_mwe_no_klon",
+        "microbenchmark_v1": "map_loop_1",
+        "microbenchmark_v3": "map_loop_3"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -50,7 +53,10 @@
         "cloudsc_vert_loop_6": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NBLOCKS"],
         "cloudsc_vert_loop_mwe": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"],
-        "cloudsc_vert_loop_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"]
+        "cloudsc_vert_loop_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
+        "cloudsc_vert_loop_orig_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
+        "microbenchmark_v1": ["KLEV", "NBLOCKS"],
+        "microbenchmark_v3": ["KLEV", "NBLOCKS"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -82,7 +88,10 @@
         "cloudsc_vert_loop_6": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU_NF", "LDCUM_NF", "PSNDE_NF",
                                 "PAPH_NF", "PSUPSAT_NF", "PT_NF", "tendency_tmp_t_NF"],
         "cloudsc_vert_loop_mwe": ["PTSPHY", "PAPH_NF"],
-        "cloudsc_vert_loop_mwe_no_klon": ["PTSPHY", "PAPH_NFS"]
+        "cloudsc_vert_loop_mwe_no_klon": ["PTSPHY", "PAPH_NFS"],
+        "cloudsc_vert_loop_orig_mwe_no_klon": ["PTSPHY", "PAPH_NS"],
+        "microbenchmark_v1": ["INPUT"],
+        "microbenchmark_v3": ["INPUT_F"]
 
     },
     "program_outputs": {
@@ -106,7 +115,9 @@
         "cloudsc_vert_loop_5": ["PLUDE"],
         "cloudsc_vert_loop_6": ["PLUDE_NF"],
         "cloudsc_vert_loop_mwe": ["PLUDE_NF"],
-        "cloudsc_vert_loop_mwe_no_klon": ["PLUDE_NFS"]
-
+        "cloudsc_vert_loop_mwe_no_klon": ["PLUDE_NFS"],
+        "cloudsc_vert_loop_orig_mwe_no_klon": ["PLUDE_NS"],
+        "microbenchmark_v1": ["OUTPUT"],
+        "microbenchmark_v3": ["OUTPUT_F"]
     }
 }

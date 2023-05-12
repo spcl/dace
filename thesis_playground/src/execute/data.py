@@ -63,6 +63,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PAPH_N': (params['KLON'], params['KLEV'] + 1, params['NBLOCKS']),
         'PAPH_NF': (params['NBLOCKS'], params['KLON'], params['KLEV'] + 1),
         'PAPH_NFS': (params['NBLOCKS'], params['KLEV'] + 1),
+        'PAPH_NS': (params['KLEV'] + 1, params['NBLOCKS']),
         'PAP': (params['KLON'], params['KLEV']),
         'PCOVPTOT': (params['KLON'], params['KLEV']),
         'PFCQLNG': (params['KLON'], params['KLEV'] + 1),
@@ -84,6 +85,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PLUDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PLUDE_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
         'PLUDE_NFS': (params['NBLOCKS'], params['KLEV']),
+        'PLUDE_NS': (params['KLEV'], params['NBLOCKS'], ),
         'PSUPSAT': (params['KLON'], params['KLEV']),
         'PSUPSAT_N': (params['KLON'], params['KLEV'], params['NBLOCKS']),
         'PSUPSAT_NF': (params['NBLOCKS'], params['KLON'], params['KLEV']),
@@ -162,6 +164,10 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'PA': (params['KLON'], params['KLEV']),
         'PCLV': (params['KLON'], params['KLEV'], params['NCLV']),
         'PCLV_N': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
+        'INPUT': (params['KLEV'], params['NBLOCKS']),
+        'INPUT_F': (params['NBLOCKS'], params['KLEV']),
+        'OUTPUT': (params['KLEV'], params['NBLOCKS']),
+        'OUTPUT_F': (params['NBLOCKS'], params['KLEV']),
     }
 
 
@@ -360,6 +366,19 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'start': (0, params['NCLDTOP']-1),
                     'end': (params['NBLOCKS'], params['KLEV'])
                 }
+            ],
+            'cloudsc_vert_loop_orig_mwe_no_klon': [
+                {
+                    'variables': ['PLUDE_NS'],
+                    'start': (params['NCLDTOP']-1, 0),
+                    'end': (params['KLEV'], params['NBLOCKS'])
+                }
+            ],
+            'microbenchmark_v1': [
+                {'variables': ['OUTPUT'], 'start': (2, 0), 'end': (params['KLEV'], params['NBLOCKS'])}
+            ],
+            'microbenchmark_v3': [
+                {'variables': ['OUTPUT_F'], 'start': (2, 0), 'end': (params['KLEV'], params['NBLOCKS'])}
             ],
     }
     return ranges[program]

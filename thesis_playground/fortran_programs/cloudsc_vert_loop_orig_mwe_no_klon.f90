@@ -12,10 +12,10 @@ PROGRAM vert_loop_mwe_no_klon
 
     ! input
     REAL(KIND=JPRB) PTSPHY
-    REAL(KIND=JPRB) PAPH(NBLOCKS, KLEV+1)
+    REAL(KIND=JPRB) PAPH(KLEV+1, NBLOCKS)
 
     ! output
-    REAL(KIND=JPRB) PLUDE(NBLOCKS, KLEV)
+    REAL(KIND=JPRB) PLUDE(KLEV, NBLOCKS)
 
     CALL vert_loop_orig_mwe_no_klon_routine(&
         & KLEV, NCLV, NCLDTOP, NBLOCKS, &
@@ -26,8 +26,8 @@ END PROGRAM
 ! Base on lines 1096 to 1120 and others
 SUBROUTINE vert_loop_orig_mwe_no_klon_routine(&
     & KLEV, NCLV, NCLDTOP, NBLOCKS, &
-    & PTSPHY, PAPH_NFS, &
-    & PLUDE_NFS)
+    & PTSPHY, PAPH_NS, &
+    & PLUDE_NS)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -42,16 +42,16 @@ SUBROUTINE vert_loop_orig_mwe_no_klon_routine(&
 
     ! input
     REAL(KIND=JPRB) PTSPHY
-    REAL(KIND=JPRB) PAPH_NFS(NBLOCKS, KLEV+1)
+    REAL(KIND=JPRB) PAPH_NS(KLEV+1, NBLOCKS)
 
     ! output
-    REAL(KIND=JPRB) PLUDE_NFS(NBLOCKS, KLEV)
+    REAL(KIND=JPRB) PLUDE_NS(KLEV, NBLOCKS)
 
     DO JN=1,NBLOCKS
         CALL inner_loops(&
             & KLEV, NCLV, NCLDTOP, &
-            & PTSPHY, PAPH_NFS(JN,:), &
-            & PLUDE_NFS(JN,:))
+            & PTSPHY, PAPH_NS(:,JN), &
+            & PLUDE_NS(:,JN))
 
     ENDDO
 
@@ -59,17 +59,17 @@ END SUBROUTINE vert_loop_orig_mwe_no_klon_routine
 
 SUBROUTINE inner_loops(&
     & KLEV, NCLV, NCLDTOP, &
-    & PTSPHY, PAPH_NFS, &
-    & PLUDE_NFS)
+    & PTSPHY, PAPH_NS, &
+    & PLUDE_NS)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
     REAL(KIND=JPRB) PTSPHY
-    REAL(KIND=JPRB) PAPH_NFS(KLEV+1)
+    REAL(KIND=JPRB) PAPH_NS(KLEV+1)
 
     ! output
-    REAL(KIND=JPRB) PLUDE_NFS(KLEV)
+    REAL(KIND=JPRB) PLUDE_NS(KLEV)
 
     ! temporary arrays
     REAL(KIND=JPRB) ZDTGDP
@@ -78,8 +78,8 @@ SUBROUTINE inner_loops(&
     ZDTGDP = 0.0
 
     DO JK=NCLDTOP,KLEV
-        ZDTGDP  = PTSPHY*PAPH_NFS(JK+1)-PAPH_NFS(JK)
-        PLUDE_NFS(JK)=PLUDE_NFS(JK)*ZDTGDP
+        ZDTGDP  = PTSPHY*PAPH_NS(JK+1)-PAPH_NS(JK)
+        PLUDE_NS(JK)=PLUDE_NS(JK)*ZDTGDP
     ENDDO ! on vertical level JK
 
 END SUBROUTINE inner_loops

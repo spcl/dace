@@ -105,6 +105,41 @@ custom_parameters = {
         'KFDIA': 1,
         'KIDIA': 1,
         'NBLOCKS': 200000
+    },
+    'vert_loop_orig_mwe_no_klon':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+    },
+    'vert_loop_mwe_no_klon':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+    },
+    'vert_loop_mwe':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+    },
+    'microbenchmark_v1':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+    },
+    'microbenchmark_v3':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
     }
 }
 

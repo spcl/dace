@@ -376,20 +376,20 @@ def get_data_ranges(
                 {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
                 {
                     'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
-                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'size': (KFDIA-KIDIA+1) * (KLEV) * NBLOCKS,
                     'action': 'r'
                 },
-                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV) * NBLOCKS, 'action': 'rw'},
         ],
         'cloudsc_vert_loop_5':
         [
                 {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
                 {
                     'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
-                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'size': (KFDIA-KIDIA+1) * (KLEV) * NBLOCKS,
                     'action': 'r'
                 },
-                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
         ],
         'cloudsc_vert_loop_6':
         [
@@ -399,10 +399,30 @@ def get_data_ranges(
                 {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
                 {
                     'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
-                    'size': (KFDIA-KIDIA) * (KLEV) * NBLOCKS,
+                    'size': (KFDIA-KIDIA+1) * (KLEV) * NBLOCKS,
                     'action': 'r'
                 },
-                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA) * (KLEV+1) * NBLOCKS, 'action': 'rw'},
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV) * NBLOCKS, 'action': 'rw'},
+        ],
+        'cloudsc_vert_loop_orig_mwe_no_klon':
+        [
+                {'variables': ['PAPH_NS'], 'size': (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PLUDE_NS'], 'size': 2*(KLEV) * NBLOCKS, 'action': 'rw'},
+        ],
+        'cloudsc_vert_loop_mwe_no_klon':
+        [
+                {'variables': ['PAPH_NS'], 'size': (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PLUDE_NS'], 'size': 2*(KLEV) * NBLOCKS, 'action': 'rw'},
+        ],
+        'microbenchmark_v1':
+        [
+                {'variables': ['INPUT'], 'size': (KLEV) * NBLOCKS, 'action': 'r'},
+                {'variables': ['OUTPUT'], 'size': (KLEV) * NBLOCKS, 'action': 'w'},
+        ],
+        'microbenchmark_v3':
+        [
+                {'variables': ['INPUT_F'], 'size': (KLEV) * NBLOCKS, 'action': 'r'},
+                {'variables': ['OUTPUT_F'], 'size': (KLEV) * NBLOCKS, 'action': 'w'},
         ],
     }
 
@@ -424,6 +444,12 @@ def get_data_ranges(
             {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['microbenchmark_v1'].extend([
+            {'variables': ['TMP'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['microbenchmark_v3'].extend([
+            {'variables': ['TMP_F'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},
             ])
     return iteration_shapes
 
@@ -523,8 +549,10 @@ def get_number_of_bytes_2(
         if data[inp] == (0, ):
             read += BYTES_DOUBLE
     for entry in memory_data:
-        if 'action' not in entry:
-            continue
+        # if 'action' not in entry:
+        #     continue
+        if entry['size'] == 0:
+            print(f"[flop_computation::get_number_of_bytes] WARNING: size is 0 for {entry['variables']} for {program}")
         if entry['action'] in ['r']:
             read += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
         if entry['action'] in ['w']:

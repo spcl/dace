@@ -2,7 +2,6 @@ import os
 import sys
 cuda_root = os.getenv('CUDA_ROOT')
 for file in os.listdir(cuda_root):
-    # print(os.path.isdir(file), file)
     if os.path.isdir(os.path.join(cuda_root, file)) and file.startswith('nsight-compute'):
         nsight_folder = file
         break
