@@ -414,6 +414,11 @@ def get_data_ranges(
                 {'variables': ['PAPH_NS'], 'size': (KLEV+1) * NBLOCKS, 'action': 'r'},
                 {'variables': ['PLUDE_NS'], 'size': 2*(KLEV) * NBLOCKS, 'action': 'rw'},
         ],
+        'cloudsc_vert_loop_mwe_wip':
+        [
+                {'variables': ['INPUT_F'], 'size': (KLEV) * NBLOCKS, 'action': 'r'},
+                {'variables': ['OUTPUT_F'], 'size': (KLEV) * NBLOCKS, 'action': 'w'},
+        ],
         'microbenchmark_v1':
         [
                 {'variables': ['INPUT'], 'size': (KLEV) * NBLOCKS, 'action': 'r'},
@@ -444,6 +449,9 @@ def get_data_ranges(
             {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['cloudsc_vert_loop_mwe_wip'].extend([
+            {'variables': ['TMP_F'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},
             ])
         iteration_shapes['microbenchmark_v1'].extend([
             {'variables': ['TMP'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},

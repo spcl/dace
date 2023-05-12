@@ -22,6 +22,7 @@
         "cloudsc_vert_loop_mwe": "vert_loop_mwe",
         "cloudsc_vert_loop_mwe_no_klon": "vert_loop_mwe_no_klon",
         "cloudsc_vert_loop_orig_mwe_no_klon": "vert_loop_orig_mwe_no_klon",
+        "cloudsc_vert_loop_mwe_wip": "vert_loop_mwe_wip",
         "microbenchmark_v1": "map_loop_1",
         "microbenchmark_v3": "map_loop_3"
     },
@@ -55,6 +56,7 @@
         "cloudsc_vert_loop_mwe": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"],
         "cloudsc_vert_loop_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
+        "cloudsc_vert_loop_mwe_wip": ["KLEV", "NBLOCKS"],
         "microbenchmark_v1": ["KLEV", "NBLOCKS"],
         "microbenchmark_v3": ["KLEV", "NBLOCKS"]
     },
@@ -90,6 +92,7 @@
         "cloudsc_vert_loop_mwe": ["PTSPHY", "PAPH_NF"],
         "cloudsc_vert_loop_mwe_no_klon": ["PTSPHY", "PAPH_NFS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["PTSPHY", "PAPH_NS"],
+        "cloudsc_vert_loop_mwe_wip": ["INPUT_F"],
         "microbenchmark_v1": ["INPUT"],
         "microbenchmark_v3": ["INPUT_F"]
 
@@ -117,6 +120,7 @@
         "cloudsc_vert_loop_mwe": ["PLUDE_NF"],
         "cloudsc_vert_loop_mwe_no_klon": ["PLUDE_NFS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["PLUDE_NS"],
+        "cloudsc_vert_loop_mwe_wip": ["OUTPUT_F"],
         "microbenchmark_v1": ["OUTPUT"],
         "microbenchmark_v3": ["OUTPUT_F"]
     }
