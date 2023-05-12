@@ -26,7 +26,7 @@ def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwid
     if bandwidth_label is not None:
         text += f" ({bandwidth_label})"
     ax.text(min_intensity, max_bandwidth*min_intensity, text, rotation=angle,
-            rotation_mode='anchor', transform_rotates_text=True)
+            rotation_mode='anchor', transform_rotates_text=True, color=color)
 
 
 def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis, program: Optional[str] = None,

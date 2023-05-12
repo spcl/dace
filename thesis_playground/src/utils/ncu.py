@@ -101,6 +101,22 @@ def action_list_to_dict(actions: List[IAction]) -> Dict[str, List[IAction]]:
     return action_dict
 
 
+def get_frequencies(action: IAction) -> Tuple[float, float]:
+    """
+    Return the gpu and memory frequency in Hz (cycles per second)
+
+    :param action: The ncu action object
+    :type action: IAction
+    :return: Tuple ŵith gpu frequency first and memory frequency second
+    :rtype: Tuple[float, float]
+    """
+    # GPU cycles per second
+    gpu_frequency = action.metric_by_name('gpc__cycles_elapsed.avg.per_second').as_double()
+    # Memory cycles per second
+    memory_frequency = action.metric_by_name('dram__cycles_elapsed.avg.per_second').as_double()
+    return (gpu_frequency, memory_frequency)
+
+
 def get_peak_performance(action: IAction) -> Tuple[float, float]:
     """
     Gets the peak performance given the ncu action.
@@ -110,14 +126,12 @@ def get_peak_performance(action: IAction) -> Tuple[float, float]:
     :return: The peak performance and bandwidth in flop/s and byte/s
     :rtype: Tuple[float, float]
     """
+    # get frequencys in cycles per second
+    gpu_frequency, memory_frequency = get_frequencies(action)
     # bytes per memory cycle
     peak_beta = action.metric_by_name('dram__bytes.sum.peak_sustained').as_double()
-    # memory cycles per second
-    memory_frequency = action.metric_by_name('dram__cycles_elapsed.avg.per_second').as_double()
     # flop per gpu cycle
     pi = 2.0 * action.metric_by_name('sm__sass_thread_inst_executed_op_dfma_pred_on.sum.peak_sustained').as_double()
-    # gpu cycles per second
-    gpu_frequency = action.metric_by_name('gpc__cycles_elapsed.avg.per_second').as_double()
     return (pi * gpu_frequency, peak_beta * memory_frequency)
 
 

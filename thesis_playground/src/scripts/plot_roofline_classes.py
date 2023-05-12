@@ -8,7 +8,7 @@ from typing import Optional, List, Tuple
 
 from utils.paths import get_complete_results_dir
 from utils.plot import update_min_max, draw_program_points, draw_roofline, draw_ncu_points
-from utils.ncu import get_all_actions_filtered
+from utils.ncu import get_all_actions_filtered, get_peak_performance
 from scripts import Script
 from scripts.generate_complete_results import CompleteData
 
@@ -63,7 +63,6 @@ class PlotRooflineClasses(Script):
 
     @staticmethod
     def action(args):
-        # TODO: Make legend more compact -> one entry per program and differene ncu/my and baseline/my
         baseline_data = CompleteData('class2_3_baseline')
         my_data = CompleteData('all_first_opt')
 
@@ -86,8 +85,13 @@ class PlotRooflineClasses(Script):
             draw_roofline(ax, peak_performance,
                           hardware_data['bytes_per_second']['global']['measured'],
                           'bytes / second',
+                          min_i, max_i, color='gray',
+                          bandwidth_label="Global, measured")
+            draw_roofline(ax, peak_performance,
+                          hardware_data['bytes_per_second']['global']['theoretical'],
+                          'bytes / second',
                           min_i, max_i, color='black',
-                          bandwidth_label="Global, Measured")
+                          bandwidth_label="Global")
 
             # Only use one legend entry per program
             new_handles, new_labels = [], []

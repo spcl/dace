@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 from tabulate import tabulate
 import json
 import os
@@ -17,12 +18,18 @@ class PrintMUEVertLoop(Script):
     name = "print-mue-vert"
     description = "Print MUE for the vertical loop results"
 
+    def add_args(self, parser: ArgumentParser):
+        parser.add_argument('--mwe', action='store_true', default=False)
+
     @staticmethod
     def action(args):
         data = {}
-        for file in os.listdir(folder):
+        files = os.listdir(folder)
+        if args.mwe:
+            files = [f for f in files if re.search('_mwe_', f)]
+        for file in files:
             if file.split('.')[-1] == 'ncu-rep':
-                label = '_'.join(file.split('_')[1:6])
+                label = '_'.join(file.split('.')[0].split('_')[1:-1])
                 actions = get_all_actions(os.path.join(folder, file))
                 if len(actions) > 1:
                     actions = action_list_to_dict(actions)
@@ -63,6 +70,7 @@ class PrintMUEVertLoop(Script):
                         myQ = get_number_of_bytes_2(program_measurement.parameters, program_measurement.program)[0]
                         myQ_temp = get_number_of_bytes_2(program_measurement.parameters, program_measurement.program,
                                                          temp_arrays=True)[0]
+
                         if label not in data:
                             data[label] = {}
                         data[label]['theoretical bytes'] = myQ
@@ -85,7 +93,7 @@ class PrintMUEVertLoop(Script):
 
         tabulate_data.sort()
         print(tabulate(tabulate_data,
-                       headers=['program', 'measured bytes', 'measured bytes range', 'theoretical bytes', 'theoretical bytes with temp',
-                                'I/O efficiency', 'I/O efficiency with temp', 'BW efficiency', 'MUE', 'MUE with temp',
+                       headers=['program', 'measured bytes', 'measured bytes range', 'theoretical bytes', 'theo. bytes with temp',
+                                'I/O eff.', 'I/O eff. w/ temp', 'BW eff.', 'MUE', 'MUE with temp',
                                 'runtime [s]'],
-                       intfmt=',', floatfmt=('.2f', '.2f', '.2f', '.2f', '.2e')))
+                       intfmt=',', floatfmt=(None, None, None, None, '.2f', '.2f', '.2f', '.2f', '.2e', '.2e', '.2e')))

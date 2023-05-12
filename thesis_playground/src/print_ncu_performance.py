@@ -5,7 +5,7 @@ import re
 
 from utils.print import sort_by_program_number
 from utils.ncu import get_all_actions, get_achieved_performance, get_achieved_work, get_achieved_bytes, \
-                      get_peak_performance, action_list_to_dict
+                      get_peak_performance, action_list_to_dict, get_runtime
 
 
 def main():
@@ -22,7 +22,7 @@ def main():
     flat_data_detail_flop = []
     flat_data_detail_memory = []
     headers = ['program', 'Q [byte]', 'W [flop]', 'I [Flop/byte]', 'P [flop/s]', 'beta [byte/s]',
-               'peak P [flop/s]', 'peak beta [byte/s]', 'Performance [%]', 'Bandwidth [%]']
+               'peak P [flop/s]', 'peak beta [byte/s]', 'P[%]', 'beta [%]']
     floatfmt = [None, None, None, ".3f", ".1E", ".1E", ".1E", ".1E", ".1f", ".1f"]
     headers_detail_flop = ['program', 'double W', 'dadds', 'dmuls', 'dfmas', 'float W', 'fadds', 'fmuls', 'ffmas']
     headers_detail_memory = ['program', 'global total', 'global written', 'global read']
@@ -59,7 +59,7 @@ def main():
                        peak[0], peak[1],
                        achieved_performance[0] / peak[0] * 100, achieved_performance[1] / peak[1] * 100]
                 if args.with_runtime:
-                    runtime = action.metric_by_name('gpu__time_duration.sum').as_double() * 1e9
+                    runtime = get_runtime(action)
                     row.append(runtime)
 
                 if args.detail:
