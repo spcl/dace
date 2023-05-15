@@ -48,7 +48,7 @@ SUBROUTINE inner_loops(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
 
     DO JK=3 ,KLEV
         TMP(JK) = (INPUT_F(JK) + INPUT_F(JK-1) + INPUT_F(JK-2)) * 3
-        OUTPUT_F = (TMP(JK) + TMP(JK-1) + TMP(JK-2)) * 3
+        OUTPUT_F(JK) = (TMP(JK) + TMP(JK-1) + TMP(JK-2)) * 3
     ENDDO
 
 END SUBROUTINE inner_loops
