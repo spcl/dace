@@ -24,14 +24,28 @@ SUBROUTINE vert_loop_mwe_wip_routine(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
 
     REAL(KIND=JPRB) INPUT_F(NBLOCKS, KLEV)
     REAL(KIND=JPRB) OUTPUT_F(NBLOCKS, KLEV)
+    REAL(KIND=JPRB) TMP_F(NBLOCKS, KLEV)
+    TMP_F(:, :) = 0
+
+    ! temporary arrays
+    ! REAL(KIND=JPRB) TMP(NBLOCKS, KLEV)
+
+    ! TMP(:, :) = 0
+
+    ! DO JN=1,NBLOCKS
+    !     DO JK=3 ,KLEV
+    !         TMP(JN, JK) = (INPUT_F(JN, JK) + INPUT_F(JN, JK-1) + INPUT_F(JN, JK-2)) * 3
+    !         OUTPUT_F(JN, JK) = (TMP(JN, JK) + TMP(JN, JK-1) + TMP(JN, JK-2)) * 3
+    !     ENDDO
+    ! ENDDO
 
     DO JN=1,NBLOCKS
-        CALL inner_loops(KLEV, NBLOCKS, INPUT_F(JN,:), OUTPUT_F(JN,:))
+        CALL inner_loops(KLEV, NBLOCKS, INPUT_F(JN,:), OUTPUT_F(JN,:), TMP_F(JN,:))
     ENDDO
 
 END SUBROUTINE vert_loop_mwe_wip_routine
 
-SUBROUTINE inner_loops(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
+SUBROUTINE inner_loops(KLEV, NBLOCKS, INPUT_F, OUTPUT_F, TMP)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -44,7 +58,7 @@ SUBROUTINE inner_loops(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
     ! temporary arrays
     REAL(KIND=JPRB) TMP(KLEV)
 
-    TMP(:) = 0
+    ! TMP(:) = 0
 
     DO JK=3 ,KLEV
         TMP(JK) = (INPUT_F(JK) + INPUT_F(JK-1) + INPUT_F(JK-2)) * 3

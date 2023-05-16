@@ -17,14 +17,14 @@ PROGRAM vert_loop_mwe_no_klon
     ! output
     REAL(KIND=JPRB) PLUDE(NBLOCKS, KLEV)
 
-    CALL vert_loop_orig_mwe_no_klon_routine(&
+    CALL vert_loop_mwe_no_klon_routine(&
         & KLEV, NCLV, NCLDTOP, NBLOCKS, &
         & PTSPHY, PAPH, &
         & PLUDE)
 
 END PROGRAM
 ! Base on lines 1096 to 1120 and others
-SUBROUTINE vert_loop_orig_mwe_no_klon_routine(&
+SUBROUTINE vert_loop_mwe_no_klon_routine(&
     & KLEV, NCLV, NCLDTOP, NBLOCKS, &
     & PTSPHY, PAPH_NFS, &
     & PLUDE_NFS)
@@ -55,7 +55,7 @@ SUBROUTINE vert_loop_orig_mwe_no_klon_routine(&
 
     ENDDO
 
-END SUBROUTINE vert_loop_orig_mwe_no_klon_routine
+END SUBROUTINE vert_loop_mwe_no_klon_routine
 
 SUBROUTINE inner_loops(&
     & KLEV, NCLV, NCLDTOP, &

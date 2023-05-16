@@ -31,7 +31,7 @@ SUBROUTINE my_roofline_test_routine(KLON, KLEV, KIDIA, KFDIA, ARRAY_A, ARRAY_B, 
 
     DO JK=1,KLEV
         DO JL=KIDIA,KFDIA
-            ARRAY_A(JL,JK) = (ARRAY_B(JL,JK) * ARRAY_C(JL,JK))
+            ARRAY_A(JL,JK) = (ARRAY_B(JL,JK) + ARRAY_C(JL,JK))
         ENDDO
     ENDDO
 

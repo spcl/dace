@@ -23,11 +23,12 @@ SUBROUTINE map_loop_3_routine(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
     REAL(KIND=JPRB) OUTPUT_F(NBLOCKS, KLEV)
     REAL(KIND=JPRB) TMP_F(NBLOCKS, KLEV)
 
+    TMP_F(:, :) = 0
 
     DO I=1,NBLOCKS
         DO J=3,KLEV
-            TMP_F(J,I) = (INPUT_F(J,I) + INPUT_F(J-1, I) + INPUT_F(J-2, I)) * 3
-            OUTPUT_F(J,I) = (TMP_F(J,I) + TMP_F(J-1, I) + TMP_F(J-2, I)) * 3
+            TMP_F(I, J) = (INPUT_F(I, J) + INPUT_F(I, J-1) + INPUT_F(I, J-2)) * 3
+            OUTPUT_F(I, J) = (TMP_F(I, J) + TMP_F(I, J-2) + TMP_F(I, J-2)) * 3
         ENDDO
     ENDDO
 
