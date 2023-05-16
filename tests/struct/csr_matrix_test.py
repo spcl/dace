@@ -48,6 +48,7 @@ def test_csrmm():
         return C
     
     sdfg = csrmm.to_sdfg()
+    # sdfg.view()
     func = sdfg.compile()
     
     rng = np.random.default_rng(42)
@@ -95,25 +96,76 @@ def test_batched_csrmm():
 
     inpA = np.empty((3,), dtype=np.dtype(CSR.dtype.as_ctypes()))
     ref = np.empty((3, 200, 50), dtype=np.float32)
+    A_matrices = []
     for l in range(3):
         A = sparse.random(200, 100, density=0.1, format='csr', dtype=np.float32, random_state=rng)
-        inpA[l] = CSR.dtype.as_ctypes()(
-            indptr=A.indptr.__array_interface__['data'][0],
-            indices=A.indices.__array_interface__['data'][0],
-            data=A.data.__array_interface__['data'][0],
-            rows=A.shape[0],
-            cols=A.shape[1],
-            M=A.shape[0],
-            K=A.shape[1],
-            nnz=A.nnz
-        )
+
+        inpA[l]['indptr'] = A.indptr.__array_interface__['data'][0]
+        inpA[l]['indices'] = A.indices.__array_interface__['data'][0]
+        inpA[l]['data'] = A.data.__array_interface__['data'][0]
+        inpA[l]['rows'] = A.shape[0]
+        inpA[l]['cols'] = A.shape[1]
+        inpA[l]['M'] = A.shape[0]
+        inpA[l]['K'] = A.shape[1]
+        inpA[l]['nnz'] = A.nnz
+
         ref[l] = A @ B[l]
 
-    val = func(A=inpA, B=B, M=200, K=100, N=50, nnz=A.nnz)
+        A_matrices.append(A)
+
+    val = func(A=inpA, B=B, M=200, K=100, N=50, L=3, nnz=A.nnz)
 
     assert np.allclose(val, ref)
 
 
+def test_sddmm():
+
+    N, K, nnz = (dace.symbol(s) for s in ('N', 'K', 'nnz'))
+    CSR = CSRMatrix(N, N, nnz, dace.float32)
+
+    @dace.program
+    def sddmm(A: CSR, B: dace.float32[N, K], C: dace.float32[K, N]) -> CSR:
+        D = dace.define_local_scalar(CSR.dtype)
+        # D: CSR
+        D.indptr[:] = A.indptr
+        D.indices[:] = A.indices
+        D.data[:] = 0
+        for i in range(N):
+            for j in range(A.indptr[i], A.indptr[i + 1]):
+                for k in range(K):
+                    D.data[j] += A.data[j] * B[i, k] * B[k, A.indices[j]]
+        return D
+    
+    sdfg = sddmm.to_sdfg()
+    sdfg.view()
+    func = sdfg.compile()
+    
+    rng = np.random.default_rng(42)
+    A = sparse.random(100, 100, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+    B = rng.random((100, 50), dtype=np.float32)
+    C = rng.random((50, 100), dtype=np.float32)
+
+    inpA = CSR.dtype.as_ctypes()(
+        indptr=A.indptr.__array_interface__['data'][0],
+        indices=A.indices.__array_interface__['data'][0],
+        data=A.data.__array_interface__['data'][0],
+        rows=A.shape[0],
+        cols=A.shape[1],
+        N=A.shape[0],
+        nnz=A.nnz
+    )
+
+    val = func(A=inpA, B=B, M=200, K=100, N=50, nnz=A.nnz)
+    ref_data = np.empty((A.nnz,), dtype=np.float32)
+    BC = B @ C
+    for i in range(A.shape[0]):
+        for j in range(A.indptr[i], A.indptr[i+1]):
+            ref_data[j] = BC[i, A.indices[j]]
+
+    assert np.allclose(val.data, ref_data)
+
+
 if __name__ == '__main__':
-    test_csrmm()
-    test_batched_csrmm()
+    # test_csrmm()
+    # test_batched_csrmm()
+    test_sddmm()
