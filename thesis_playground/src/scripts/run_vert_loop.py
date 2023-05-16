@@ -3,6 +3,7 @@ import os
 import json
 
 from utils.execute_dace import RunConfig, test_program, gen_ncu_report, profile_program
+from utils.paths import get_vert_loops_dir
 from utils.general import use_cache
 from utils.print import print_with_time
 from execute.data import ParametersProvider
@@ -11,10 +12,12 @@ from scripts import Script
 
 # sizes = [1e5, 2e5, 5e5]
 vert_sizes = [5e5, 2e5, 1e5]
-# sizes = [5e5]
-# versions = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_5', 'cloudsc_vert_loop_6']
-vert_versions = ['cloudsc_vert_loop_5', 'cloudsc_vert_loop_6']
-
+# vert_sizes = [5e5]
+# vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_5']
+# vert_versions = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_5', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
+#                  'cloudsc_vert_loop_7']
+vert_versions = [
+                 'cloudsc_vert_loop_7']
 mwe_versions = ['cloudsc_vert_loop_orig_mwe_no_klon', 'cloudsc_vert_loop_mwe_no_klon']
 mwe_sizes = [5e4]
 
@@ -34,7 +37,7 @@ class RunVertLoop(Script):
     @staticmethod
     def action(args):
 
-        results_folder = 'vert_loop_results'
+        results_folder = get_vert_loops_dir()
         if not os.path.exists(results_folder):
             os.mkdir(results_folder)
         run_config = RunConfig(use_dace_auto_opt=args.use_dace_auto_opt)
@@ -60,7 +63,7 @@ class RunVertLoop(Script):
                 run_data = MeasurementRun(f"With {size:.0E} NBLOCKS")
                 params = ParametersProvider(version, update={'NBLOCKS': int(size), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                     'KLON': 1})
-                print(f"Run {version} with KLEV: {params['KLEV']} NBLOCKS: {params['NBLOCKS']:,} KLON: {params['KLON0']} "
+                print(f"Run {version} with KLEV: {params['KLEV']} NBLOCKS: {params['NBLOCKS']:,} KLON: {params['KLON']} "
                       f"KFDIA: {params['KFDIA']} KIDIA: {params['KIDIA']}")
                 program_data = profile_program(version, run_config, params, repetitions=1)
                 run_data.add_program_data(program_data)

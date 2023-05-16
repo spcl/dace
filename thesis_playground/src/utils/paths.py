@@ -83,3 +83,13 @@ def get_verbose_graphs_dir() -> str:
     :rtype: str
     """
     return join(get_thesis_playground_root_dir(), 'sdfg_graphs')
+
+
+def get_vert_loops_dir() -> str:
+    """
+    Returns path to the vert_loop_results directory
+
+    :return: Path
+    :rtype: str
+    """
+    return join(get_thesis_playground_root_dir(), 'vert_loop_results')

@@ -353,6 +353,20 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
                 }
             ],
+            'cloudsc_vert_loop_6_1': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_7': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
             'cloudsc_vert_loop_mwe': [
                 {
                     'variables': ['PLUDE_NF'],
@@ -373,6 +387,9 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'start': (params['NCLDTOP']-1, 0),
                     'end': (params['KLEV'], params['NBLOCKS'])
                 }
+            ],
+            'cloudsc_vert_loop_mwe_wip': [
+                {'variables': ['OUTPUT_F'], 'start': (2, 0), 'end': (params['KLEV'], params['NBLOCKS'])}
             ],
             'microbenchmark_v1': [
                 {'variables': ['OUTPUT'], 'start': (2, 0), 'end': (params['KLEV'], params['NBLOCKS'])}

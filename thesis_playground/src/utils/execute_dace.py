@@ -97,10 +97,10 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     outputs_d = outputs_d_device
     passes_test = compare_output(outputs_f, outputs_d, program, params)
     if compare_output_all(outputs_f, outputs_original, print_if_differ=False):
-        print_with_time("!!! Fortran has not change any output values !!!")
+        print_with_time("!!! Fortran has not changed any output values !!!")
         passes_test = False
     if compare_output_all(outputs_d, outputs_original, print_if_differ=False):
-        print_with_time("!!! DaCe has not change any output values !!!")
+        print_with_time("!!! DaCe has not changed any output values !!!")
         passes_test = False
 
     # passes_test = compare_output_all(outputs_f, outputs_d)

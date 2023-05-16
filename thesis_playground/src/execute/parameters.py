@@ -106,21 +106,44 @@ custom_parameters = {
         'KIDIA': 1,
         'NBLOCKS': 200000
     },
-    'vert_loop_orig_mwe_no_klon':
+    'cloudsc_vert_loop_6_1':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_7':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_orig_mwe_no_klon':
     {
         'KLEV': 137,
         'KLON': 1,
         'KFDIA': 1,
         'KIDIA': 1,
     },
-    'vert_loop_mwe_no_klon':
+    'cloudsc_vert_loop_mwe_no_klon':
     {
         'KLEV': 137,
         'KLON': 1,
         'KFDIA': 1,
         'KIDIA': 1,
     },
-    'vert_loop_mwe':
+    'cloudsc_vert_loop_mwe':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+    },
+    'cloudsc_vert_loop_mwe_wip':
     {
         'KLEV': 137,
         'KLON': 1,
@@ -145,8 +168,8 @@ custom_parameters = {
 
 
 # changes from the parameters dict for testing
-# testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
-testing_parameters = {'KLON': 1, 'KLEV': 13, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 20}
+testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
+# testing_parameters = {'KLON': 1, 'KLEV': 13, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 20}
 
 
 class ParametersProvider:

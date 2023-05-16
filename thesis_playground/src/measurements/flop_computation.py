@@ -404,6 +404,32 @@ def get_data_ranges(
                 },
                 {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV) * NBLOCKS, 'action': 'rw'},
         ],
+        'cloudsc_vert_loop_6_1':
+        [
+                {'variables': ['PLU'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['LDCUM'], 'size': (KFDIA-KIDIA+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PSNDE'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {
+                    'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
+                    'size': (KFDIA-KIDIA+1) * (KLEV) * NBLOCKS,
+                    'action': 'r'
+                },
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV) * NBLOCKS, 'action': 'rw'},
+        ],
+        'cloudsc_vert_loop_7':
+        [
+                {'variables': ['PLU'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['LDCUM'], 'size': (KFDIA-KIDIA+1) * NBLOCKS, 'action': 'r'},
+                {'variables': ['PSNDE'], 'size': (KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'r'},
+                {'variables': ['PAPH_N'], 'size': (KFDIA-KIDIA+1) * (KLEV+1) * NBLOCKS, 'action': 'r'},
+                {
+                    'variables': ['PSUPSAT_N', 'PT_N', 'tendency_tmp_t_N'],
+                    'size': (KFDIA-KIDIA+1) * (KLEV) * NBLOCKS,
+                    'action': 'r'
+                },
+                {'variables': ['PLUDE'], 'size': 2*(KFDIA-KIDIA+1) * (KLEV) * NBLOCKS, 'action': 'rw'},
+        ],
         'cloudsc_vert_loop_orig_mwe_no_klon':
         [
                 {'variables': ['PAPH_NS'], 'size': (KLEV+1) * NBLOCKS, 'action': 'r'},
@@ -449,6 +475,18 @@ def get_data_ranges(
             {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * KLEV * NBLOCKS, 'action': 'rw'},
+            ]),
+        iteration_shapes['cloudsc_vert_loop_6'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            ])
+        iteration_shapes['cloudsc_vert_loop_6_1'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             ])
         iteration_shapes['cloudsc_vert_loop_mwe_wip'].extend([
             {'variables': ['TMP_F'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},
