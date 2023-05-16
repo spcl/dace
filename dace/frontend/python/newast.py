@@ -2166,7 +2166,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
         for s in expr.free_symbols:
-            if s.name in self.defined:
+            if s.name in self.defined and not isinstance(self.defined[s.name], data.Data):
                 repldict[s] = self.defined[s.name]
         return expr.subs(repldict)
 
@@ -4631,6 +4631,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr = varr.stype
             attr = getattr(arr, node.attr)
             if issubclass(type(arr), data.Structure) and isinstance(attr, data.Data):
+                if node.attr not in self.sdfg.arrays:
+                    copy_desc = copy.deepcopy(attr)
+                    copy_desc.transient = True
+                    self.sdfg.arrays[node.attr] = copy_desc
                 vname, vdesc = self.sdfg.add_view(node.attr,
                                                   attr.shape,
                                                   attr.dtype,
@@ -4638,7 +4642,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   attr.strides,
                                                   attr.offset,
                                                   find_new_name=True)
-                self.views[vname] = (result, Memlet.from_array(f"{result}.{node.attr}", attr), node.attr)
+                self.views[vname] = (result, Memlet.from_array(f"{node.attr}", attr), node.attr)
                 return vname
             return getattr(arr, node.attr)
         except KeyError:
@@ -4845,7 +4849,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
                 wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
-                self.last_state.add_edge(rnode, None, wnode, 'views',
+                # self.last_state.add_edge(rnode, None, wnode, 'views',
+                self.last_state.add_edge(rnode, None, wnode, None,
                                          Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
                 # self.materialized_views.add(wnode)
             
