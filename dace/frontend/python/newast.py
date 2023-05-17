@@ -11,7 +11,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
+from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional
 import operator
 
 import dace
@@ -2164,7 +2164,14 @@ class ProgramVisitor(ExtNodeVisitor):
         repldict = dict()
         for s in expr.free_symbols:
             if s.name in self.defined:
-                repldict[s] = self.defined[s.name]
+                repl = self.defined[s.name]
+                # Convert strings to SymPy symbols (for SymPy 1.12)
+                if isinstance(repl, str):
+                    repl = sympy.Symbol(repl)
+                # Filter out callables and iterables (for SymPy 1.12)
+                elif isinstance(repl, (Callable, Iterable)):
+                    continue
+                repldict[s] = repl
         return expr.subs(repldict)
 
     def visit_For(self, node: ast.For):
