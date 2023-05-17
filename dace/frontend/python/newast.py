@@ -254,7 +254,7 @@ def parse_dace_program(name: str,
     except Exception:
         # Print the offending line causing the exception
         li = visitor.current_lineinfo
-        print('Exception raised while parsing DaCe program:\n' f'  in File "{li.filename}", line {li.start_line}')
+        print(f'Exception raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
         lines = preprocessed_ast.src.split('\n')
         lineid = li.start_line - preprocessed_ast.src_line - 1
         if lineid >= 0 and lineid < len(lines):
@@ -601,6 +601,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
+
     def __init__(self,
                  visitor,
                  defined,
@@ -2169,7 +2170,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(repl, str):
                     repl = sympy.Symbol(repl)
                 # Filter out callables and iterables (for SymPy 1.12)
-                elif isinstance(repl, (Callable, Iterable)):
+                elif repl is None or isinstance(repl, (Callable, Iterable)):
                     continue
                 repldict[s] = repl
         return expr.subs(repldict)
@@ -4826,6 +4827,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
+
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
