@@ -4,6 +4,7 @@ from dace.transformation.interstate import InlineSDFG, StateFusion
 from dace.libraries import blas
 from dace.library import change_default
 import numpy as np
+import os
 import pytest
 
 W = dace.symbol('W')
@@ -263,8 +264,6 @@ def test_inline_unsqueeze3():
             assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
 
 
-# NOTE: Issue with serialization
-@pytest.mark.skip
 def test_inline_unsqueeze4():
 
     @dace.program
@@ -281,7 +280,10 @@ def test_inline_unsqueeze4():
 
     A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
     B = np.zeros((5, 3), np.int32)
+    last_value = os.environ.get('DACE_testing_serialization', '0')
+    os.environ['DACE_testing_serialization'] = '0'
     sdfg(A, B)
+    os.environ['DACE_testing_serialization'] = last_value
     for i in range(3):
         if i < 2:
             assert (np.array_equal(B[i + 1:2 * i + 3, 1 - i], A[i, i:2 * i + 2]))
