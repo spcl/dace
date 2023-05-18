@@ -27,7 +27,7 @@ def main():
     program_name = programs[args.program]
     sdfg = get_sdfg(fsource, program_name)
 
-    optimize_sdfg(sdfg, device, verbose_name=True)
+    optimize_sdfg(sdfg, device, verbose_name=args.program)
     sdfg.instrument = dace.InstrumentationType.Timer
     if not args.only_graph:
         sdfg.compile()
