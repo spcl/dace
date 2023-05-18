@@ -2,7 +2,7 @@ import os
 import numpy as np
 from numpy import f2py
 from numbers import Number
-from typing import Dict, Union, List
+from typing import Dict, Union, List, Optional
 from importlib import import_module
 import sys
 import tempfile
@@ -220,12 +220,16 @@ def reset_graph_files(program: str):
         os.remove(file)
 
 
-def use_cache(program: str) -> bool:
+def use_cache(program: Optional[str] = None, dacecache_folder: Optional[str] = None) -> bool:
     """
     Puts the environment variables to tell dace to use the cached generated coded. Also builts the generated code
 
-    :param program: The name of the program, used for building the code
-    :type program: str
+    :param program: The name of the program, used for building the code. Can be None if dacecache_folder is given
+    instead.
+    :type program: Optional[str]
+    :param dacecache_folder: Name of the folder of the program in the .dacecache folder. If None will infer from program
+    name
+    :type dacecache_folder: Optional[str]
     :return: True if building was successful, false otherwise
     :rtype: bool
     """
@@ -233,8 +237,9 @@ def use_cache(program: str) -> bool:
     os.environ['DACE_compiler_use_cache'] = '1'
     os.putenv('DACE_compiler_use_cache', '1')
     print("Build it without regenerating the code")
+    dacecache_folder = f"{programs[program]}_routine" if dacecache_folder is None else dacecache_folder
     build = run(['make'],
-                cwd=os.path.join(get_dacecache(), f"{programs[program]}_routine", 'build'),
+                cwd=os.path.join(get_dacecache(), dacecache_folder, 'build'),
                 capture_output=True)
     if build.returncode != 0:
         print("ERROR: Error encountered while building")
@@ -328,7 +333,8 @@ def enable_debug_flags():
     Config.set('compiler', 'cuda', 'args', value=nvcc_args + ' -g -G')
 
 
-def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True):
+def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
+                  verbose_name: Optional[str] = None):
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -339,20 +345,31 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :type device: dace.DeviceType
     :param use_my_auto_opt: Flag to control if my custon auto_opt should be used, defaults to True
     :type use_my_auto_opt: bool, optional
+    :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
+    None
+    :type verbose_name: Optional[str]
     """
 
     for k, v in sdfg.arrays.items():
         if not v.transient and type(v) == dace.data.Array:
             v.storage = dace.dtypes.StorageType.GPU_Global
 
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "before_auto_opt")
     # avoid cyclic dependency
     from execute.my_auto_opt import auto_optimize as my_auto_optimize
     if device == dace.DeviceType.GPU:
         if use_my_auto_opt:
-            my_auto_optimize(sdfg, device)
+            if verbose_name is not None:
+                my_auto_optimize(sdfg, device, program=verbose_name)
+            else:
+                my_auto_optimize(sdfg, device)
+
         else:
             dace_auto_optimize(sdfg, device)
 
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_auto_opt")
     return sdfg
 
 

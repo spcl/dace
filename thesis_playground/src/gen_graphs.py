@@ -2,8 +2,7 @@ from argparse import ArgumentParser
 
 import dace
 
-from utils.general import get_programs_data, save_graph, get_sdfg, reset_graph_files, read_source, enable_debug_flags
-from execute.my_auto_opt import auto_optimize
+from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, optimize_sdfg
 
 
 def main():
@@ -28,13 +27,7 @@ def main():
     program_name = programs[args.program]
     sdfg = get_sdfg(fsource, program_name)
 
-    for k, v in sdfg.arrays.items():
-        if not v.transient and type(v) == dace.data.Array:
-            v.storage = dace.dtypes.StorageType.GPU_Global
-
-    save_graph(sdfg, args.program, "before_auto_opt")
-    auto_optimize(sdfg, device, program=args.program)
-    save_graph(sdfg, args.program, "after_auto_opt")
+    optimize_sdfg(sdfg, device, verbose_name=True)
     sdfg.instrument = dace.InstrumentationType.Timer
     if not args.only_graph:
         sdfg.compile()
