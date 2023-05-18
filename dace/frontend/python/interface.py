@@ -2,6 +2,7 @@
 """ Python interface for DaCe functions. """
 
 import inspect
+import warnings
 from functools import wraps
 from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload
 
@@ -352,3 +353,35 @@ def in_program() -> bool:
     :return: True if in a DaCe program parsing context, or False otherwise.
     """
     return False
+
+
+def expand_if(f: F) -> F:
+    """ Expands the if-statements in the program to include (and duplicate) the subsequent statements. """
+
+    import ast
+    import astunparse
+    from dace.frontend.python import astutils
+    from dace.frontend.python.experimental import ExpandIf
+
+    func_ast, func_file, func_line, _ = astutils.function_to_ast(f)
+
+    warnings.warn_explicit(
+        'The `expand_if` decorator is an experimental feature and may be altered or even removed in the future.',
+        category=FutureWarning,
+        filename=func_file,
+        lineno=func_line
+    )
+    
+    dec_idx = None
+    for i, dec in enumerate(func_ast.body[0].decorator_list):
+        if isinstance(dec, ast.Attribute) and dec.attr == 'expand_if':
+            dec_idx = i
+            break
+    assert dec_idx is not None
+    del func_ast.body[0].decorator_list[dec_idx]
+
+    func_ast = ExpandIf().visit(func_ast)
+    print(astunparse.unparse(func_ast))
+    exec(astunparse.unparse(func_ast), f.__globals__)
+
+    return f
