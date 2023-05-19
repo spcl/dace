@@ -1508,7 +1508,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             modules: Dict[str, Any],
                             resolve_functions: bool = False,
                             parent_closure: Optional[SDFGClosure] = None,
-                            default_args: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            default_args: Optional[Set[str]] = None,
+                            expand_if: bool = False) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -1528,6 +1529,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     :param parent_closure: If not None, represents the closure of the parent of
                            the currently processed function.
     :param default_args: If not None, defines a list of unspecified default arguments.
+    :param expand_if: (Experimental) Enables expansion of if statements.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -1567,6 +1569,10 @@ def preprocess_dace_program(f: Callable[..., Any],
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
+    
+    if expand_if:
+        from dace.frontend.python.experimental import ExpandIf
+        src_ast = ExpandIf().visit(src_ast)
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:

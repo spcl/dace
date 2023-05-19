@@ -44,6 +44,7 @@ def program(f: F,
             regenerate_code: bool = True,
             recompile: bool = True,
             constant_functions=False,
+            expand_if: bool = False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
@@ -69,6 +70,16 @@ def program(f: F,
            ahead-of-time with ``.compile()``.
     """
 
+    if expand_if:
+        func_file = inspect.getfile(f)
+        _, func_line = inspect.findsource(f)
+        warnings.warn_explicit(
+            'The `expand_if` parameter is an experimental feature and may be altered or even removed in the future.',
+            category=FutureWarning,
+            filename=func_file,
+            lineno=func_line
+        )
+
     # Parses a python @dace.program function and returns an object that can
     # be translated
     return parser.DaceProgram(f,
@@ -79,7 +90,8 @@ def program(f: F,
                               constant_functions,
                               recreate_sdfg=recreate_sdfg,
                               regenerate_code=regenerate_code,
-                              recompile=recompile)
+                              recompile=recompile,
+                              expand_if=expand_if)
 
 
 function = program

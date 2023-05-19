@@ -147,7 +147,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recreate_sdfg: bool = True,
                  regenerate_code: bool = True,
                  recompile: bool = True,
-                 method: bool = False):
+                 method: bool = False,
+                 expand_if: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -167,6 +168,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.expand_if = expand_if
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -369,7 +371,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                                                            modules,
                                                            resolve_functions=self.resolve_functions,
                                                            parent_closure=parent_closure,
-                                                           default_args=given_default_args.keys())
+                                                           default_args=given_default_args.keys(),
+                                                           expand_if=self.expand_if)
         return closure
 
     def _eval_closure(self, arg: str, extra_constants: Optional[Dict[str, Any]] = None) -> Any:
@@ -852,7 +855,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                                                                     global_vars,
                                                                     modules,
                                                                     resolve_functions=self.resolve_functions,
-                                                                    default_args=unspecified_default_args.keys())
+                                                                    default_args=unspecified_default_args.keys(),
+                                                                    expand_if=self.expand_if)
 
         # Create new argument mapping from closure arrays
         arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
