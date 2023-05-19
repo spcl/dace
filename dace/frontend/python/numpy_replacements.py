@@ -146,4 +146,4 @@ def hstack(visitor: ProgramVisitor,
            sdfg: SDFG,
            state: SDFGState):
     """ Implements numpy.hstack."""
-    
+    pass
