@@ -105,7 +105,7 @@ def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvide
         if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
-            if inp in ['LDCUM', 'LDCUM_NF']:
+            if inp in ['LDCUM', 'LDCUM_NF', 'LDCUM_NFS']:
                 # Random ints in range [0,1]
                 inp_data[inp] = np.asfortranarray(rng.integers(0, 2, shape, dtype=np.int32))
             else:
@@ -437,5 +437,7 @@ def convert_to_bytes(value: Number, unit: str) -> float:
     if unit in factors:
         return float(value) * float(factors[unit])
     else:
-        print(f"ERROR: No factor recorded for {unit}")
         return None
+        prygraint(f"ERROR: No factor recorded for {unit}")
+        print(f"ERROR: No factor recorded for {unit}")
+    runplaurint(f"ERROR: No factor recorded for {unit}")

@@ -1,4 +1,4 @@
-from typing import Dict, Union, Tuple
+from typing import Dict, Union, Tuple, Optional
 from numbers import Number
 import numpy as np
 import copy
@@ -488,6 +488,12 @@ def get_data_ranges(
             {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
             ])
+        iteration_shapes['cloudsc_vert_loop_7'].extend([
+            {'variables': ['ZCONVSRCE'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZSOLQA'], 'size': 2*(KFDIA-KIDIA+1) * NCLV * NCLV * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZDTGDP'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            {'variables': ['ZTP1'], 'size': 2*(KFDIA-KIDIA+1) * NBLOCKS, 'action': 'rw'},
+            ])
         iteration_shapes['cloudsc_vert_loop_mwe_wip'].extend([
             {'variables': ['TMP_F'], 'size': 2*KLEV * NBLOCKS, 'action': 'rw'},
             ])
@@ -563,7 +569,7 @@ def get_number_of_bytes(
 
 def get_number_of_bytes_2(
         params: ParametersProvider,
-        program: str, temp_arrays: bool = False) -> Tuple[Number, Number, Number]:
+        program: str, temp_arrays: bool = False) -> Optional[Tuple[Number, Number, Number]]:
     """
     Get number of bytes separated into read and write
 
@@ -573,8 +579,8 @@ def get_number_of_bytes_2(
     :type program: str
     :param temp_arrays: Wether to include temp arrays, defaults to False
     :type temp_arrays: False
-    :return: The total, read and written number of bytes
-    :rtype: Tuple[Number, Number, Number]
+    :return: The total, read and written number of bytes or None if no data is available
+    :rtype: Optional[Tuple[Number, Number, Number]]
     """
 
     # Avoid circular imports
@@ -586,7 +592,11 @@ def get_number_of_bytes_2(
     # the precises parameters used
     data = get_data(params)
 
-    memory_data = get_data_ranges(params, temp_arrays)[program]
+    ranges = get_data_ranges(params, temp_arrays)
+    if program not in ranges:
+        return None
+
+    memory_data = ranges[program]
     read, written = 0, 0
     # Add reading of parameters
     read = BYTES_DOUBLE * len(programs_data['program_parameters'][program])
@@ -594,17 +604,22 @@ def get_number_of_bytes_2(
     for inp in programs_data['program_inputs'][program]:
         if data[inp] == (0, ):
             read += BYTES_DOUBLE
+    # print(f"{read:,} bytes come from scalar inputs")
     for entry in memory_data:
         # if 'action' not in entry:
         #     continue
         if entry['size'] == 0:
             print(f"[flop_computation::get_number_of_bytes] WARNING: size is 0 for {entry['variables']} for {program}")
         if entry['action'] in ['r']:
+            # print(f"{entry['variables']} add {entry['size']:,} bytes reading each")
             read += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
         if entry['action'] in ['w']:
+            # print(f"{entry['variables']} add {entry['size']:,} bytes writing each")
             written += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
         if entry['action'] in ['rw']:
+            # print(f"{entry['variables']} add {entry['size']:,} bytes reading and writing")
             read += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
             written += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
 
+    # print(f"This sums up to a total of {read+written:,} bytes")
     return (read+written, read, written)

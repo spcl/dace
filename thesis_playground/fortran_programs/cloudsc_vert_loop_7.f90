@@ -133,7 +133,7 @@ SUBROUTINE inner_loops(&
     REAL(KIND=JPRB) ZDTGDP(KLON)
     REAL(KIND=JPRB) ZDP(KLON)
     REAL(KIND=JPRB) ZGDP(KLON)
-    ! Cut anway KLEV dimension of ZTP1
+    ! Cut away KLEV dimension of ZTP1
     REAL(KIND=JPRB) ZTP1(KLON)
 
     ! Not sure if this causes problems

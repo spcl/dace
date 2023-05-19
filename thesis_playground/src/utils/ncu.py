@@ -164,6 +164,14 @@ def get_achieved_work(action: IAction) -> Dict[str, int]:
 
 
 def get_achieved_bytes(action: IAction) -> int:
+    """
+    Get number of bytes transferred to/from global memory in bytes
+
+    :param action: The ncu action object
+    :type action: IAction
+    :return: The number of transferred bytes
+    :rtype: int
+    """
     Q = action.metric_by_name('dram__bytes_write.sum').as_uint64()
     Q += action.metric_by_name('dram__bytes_read.sum').as_uint64()
     return Q

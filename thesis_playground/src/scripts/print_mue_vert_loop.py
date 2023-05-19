@@ -1,8 +1,7 @@
 from argparse import ArgumentParser
 from tabulate import tabulate
-import json
-import os
 import numpy as np
+import pandas as pd
 
 from utils.vertical_loops import get_data
 from scripts import Script
@@ -14,11 +13,15 @@ class PrintMUEVertLoop(Script):
 
     def add_args(self, parser: ArgumentParser):
         parser.add_argument('--mwe', action='store_true', default=False)
+        parser.add_argument('--file-regex', type=str, default=None,
+                            help='Only incldue files which match the given regex (anywhere in the filename)')
 
     @staticmethod
     def action(args):
         if args.mwe:
             data = get_data('_mwe_')
+        elif args.file_regex is not None:
+            data = get_data(args.file_regex)
         else:
             data = get_data()
 
@@ -34,12 +37,17 @@ class PrintMUEVertLoop(Script):
             mue = io_efficiency * bw_efficiency
             mue_temp = io_efficiency_temp * bw_efficiency
             runtime = np.average(data[program]['runtime'])
-            tabulate_data.append([program, ncuQ_avg, ncuQ_range, myQ, myQ_temp, io_efficiency, io_efficiency_temp,
-                                  bw_efficiency, mue, mue_temp, runtime])
+            number = len(data[program]['runtime'])
+            row = [program, ncuQ_avg, ncuQ_range, myQ, myQ_temp, io_efficiency, io_efficiency_temp, bw_efficiency,
+                   mue, mue_temp, runtime, number]
+            row = [-1 if pd.isnull(v) else v for v in row]
+            tabulate_data.append(row)
+            print(row)
 
         tabulate_data.sort()
         print(tabulate(tabulate_data,
                        headers=['program', 'measured bytes', 'measured bytes range', 'theoretical bytes', 'theo. bytes with temp',
                                 'I/O eff.', 'I/O eff. w/ temp', 'BW eff.', 'MUE', 'MUE with temp',
-                                'runtime [s]'],
-                       intfmt=',', floatfmt=(None, None, None, None, '.2f', '.2f', '.2f', '.2f', '.2e', '.2e', '.2e')))
+                                'runtime [s]', '#'],
+                       intfmt=',', floatfmt=(None, None, None, None, '.2f', '.2f', '.2f', '.2f', '.2e', '.2e', '.2e',
+                                             None)))

@@ -12,6 +12,13 @@ from utils.ncu import get_achieved_bytes, get_all_actions, get_achieved_performa
 from measurements.flop_computation import get_number_of_bytes_2
 from measurements.data import MeasurementRun
 
+# Dictionary with a list of actions to ignore for each program
+ignore_actions = {
+    'microbenchmark_v1': ['single_state_body_map_0_0_8'],
+    'microbenchmark_v3': ['single_state_body_map_0_0_8'],
+    'cloudsc_vert_loop_mwe_wip': ['single_state_body_map_0_0_9'],
+}
+
 
 def get_data(filename_regex: str = None) -> Dict[str, Dict[str, Union[Number, np.ndarray]]]:
     """
@@ -32,15 +39,17 @@ def get_data(filename_regex: str = None) -> Dict[str, Dict[str, Union[Number, np
     for file in files:
         if file.split('.')[-1] == 'ncu-rep':
             label = '_'.join(file.split('.')[0].split('_')[1:-1])
+            program = '_'.join(label.split('_')[0:-1])
             actions = get_all_actions(os.path.join(folder, file))
             if len(actions) > 1:
                 actions = action_list_to_dict(actions)
                 actions_to_consider = []
                 for name, action in actions.items():
-                    if re.match("[a-z_]*_map", name) is not None:
+                    if re.match("[a-z_0-9]*_map", name) is not None and \
+                            (program not in ignore_actions or name not in ignore_actions[program]):
                         actions_to_consider.append(*action)
                 if len(actions_to_consider) > 1:
-                    print(f"Found multiple possible actions, taking first only with name: "
+                    print(f"Found multiple possible actions for {program}, taking first only with name: "
                           f"{actions_to_consider[0].name()}")
                 if len(actions_to_consider) == 0:
                     print(f"No possible action found, actions are: {actions}")
@@ -73,9 +82,11 @@ def get_data(filename_regex: str = None) -> Dict[str, Dict[str, Union[Number, np
             with open(os.path.join(folder, file)) as f:
                 run_data = json.load(f, object_hook=MeasurementRun.from_json)
                 for program_measurement in run_data.data:
-                    myQ = get_number_of_bytes_2(program_measurement.parameters, program_measurement.program)[0]
+                    myQ = get_number_of_bytes_2(program_measurement.parameters, program_measurement.program)
                     myQ_temp = get_number_of_bytes_2(program_measurement.parameters, program_measurement.program,
-                                                     temp_arrays=True)[0]
+                                                     temp_arrays=True)
+                    myQ = myQ[0] if myQ is not None else np.nan
+                    myQ_temp = myQ_temp[0] if myQ_temp is not None else np.nan
                     if label not in data:
                         data[label] = {}
                     data[label]['theoretical bytes'] = myQ

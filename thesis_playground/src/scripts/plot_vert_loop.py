@@ -109,7 +109,7 @@ class PlotVertLoop(Script):
         sns.lineplot(data=speedups, x='program', y='runtime', hue='size', ax=ax_speedups,  marker='^',
                      hue_order=hue_order, legend=False)
         ax_speedups.set_xlabel('')
-        ax_speedups.set_ylabel('Times transferred less to/from global memory')
+        ax_speedups.set_ylabel('Speedup / less memory transfers')
 
         ax_runtime.get_legend().remove()
         sns.move_legend(ax_memory, 'center', bbox_to_anchor=(1.75, -.5), ncol=3, frameon=False, title='NBLOCKS')

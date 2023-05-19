@@ -2,7 +2,6 @@ from argparse import ArgumentParser
 import numpy as np
 import dace
 import cupy as cp
-from utils.general import optimize_sdfg
 from subprocess import run
 import os
 import pandas as pd
@@ -11,7 +10,7 @@ import matplotlib.pyplot as plt
 
 from utils.ncu import get_all_actions_filtered, get_achieved_performance, get_peak_performance, get_achieved_bytes
 from utils.paths import get_thesis_playground_root_dir
-from utils.general import enable_debug_flags, use_cache
+from utils.general import enable_debug_flags, use_cache, optimize_sdfg
 
 # NBLOCKS = int(7e4)
 KLEV = 137

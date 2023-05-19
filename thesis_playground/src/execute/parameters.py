@@ -122,6 +122,14 @@ custom_parameters = {
         'KIDIA': 1,
         'NBLOCKS': 200000
     },
+    'cloudsc_vert_loop_7_no_klon':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
     'cloudsc_vert_loop_orig_mwe_no_klon':
     {
         'KLEV': 137,

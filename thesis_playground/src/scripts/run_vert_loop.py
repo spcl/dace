@@ -33,6 +33,7 @@ class RunVertLoop(Script):
         parser.add_argument('--mwe', action='store_true', default=False)
         parser.add_argument('--versions', nargs='+', default=None)
         parser.add_argument('--size', default=None)
+        parser.add_argument('--microbenchmark', action='store_true', default=False)
 
     @staticmethod
     def action(args):
@@ -54,8 +55,14 @@ class RunVertLoop(Script):
         if args.size is not None:
             sizes = [int(args.size)]
 
+        if args.microbenchmark:
+            versions = ['microbenchmark_v1', 'microbenchmark_v3']
+            sizes = [6553*32]
+
         for version in versions:
-            use_cache(version)
+            if not args.microbenchmark:
+                use_cache(version)
+
             # if not test_program(version, run_config):
             #     continue
 
