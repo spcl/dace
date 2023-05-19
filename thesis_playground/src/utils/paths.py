@@ -76,8 +76,7 @@ def get_list_of_complete_results_name() -> List[str]:
 
 def get_verbose_graphs_dir() -> str:
     """
-    Gets path to the directory where all the SDFGs are stored when SDGFs are generated verbosly (e.g. not for compiling
-            afterwares
+    Gets path to the directory where all the SDFGs are stored when SDGFs are generated verbosly (e.g. not for compiling)
 
     :return: Path to the dir
     :rtype: str
@@ -93,3 +92,13 @@ def get_vert_loops_dir() -> str:
     :rtype: str
     """
     return join(get_thesis_playground_root_dir(), 'vert_loop_results')
+
+
+def get_playground_results_dir() -> str:
+    """
+    Get path to directory where results from playground are saved
+
+    :return: Path
+    :rtype: str
+    """
+    return join(get_thesis_playground_root_dir(), 'playground_results')
