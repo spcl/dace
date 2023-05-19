@@ -19,9 +19,9 @@ from utils.paths import get_thesis_playground_root_dir, get_playground_results_d
 
 NBLOCKS = dace.symbol('NBLOCKS')
 KLEV = dace.symbol('KLEV')
+# KLEV = 137
 KLON = 1
 NCLV = dace.symbol('NCLV')
-# NCLV = 10
 KIDIA = 0
 KFDIA = 1
 NCLDQI = 2
@@ -117,9 +117,9 @@ def vert_loop_7(
 
     for JN in dace.map[0:NBLOCKS:KLON]:
         inner_loops_7(
-            KLON,  KLEV,  NCLV,  KIDIA,  KFDIA,  NCLDQS,  NCLDQI,  NCLDQL,  NCLDTOP,
             PTSPHY,  RLMIN,  ZEPSEC,  RG,  RTHOMO,  ZALFAW,  PLU_NF[:, :, JN],  LDCUM_NF[:, JN],  PSNDE_NF[:, :, JN],
-            PAPH_NF[:, :, JN], PSUPSAT_NF[:, :, JN],  PT_NF[:, :, JN],  tendency_tmp_t_NF[:, :, JN], PLUDE_NF[:, :, JN])
+            PAPH_NF[:, :, JN], PSUPSAT_NF[:, :, JN],  PT_NF[:, :, JN],  tendency_tmp_t_NF[:, :, JN], PLUDE_NF[:, :, JN],
+            NCLV=NCLV, KLEV=KLEV)
 
 
 @dace.program
@@ -228,6 +228,66 @@ def vert_loop_7_1_no_klon(
 
 
 @dace.program
+def vert_loop_7_1_no_temp(
+            PTSPHY: dace.float64,
+            RLMIN: dace.float64,
+            ZEPSEC: dace.float64,
+            RG: dace.float64,
+            RTHOMO: dace.float64,
+            ZALFAW: dace.float64,
+            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            LDCUM_NF: dace.int32[KLON, NBLOCKS],
+            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
+            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            ZCONVSRCE: dace.float64[KLON, NCLV, NBLOCKS],
+            ZSOLQA: dace.float64[KLON, NCLV, NCLV, NBLOCKS],
+            ZDTGDP: dace.float64[KLON, NBLOCKS],
+            ZDP: dace.float64[KLON, NBLOCKS],
+            ZGDP: dace.float64[KLON, NBLOCKS],
+            ZTP1: dace.float64[KLON, NBLOCKS],
+            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
+        ):
+
+    ZCONVSRCE[:, :, :] = 0.0
+    ZSOLQA[:, :, :, :] = 0.0
+    ZDTGDP[:, :] = 0.0
+    ZDP[:, :] = 0.0
+    ZGDP[:, :] = 0.0
+    ZTP1[:, :] = 0.0
+
+    for JN in dace.map[0:NBLOCKS:KLON]:
+        for JK in range(NCLDTOP, KLEV-1):
+            for JL in range(KIDIA, KFDIA):
+                ZTP1[JL, JN] = PT_NF[JL, JK, JN] + PTSPHY * tendency_tmp_t_NF[JL, JK, JN]
+                if PSUPSAT_NF[JL, JK, JN] > ZEPSEC:
+                    if ZTP1[JL, JN] > RTHOMO:
+                        ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + PSUPSAT_NF[JL, JK, JN]
+                    else:
+                        ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + PSUPSAT_NF[JL, JK, JN]
+
+            for JL in range(KIDIA, KFDIA):
+                ZDP[JL] = PAPH_NF[JL, JK+1, JN]-PAPH_NF[JL, JK, JN]
+                ZGDP[JL] = RG/ZDP[JL]
+                ZDTGDP[JL] = PTSPHY*ZGDP[JL]
+
+            for JL in range(KIDIA, KFDIA):
+                PLUDE_NF[JL, JK, JN] = PLUDE_NF[JL, JK, JN]*ZDTGDP[JL, JN]
+                if LDCUM_NF[JL, JN] and PLUDE_NF[JL, JK, JN] > RLMIN and PLU_NF[JL, JK+1, JN] > ZEPSEC:
+                    ZCONVSRCE[JL, NCLDQL, JN] = ZALFAW*PLUDE_NF[JL, JK, JN]
+                    ZCONVSRCE[JL, NCLDQI, JN] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK, JN]
+                    ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + ZCONVSRCE[JL, NCLDQL, JN]
+                    ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + ZCONVSRCE[JL, NCLDQI, JN]
+                else:
+                    PLUDE_NF[JL, JK, JN] = 0.0
+
+                if LDCUM_NF[JL, JN]:
+                    ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK, JN] * ZDTGDP[JL]
+
+
+@dace.program
 def vert_loop_wip(
             PTSPHY: dace.float64,
             RLMIN: dace.float64,
@@ -285,6 +345,7 @@ kernels = {
     'vert_loop_7': vert_loop_7,
     'vert_loop_7_1': vert_loop_7_1,
     'vert_loop_7_1_no_klon': vert_loop_7_1_no_klon,
+    'vert_loop_7_1_no_temp': vert_loop_7_1_no_temp,
     'vert_loop_wip': vert_loop_wip,
     'kernel_1': kernel_1,
 }
@@ -347,12 +408,17 @@ def get_size_of_parameters(dace_f: dace.frontend.python.parser.DaceProgram, para
     return int(size * 8)
 
 
-def run_function_dace(f: dace.frontend.python.parser.DaceProgram, params: Dict[str, int], save_graphs: bool = False):
+def run_function_dace(f: dace.frontend.python.parser.DaceProgram, params: Dict[str, int], save_graphs: bool = False,
+                      define_symbols: bool = False):
     sdfg = f.to_sdfg(validate=True, simplify=True)
+    additional_args = {}
     if save_graphs:
-        optimize_sdfg(sdfg, device=dace.DeviceType.GPU, verbose_name=f"py_{f.name}")
-    else:
-        optimize_sdfg(sdfg, device=dace.DeviceType.GPU)
+        additional_args['verbose_name'] = f"py_{f.name}"
+    if define_symbols:
+        additional_args['symbols'] = copy.deepcopy(params)
+        # del additional_args['symbols']['NBLOCKS']
+
+    optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
     csdfg = sdfg.compile()
     arguments = gen_arguments(f, params)
     arguments_device = copy_to_device(arguments)
@@ -368,7 +434,7 @@ def action_run(args):
         use_cache(dacecache_folder=args.program)
     print()
     params.update({'NBLOCKS': args.NBLOCKS})
-    run_function_dace(kernels[args.program], params, args.save_graphs)
+    run_function_dace(kernels[args.program], params, args.save_graphs, args.define_symbols)
 
 
 def action_profile(args):
@@ -386,6 +452,8 @@ def action_profile(args):
                 program, '--NBLOCKS', str(args.NBLOCKS)]
         if args.cache:
             cmds.append('--cache')
+        if not args.define_symbols:
+            cmds.append('--no-define-symbols')
         run(cmds)
         actions = get_all_actions_filtered(report_path, '_numpy_full_')
         action = actions[0]
@@ -398,7 +466,7 @@ def action_profile(args):
         data.append([program, D, bw, upper_Q, T])
 
     # Print data
-    print(tabulate(data, headers=['program', 'D', 'BW [ratio]', 'upper limit Q', 'T [s]'], intfmt=',', floatfmt='.3f'))
+    print(tabulate(data, headers=['program', 'D', 'BW [ratio]', 'upper limit Q', 'T [s]'], intfmt=',', floatfmt='.3e'))
 
     # save data
     if args.export is not None:
@@ -476,6 +544,7 @@ def main():
     run_parser.add_argument('--cache', action='store_true', default=False)
     run_parser.add_argument('--debug', action='store_true', default=False)
     run_parser.add_argument('--save-graphs', action='store_true', default=False)
+    run_parser.add_argument('--not-define-symbols', dest='define_symbols', action='store_false', default=True)
     run_parser.set_defaults(func=action_run)
 
     profile_parser = subparsers.add_parser('profile', description='Profile given kernels')
@@ -487,6 +556,7 @@ def main():
                                 help=f"Save into the given filename in {get_playground_results_dir()}/python."
                                      f"Will append if File exists. Will store in csv format")
     profile_parser.add_argument('--description', default=None, type=str, help='Description of the specific run')
+    profile_parser.add_argument('--not-define-symbols', dest='define_symbols', action='store_false', default=True)
     profile_parser.set_defaults(func=action_profile)
 
     test_parser = subparsers.add_parser('test', description='Test given kernels')
