@@ -1,4 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import sympy
 import warnings
 
 from dace import data, dtypes, symbolic
@@ -47,7 +48,7 @@ def linspace(visitor: ProgramVisitor,
             raise NotImplementedError("DaCe's np.linspace implementation does not support array-like start argument.")
         start_conn = '__inp0'
         start_type = start_desc.dtype.type
-    elif isinstance(start, symbolic.SymbolicType):
+    elif isinstance(start, (sympy.Basic, symbolic.SymExpr)):
         start_type = _sym_type(start).type
 
     stop_conn = None
@@ -61,7 +62,7 @@ def linspace(visitor: ProgramVisitor,
             raise NotImplementedError("DaCe's np.linspace implementation does not support array-like stop argument.")
         stop_conn = '__inp1'
         stop_type = stop_desc.dtype.type
-    elif isinstance(stop, symbolic.SymbolicType):
+    elif isinstance(stop, (sympy.Basic, symbolic.SymExpr)):
         stop_type = _sym_type(stop).type
 
     if retstep:
@@ -138,3 +139,11 @@ def linspace(visitor: ProgramVisitor,
         state.add_edge(tasklet, out_conn, out_node, None, Memlet(data=out_name, subset=f'{length}'))
 
     return out_name
+
+
+@oprepo.replaces('numpy.hstack')
+def hstack(visitor: ProgramVisitor,
+           sdfg: SDFG,
+           state: SDFGState):
+    """ Implements numpy.hstack."""
+    
