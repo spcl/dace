@@ -10,7 +10,7 @@ idna==2.10
 itsdangerous==2.0.0a1
 Jinja2==3.0.0a1
 MarkupSafe==2.0.0a1
-mpmath==1.1.0
+mpmath==1.3.0
 networkx==2.5
 numpy>=1.21
 packaging==20.4
