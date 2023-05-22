@@ -2,9 +2,9 @@ from argparse import ArgumentParser
 import os
 import json
 
-from utils.execute_dace import RunConfig, test_program, gen_ncu_report, profile_program
+from utils.execute_dace import RunConfig, gen_ncu_report, profile_program, compile_for_profile
 from utils.paths import get_vert_loops_dir
-from utils.general import use_cache
+from utils.general import use_cache, disable_cache, insert_heap_size_limit, get_programs_data
 from utils.print import print_with_time
 from execute.data import ParametersProvider
 from measurements.data import MeasurementRun
@@ -16,8 +16,7 @@ vert_sizes = [5e5, 2e5, 1e5]
 # vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_5']
 # vert_versions = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_5', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
 #                  'cloudsc_vert_loop_7']
-vert_versions = [
-                 'cloudsc_vert_loop_7']
+vert_versions = ['cloudsc_vert_loop_6_1']
 mwe_versions = ['cloudsc_vert_loop_orig_mwe_no_klon', 'cloudsc_vert_loop_mwe_no_klon']
 mwe_sizes = [5e4]
 
@@ -34,13 +33,12 @@ class RunVertLoop(Script):
         parser.add_argument('--versions', nargs='+', default=None)
         parser.add_argument('--size', default=None)
         parser.add_argument('--microbenchmark', action='store_true', default=False)
+        parser.add_argument('--only', choices=['specialise', 'heap', 'both'], default='both')
+        # parser.add_argument('--no-cache', action='store_true', default=False)
 
     @staticmethod
     def action(args):
 
-        results_folder = get_vert_loops_dir()
-        if not os.path.exists(results_folder):
-            os.mkdir(results_folder)
         run_config = RunConfig(use_dace_auto_opt=args.use_dace_auto_opt)
 
         if args.mwe:
@@ -60,27 +58,57 @@ class RunVertLoop(Script):
             sizes = [6553*32]
 
         for version in versions:
-            if not args.microbenchmark:
-                use_cache(version)
 
-            # if not test_program(version, run_config):
-            #     continue
+            version_dir_specialised = os.path.join(get_vert_loops_dir(), version, 'specialised')
+            version_dir_heap = os.path.join(get_vert_loops_dir(), version, 'heap')
+            os.makedirs(version_dir_heap, exist_ok=True)
+            os.makedirs(version_dir_specialised, exist_ok=True)
 
-            for size in sizes:
-                run_data = MeasurementRun(f"With {size:.0E} NBLOCKS")
-                params = ParametersProvider(version, update={'NBLOCKS': int(size), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
-                    'KLON': 1})
-                print(f"Run {version} with KLEV: {params['KLEV']} NBLOCKS: {params['NBLOCKS']:,} KLON: {params['KLON']} "
-                      f"KFDIA: {params['KFDIA']} KIDIA: {params['KIDIA']}")
-                program_data = profile_program(version, run_config, params, repetitions=1)
-                run_data.add_program_data(program_data)
+            if args.only == 'specialise':
+                specialise_arr = [True]
+                dir_arr = [version_dir_specialised]
+            elif args.only == 'heap':
+                specialise_arr = [False]
+                dir_arr = [version_dir_heap]
+            else:
+                specialise_arr = [False, True]
+                dir_arr = [version_dir_heap, version_dir_specialised]
 
-                filename = os.path.join(results_folder, f"result_{version}_{size:.0E}.json")
-                print_with_time(f"Save results into {filename}")
-                with open(filename, 'w') as file:
-                    json.dump(run_data, file, default=MeasurementRun.to_json)
+            for specialise, res_dir in zip(specialise_arr, dir_arr):
+                if not specialise:
+                    compile_for_profile(version, run_config)
+                    programs = get_programs_data()['programs']
+                    insert_heap_size_limit(f"{programs[version]}_routine",
+                                           "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +"
+                                           "KLON * (KLEV - 1) + 4 * KLON")
 
-                for index in range(args.repetitions):
-                    report_filename = os.path.join(results_folder, f"report_{version}_{size:.0E}_{index}.ncu-rep")
-                    gen_ncu_report(version, report_filename, run_config, ['--set', 'full'],
-                                   program_args=['--NBLOCKS', str(int(size))])
+                if not args.microbenchmark and not specialise:
+                    use_cache(version)
+                else:
+                    disable_cache()
+
+                for size in sizes:
+                    description = f"With {size:.0E} NBLOCKS"
+                    if specialise:
+                        description += " and specialised symbols"
+
+                    run_data = MeasurementRun(description)
+                    params = ParametersProvider(version, update={'NBLOCKS': int(size), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
+                                                                 'KLON': 1})
+                    print(f"Run {version} with KLEV: {params['KLEV']} NBLOCKS: {params['NBLOCKS']:,} KLON: {params['KLON']} "
+                          f"KFDIA: {params['KFDIA']} KIDIA: {params['KIDIA']} and specialise: {specialise}")
+                    program_data = profile_program(version, run_config, params, repetitions=1)
+                    run_data.add_program_data(program_data)
+
+                    filename = os.path.join(res_dir, f"result_{version}_{size:.0E}.json")
+                    print_with_time(f"Save results into {filename}")
+                    with open(filename, 'w') as file:
+                        json.dump(run_data, file, default=MeasurementRun.to_json)
+
+                    for index in range(args.repetitions):
+                        report_filename = os.path.join(res_dir, f"report_{version}_{size:.0E}_{index}.ncu-rep")
+                        program_args = ['--NBLOCKS', str(int(size))]
+                        if specialise:
+                            program_args.append('--specialize-symbols')
+                        gen_ncu_report(version, report_filename, run_config, ['--set', 'full'],
+                                       program_args=program_args)

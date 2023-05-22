@@ -8,7 +8,7 @@ import sys
 import tempfile
 import json
 from glob import glob
-from subprocess import run
+from subprocess import run, PIPE, Popen, check_output
 import cupy as cp
 
 import dace
@@ -248,6 +248,14 @@ def use_cache(program: Optional[str] = None, dacecache_folder: Optional[str] = N
     return True
 
 
+def disable_cache():
+    """
+    Disables using the cache in the settings and env variables
+    """
+    os.environ['DACE_compiler_use_cache'] = '0'
+    os.putenv('DACE_compiler_use_cache', '0')
+
+
 def compare_output(output_a: Dict, output_b: Dict, program: str, params: ParametersProvider) -> bool:
     """
     Compares two outputs. Outputs are dictionaries where key is the variable name and value a n-dimensional matrix. They
@@ -334,7 +342,7 @@ def enable_debug_flags():
 
 
 def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
-                  verbose_name: Optional[str] = None):
+                  verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None):
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -348,6 +356,8 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
     None
     :type verbose_name: Optional[str]
+    :param symbols: Dictionary of key, value pairs defining symbols which can be set to const, defaults to None
+    :type symbols: Optional[Dict[str, Number]]
     """
 
     for k, v in sdfg.arrays.items():
@@ -359,14 +369,15 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     # avoid cyclic dependency
     from execute.my_auto_opt import auto_optimize as my_auto_optimize
     if device == dace.DeviceType.GPU:
+        additional_args = {}
+        if symbols:
+            additional_args['symbols'] = symbols
         if use_my_auto_opt:
             if verbose_name is not None:
-                my_auto_optimize(sdfg, device, program=verbose_name)
-            else:
-                my_auto_optimize(sdfg, device)
-
+                additional_args['program'] = verbose_name
+            my_auto_optimize(sdfg, device, **additional_args)
         else:
-            dace_auto_optimize(sdfg, device)
+            dace_auto_optimize(sdfg, device, **additional_args)
 
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_auto_opt")
@@ -438,6 +449,28 @@ def convert_to_bytes(value: Number, unit: str) -> float:
         return float(value) * float(factors[unit])
     else:
         return None
-        prygraint(f"ERROR: No factor recorded for {unit}")
         print(f"ERROR: No factor recorded for {unit}")
-    runplaurint(f"ERROR: No factor recorded for {unit}")
+
+
+def insert_heap_size_limit(dacecache_folder_name: str, limit: str):
+    src_dir = os.path.join(get_dacecache(), dacecache_folder_name, 'src', 'cuda')
+    src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
+    if len(os.listdir(src_dir)) > 1:
+        print(f"WARNING: More than one files in {src_dir}")
+    print(f"Adding heap limit of {limit} to {src_file}")
+
+    lines = run(['grep', '-rn', 'cudaLaunchKernel', src_file], capture_output=True).stdout.decode('UTF-8')
+    last_line = lines.split('\n')[-2]
+    line_number = int(last_line.split(':')[0]) - 1
+
+    set_heap_limit_str = f"size_t required_heap_size = ({limit}) * NBLOCKS * 8 * 2;\n" + \
+                         "cudaError_t limit_error = cudaDeviceSetLimit(cudaLimitMallocHeapSize, required_heap_size);\n"
+
+    with open(src_file, 'r') as f:
+        contents = f.readlines()
+        contents.insert(line_number, set_heap_limit_str)
+        # print(contents)
+
+    with open(src_file, 'w') as f:
+        contents = "".join(contents)
+        f.write(contents)

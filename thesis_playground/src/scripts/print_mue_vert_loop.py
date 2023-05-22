@@ -1,9 +1,8 @@
 from argparse import ArgumentParser
 from tabulate import tabulate
 import numpy as np
-import pandas as pd
 
-from utils.vertical_loops import get_data
+from utils.vertical_loops import get_dataframe
 from scripts import Script
 
 
@@ -19,35 +18,56 @@ class PrintMUEVertLoop(Script):
     @staticmethod
     def action(args):
         if args.mwe:
-            data = get_data('_mwe_')
+            data, descriptions, nodes = get_dataframe('_mwe_')
         elif args.file_regex is not None:
-            data = get_data(args.file_regex)
+            data, descriptions, nodes = get_dataframe(args.file_regex)
         else:
-            data = get_data()
+            data, descriptions, nodes = get_dataframe()
 
-        tabulate_data = []
-        for program in data:
-            ncuQ_avg = int(np.average(data[program]['measured bytes']))
-            ncuQ_range = int(np.max(data[program]['measured bytes']) - np.min(data[program]['measured bytes']))
-            myQ = data[program]['theoretical bytes']
-            myQ_temp = data[program]['theoretical bytes temp']
-            io_efficiency = myQ / ncuQ_avg
-            io_efficiency_temp = myQ_temp / ncuQ_avg
-            bw_efficiency = np.average(data[program]['achieved bandwidth'] / data[program]['peak bandwidth'])
-            mue = io_efficiency * bw_efficiency
-            mue_temp = io_efficiency_temp * bw_efficiency
-            runtime = np.average(data[program]['runtime'])
-            number = len(data[program]['runtime'])
-            row = [program, ncuQ_avg, ncuQ_range, myQ, myQ_temp, io_efficiency, io_efficiency_temp, bw_efficiency,
-                   mue, mue_temp, runtime, number]
-            row = [-1 if pd.isnull(v) else v for v in row]
-            tabulate_data.append(row)
-            print(row)
+        indices = ['program', 'size', 'short_desc']
+        grouped_data = data.groupby(by=indices).mean()
+        grouped_data['measured bytes min'] = data['measured bytes'].groupby(by=indices).min()
+        grouped_data['measured bytes max'] = data['measured bytes'].groupby(by=indices).max()
+        grouped_data['measured bytes range'] = grouped_data['measured bytes max'] - grouped_data['measured bytes min']
+        grouped_data['io efficiency'] = grouped_data['theoretical bytes'] / grouped_data['measured bytes']
+        grouped_data['io efficiency temp'] = grouped_data['theoretical bytes temp'] / grouped_data['measured bytes']
+        grouped_data['bw efficiency'] = grouped_data['achieved bandwidth'] / grouped_data['peak bandwidth']
+        grouped_data['mue'] = grouped_data['io efficiency'] * grouped_data['bw efficiency']
+        grouped_data['mue temp'] = grouped_data['io efficiency temp'] * grouped_data['bw efficiency']
+        grouped_data['count'] = data['measured bytes'].groupby(by=indices).count()
+        grouped_data = grouped_data.reset_index()
 
-        tabulate_data.sort()
-        print(tabulate(tabulate_data,
-                       headers=['program', 'measured bytes', 'measured bytes range', 'theoretical bytes', 'theo. bytes with temp',
-                                'I/O eff.', 'I/O eff. w/ temp', 'BW eff.', 'MUE', 'MUE with temp',
-                                'runtime [s]', '#'],
-                       intfmt=',', floatfmt=(None, None, None, None, '.2f', '.2f', '.2f', '.2f', '.2e', '.2e', '.2e',
-                                             None)))
+        columns = {
+                'program': ('Program', None),
+                'short_desc': ('desc', None),
+                'size': ('NBLOCKS', '.1e'),
+                'measured bytes': ('measured bytes', '.3e'),
+                'measured bytes range': ('range (max-min)', '.3e'),
+                'theoretical bytes': ('theo. bytes', '.3e'),
+                'theoretical bytes temp': ('theo. bytes temp', '.3e'),
+                'io efficiency': ('I/O eff.', '.2f'),
+                'io efficiency temp': ('I/O eff. temp', '.2f'),
+                'bw efficiency': ('bw eff', '.2f'),
+                'mue': ('MUE', '.2f'),
+                'mue temp': ('MUE temp', '.2f'),
+                'runtime': ('T [s]', '.3e'),
+                'count': ('#', ''),
+                }
+        df_columns = []
+        headers = []
+        floatfmt = []
+        intfmt = []
+        for c in columns:
+            df_columns.append(c)
+            headers.append(columns[c][0])
+            if grouped_data[c].dtype == np.float64:
+                floatfmt.append(columns[c][1])
+                intfmt.append(None)
+            elif grouped_data[c].dtype == np.int64:
+                floatfmt.append(None)
+                intfmt.append(columns[c][1])
+            else:
+                floatfmt.append(None)
+                intfmt.append(None)
+
+        print(tabulate(grouped_data[df_columns], headers=headers, floatfmt=floatfmt, intfmt=intfmt, showindex=False))

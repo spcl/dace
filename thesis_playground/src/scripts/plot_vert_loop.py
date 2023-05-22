@@ -11,6 +11,7 @@ from utils.vertical_loops import get_dataframe, get_non_list_indices
 from scripts import Script
 
 
+# TODO: Adapt to df changes
 def key_program_sort(programs):
     """
     Sort by program name/index/version

@@ -216,6 +216,9 @@ class ParametersProvider:
     def __contains__(self, key: str) -> bool:
         return key in self.parameters
 
+    def get_dict(self) -> Dict[str, Number]:
+        return copy.deepcopy(self.parameters)
+
     @staticmethod
     def to_json(params: 'ParametersProvider') -> Dict:
         dict = copy.deepcopy(params.parameters)

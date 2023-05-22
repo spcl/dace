@@ -113,7 +113,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
 
 
 def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
-                sdfg_file: Optional[str] = None):
+                sdfg_file: Optional[str] = None, specialize_symbols: bool = False):
     """
     Runs Programs
 
@@ -127,6 +127,8 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     :type repetitions: int, optional
     :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
     :type sdfg_file: str, optional
+    :param specialize_symbols: Whether the symbols should be specialised, defaults to False
+    :type specialize_symbols: bool
     """
     programs = get_programs_data()['programs']
     print(f"Run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
@@ -134,7 +136,11 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     program_name = programs[program]
     if sdfg_file is None:
         sdfg = get_sdfg(fsource, program_name)
-        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+        additional_args = {}
+        if specialize_symbols:
+            additional_args['symbols'] = params.get_dict()
+
+        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
