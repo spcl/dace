@@ -1,344 +1,25 @@
 from argparse import ArgumentParser
-import inspect
 from subprocess import run
-from numbers import Number
 import copy
 import os
-from typing import Dict, Union, Tuple
+from typing import Dict
 from tabulate import tabulate
 import dace
-import numpy as np
 import cupy as cp
 import pandas as pd
-import sympy
 
+from python_programs import vert_loop_7, vert_loop_7_1, vert_loop_7_1_no_klon, vert_loop_7_1_no_temp, \
+                            vert_loop_wip
 from utils.general import optimize_sdfg, copy_to_device, use_cache, enable_debug_flags
 from utils.ncu import get_all_actions_filtered, get_achieved_performance, get_peak_performance, get_achieved_bytes, \
                       get_runtime
 from utils.paths import get_thesis_playground_root_dir, get_playground_results_dir
+from utils.python import gen_arguments, get_size_of_parameters, vert_loop_symbol_wrapper
 
-NBLOCKS = dace.symbol('NBLOCKS')
-KLEV = dace.symbol('KLEV')
-# KLEV = 137
-KLON = 1
-NCLV = dace.symbol('NCLV')
-KIDIA = 0
-KFDIA = 1
-NCLDQI = 2
-NCLDQL = 3
-NCLDQR = 4
-NCLDQS = 5
-NCLDQV = 6
-NCLDTOP = 0
 
-params = {'KLEV': 137, 'NCLV': 10}
+symbols = {'KLEV': 137, 'NCLV': 10, 'KLON': 1, 'KIDIA': 0, 'KFDIA': 1, 'NCLDQI': 2, 'NCLDQL': 3,
+           'NCLDQS': 5, 'NCLDTOP': 0}
 df_index_cols = ['program', 'NBLOCKS', 'description']
-
-
-@dace.program
-def kernel_1(inp1: dace.float64[KLEV, NBLOCKS], out1: dace.float64[KLEV, NBLOCKS]):
-    tmp = np.zeros([2, NBLOCKS], dtype=np.float64)
-    for i in dace.map[0:NBLOCKS]:
-        for j in range(1, KLEV):
-            tmp[j % 2, i] = (inp1[j, i] + inp1[j - 1, i])
-            out1[j, i] = (tmp[j % 2, i] + tmp[(j-1) % 2, i])
-
-
-@dace.program
-def inner_loops_7(
-        PTSPHY: dace.float64,
-        RLMIN: dace.float64,
-        ZEPSEC: dace.float64,
-        RG: dace.float64,
-        RTHOMO: dace.float64,
-        ZALFAW: dace.float64,
-        PLU_NF: dace.float64[KLON, KLEV],
-        LDCUM_NF: dace.int32[KLON],
-        PSNDE_NF: dace.float64[KLON, KLEV],
-        PAPH_NF: dace.float64[KLON, KLEV+1],
-        PSUPSAT_NF: dace.float64[KLON, KLEV],
-        PT_NF: dace.float64[KLON, KLEV],
-        tendency_tmp_t_NF: dace.float64[KLON, KLEV],
-        PLUDE_NF: dace.float64[KLON, KLEV]
-        ):
-
-    ZCONVSRCE = np.zeros([KLON, NCLV], dtype=np.float64)
-    ZSOLQA = np.zeros([KLON, NCLV, NCLV], dtype=np.float64)
-    ZDTGDP = np.zeros([KLON], dtype=np.float64)
-    ZDP = np.zeros([KLON], dtype=np.float64)
-    ZGDP = np.zeros([KLON], dtype=np.float64)
-    ZTP1 = np.zeros([KLON], dtype=np.float64)
-
-    for JK in range(NCLDTOP, KLEV-1):
-        for JL in range(KIDIA, KFDIA):
-            ZTP1[JL] = PT_NF[JL, JK] + PTSPHY * tendency_tmp_t_NF[JL, JK]
-            if PSUPSAT_NF[JL, JK] > ZEPSEC:
-                if ZTP1[JL] > RTHOMO:
-                    ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + PSUPSAT_NF[JL, JK]
-                else:
-                    ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + PSUPSAT_NF[JL, JK]
-
-        for JL in range(KIDIA, KFDIA):
-            ZDP[JL] = PAPH_NF[JL, JK+1]-PAPH_NF[JL, JK]
-            ZGDP[JL] = RG/ZDP[JL]
-            ZDTGDP[JL] = PTSPHY*ZGDP[JL]
-
-        for JL in range(KIDIA, KFDIA):
-            PLUDE_NF[JL, JK] = PLUDE_NF[JL, JK]*ZDTGDP[JL]
-            if LDCUM_NF[JL] and PLUDE_NF[JL, JK] > RLMIN and PLU_NF[JL, JK+1] > ZEPSEC:
-                ZCONVSRCE[JL, NCLDQL] = ZALFAW*PLUDE_NF[JL, JK]
-                ZCONVSRCE[JL, NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK]
-                ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL]+ZCONVSRCE[JL, NCLDQL]
-                ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI]+ZCONVSRCE[JL, NCLDQI]
-            else:
-                PLUDE_NF[JL, JK] = 0.0
-
-            if LDCUM_NF[JL]:
-                ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK]*ZDTGDP[JL]
-
-
-@dace.program
-def vert_loop_7(
-            PTSPHY: dace.float64,
-            RLMIN: dace.float64,
-            ZEPSEC: dace.float64,
-            RG: dace.float64,
-            RTHOMO: dace.float64,
-            ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            LDCUM_NF: dace.int32[KLON, NBLOCKS],
-            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
-        ):
-
-    for JN in dace.map[0:NBLOCKS:KLON]:
-        inner_loops_7(
-            PTSPHY,  RLMIN,  ZEPSEC,  RG,  RTHOMO,  ZALFAW,  PLU_NF[:, :, JN],  LDCUM_NF[:, JN],  PSNDE_NF[:, :, JN],
-            PAPH_NF[:, :, JN], PSUPSAT_NF[:, :, JN],  PT_NF[:, :, JN],  tendency_tmp_t_NF[:, :, JN], PLUDE_NF[:, :, JN],
-            NCLV=NCLV, KLEV=KLEV)
-
-
-@dace.program
-def vert_loop_7_1(
-            PTSPHY: dace.float64,
-            RLMIN: dace.float64,
-            ZEPSEC: dace.float64,
-            RG: dace.float64,
-            RTHOMO: dace.float64,
-            ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            LDCUM_NF: dace.int32[KLON, NBLOCKS],
-            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
-        ):
-
-    for JN in dace.map[0:NBLOCKS:KLON]:
-        ZCONVSRCE = np.zeros([KLON, NCLV], dtype=np.float64)
-        ZSOLQA = np.zeros([KLON, NCLV, NCLV], dtype=np.float64)
-        ZDTGDP = np.zeros([KLON], dtype=np.float64)
-        ZDP = np.zeros([KLON], dtype=np.float64)
-        ZGDP = np.zeros([KLON], dtype=np.float64)
-        ZTP1 = np.zeros([KLON], dtype=np.float64)
-
-        for JK in range(NCLDTOP, KLEV-1):
-            for JL in range(KIDIA, KFDIA):
-                ZTP1[JL] = PT_NF[JL, JK, JN] + PTSPHY * tendency_tmp_t_NF[JL, JK, JN]
-                if PSUPSAT_NF[JL, JK, JN] > ZEPSEC:
-                    if ZTP1[JL] > RTHOMO:
-                        ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + PSUPSAT_NF[JL, JK, JN]
-                    else:
-                        ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + PSUPSAT_NF[JL, JK, JN]
-
-            for JL in range(KIDIA, KFDIA):
-                ZDP[JL] = PAPH_NF[JL, JK+1, JN]-PAPH_NF[JL, JK, JN]
-                ZGDP[JL] = RG/ZDP[JL]
-                ZDTGDP[JL] = PTSPHY*ZGDP[JL]
-
-            for JL in range(KIDIA, KFDIA):
-                PLUDE_NF[JL, JK, JN] = PLUDE_NF[JL, JK, JN]*ZDTGDP[JL]
-                if LDCUM_NF[JL, JN] and PLUDE_NF[JL, JK, JN] > RLMIN and PLU_NF[JL, JK+1, JN] > ZEPSEC:
-                    ZCONVSRCE[JL, NCLDQL] = ZALFAW*PLUDE_NF[JL, JK, JN]
-                    ZCONVSRCE[JL, NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK, JN]
-                    ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + ZCONVSRCE[JL, NCLDQL]
-                    ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + ZCONVSRCE[JL, NCLDQI]
-                else:
-                    PLUDE_NF[JL, JK, JN] = 0.0
-
-                if LDCUM_NF[JL, JN]:
-                    ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK, JN] * ZDTGDP[JL]
-
-
-@dace.program
-def vert_loop_7_1_no_klon(
-            PTSPHY: dace.float64,
-            RLMIN: dace.float64,
-            ZEPSEC: dace.float64,
-            RG: dace.float64,
-            RTHOMO: dace.float64,
-            ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLEV, NBLOCKS],
-            LDCUM_NF: dace.int32[NBLOCKS],
-            PSNDE_NF: dace.float64[KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLEV, NBLOCKS],
-            PLUDE_NF: dace.float64[KLEV, NBLOCKS]
-        ):
-
-    for JN in dace.map[0:NBLOCKS]:
-        ZCONVSRCE = np.zeros([NCLV], dtype=np.float64)
-        ZSOLQA = np.zeros([NCLV, NCLV], dtype=np.float64)
-        ZDTGDP = 0.0
-        ZDP = 0.0
-        ZGDP = 0.0
-        ZTP1 = 0.0
-
-        for JK in range(NCLDTOP, KLEV-1):
-            ZTP1 = PT_NF[JK, JN] + PTSPHY * tendency_tmp_t_NF[JK, JN]
-            if PSUPSAT_NF[JK, JN] > ZEPSEC:
-                if ZTP1 > RTHOMO:
-                    ZSOLQA[NCLDQL, NCLDQL] = ZSOLQA[NCLDQL, NCLDQL] + PSUPSAT_NF[JK, JN]
-                else:
-                    ZSOLQA[NCLDQI, NCLDQI] = ZSOLQA[NCLDQI, NCLDQI] + PSUPSAT_NF[JK, JN]
-
-            ZDP = PAPH_NF[JK+1, JN]-PAPH_NF[JK, JN]
-            ZGDP = RG/ZDP
-            ZDTGDP = PTSPHY*ZGDP
-
-            PLUDE_NF[JK, JN] = PLUDE_NF[JK, JN]*ZDTGDP
-            if LDCUM_NF[JN] and PLUDE_NF[JK, JN] > RLMIN and PLU_NF[JK+1, JN] > ZEPSEC:
-                ZCONVSRCE[NCLDQL] = ZALFAW*PLUDE_NF[JK, JN]
-                ZCONVSRCE[NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JK, JN]
-                ZSOLQA[NCLDQL, NCLDQL] = ZSOLQA[NCLDQL, NCLDQL] + ZCONVSRCE[NCLDQL]
-                ZSOLQA[NCLDQI, NCLDQI] = ZSOLQA[NCLDQI, NCLDQI] + ZCONVSRCE[NCLDQI]
-            else:
-                PLUDE_NF[JK, JN] = 0.0
-
-            if LDCUM_NF[JN]:
-                ZSOLQA[NCLDQS, NCLDQS] = ZSOLQA[NCLDQS, NCLDQS] + PSNDE_NF[JK, JN] * ZDTGDP
-
-
-@dace.program
-def vert_loop_7_1_no_temp(
-            PTSPHY: dace.float64,
-            RLMIN: dace.float64,
-            ZEPSEC: dace.float64,
-            RG: dace.float64,
-            RTHOMO: dace.float64,
-            ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            LDCUM_NF: dace.int32[KLON, NBLOCKS],
-            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            ZCONVSRCE: dace.float64[KLON, NCLV, NBLOCKS],
-            ZSOLQA: dace.float64[KLON, NCLV, NCLV, NBLOCKS],
-            ZDTGDP: dace.float64[KLON, NBLOCKS],
-            ZDP: dace.float64[KLON, NBLOCKS],
-            ZGDP: dace.float64[KLON, NBLOCKS],
-            ZTP1: dace.float64[KLON, NBLOCKS],
-            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
-        ):
-
-    ZCONVSRCE[:, :, :] = 0.0
-    ZSOLQA[:, :, :, :] = 0.0
-    ZDTGDP[:, :] = 0.0
-    ZDP[:, :] = 0.0
-    ZGDP[:, :] = 0.0
-    ZTP1[:, :] = 0.0
-
-    for JN in dace.map[0:NBLOCKS:KLON]:
-        for JK in range(NCLDTOP, KLEV-1):
-            for JL in range(KIDIA, KFDIA):
-                ZTP1[JL, JN] = PT_NF[JL, JK, JN] + PTSPHY * tendency_tmp_t_NF[JL, JK, JN]
-                if PSUPSAT_NF[JL, JK, JN] > ZEPSEC:
-                    if ZTP1[JL, JN] > RTHOMO:
-                        ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + PSUPSAT_NF[JL, JK, JN]
-                    else:
-                        ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + PSUPSAT_NF[JL, JK, JN]
-
-            for JL in range(KIDIA, KFDIA):
-                ZDP[JL] = PAPH_NF[JL, JK+1, JN]-PAPH_NF[JL, JK, JN]
-                ZGDP[JL] = RG/ZDP[JL]
-                ZDTGDP[JL] = PTSPHY*ZGDP[JL]
-
-            for JL in range(KIDIA, KFDIA):
-                PLUDE_NF[JL, JK, JN] = PLUDE_NF[JL, JK, JN]*ZDTGDP[JL, JN]
-                if LDCUM_NF[JL, JN] and PLUDE_NF[JL, JK, JN] > RLMIN and PLU_NF[JL, JK+1, JN] > ZEPSEC:
-                    ZCONVSRCE[JL, NCLDQL, JN] = ZALFAW*PLUDE_NF[JL, JK, JN]
-                    ZCONVSRCE[JL, NCLDQI, JN] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK, JN]
-                    ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + ZCONVSRCE[JL, NCLDQL, JN]
-                    ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + ZCONVSRCE[JL, NCLDQI, JN]
-                else:
-                    PLUDE_NF[JL, JK, JN] = 0.0
-
-                if LDCUM_NF[JL, JN]:
-                    ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK, JN] * ZDTGDP[JL]
-
-
-@dace.program
-def vert_loop_wip(
-            PTSPHY: dace.float64,
-            RLMIN: dace.float64,
-            ZEPSEC: dace.float64,
-            RG: dace.float64,
-            RTHOMO: dace.float64,
-            ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            LDCUM_NF: dace.int32[KLON, NBLOCKS],
-            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
-        ):
-
-    for JN in dace.map[0:NBLOCKS:KLON]:
-        ZCONVSRCE = np.zeros([KLON, NCLV], dtype=np.float64)
-        ZSOLQA = np.zeros([KLON, NCLV, NCLV], dtype=np.float64)
-        ZDTGDP = np.zeros([KLON], dtype=np.float64)
-        ZDP = np.zeros([KLON], dtype=np.float64)
-        ZGDP = np.zeros([KLON], dtype=np.float64)
-        ZTP1 = np.zeros([KLON], dtype=np.float64)
-
-        for JK in range(NCLDTOP, KLEV-1):
-            for JL in range(KIDIA, KFDIA):
-                ZTP1[JL] = PT_NF[JL, JK, JN] + PTSPHY * tendency_tmp_t_NF[JL, JK, JN]
-                if PSUPSAT_NF[JL, JK, JN] > ZEPSEC:
-                    if ZTP1[JL] > RTHOMO:
-                        ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + PSUPSAT_NF[JL, JK, JN]
-                    else:
-                        ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + PSUPSAT_NF[JL, JK, JN]
-
-            for JL in range(KIDIA, KFDIA):
-                ZDP[JL] = PAPH_NF[JL, JK+1, JN]-PAPH_NF[JL, JK, JN]
-                ZGDP[JL] = RG/ZDP[JL]
-                ZDTGDP[JL] = PTSPHY*ZGDP[JL]
-
-            for JL in range(KIDIA, KFDIA):
-                PLUDE_NF[JL, JK, JN] = PLUDE_NF[JL, JK, JN]*ZDTGDP[JL]
-                if LDCUM_NF[JL, JN] and PLUDE_NF[JL, JK, JN] > RLMIN and PLU_NF[JL, JK+1, JN] > ZEPSEC:
-                    ZCONVSRCE[JL, NCLDQL] = ZALFAW*PLUDE_NF[JL, JK, JN]
-                    ZCONVSRCE[JL, NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK, JN]
-                    ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + ZCONVSRCE[JL, NCLDQL]
-                    ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + ZCONVSRCE[JL, NCLDQI]
-                else:
-                    PLUDE_NF[JL, JK, JN] = 0.0
-
-                if LDCUM_NF[JL, JN]:
-                    ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK, JN] * ZDTGDP[JL]
 
 
 kernels = {
@@ -347,82 +28,24 @@ kernels = {
     'vert_loop_7_1_no_klon': vert_loop_7_1_no_klon,
     'vert_loop_7_1_no_temp': vert_loop_7_1_no_temp,
     'vert_loop_wip': vert_loop_wip,
-    'kernel_1': kernel_1,
 }
 
 
-def eval_argument_shape(parameter: inspect.Parameter, params: Dict[str, int]) -> Tuple[int]:
-    """
-    Evaluate the shape of the given parameter/argument for an array
-
-    :param parameter: The parameter/argument
-    :type parameter: inspect.Parameter
-    :param params: The parameters used to evaulate
-    :type params: Dict[str, int]
-    :return: The shape
-    :rtype: Tuple[int]
-    """
-    shape = list(parameter.annotation.shape)
-    for index, dim in enumerate(shape):
-        if isinstance(dim, sympy.core.expr.Expr):
-            shape[index] = int(dim.evalf(subs=params))
-    return shape
-
-
-def gen_arguments(f: dace.frontend.python.parser.DaceProgram,
-                  params: Dict[str, int]) -> Dict[str, Union[np.ndarray, Number]]:
-    """
-    Generates the neccessary arguments to call the given function
-
-    :param f: The DaceProgram
-    :type f: dace.frontend.python.parser.DaceProgram
-    :param params: Values for symbols
-    :type params: Dict[str, int]
-    :return: Dict, keys are argument names, values are argument values
-    :rtype: Dict[str, Union[nd.array, Number]]
-    """
-    rng = np.random.default_rng(42)
-    arguments = {}
-    for parameter in inspect.signature(f.f).parameters.values():
-        if isinstance(parameter.annotation, dace.dtypes.typeclass):
-            arguments[parameter.name] = rng.random(dtype=parameter.annotation.dtype.as_numpy_dtype())
-        elif isinstance(parameter.annotation, dace.data.Array):
-            shape = eval_argument_shape(parameter, params)
-            dtype = parameter.annotation.dtype.as_numpy_dtype()
-            if np.issubdtype(dtype, np.integer):
-                arguments[parameter.name] = rng.integers(0, 2, shape, dtype=parameter.annotation.dtype.as_numpy_dtype())
-            else:
-                arguments[parameter.name] = rng.random(shape, dtype=parameter.annotation.dtype.as_numpy_dtype())
-    return arguments
-
-
-def get_size_of_parameters(dace_f: dace.frontend.python.parser.DaceProgram, params: Dict[str, int]) -> int:
-    size = 0
-    for name, parameter in inspect.signature(dace_f.f).parameters.items():
-        if isinstance(parameter.annotation, dace.dtypes.typeclass):
-            size += 1
-        elif isinstance(parameter.annotation, dace.data.Array):
-            shape = eval_argument_shape(parameter, params)
-            size += np.prod(shape)
-            # print(f"{name:15} ({shape}) adds {np.prod(shape):12,} bytes. New size {size:12,}")
-    return int(size * 8)
-
-
-def run_function_dace(f: dace.frontend.python.parser.DaceProgram, params: Dict[str, int], save_graphs: bool = False,
+def run_function_dace(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, int], save_graphs: bool = False,
                       define_symbols: bool = False):
     sdfg = f.to_sdfg(validate=True, simplify=True)
     additional_args = {}
     if save_graphs:
         additional_args['verbose_name'] = f"py_{f.name}"
     if define_symbols:
-        additional_args['symbols'] = copy.deepcopy(params)
+        additional_args['symbols'] = copy.deepcopy(symbols)
         # del additional_args['symbols']['NBLOCKS']
 
     optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
     csdfg = sdfg.compile()
-    arguments = gen_arguments(f, params)
+    arguments = gen_arguments(f, symbols)
     arguments_device = copy_to_device(arguments)
-    csdfg(**arguments_device, **params)
+    csdfg(**arguments_device, **symbols)
 
 
 def action_run(args):
@@ -433,13 +56,13 @@ def action_run(args):
     if args.cache:
         use_cache(dacecache_folder=args.program)
     print()
-    params.update({'NBLOCKS': args.NBLOCKS})
-    run_function_dace(kernels[args.program], params, args.save_graphs, args.define_symbols)
+    symbols.update({'NBLOCKS': args.NBLOCKS})
+    run_function_dace(kernels[args.program], symbols, args.save_graphs, args.define_symbols)
 
 
 def action_profile(args):
     data = []
-    params.update({'NBLOCKS': args.NBLOCKS})
+    symbols.update({'NBLOCKS': args.NBLOCKS})
 
     # collect data
     for program in args.programs:
@@ -459,7 +82,7 @@ def action_profile(args):
         action = actions[0]
         if len(actions) > 1:
             print(f"WARNING: More than one action, taking first {action}")
-        upper_Q = get_size_of_parameters(kernels[program], params)
+        upper_Q = get_size_of_parameters(kernels[program], symbols)
         D = get_achieved_bytes(action)
         bw = get_achieved_performance(action)[1] / get_peak_performance(action)[1]
         T = get_runtime(action)
@@ -500,20 +123,27 @@ def action_profile(args):
 
 
 def action_test(args):
-    params.update({'NBLOCKS': 10, 'KLEV': 137})
+    symbols.update({'NBLOCKS': 4, 'KLEV': 7})
     for program in args.programs:
         if args.cache:
             use_cache(dacecache_folder=program)
         dace_f = kernels[program]
-        arguments = gen_arguments(dace_f, params)
+        arguments = gen_arguments(dace_f, symbols)
         # Does not work because it can not convert the symbol NBLOCKS
-        dace_f.f(**arguments)
+        # vert_loop_symbol_wrapper(**symbols, func=dace_f.f, func_args=arguments)
+        # dace_f.f(**arguments, **symbols)
+        globals = {}
+        globals['arguments'] = arguments
+        globals['dace_f'] = dace_f
+        for k, v in symbols.items():
+            globals[k] = v
+        eval('dace_f.f(**arguments)', globals)
 
         arguments_device = copy_to_device(copy.deepcopy(arguments))
         sdfg = dace_f.to_sdfg(validate=True, simplify=True)
         optimize_sdfg(sdfg, device=dace.DeviceType.GPU)
         csdfg = sdfg.compile()
-        csdfg(**arguments, **params)
+        csdfg(**arguments, **symbols)
 
         assert cp.allclose(cp.asarray(arguments), arguments_device)
 
