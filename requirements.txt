@@ -17,7 +17,7 @@ packaging==20.4
 ply==3.11
 pyparsing==3.0.0a2
 PyYAML==5.4
-requests==2.25.1
+requests==2.31.0
 scikit-build==0.11.1
 six==1.15.0
 sympy==1.7
