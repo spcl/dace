@@ -8,7 +8,8 @@ from argparse import Namespace
 
 import dace
 
-from execute.data import ParametersProvider, set_input_pattern
+from execute.parameters import ParametersProvider
+from execute.data import set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                           compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
                           print_non_zero_percentage
@@ -23,12 +24,15 @@ class RunConfig:
     pattern: str
     use_dace_auto_opt: bool
     device: dace.DeviceType
+    # CONTINUE
+    specialise_symbols: bool
 
-    def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,device:
-                 dace.DeviceType = dace.DeviceType.GPU):
+    def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
+                 device: dace.DeviceType = dace.DeviceType.GPU, specialise_symbols: bool = True):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
         self.device = device
+        self.specialise_symbols = specialise_symbols
 
     def set_from_args(self, args: Namespace):
         keys = ['pattern', 'use_dace_auto_opt']
@@ -36,6 +40,10 @@ class RunConfig:
         for key in args_dict:
             if key in keys:
                 setattr(self, key, args_dict[key])
+        if 'specialise_symbols' in args_dict and args_dict['specialise_symbols']:
+            self.specialise_symbols = True
+        if 'not_specialise_symbols' in args_dict and args_dict['not_specialise_symbols']:
+            self.specialise_symbols = False
 
     def __len__(self):
         return len(self.pattern)
@@ -59,20 +67,23 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     assert run_config.device == dace.DeviceType.GPU
 
     programs_data = get_programs_data()
+    params = ParametersProvider(program, testing=True)
     fsource = read_source(program)
     program_name = programs_data['programs'][program]
     routine_name = f'{program_name}_routine'
     ffunc = get_fortran(fsource, program_name, routine_name)
     if sdfg_file is None:
         sdfg = get_sdfg(fsource, program_name)
-        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+        add_args = {}
+        if run_config.specialise_symbols:
+            add_args['symbols'] = params.get_dict()
+        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
         sdfg.compile()
 
     rng = np.random.default_rng(RNG_SEED)
-    params = ParametersProvider(program, testing=True)
     inputs = get_inputs(program, rng, params)
     outputs_f = get_outputs(program, rng, params)
     outputs_original = copy.deepcopy(outputs_f)
@@ -113,7 +124,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
 
 
 def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
-                sdfg_file: Optional[str] = None, specialize_symbols: bool = False):
+                sdfg_file: Optional[str] = None):
     """
     Runs Programs
 
@@ -127,8 +138,6 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     :type repetitions: int, optional
     :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
     :type sdfg_file: str, optional
-    :param specialize_symbols: Whether the symbols should be specialised, defaults to False
-    :type specialize_symbols: bool
     """
     programs = get_programs_data()['programs']
     print(f"Run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
@@ -137,7 +146,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     if sdfg_file is None:
         sdfg = get_sdfg(fsource, program_name)
         additional_args = {}
-        if specialize_symbols:
+        if run_config.specialise_symbols:
             additional_args['symbols'] = params.get_dict()
 
         optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
@@ -156,12 +165,27 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         sdfg(**inputs, **outputs)
 
 
-def compile_for_profile(program: str, run_config: RunConfig) -> dace.SDFG:
+def compile_for_profile(program: str, params: ParametersProvider, run_config: RunConfig) -> dace.SDFG:
+    """
+    Compile the given program for profiliation. Meaning a total runtime timer is added
+
+    :param program: Name of the program
+    :type program: str
+    :param params: The parameters to use.
+    :type params: ParametersProvider
+    :param run_config: Configuration how to run it
+    :type run_config: RunConfig
+    :return: Generated SDFG
+    :rtype: dace.SDFG
+    """
     programs = get_programs_data()['programs']
     fsource = read_source(program)
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name)
-    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt)
+    add_args = {}
+    if run_config.specialise_symbols:
+        add_args['symbols'] = params.get_dict()
+    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer
     sdfg.compile()
@@ -177,7 +201,7 @@ def profile_program(program: str, run_config: RunConfig, params: ParametersProvi
     print_with_time(f"Profile {program}({programs[program]}) rep={repetitions}")
     routine_name = f"{programs[program]}_routine"
 
-    sdfg = compile_for_profile(program, run_config)
+    sdfg = compile_for_profile(program, params, run_config)
 
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, params)

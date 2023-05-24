@@ -1,7 +1,6 @@
 from argparse import ArgumentParser
-from tabulate import tabulate
-import numpy as np
 
+from utils.print import print_dataframe
 from utils.vertical_loops import get_dataframe
 from scripts import Script
 
@@ -53,21 +52,4 @@ class PrintMUEVertLoop(Script):
                 'runtime': ('T [s]', '.3e'),
                 'count': ('#', ''),
                 }
-        df_columns = []
-        headers = []
-        floatfmt = []
-        intfmt = []
-        for c in columns:
-            df_columns.append(c)
-            headers.append(columns[c][0])
-            if grouped_data[c].dtype == np.float64:
-                floatfmt.append(columns[c][1])
-                intfmt.append(None)
-            elif grouped_data[c].dtype == np.int64:
-                floatfmt.append(None)
-                intfmt.append(columns[c][1])
-            else:
-                floatfmt.append(None)
-                intfmt.append(None)
-
-        print(tabulate(grouped_data[df_columns], headers=headers, floatfmt=floatfmt, intfmt=intfmt, showindex=False))
+        print_dataframe(columns, grouped_data)

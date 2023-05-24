@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--KLEV', type=int)
     parser.add_argument('--KLON', type=int)
     parser.add_argument('--read-sdfg', action='store_true')
-    parser.add_argument('--specialize-symbols', action='store_true', default=False)
+    parser.add_argument('--not-specialise-symbols', action='store_true', default=False)
 
     args = parser.parse_args()
     run_config = RunConfig()
@@ -45,8 +45,6 @@ def main():
         additional_args = {}
         if args.read_sdfg:
             additional_args['sdfg_file'] = get_default_sdfg_file(args.program)
-        if args.specialize_symbols:
-            additional_args['specialize_symbols'] = True
 
         run_program(args.program, run_config, params, repetitions=args.repetitions, **additional_args)
 

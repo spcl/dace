@@ -174,7 +174,10 @@ class ProgramMeasurement:
     @staticmethod
     def from_json(dict: Dict) -> 'ProgramMeasurement':
         if '__ProgramMeasurement__' in dict:
-            return ProgramMeasurement(dict['program'], ParametersProvider.from_json(dict['parameters']),
+            params = ParametersProvider.from_json(dict['parameters'])
+            if isinstance(params, Dict):
+                params = ParametersProvider(dict['program'], update=params)
+            return ProgramMeasurement(dict['program'], params,
                                       measurements=dict['measurements'])
         elif '__Measurement__' in dict:
             return Measurement.from_json(dict)
@@ -267,8 +270,7 @@ class MeasurementRun:
                 return MeasurementRun(dict['description'], data=dict['data'], git_hash=dict['git_hash'],
                                       date=datetime.fromisoformat(dict['date']), node=dict['node'])
         if '__ProgramMeasurement__' in dict:
-            return ProgramMeasurement(dict['program'], dict['parameters'],
-                                      measurements=dict['measurements'])
+            return ProgramMeasurement.from_json(dict)
         elif '__Measurement__' in dict:
             return Measurement.from_json(dict)
         else:

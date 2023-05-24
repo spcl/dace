@@ -2,7 +2,9 @@ from typing import Dict, Tuple, Optional
 from numbers import Number
 import matplotlib
 import matplotlib.pyplot as plt
+import seaborn as sns
 import math
+import os
 
 from utils.general import convert_to_seconds
 from measurements.data import MeasurementRun, Measurement
@@ -25,8 +27,11 @@ def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwid
     text = f"beta={max_bandwidth:.3e} [{max_bandwidth_unit}]"
     if bandwidth_label is not None:
         text += f" ({bandwidth_label})"
+    # Hardcoded values because formula with transform_rotates_text=True does not work as expected
+    angle = 30
     ax.text(min_intensity, max_bandwidth*min_intensity, text, rotation=angle,
-            rotation_mode='anchor', transform_rotates_text=True, color=color)
+            rotation_mode='anchor', transform_rotates_text=False, color=color)
+    ax.grid()
 
 
 def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis, program: Optional[str] = None,
@@ -257,3 +262,38 @@ def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tup
 
     ax.legend()
     ax.grid()
+
+
+def set_general_plot_style():
+    """
+    Sets style and other settings for matplotlib
+    """
+    plt.rcParams.update({'figure.figsize': (19, 10)})
+    plt.rcParams.update({'font.size': 12})
+    sns.set_style('whitegrid')
+    sns.set_palette('pastel')
+
+
+def save_plot(path: str):
+    """
+    Saves the current plot into the given filepath. Makes sure that all folders are created and prints a message where
+    it is saved to.
+
+    :param path: Path to the file to save it to
+    :type path: str
+    """
+    os.makedirs(os.path.basename(path), exist_ok=True)
+    print(f"Store plot into {path}")
+    plt.savefig(path)
+
+
+def rotate_xlabels(ax: matplotlib.axis.Axis, angle: int = 45):
+    """
+    Rotates the x labels/ticks of the given axis by the given label
+
+    :param ax: The axis
+    :type ax: matplotlib.axis.Axis
+    :param angle: The angle to rotate by, defaults to 45
+    :type angle: int, optional
+    """
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=angle, horizontalalignment='right')

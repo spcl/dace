@@ -16,7 +16,7 @@ vert_sizes = [5e5, 2e5, 1e5]
 # vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_5']
 # vert_versions = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_5', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
 #                  'cloudsc_vert_loop_7']
-vert_versions = ['cloudsc_vert_loop_6_1']
+vert_versions = ['cloudsc_vert_loop_4']
 mwe_versions = ['cloudsc_vert_loop_orig_mwe_no_klon', 'cloudsc_vert_loop_mwe_no_klon']
 mwe_sizes = [5e4]
 
@@ -76,11 +76,14 @@ class RunVertLoop(Script):
 
             for specialise, res_dir in zip(specialise_arr, dir_arr):
                 if not specialise:
-                    compile_for_profile(version, run_config)
+                    run_config.specialise_symbols = False
+                    compile_for_profile(version, ParametersProvider(version), run_config)
                     programs = get_programs_data()['programs']
                     insert_heap_size_limit(f"{programs[version]}_routine",
                                            "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +"
                                            "KLON * (KLEV - 1) + 4 * KLON")
+                else:
+                    run_config.specialise_symbols = True
 
                 if not args.microbenchmark and not specialise:
                     use_cache(version)
@@ -108,7 +111,7 @@ class RunVertLoop(Script):
                     for index in range(args.repetitions):
                         report_filename = os.path.join(res_dir, f"report_{version}_{size:.0E}_{index}.ncu-rep")
                         program_args = ['--NBLOCKS', str(int(size))]
-                        if specialise:
-                            program_args.append('--specialize-symbols')
+                        if not specialise:
+                            program_args.append('--not-specialise-symbols')
                         gen_ncu_report(version, report_filename, run_config, ['--set', 'full'],
                                        program_args=program_args)

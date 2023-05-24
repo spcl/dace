@@ -415,8 +415,11 @@ def convert_to_seconds(value: Number, unit: str) -> float:
     """
     factors = {
             'second': 1,
+            'seconds': 1,
             'msecond': 1000,
-            'usecond': 1000000
+            'ms': 1000,
+            'usecond': 1000000,
+            'us': 1000000
             }
     if unit in factors:
         return float(value) / float(factors[unit])

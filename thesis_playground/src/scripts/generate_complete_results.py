@@ -109,10 +109,13 @@ def run_programs(info_data: Dict, raw_data_dir: str):
     """
     run_path = os.path.join(get_thesis_playground_root_dir(), 'src', 'run.py')
     for class_number in info_data['classes']:
-        run(['python3', run_path, '--class', str(class_number), '--ncu-report', '--roofline',
-             '--ncu-report-folder', raw_data_dir, '--results-folder', raw_data_dir,
-             '--output', f"class_{class_number}.json",
-             *info_data['additional_run_flags']])
+        args = ['python3', run_path, '--class', str(class_number), '--roofline',
+                '--ncu-report-folder', raw_data_dir, '--results-folder', raw_data_dir,
+                '--output', f"class_{class_number}.json",
+                *info_data['additional_run_flags']]
+        if "ncu_report" in info_data and info_data["ncu_report"]:
+            args.append('--ncu-report')
+        run(args)
 
 
 class GenerateCompleteResults(Script):
