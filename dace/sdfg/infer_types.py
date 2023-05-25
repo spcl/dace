@@ -160,6 +160,11 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
                         node to its children.
     """
     parent_schedules = parent_schedules or [None]
+
+    # TODO(later): Remove GPU_Default
+    if parent_schedules[-1] == dtypes.ScheduleType.GPU_Default and use_parent_schedule:
+        use_parent_schedule = False
+
     if isinstance(scope, SDFG):
         # Set device for default top-level schedules and storages
         for state in scope.nodes():
@@ -174,7 +179,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
             if not desc.transient and scope.parent_sdfg is not None:
                 desc.storage = _get_storage_from_parent(aname, scope)
-            elif ((desc.transient or scope.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
+            elif ((desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default):
                 # Indeterminate storage type, set to register
                 desc.storage = dtypes.StorageType.Register
         return
@@ -204,11 +209,15 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
         if isinstance(nnode, nodes.NestedSDFG):
             nscope = nnode.sdfg
             child_nodes = None
+            extra_parent_schedules = []
+            # TODO(later): Remove GPU_Default
+            if nnode.schedule == dtypes.ScheduleType.GPU_Default:
+                extra_parent_schedules.append(nnode.schedule)
         else:
             nscope = nnode
+            extra_parent_schedules = [nnode.schedule]
         set_default_schedule_and_storage_types(nscope,
-                                               parent_schedules +
-                                               ([nnode.schedule] if not isinstance(nnode, nodes.NestedSDFG) else []),
+                                               parent_schedules + extra_parent_schedules,
                                                use_parent_schedule=False,
                                                state=state,
                                                child_nodes=child_nodes)
