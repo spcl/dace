@@ -765,8 +765,22 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         func = func.lower() + 'gemv'
 
-        code = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {node.alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {node.beta}, _y, {strides_y[0]});"""
+        alpha = f'{dtype.ctype}({node.alpha})'
+        beta = f'{dtype.ctype}({node.beta})'
+        code = ''
+        if dtype in (dace.complex64, dace.complex128):
+            code = f'''
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            alphastr = '&alpha'
+            betastr = '&beta'
+        else:
+            alphastr = alpha
+            betastr = beta
+
+        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alphastr}, _A, {lda},
+                                _x, {strides_x[0]}, {betastr}, _y, {strides_y[0]});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
