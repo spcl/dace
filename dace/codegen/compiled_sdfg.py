@@ -218,6 +218,8 @@ class CompiledSDFG(object):
             
             :return: the ctypes.Structure representation of the state struct.
         """
+        if not self._libhandle:
+            raise ValueError('Library was not initialized')
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
