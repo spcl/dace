@@ -19,6 +19,14 @@ def _is_scalar(desc: data.Data) -> bool:
     return isinstance(desc, data.Scalar) or (isinstance(desc, (data.Array, data.View)) and desc.shape == (1, ))
 
 
+def _normalize_axis_index(axis: int, ndims: int) -> int:
+    if axis < 0:
+        axis += ndims
+    if axis < 0 or axis >= ndims:
+        raise ValueError(f"Axis {axis} is out of bounds for array of dimension {ndims}.")
+    return axis
+
+
 @oprepo.replaces('numpy.linspace')
 def linspace(visitor: ProgramVisitor,
              sdfg: SDFG,
@@ -29,7 +37,7 @@ def linspace(visitor: ProgramVisitor,
              endpoint: bool = True,
              retstep: bool = False,
              dtype: dtypes.typeclass = None,
-             axis=0):
+             axis=0) -> str:
     """ Implements numpy.linspace.
     
         The method supports symbolic start, stop, and num arguments.
@@ -141,9 +149,123 @@ def linspace(visitor: ProgramVisitor,
     return out_name
 
 
+@oprepo.replaces('numpy.concatenate')
+def concatenate(visitor: ProgramVisitor,
+                sdfg: SDFG,
+                state: SDFGState,
+                arrays: Sequence[str],
+                axis: int = 0,
+                out: str = None,
+                dtype: dtypes.typeclass = None,
+                casting: str = 'same_kind') -> Union[None, str]:
+    """ Implements numpy.concatenate.
+
+        Doesn't support axis = None.
+    """
+
+    # Get array descriptors
+    arr_descs = [sdfg.arrays[a] for a in arrays]
+
+    if not arr_descs:
+        raise ValueError('At least one is array is needed to concatenate.')
+    
+    if axis is None:
+        raise NotImplementedError("DaCe's np.concatenate implementation does not support axis=None.")
+    
+    # TODO (minor): NumPy returns a more detailed error message here.
+    ndims = {i: len(arr_desc.shape) for i, arr_desc in enumerate(arr_descs)}
+    if len(set(ndims.values())) != 1:
+        raise ValueError('All input arrays must have the same number of dimensions.')
+    
+    result_ndim = ndims[0]
+    axis = _normalize_axis_index(axis, result_ndim)
+
+    # TODO (minor): NumPy returns a more detailed error message here.
+    shapes = {i: tuple(s for j, s in enumerate(arr_desc.shape) if j != axis) for i, arr_desc in enumerate(arr_descs)}
+    if len(set(shapes.values())) != 1:
+        raise ValueError('All input array dimensions except for the concatenation axis must match exactly.')
+
+    concat_dim = sum(arr_desc.shape[axis] for arr_desc in arr_descs)
+
+    if result_ndim > 1:
+        result_shape = tuple(list(shapes[0]).insert(axis, concat_dim))
+    else:
+        result_shape = (concat_dim, )
+
+    if out is None:
+        # TODO: Casting
+        if dtype is None:
+            dtype = arr_descs[0].dtype
+        out_name, out_arr = sdfg.add_transient('tmp', result_shape, dtype, find_new_name=True)
+    else:
+        out_arr = sdfg.arrays[out]
+        out_name = out
+        if dtype is not None:
+            raise TypeError("concatenate() only takes `out` or `dtype` as an argument, but both were provided.")
+        if result_ndim != len(out_arr.shape):
+            raise ValueError("Output array has wrong dimensionality.")
+        if result_shape != out_arr.shape:
+            raise ValueError("Output array has wrong shape.")
+    
+    index = 0
+    out_node = state.add_access(out_name)
+    for arr_name, arr_desc in zip(arrays, arr_descs):
+        arr_node = state.add_access(arr_name)
+        subset = ','.join(f'0:{s}' if i != axis else f'{index}:{index + s}' for i, s in enumerate(arr_desc.shape))
+        other_subset = ','.join(f'0:{s}' for s in arr_desc.shape)
+        state.add_edge(arr_node, None, out_node, None, Memlet(data=out_name, subset=subset, other_subset=other_subset))
+        index += arr_desc.shape[axis]
+    
+    if out is None:
+        return out_name
+
+
+@oprepo.replaces('numpy.stack')
+def stack(visitor: ProgramVisitor,
+          sdfg: SDFG,
+          state: SDFGState,
+          arrays: Sequence[str],
+          axis: int = 0,
+          out: str = None,
+          dtype: dtypes.typeclass = None,
+          casting: str = 'same_kind') -> Union[None, str]:
+    """ Implements numpy.stack. """
+    
+    # Get array descriptors
+    arr_descs = [sdfg.arrays[a] for a in arrays]
+
+    if not arr_descs:
+        raise ValueError('At least one is array is needed to stack.')
+    
+    shapes = {arr.shape for arr in arr_descs}
+    if len(shapes) != 1:
+        raise ValueError('All input arrays must have the same shape.')
+    
+    result_ndim = len(arr_descs[0].shape) + 1
+    axis = _normalize_axis_index(axis, result_ndim)
+
+    if axis == result_ndim - 1:
+        from dace.frontend.python.replacements import reshape
+        arrays = [reshape(visitor, sdfg, state, arr, (*desc.shape, 1), 'A') for arr, desc in zip(arrays, arr_descs)]
+    
+    return concatenate(visitor, sdfg, state, arrays, axis, out, dtype, casting)
+
+
 @oprepo.replaces('numpy.hstack')
 def hstack(visitor: ProgramVisitor,
-           sdfg: SDFG,
-           state: SDFGState):
-    """ Implements numpy.hstack."""
-    pass
+          sdfg: SDFG,
+          state: SDFGState,
+          arrays: Sequence[str],
+          axis: int = 0,
+          out: str = None,
+          dtype: dtypes.typeclass = None,
+          casting: str = 'same_kind') -> Union[None, str]:
+    """ Implements numpy.hstack. """
+
+    # Get array descriptors
+    arr_descs = [sdfg.arrays[a] for a in arrays]
+
+    if arr_descs and len(arr_descs[0].shape) == 1:
+        return concatenate(visitor, sdfg, state, arrays, 0, out, dtype, casting)
+    else:
+        return concatenate(visitor, sdfg, state, arrays, 1, out, dtype, casting)
