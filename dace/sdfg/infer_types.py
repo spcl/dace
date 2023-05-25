@@ -225,7 +225,7 @@ def _determine_child_schedule(parent_schedules: List[dtypes.ScheduleType]) -> Op
 
 def _determine_child_storage(parent_schedules: List[dtypes.ScheduleType]) -> Optional[dtypes.StorageType]:
     for sched in reversed(parent_schedules):
-        if sched is not None and sched in dtypes.SCOPEDEFAULT_STORAGE:
+        if (sched is not None and sched in dtypes.SCOPEDEFAULT_STORAGE and sched != dtypes.ScheduleType.Sequential):
             child_sched = dtypes.SCOPEDEFAULT_STORAGE[sched]
             if child_sched is not None:
                 return child_sched
