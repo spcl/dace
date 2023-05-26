@@ -29,4 +29,4 @@ class PlotMueClasses(Script):
         sns.move_legend(ax, 'center', title=None, frameon=False, ncols=3, bbox_to_anchor=(0.5, 0.97))
         plt.title('MUE and IO/Bandwidth efficiency for the classes using formula pattern and my improvements')
         plt.tight_layout()
-        save_plot(os.path.join(get_complete_results_dir(), 'plots', 'mue.png'))
+        save_plot(os.path.join(get_complete_results_dir(), 'plots', 'mue.pdf'))

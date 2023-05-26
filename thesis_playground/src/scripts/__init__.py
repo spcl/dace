@@ -11,3 +11,4 @@ from .plot_vert_loop import PlotVertLoop
 from .plot_improvements_classes import PlotImprovementsClasses
 from .plot_pattern_distribution import PlotPatternDistribution
 from .plot_mue_classes import PlotMueClasses
+from .plot_measurement_distribution import PlotMeasurementDistribution

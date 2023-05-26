@@ -37,13 +37,20 @@ class PlotImprovementsClasses(Script):
         # Get data
         data, classes, parameters = get_dataframe(['all_first_opt_no_pattern', 'class2_3_baseline_no_pattern',
                                                    'class1_baseline'])
+        data_const, _, parameters_const = get_dataframe(['all_first_opt_const_pattern',
+                                                        'class2_3_baseline_const_pattern'])
+        data_formula, _, parameters_formula = get_dataframe(['all_first_opt', 'class2_3_baseline'])
+        data['pattern'] = 'Random'
+        data_formula['pattern'] = 'Formula'
+        data_const['pattern'] = 'Const'
+        data = pd.concat([data_formula, data_const, data])
         data = data.join(classes, on='program')
 
         run_numbers = data \
             .reset_index()\
             .drop(['unit', 'node', 'experiment name', 'run description', 'kernel name', 'class', 'value'],
                   axis='columns') \
-            .groupby(['program', 'measurement name', 'auto_opt']) \
+            .groupby(['program', 'measurement name', 'auto_opt', 'pattern']) \
             .count()
         number_of_runs = run_numbers.min()[0]
         if run_numbers.max()[0] != number_of_runs:
@@ -53,7 +60,7 @@ class PlotImprovementsClasses(Script):
             .reset_index() \
             .drop(['run number', 'unit', 'node', 'experiment name', 'run description', 'kernel name', 'class'],
                   axis='columns') \
-            .groupby(['program', 'measurement name', 'auto_opt']) \
+            .groupby(['program', 'measurement name', 'auto_opt', 'pattern']) \
             .mean()
         improved_data = avg_data.xs('My', level=2)
         baseline_data = avg_data.xs('DaCe', level=2)
@@ -76,11 +83,12 @@ class PlotImprovementsClasses(Script):
         figure.suptitle(f"Speedup of my improvements averaged over {number_of_runs} runs")
         ax_runtime_speedup_1.axhline(y=1, color='gray')
         ax_runtime_speedup_2.axhline(y=1, color='gray')
-        hue_order = ['Total Time', 'Kernel Time', 'Kernel Cycles']
-        sns.pointplot(data=speedup_data[speedup_data['class'] == 1], x='program', y='value', ax=ax_runtime_speedup_1,
-                      join=False, hue='measurement name')
-        sns.pointplot(data=speedup_data[speedup_data['class'] > 1], x='program', y='value', ax=ax_runtime_speedup_2,
-                      join=False, hue='measurement name', hue_order=hue_order)
+        hue_order = ['Total time', 'Kernel Time', 'Kernel Cycles']
+        markers = ['o', '^', 's']
+        sns.scatterplot(data=speedup_data[speedup_data['class'] == 1], x='program', y='value', ax=ax_runtime_speedup_1,
+                        hue='measurement name', style='pattern', markers=markers, s=100)
+        sns.scatterplot(data=speedup_data[speedup_data['class'] > 1], x='program', y='value', ax=ax_runtime_speedup_2,
+                        hue='measurement name', hue_order=hue_order, style='pattern', markers=markers, s=100)
         ax_runtime_speedup_1.set_ylabel('Speedup')
         ax_runtime_speedup_2.set_ylabel('')
         ax_runtime_speedup_1.set_xlabel('')
@@ -91,4 +99,4 @@ class PlotImprovementsClasses(Script):
 
         # Save plot
         plt.tight_layout()
-        save_plot(os.path.join(get_complete_results_dir(), 'plots', 'improvements.png'))
+        save_plot(os.path.join(get_complete_results_dir(), 'plots', 'improvements.pdf'))

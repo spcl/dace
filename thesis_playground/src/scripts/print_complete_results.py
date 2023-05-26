@@ -24,6 +24,7 @@ class PrintCompleteResults(Script):
                     ('Q [bytes]', lambda msr, action, roof: get_number_of_bytes_2(msr.parameters, msr.program)[0], ','),
                     ('D (ncu) [bytes]', lambda msr, action, roof: get_achieved_bytes(action), ','),
                     ('Kernel time [s]', lambda msr, action, roof: get_runtime(action), '.3e'),
+                    ('Total time [s]', lambda msr, action, roof: msr.get_measurement('Total time').average(), '.3e'),
                     ('Bandwidth [%]', lambda msr, action, roof: float(get_achieved_performance(action)[1] /
                                                                 get_peak_performance(action)[1]) * 100, '.2f'),
                 ]

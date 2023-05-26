@@ -14,12 +14,13 @@ from utils.general import optimize_sdfg, copy_to_device, use_cache, enable_debug
 from utils.ncu import get_all_actions_filtered, get_achieved_performance, get_peak_performance, get_achieved_bytes, \
                       get_runtime
 from utils.paths import get_thesis_playground_root_dir, get_playground_results_dir
-from utils.python import gen_arguments, get_size_of_parameters, vert_loop_symbol_wrapper
+from utils.print import print_dataframe
+from utils.python import gen_arguments, get_size_of_parameters
 
 
 symbols = {'KLEV': 137, 'NCLV': 10, 'KLON': 1, 'KIDIA': 0, 'KFDIA': 1, 'NCLDQI': 2, 'NCLDQL': 3,
            'NCLDQS': 5, 'NCLDTOP': 0}
-df_index_cols = ['program', 'NBLOCKS', 'description']
+df_index_cols = ['program', 'NBLOCKS', 'description', 'specialised']
 
 
 kernels = {
@@ -76,7 +77,7 @@ def action_profile(args):
         if args.cache:
             cmds.append('--cache')
         if not args.define_symbols:
-            cmds.append('--no-define-symbols')
+            cmds.append('--not-define-symbols')
         run(cmds)
         actions = get_all_actions_filtered(report_path, '_numpy_full_')
         action = actions[0]
@@ -104,9 +105,11 @@ def action_profile(args):
                 row.append('N.A.')
             else:
                 row.append(args.description)
+            row.append(args.define_symbols)
 
         # create dataframe
-        this_df = pd.DataFrame(data, columns=['program', 'D', 'bw_ratio', 'upper_Q', 'T', 'NBLOCKS', 'description'])
+        this_df = pd.DataFrame(data, columns=['program', 'D', 'bw_ratio', 'upper_Q', 'T', 'NBLOCKS', 'description',
+                                              'specialised'])
         this_df.set_index(df_index_cols, inplace=True)
 
         # create folder if neccessary
@@ -157,11 +160,19 @@ def action_print(args):
         df = pd.read_csv(path, index_col=df_index_cols)
         joined_df = pd.concat([joined_df, df])
 
-    print(tabulate(joined_df.reset_index(), tablefmt='pipe', showindex=False, intfmt=',',
-                   headers=['program', 'NBLOCKS', 'description', 'transferred bytes', 'Bandwidth [ratio]',
-                            'Upper limit of Q', 'runtime [s]']))
+    columns = {
+        'program': ('Program', None),
+        'NBLOCKS': ('NBLOCKS', '.1e'),
+        'specialised': ('Specialised Symbols', None),
+        'D': ('measured bytes', '.3e'),
+        'bw_ratio': ('bw eff', '.2f'),
+        'T': ('T [s]', '.3e'),
+    }
+
+    print_dataframe(columns, joined_df.reset_index(), tablefmt='pipe')
 
 
+# TODO: Add multiple runs
 def main():
     parser = ArgumentParser()
     subparsers = parser.add_subparsers(

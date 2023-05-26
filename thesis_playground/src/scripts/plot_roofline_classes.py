@@ -116,6 +116,6 @@ class PlotRooflineClasses(Script):
             dir = os.path.join(get_complete_results_dir(), "plots")
             if not os.path.exists(dir):
                 os.mkdir(dir)
-            filename = os.path.join(dir, "roofline_all.png")
+            filename = os.path.join(dir, "roofline_all.pdf")
             print(f"Save plot into {filename}")
             plt.savefig(filename)
