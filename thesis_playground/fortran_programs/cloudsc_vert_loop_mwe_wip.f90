@@ -3,66 +3,95 @@ PROGRAM vert_loop_mwe_wip
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
+    INTEGER(KIND=JPIM), PARAMETER  :: KLON = 100
     INTEGER(KIND=JPIM), PARAMETER  :: KLEV = 100
+    INTEGER(KIND=JPIM), PARAMETER  :: NCLV = 100
     INTEGER(KIND=JPIM), PARAMETER  :: NBLOCKS = 100
 
-    REAL(KIND=JPRB) INPUT_F(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) OUTPUT_F(NBLOCKS, KLEV)
+    ! Parameters
+    INTEGER(KIND=JPIM) KIDIA 
+    INTEGER(KIND=JPIM) KFDIA 
+    INTEGER(KIND=JPIM) NCLDTOP
 
-    CALL vert_loop_mwe_wip_routine(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
+    ! input
+    REAL(KIND=JPRB) PTSPHY
+    REAL(KIND=JPRB) PAPH(NBLOCKS, KLON, KLEV+1)
+
+    ! output
+    REAL(KIND=JPRB) PLUDE(NBLOCKS, KLON, KLEV)
+
+    CALL vert_loop_mwe_wip_routine(&
+        & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDTOP, NBLOCKS, &
+        & PTSPHY, PAPH, &
+        & PLUDE)
 
 END PROGRAM
-
-SUBROUTINE vert_loop_mwe_wip_routine(KLEV, NBLOCKS, INPUT_F, OUTPUT_F)
+! Base on lines 1096 to 1120 and others
+SUBROUTINE vert_loop_mwe_wip_routine(&
+    & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDTOP, NBLOCKS, &
+    & PTSPHY, PAPH_NF, &
+    & PLUDE_NF)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
     ! Parameters
     INTEGER(KIND=JPIM) KLEV
+    INTEGER(KIND=JPIM) NCLV
+    INTEGER(KIND=JPIM) KIDIA 
+    INTEGER(KIND=JPIM) KFDIA 
+    INTEGER(KIND=JPIM) NCLDTOP
+    ! NGPTOT == NPROMA == KLON
+    ! INTEGER(KIND=JPIM) NPROMA 
     INTEGER(KIND=JPIM) NBLOCKS 
 
-    REAL(KIND=JPRB) INPUT_F(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) OUTPUT_F(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) TMP_F(NBLOCKS, KLEV)
-    TMP_F(:, :) = 0
+    ! input
+    REAL(KIND=JPRB) PTSPHY
+    REAL(KIND=JPRB) PAPH_NF(NBLOCKS, KLON, KLEV+1)
 
-    ! temporary arrays
-    ! REAL(KIND=JPRB) TMP(NBLOCKS, KLEV)
+    ! output
+    REAL(KIND=JPRB) PLUDE_NF(NBLOCKS, KLON, KLEV)
 
-    ! TMP(:, :) = 0
+    DO JN=1,NBLOCKS,KLON
+        CALL inner_loops(&
+            & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDTOP, &
+            & PTSPHY, PAPH_NF(JN,:,:), &
+            & PLUDE_NF(JN,:,:))
 
-    ! DO JN=1,NBLOCKS
-    !     DO JK=3 ,KLEV
-    !         TMP(JN, JK) = (INPUT_F(JN, JK) + INPUT_F(JN, JK-1) + INPUT_F(JN, JK-2)) * 3
-    !         OUTPUT_F(JN, JK) = (TMP(JN, JK) + TMP(JN, JK-1) + TMP(JN, JK-2)) * 3
-    !     ENDDO
-    ! ENDDO
-
-    DO JN=1,NBLOCKS
-        CALL inner_loops(KLEV, NBLOCKS, INPUT_F(JN,:), OUTPUT_F(JN,:), TMP_F(JN,:))
     ENDDO
 
 END SUBROUTINE vert_loop_mwe_wip_routine
 
-SUBROUTINE inner_loops(KLEV, NBLOCKS, INPUT_F, OUTPUT_F, TMP)
+SUBROUTINE inner_loops(&
+    & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDTOP, &
+    & PTSPHY, PAPH_NF, &
+    & PLUDE_NF)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
-    REAL(KIND=JPRB) INPUT_F(KLEV)
+    REAL(KIND=JPRB) PTSPHY
+    REAL(KIND=JPRB) PAPH_NF(KLON, KLEV+1)
 
     ! output
-    REAL(KIND=JPRB) OUTPUT_F(KLEV)
+    REAL(KIND=JPRB) PLUDE_NF(KLON, KLEV)
 
     ! temporary arrays
-    REAL(KIND=JPRB) TMP(KLEV)
+    REAL(KIND=JPRB) ZDTGDP(KLON)
 
-    ! TMP(:) = 0
+    ! Not sure if this causes problems
+    ZDTGDP(:) = 0.0
 
-    DO JK=3 ,KLEV
-        TMP(JK) = (INPUT_F(JK) + INPUT_F(JK-1) + INPUT_F(JK-2)) * 3
-        OUTPUT_F(JK) = (TMP(JK) + TMP(JK-1) + TMP(JK-2)) * 3
-    ENDDO
+    DO JK=NCLDTOP,KLEV
+        DO JL=KIDIA,KFDIA
+            ZDTGDP(JL)  = PTSPHY*PAPH_NF(JL,JK+1)-PAPH_NF(JL,JK)
+        ENDDO
+
+        DO JL=KIDIA,KFDIA
+
+            PLUDE_NF(JL,JK)=PLUDE_NF(JL,JK)*ZDTGDP(JL)
+
+        ENDDO
+    ENDDO ! on vertical level JK
 
 END SUBROUTINE inner_loops
