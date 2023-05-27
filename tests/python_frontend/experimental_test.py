@@ -59,7 +59,6 @@ def test_expand_if_python():
     assert np.allclose(B_ref, B_val)
 
 
-@pytest.mark.skip
 def test_expand_if_dace():
 
     @dace.program(expand_if=True)
@@ -125,7 +124,44 @@ def test_if_array_none():
     assert np.allclose(B_ref, B_val)
 
 
+def test_florian():
+
+    @dace.program(expand_if=True)
+    def a_function(
+        array,
+        scalar: dace.float32,
+        optional_array=None,
+    ):
+        if optional_array is None:
+            tmp_array = array
+        else:
+            tmp_array = optional_array
+
+        tmp_array[:] = scalar
+
+
+    @dace.program
+    def a_program(
+        array,
+        scalar: dace.float32,
+        optional_array,
+    ):
+        a_function(array, scalar)
+        a_function(array, scalar, optional_array)
+
+
+    arr = np.ones((4), dtype=np.float32)
+    opt_arr = np.ones((4), dtype=np.float32)
+    s = np.float32(3.0)
+
+    a_program(arr, s, opt_arr)
+
+    assert (arr == s).all()
+    assert (opt_arr == s).all()
+
+
 if __name__ == '__main__':
     test_expand_if_python()
     test_expand_if_dace()
     test_if_array_none()
+    test_florian()
