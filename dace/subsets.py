@@ -960,7 +960,7 @@ class Indices(Subset):
 class Subsetlist(Subset):
 
     def __init__(self, subset_list: list[Subset]):
-        self.subset_list = subset_list
+        self.subset_list: list[Subset] = subset_list
 
 
     def covers(self, other):
@@ -979,15 +979,25 @@ class Subsetlist(Subset):
                 return expr
 
         if isinstance(other, Subsetlist):
-            for subset in other.subset_list:
-                if subset not in self.subset_list:
-                    return False
-            return True
+            for subset in self.subset_list:
+                # check if ther is a subset in self that covers every subset in other
+                if all(subset.covers(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
         else:
-            return other in self.subset_list
+            return all(other.covers(s) for s in self.subset_list)
 
-    def __repr__(self):
-        return '%s (%s)' % (type(self).__name__, self.__str__())
+    def __str__(self):
+        string = ''
+        for subset in self.subset_list:
+            if not string == '':
+                string += " "
+            string += subset.__str__()
+        return string
+    
+    def dims(self):
+        return next(iter(self.subset_list)).dims()
 
     def offset(self, other, negative, indices=None):
         raise NotImplementedError
@@ -1011,8 +1021,23 @@ class Subsetlist(Subset):
 
     @property
     def free_symbols(self) -> Set[str]:
-        """ Returns a set of undefined symbols in this subset. """
-        raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
+        result = set()
+        for subset in self.subset_list:
+            result |= subset.free_symbols
+        return result
+    
+    def replace(self, repl_dict):
+        for subset in self.subset_list:
+            subset.replace(repl_dict)
+
+    def num_elements(self):
+        # TODO: write something meaningful here
+        min = 0
+        # for subset in self.subset_list:
+        #     if subset.num_elements() < min or min ==0:
+        #         min = subset.num_elements()
+            
+        return min
 
 
 
@@ -1116,6 +1141,27 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     except TypeError:  # cannot determine truth value of Relational
         return None
 
+def list_union(subset_a: Subset, subset_b: Subset)-> Subset:
+    # TODO: Make sure that all the elements in the subset lists have the same dimensions
+    try:
+        if subset_a is not None and subset_b is None:
+            return subset_a
+        elif subset_b is not None and subset_a is None:
+            return subset_b
+        elif subset_a is None and subset_b is None:
+            raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            if isinstance(subset_b, Subsetlist):
+                return Subsetlist(subset_b.subset_list_.append(subset_a))
+            else:
+                return Subsetlist(subset_a.subset_list.append(subset_b))
+        elif isinstance(subset_a, Subsetlist):
+            return Subsetlist(subset_a.subset_list + subset_b.subset_list)
+        else:
+            return Subsetlist([subset_a,subset_b])
+
+    except TypeError:  # cannot determine truth value of Relational
+        return None
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
     """

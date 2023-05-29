@@ -4,11 +4,12 @@ Functionality relating to Memlet propagation (deducing external memlets
 from internal memory accesses and scope ranges).
 """
 
-from collections import deque
+from collections import defaultdict, deque
 import copy
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 import itertools
 import functools
+from dace.transformation.pass_pipeline import Modifies, Pass
 import sympy
 from sympy import ceiling
 from sympy.concrete.summations import Sum
@@ -18,9 +19,18 @@ import networkx as nx
 from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFGState, graph as gr
-from typing import List, Set
+import dace
+from typing import List, Set, Type, Union
+from dace.sdfg.analysis import cfg
+from dace.transformation import pass_pipeline as ppl
+from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
+
 
 approximation_dict = {}
+# dictionary that maps loop headers to "border memlets" that are written to in the corresponding loop
+loop_write_dict: dict[SDFGState, dict[str, Memlet]] = {}
+loop_dict: dict[SDFGState, (SDFGState, SDFGState, list[SDFGState], str, subsets.Range)] = {}
+
 
 
 @registry.make_registry
@@ -560,455 +570,550 @@ class ConstantRangeMemlet(MemletPattern):
 
         return subsets.Range(rng)
 
-def approximate_memlets(sdfg) -> dict[Memlet, Memlet]:
-    for (edge, parent) in sdfg.all_edges_recursive():
-        if isinstance(parent, SDFGState):
-            approximation_dict[edge.data] = None
+class UnderapproximateWrites(ppl.Pass):
 
-    propagate_memlets_sdfg(sdfg)
-
-    return(approximation_dict)
-
-
-def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
-    """
-    Annotate each valid for loop construct with its loop variable ranges.
-
-    :param sdfg: The SDFG in which to look.
-    :param unannotated_cycle_states: List of states in cycles without valid
-                                     for loop ranges.
-    """
-
-    # We import here to avoid cyclic imports.
-    from dace.transformation.interstate.loop_detection import find_for_loop
-    from dace.sdfg import utils as sdutils
-
-    for cycle in sdfg.find_cycles():
-        # In each cycle, try to identify a valid loop guard state.
-        guard = None
-        begin = None
-        itvar = None
-        for v in cycle:
-            # Try to identify a valid for-loop guard.
-            in_edges = sdfg.in_edges(v)
-            out_edges = sdfg.out_edges(v)
-
-            # A for-loop guard has two or more incoming edges (1 increment and
-            # n init, all identical), and exactly two outgoing edges (loop and
-            # exit loop).
-            if len(in_edges) < 2 or len(out_edges) != 2:
-                continue
-
-            # All incoming guard edges must set exactly one variable and it must
-            # be the same for all of them.
-            itvars = set()
-            for iedge in in_edges:
-                if len(iedge.data.assignments) > 0:
-                    if not itvars:
-                        itvars = set(iedge.data.assignments.keys())
-                    else:
-                        itvars &= set(iedge.data.assignments.keys())
-                else:
-                    itvars = None
-                    break
-            if not itvars or len(itvars) > 1:
-                continue
-            itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
-
-            # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
-                continue
-
-            # Make sure the last state of the loop (i.e. the state leading back
-            # to the guard via 'increment' edge) is part of this cycle. If not,
-            # we're looking at the guard for a nested cycle, which we ignore for
-            # this cycle.
-            increment_edge = None
-            for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
-                    increment_edge = iedge
-                    break
-            if increment_edge is None:
-                continue
-            if increment_edge.src not in cycle:
-                continue
-
-            # One of the child states must be in the loop (loop begin), and the
-            # other one must be outside the cycle (loop exit).
-            loop_state = None
-            exit_state = None
-            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
-                loop_state = out_edges[0].dst
-                exit_state = out_edges[1].dst
-            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
-                loop_state = out_edges[1].dst
-                exit_state = out_edges[0].dst
-            if loop_state is None or exit_state is None:
-                continue
-
-            # This is a valid guard state candidate.
-            guard = v
-            begin = loop_state
-            break
-
-        if guard is not None and begin is not None and itvar is not None:
-            # A guard state was identified, see if it has valid for-loop ranges
-            # and annotate the loop as such.
-
-            # Ensure that this guard's loop wasn't annotated yet.
-            if itvar in begin.ranges:
-                continue
-
-            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
-            if res is None:
-                # No range detected, mark as unbounded.
-                unannotated_cycle_states.extend(cycle)
-            else:
-                itervar, rng, _ = res
-
-                # Make sure the range is flipped in a direction such that the
-                # stride is positive (in order to match subsets.Range).
-                start, stop, stride = rng
-                # This inequality needs to be checked exactly like this due to
-                # constraints in sympy/symbolic expressions, do not simplify!!!
-                if (stride < 0) == True:
-                    rng = (stop, start, -stride)
-
-                loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
-                for v in loop_states:
-                    v.ranges[itervar] = subsets.Range([rng])
-                guard.ranges[itervar] = subsets.Range([rng])
-                guard.condition_edge = sdfg.edges_between(guard, begin)[0]
-                guard.is_loop_guard = True
-                guard.itvar = itervar
-        else:
-            # There's no guard state, so this cycle marks all states in it as
-            # dynamically unbounded.
-            unannotated_cycle_states.extend(cycle)
-
-
-def propagate_states(sdfg) -> None:
-    """
-    Annotate the states of an SDFG with the number of executions.
-
-    Algorithm:
+    def depends_on(self) -> Set[Type[Pass] | Pass]:
+        # pass does not depend on any other pass so far
+        # TODO: changes this for later versions
+        return super().depends_on()
     
-        1. Clean up the state machine by splitting condition and assignment edges
-           into separate edes with a dummy state in between.
-        2. Detect and annotate any for-loop constructs with their corresponding loop
-           variable ranges.
-        3. Start traversing the state machine from the start state (start state
-           gets executed once by default). At every state, check the following:
+    def modifies(self) -> Modifies:
+        return ppl.Modifies.Nothing
+    
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Symbols | ppl.Modifies.Nodes
+    
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> Dict[gr.MultiConnectorEdge[Memlet], gr.MultiConnectorEdge[Memlet]]:
+        """
+        Applies the pass to the given SDFG.
 
-            a. The state was already visited -> in this case it can either be the
-               guard of a loop we're returning to - in which case the number of
-               executions is additively combined - or it is a state that can be
-               reached through multiple paths (e.g. if/else branches), in which case
-               the number of executions is equal to the maximum number of executions
-               for each incoming path (in case this fully merges a previously
-               branched out tree again, the number of executions isn't dynamic
-               anymore). In both cases we override the calculated number of
-               executions if we're propagating dynamic unbounded. This DFS traversal
-               is complete and we continue with the next unvisited state.
-            b. We're propagating dynamic unbounded -> this overrides every
-               calculated number of executions, so this gets unconditionally
-               propagated to all child states.
-            c. None of the above, the next regular traversal step is executed:
+        :param sdfg: The SDFG to apply the pass to.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: Some object if pass was applied, or None if nothing changed.
+        """
+        approximation_dict.clear()
+        loop_write_dict.clear()
 
-                1. If there is no further outgoing edge, this DFS traversal is done and we continue with the next
-                   unvisited state.
-                2. If there is one outgoing edge, we continue propagating the
-                   same number of executions to the child state. If the transition
-                   to the child state is conditional, the current state might be
-                   an implicit exit state, in which case we mark the next state as
-                   dynamic to signal that it's an upper bound.
-                3. If there is more than one outgoing edge we:
+        # fill the approximation dictionary with the original edges as keys and the edges with the
+        # approximated memlets as values
+        for (edge, parent) in sdfg.all_edges_recursive():
+            if isinstance(parent, SDFGState):
+                approximation_dict[edge] = copy.deepcopy(edge)
+                if not isinstance(approximation_dict[edge].data.subset, subsets.Subsetlist) and not approximation_dict[edge].data.subset == None:
+                    approximation_dict[edge].data.subset = subsets.Subsetlist([approximation_dict[edge].data.subset])
+                if not isinstance(approximation_dict[edge].data.dst_subset, subsets.Subsetlist) and not approximation_dict[edge].data.dst_subset == None:
+                    approximation_dict[edge].data.dst_subset = subsets.Subsetlist([approximation_dict[edge].data.dst_subset])
+                if not isinstance(approximation_dict[edge].data.src_subset, subsets.Subsetlist) and not approximation_dict[edge].data.src_subset == None:
+                    approximation_dict[edge].data.src_subset = subsets.Subsetlist([approximation_dict[edge].data.src_subset])
 
-                    a. Check if it's an annotated loop guard with a range. If
-                       so, we calculate the number of executions for the loop
-                       and propagate this down the loop.
-                    b. Check if it's a loop that hasn't been unannotated, which
-                       means it's unbounded. In this case we propagate dynamic
-                       unbounded down the loop.
-                    c. Otherwise this must be a conditional branch, so this
-                       state's number of executions is given to all child states
-                       as an upper bound.
+        self.propagate_memlets_sdfg(sdfg)
 
-        4. The traversal ends when all reachable states have been visited at least
-           once.
+        return  {
+            "approximation": approximation_dict,
+            "loop_approximation": loop_write_dict,
+            "loops" : loop_dict
+        }
 
-    :param sdfg: The SDFG to annotate.
-    :note: This operates on the SDFG in-place.
-    """
 
-    # We import here to avoid cyclic imports.
-    from dace.sdfg import InterstateEdge
-    from dace.transformation.helpers import split_interstate_edges
-    from dace.sdfg.analysis import cfg
 
-    # Reset the state edge annotations (which may have changed due to transformations)
-    reset_state_annotations(sdfg)
+    def _annotate_loop_ranges(self, sdfg, unannotated_cycle_states) -> Dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]:
+            """
+            Modified version of _annotate_loop_ranges from dace.sdfg.propagation
+            that also returns the identified loops in a dictionary
 
-    # Clean up the state machine by separating combined condition and assignment
-    # edges.
-    split_interstate_edges(sdfg)
+            Annotate each valid for loop construct with its loop variable ranges.
+            :param sdfg: The SDFG in which to look.
+            :param unannotated_cycle_states: List of states in cycles without valid
+                                            for loop ranges.
+            :return: dictionary mapping loop headers to first state in the loop,
+                    the set of states enclosed by the loop, the itearation variable,
+                    the range of the iterator variable
+            """
 
-    # To enable branch annotation, we add a temporary exit state that connects
-    # to all child-less states. With this, we can use the dominance frontier
-    # to determine a full-merge state for branches.
-    temp_exit_state = None
-    for s in sdfg.nodes():
-        if sdfg.out_degree(s) == 0:
-            if temp_exit_state is None:
-                temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
-            sdfg.add_edge(s, temp_exit_state, InterstateEdge())
+            # We import here to avoid cyclic imports.
+            from dace.transformation.interstate.loop_detection import find_for_loop
+            from dace.sdfg import utils as sdutils
 
-    dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
+            # dictionary mapping loop headers to beginstate, loopstates, looprange
+            identified_loops = {}
+            for cycle in sdfg.find_cycles():
+                # In each cycle, try to identify a valid loop guard state.
+                guard = None
+                begin = None
+                itvar = None
+                for v in cycle:
+                    # Try to identify a valid for-loop guard.
+                    in_edges = sdfg.in_edges(v)
+                    out_edges = sdfg.out_edges(v)
 
-    # Find any valid for loop constructs and annotate the loop ranges. Any other
-    # cycle should be marked as unannotated.
-    unannotated_cycle_states = []
-    _annotate_loop_ranges(sdfg, unannotated_cycle_states)
+                    # A for-loop guard has two or more incoming edges (1 increment and
+                    # n init, all identical), and exactly two outgoing edges (loop and
+                    # exit loop).
+                    if len(in_edges) < 2 or len(out_edges) != 2:
+                        continue
 
-    # Keep track of states that fully merge a previous conditional split. We do
-    # this so we can remove the dynamic executions flag for those states.
-    full_merge_states = set()
+                    # All incoming guard edges must set exactly one variable and it must
+                    # be the same for all of them.
+                    itvars = set()
+                    for iedge in in_edges:
+                        if len(iedge.data.assignments) > 0:
+                            if not itvars:
+                                itvars = set(iedge.data.assignments.keys())
+                            else:
+                                itvars &= set(iedge.data.assignments.keys())
+                        else:
+                            itvars = None
+                            break
+                    if not itvars or len(itvars) > 1:
+                        continue
+                    itvar = next(iter(itvars))
+                    itvarsym = pystr_to_symbolic(itvar)
 
-    visited_states = set()
+                    # The outgoing edges must be negations of one another.
+                    if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
+                        continue
 
-    traversal_q = deque()
-    traversal_q.append((sdfg.start_state, 1, False, []))
-    while traversal_q:
-        (state, proposed_executions, proposed_dynamic, itvar_stack) = traversal_q.pop()
+                    # Make sure the last state of the loop (i.e. the state leading back
+                    # to the guard via 'increment' edge) is part of this cycle. If not,
+                    # we're looking at the guard for a nested cycle, which we ignore for
+                    # this cycle.
+                    increment_edge = None
+                    for iedge in in_edges:
+                        if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
+                            increment_edge = iedge
+                            break
+                    if increment_edge is None:
+                        continue
+                    if increment_edge.src not in cycle:
+                        continue
 
-        out_degree = sdfg.out_degree(state)
-        out_edges = sdfg.out_edges(state)
+                    # One of the child states must be in the loop (loop begin), and the
+                    # other one must be outside the cycle (loop exit).
+                    loop_state = None
+                    exit_state = None
+                    if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
+                        loop_state = out_edges[0].dst
+                        exit_state = out_edges[1].dst
+                    elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
+                        loop_state = out_edges[1].dst
+                        exit_state = out_edges[0].dst
+                    if loop_state is None or exit_state is None:
+                        continue
 
-        # Check if the traversal reached a state that's already been visited
-        # (ends traversal), or if the number of executions being propagated is
-        # dynamic unbounded. Otherwise, continue regular traversal.
-        if state in visited_states:
-            # This state has already been visited.
-            if proposed_executions == 0 and proposed_dynamic:
+                    # This is a valid guard state candidate.
+                    guard = v
+                    begin = loop_state
+                    break
+
+                if guard is not None and begin is not None and itvar is not None:
+                    # A guard state was identified, see if it has valid for-loop ranges
+                    # and annotate the loop as such.
+
+                    # Ensure that this guard's loop wasn't annotated yet.
+
+
+
+                    loop_state_list = []
+                    res = find_for_loop(sdfg, guard, begin, itervar=itvar)
+                    if res is None:
+                        # No range detected, mark as unbounded.
+                        unannotated_cycle_states.extend(cycle)
+                    else:
+                        itervar, rng, (start_states, last_loop_state) = res
+
+                        # Make sure the range is flipped in a direction such that the
+                        # stride is positive (in order to match subsets.Range).
+                        start, stop, stride = rng
+                        # This inequality needs to be checked exactly like this due to
+                        # constraints in sympy/symbolic expressions, do not simplify!!!
+                        if (stride < 0) == True:
+                            rng = (stop, start, -stride)
+
+                        loop_states = sdutils.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
+                        
+                        if itvar not in begin.ranges:
+                            # only do this if loop has not been annotated yet
+                            for v in loop_states:
+                                v.ranges[itervar] = subsets.Range([rng])
+                                loop_state_list.append(v)
+                            guard.ranges[itervar] = subsets.Range([rng])
+                            guard.condition_edge = sdfg.edges_between(guard, begin)[0]
+                            guard.is_loop_guard = True
+                            guard.itvar = itervar
+                            identified_loops[guard] = (begin, last_loop_state, loop_state_list, itvar, subsets.Range([rng]))
+
+                else:
+                    # There's no guard state, so this cycle marks all states in it as
+                    # dynamically unbounded.
+                    unannotated_cycle_states.extend(cycle)
+
+            return identified_loops
+
+
+    def propagate_states(self, sdfg) -> None:
+        """
+        Annotate the states of an SDFG with the number of executions.
+
+        Algorithm:
+        
+            1. Clean up the state machine by splitting condition and assignment edges
+            into separate edes with a dummy state in between.
+            2. Detect and annotate any for-loop constructs with their corresponding loop
+            variable ranges.
+            3. Start traversing the state machine from the start state (start state
+            gets executed once by default). At every state, check the following:
+
+                a. The state was already visited -> in this case it can either be the
+                guard of a loop we're returning to - in which case the number of
+                executions is additively combined - or it is a state that can be
+                reached through multiple paths (e.g. if/else branches), in which case
+                the number of executions is equal to the maximum number of executions
+                for each incoming path (in case this fully merges a previously
+                branched out tree again, the number of executions isn't dynamic
+                anymore). In both cases we override the calculated number of
+                executions if we're propagating dynamic unbounded. This DFS traversal
+                is complete and we continue with the next unvisited state.
+                b. We're propagating dynamic unbounded -> this overrides every
+                calculated number of executions, so this gets unconditionally
+                propagated to all child states.
+                c. None of the above, the next regular traversal step is executed:
+
+                    1. If there is no further outgoing edge, this DFS traversal is done and we continue with the next
+                    unvisited state.
+                    2. If there is one outgoing edge, we continue propagating the
+                    same number of executions to the child state. If the transition
+                    to the child state is conditional, the current state might be
+                    an implicit exit state, in which case we mark the next state as
+                    dynamic to signal that it's an upper bound.
+                    3. If there is more than one outgoing edge we:
+
+                        a. Check if it's an annotated loop guard with a range. If
+                        so, we calculate the number of executions for the loop
+                        and propagate this down the loop.
+                        b. Check if it's a loop that hasn't been unannotated, which
+                        means it's unbounded. In this case we propagate dynamic
+                        unbounded down the loop.
+                        c. Otherwise this must be a conditional branch, so this
+                        state's number of executions is given to all child states
+                        as an upper bound.
+
+            4. The traversal ends when all reachable states have been visited at least
+            once.
+
+        :param sdfg: The SDFG to annotate.
+        :note: This operates on the SDFG in-place.
+        """
+
+        # We import here to avoid cyclic imports.
+        from dace.sdfg import InterstateEdge
+        from dace.transformation.helpers import split_interstate_edges
+        from dace.sdfg.analysis import cfg
+
+        # Reset the state edge annotations (which may have changed due to transformations)
+        self.reset_state_annotations(sdfg)
+
+        # Clean up the state machine by separating combined condition and assignment
+        # edges.
+        # TODO: this modifies the sdfg. Find a solution s.t. it leaves the sdfg unmodified
+        split_interstate_edges(sdfg)
+
+        # To enable branch annotation, we add a temporary exit state that connects
+        # to all child-less states. With this, we can use the dominance frontier
+        # to determine a full-merge state for branches.
+        temp_exit_state = None
+        for s in sdfg.nodes():
+            if sdfg.out_degree(s) == 0:
+                if temp_exit_state is None:
+                    temp_exit_state = sdfg.add_state('__dace_brannotate_exit')
+                sdfg.add_edge(s, temp_exit_state, InterstateEdge())
+
+        dom_frontier = cfg.acyclic_dominance_frontier(sdfg)
+
+        # Find any valid for loop constructs and annotate the loop ranges. Any other
+        # cycle should be marked as unannotated.
+        unannotated_cycle_states = []
+        self._annotate_loop_ranges(sdfg, unannotated_cycle_states)
+
+        # Keep track of states that fully merge a previous conditional split. We do
+        # this so we can remove the dynamic executions flag for those states.
+        full_merge_states = set()
+
+        visited_states = set()
+
+        traversal_q = deque()
+        traversal_q.append((sdfg.start_state, 1, False, []))
+        while traversal_q:
+            (state, proposed_executions, proposed_dynamic, itvar_stack) = traversal_q.pop()
+
+            out_degree = sdfg.out_degree(state)
+            out_edges = sdfg.out_edges(state)
+
+            # Check if the traversal reached a state that's already been visited
+            # (ends traversal), or if the number of executions being propagated is
+            # dynamic unbounded. Otherwise, continue regular traversal.
+            if state in visited_states:
+                # This state has already been visited.
+                if proposed_executions == 0 and proposed_dynamic:
+                    state.executions = proposed_executions
+                    state.dynamic_executions = proposed_dynamic
+                elif getattr(state, 'is_loop_guard', False):
+                    # If we encounter a loop guard that's already been visited,
+                    # we've finished traversing a loop and can remove that loop's
+                    # iteration variable from the stack. We additively merge the
+                    # number of executions.
+                    if not (state.executions == 0 and state.dynamic_executions):
+                        state.executions += proposed_executions
+                else:
+                    # If we have already visited this state, but it is NOT a loop
+                    # guard, this means that we can reach this state via multiple
+                    # different paths. If so, the number of executions for this
+                    # state is given by the maximum number of executions among each
+                    # of the paths reaching it. If the state additionally completely
+                    # merges a previously branched out state tree, we know that the
+                    # number of executions isn't dynamic anymore.
+                    # The only exception to this rule: If the state is in an
+                    # unannotated loop, i.e. should be annotated as dynamic
+                    # unbounded instead, we do that.
+                    if (state in unannotated_cycle_states):
+                        state.executions = 0
+                        state.dynamic_executions = True
+                    else:
+                        state.executions = sympy.Max(state.executions, proposed_executions).doit()
+                        if state in full_merge_states:
+                            state.dynamic_executions = False
+                        else:
+                            state.dynamic_executions = (state.dynamic_executions or proposed_dynamic)
+            elif proposed_dynamic and proposed_executions == 0:
+                # We're propagating a dynamic unbounded number of executions, which
+                # always gets propagated unconditionally. Propagate to all children.
+                visited_states.add(state)
                 state.executions = proposed_executions
                 state.dynamic_executions = proposed_dynamic
-            elif getattr(state, 'is_loop_guard', False):
-                # If we encounter a loop guard that's already been visited,
-                # we've finished traversing a loop and can remove that loop's
-                # iteration variable from the stack. We additively merge the
-                # number of executions.
-                if not (state.executions == 0 and state.dynamic_executions):
-                    state.executions += proposed_executions
-            else:
-                # If we have already visited this state, but it is NOT a loop
-                # guard, this means that we can reach this state via multiple
-                # different paths. If so, the number of executions for this
-                # state is given by the maximum number of executions among each
-                # of the paths reaching it. If the state additionally completely
-                # merges a previously branched out state tree, we know that the
-                # number of executions isn't dynamic anymore.
-                # The only exception to this rule: If the state is in an
-                # unannotated loop, i.e. should be annotated as dynamic
-                # unbounded instead, we do that.
-                if (state in unannotated_cycle_states):
-                    state.executions = 0
-                    state.dynamic_executions = True
-                else:
-                    state.executions = sympy.Max(state.executions, proposed_executions).doit()
-                    if state in full_merge_states:
-                        state.dynamic_executions = False
-                    else:
-                        state.dynamic_executions = (state.dynamic_executions or proposed_dynamic)
-        elif proposed_dynamic and proposed_executions == 0:
-            # We're propagating a dynamic unbounded number of executions, which
-            # always gets propagated unconditionally. Propagate to all children.
-            visited_states.add(state)
-            state.executions = proposed_executions
-            state.dynamic_executions = proposed_dynamic
-            # This gets pushed through to all children unconditionally.
-            if len(out_edges) > 0:
-                for oedge in out_edges:
-                    traversal_q.append((oedge.dst, proposed_executions, proposed_dynamic, itvar_stack))
-        else:
-            # If the state hasn't been visited yet and we're not propagating a
-            # dynamic unbounded number of executions, we calculate the number of
-            # executions for the next state(s) and continue propagating.
-            visited_states.add(state)
-            if state in full_merge_states:
-                # If this state fully merges a conditional branch, this turns
-                # dynamic executions back off.
-                proposed_dynamic = False
-            state.executions = proposed_executions
-            state.dynamic_executions = proposed_dynamic
-
-            if out_degree == 1:
-                # Continue with the only child state.
-                if not out_edges[0].data.is_unconditional():
-                    # If the transition to the child state is based on a
-                    # condition, this state could be an implicit exit state. The
-                    # child state's number of executions is thus only given as
-                    # an upper bound and marked as dynamic.
-                    proposed_dynamic = True
-                traversal_q.append((out_edges[0].dst, proposed_executions, proposed_dynamic, itvar_stack))
-            elif out_degree > 1:
-                if getattr(state, 'is_loop_guard', False):
-                    itvar = symbolic.symbol(state.itvar)
-                    loop_range = state.ranges[state.itvar]
-                    start = loop_range[0][0]
-                    stop = loop_range[0][1]
-                    stride = loop_range[0][2]
-
-                    # Calculate the number of loop executions.
-                    # This resolves ranges based on the order of iteration
-                    # variables pushed on to the stack if we're in a nested
-                    # loop.
-                    loop_executions = ceiling(((stop + 1) - start) / stride)
-                    for outer_itvar_string in reversed(itvar_stack):
-                        outer_range = state.ranges[outer_itvar_string]
-                        outer_start = outer_range[0][0]
-                        outer_stop = outer_range[0][1]
-                        outer_stride = outer_range[0][2]
-                        outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
-                        exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
-                        loop_executions = Sum(exec_repl,
-                                              (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
-                    loop_executions = loop_executions.doit()
-
-                    loop_state = state.condition_edge.dst
-                    end_state = (out_edges[0].dst if out_edges[1].dst == loop_state else out_edges[1].dst)
-
-                    traversal_q.append((end_state, state.executions, proposed_dynamic, itvar_stack))
-                    traversal_q.append((loop_state, loop_executions, proposed_dynamic, itvar_stack + [state.itvar]))
-                else:
-                    # Conditional split or unannotated (dynamic unbounded) loop.
-                    unannotated_loop_edge = None
+                # This gets pushed through to all children unconditionally.
+                if len(out_edges) > 0:
                     for oedge in out_edges:
-                        if oedge.dst in unannotated_cycle_states:
-                            # This is an unannotated loop down this branch.
-                            unannotated_loop_edge = oedge
+                        traversal_q.append((oedge.dst, proposed_executions, proposed_dynamic, itvar_stack))
+            else:
+                # If the state hasn't been visited yet and we're not propagating a
+                # dynamic unbounded number of executions, we calculate the number of
+                # executions for the next state(s) and continue propagating.
+                visited_states.add(state)
+                if state in full_merge_states:
+                    # If this state fully merges a conditional branch, this turns
+                    # dynamic executions back off.
+                    proposed_dynamic = False
+                state.executions = proposed_executions
+                state.dynamic_executions = proposed_dynamic
 
-                    if unannotated_loop_edge is not None:
-                        # Traverse as an unbounded loop.
-                        out_edges.remove(unannotated_loop_edge)
-                        for oedge in out_edges:
-                            traversal_q.append((oedge.dst, state.executions, False, itvar_stack))
-                        traversal_q.append((unannotated_loop_edge.dst, 0, True, itvar_stack))
-                    else:
-                        # Traverse as a conditional split.
-                        proposed_executions = state.executions
+                if out_degree == 1:
+                    # Continue with the only child state.
+                    if not out_edges[0].data.is_unconditional():
+                        # If the transition to the child state is based on a
+                        # condition, this state could be an implicit exit state. The
+                        # child state's number of executions is thus only given as
+                        # an upper bound and marked as dynamic.
                         proposed_dynamic = True
+                    traversal_q.append((out_edges[0].dst, proposed_executions, proposed_dynamic, itvar_stack))
+                elif out_degree > 1:
+                    if getattr(state, 'is_loop_guard', False):
+                        itvar = symbolic.symbol(state.itvar)
+                        loop_range = state.ranges[state.itvar]
+                        start = loop_range[0][0]
+                        stop = loop_range[0][1]
+                        stride = loop_range[0][2]
 
-                        # Get the dominance frontier for each child state and
-                        # merge them into one common frontier, representing the
-                        # branch's immediate post-dominator. If a state has no
-                        # dominance frontier, add the state itself to the
-                        # frontier. This takes care of the case where a branch
-                        # is fully merged, but one branch contains no states.
-                        common_frontier = set()
+                        # Calculate the number of loop executions.
+                        # This resolves ranges based on the order of iteration
+                        # variables pushed on to the stack if we're in a nested
+                        # loop.
+                        loop_executions = ceiling(((stop + 1) - start) / stride)
+                        for outer_itvar_string in reversed(itvar_stack):
+                            outer_range = state.ranges[outer_itvar_string]
+                            outer_start = outer_range[0][0]
+                            outer_stop = outer_range[0][1]
+                            outer_stride = outer_range[0][2]
+                            outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
+                            exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
+                            loop_executions = Sum(exec_repl,
+                                                (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
+                        loop_executions = loop_executions.doit()
+
+                        loop_state = state.condition_edge.dst
+                        end_state = (out_edges[0].dst if out_edges[1].dst == loop_state else out_edges[1].dst)
+
+                        traversal_q.append((end_state, state.executions, proposed_dynamic, itvar_stack))
+                        traversal_q.append((loop_state, loop_executions, proposed_dynamic, itvar_stack + [state.itvar]))
+                    else:
+                        # Conditional split or unannotated (dynamic unbounded) loop.
+                        unannotated_loop_edge = None
                         for oedge in out_edges:
-                            frontier = dom_frontier[oedge.dst]
-                            if not frontier:
-                                frontier = {oedge.dst}
-                            common_frontier |= frontier
+                            if oedge.dst in unannotated_cycle_states:
+                                # This is an unannotated loop down this branch.
+                                unannotated_loop_edge = oedge
 
-                            # Continue traversal for each child.
-                            traversal_q.append((oedge.dst, proposed_executions, proposed_dynamic, itvar_stack))
+                        if unannotated_loop_edge is not None:
+                            # Traverse as an unbounded loop.
+                            out_edges.remove(unannotated_loop_edge)
+                            for oedge in out_edges:
+                                traversal_q.append((oedge.dst, state.executions, False, itvar_stack))
+                            traversal_q.append((unannotated_loop_edge.dst, 0, True, itvar_stack))
+                        else:
+                            # Traverse as a conditional split.
+                            proposed_executions = state.executions
+                            proposed_dynamic = True
 
-                        # If the whole branch is not dynamic, and the
-                        # common frontier is exactly one state, we know that
-                        # the branch merges again at that state.
-                        if not state.dynamic_executions and len(common_frontier) == 1:
-                            full_merge_states.add(list(common_frontier)[0])
+                            # Get the dominance frontier for each child state and
+                            # merge them into one common frontier, representing the
+                            # branch's immediate post-dominator. If a state has no
+                            # dominance frontier, add the state itself to the
+                            # frontier. This takes care of the case where a branch
+                            # is fully merged, but one branch contains no states.
+                            common_frontier = set()
+                            for oedge in out_edges:
+                                frontier = dom_frontier[oedge.dst]
+                                if not frontier:
+                                    frontier = {oedge.dst}
+                                common_frontier |= frontier
 
-    # If we had to create a temporary exit state, we remove it again here.
-    if temp_exit_state is not None:
-        sdfg.remove_node(temp_exit_state)
+                                # Continue traversal for each child.
+                                traversal_q.append((oedge.dst, proposed_executions, proposed_dynamic, itvar_stack))
+
+                            # If the whole branch is not dynamic, and the
+                            # common frontier is exactly one state, we know that
+                            # the branch merges again at that state.
+                            if not state.dynamic_executions and len(common_frontier) == 1:
+                                full_merge_states.add(list(common_frontier)[0])
+
+        # If we had to create a temporary exit state, we remove it again here.
+        if temp_exit_state is not None:
+            sdfg.remove_node(temp_exit_state)
 
 
-def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
-    """
-    Propagate memlets out of a nested sdfg.
+    def propagate_memlets_nested_sdfg(self, parent_sdfg, parent_state, nsdfg_node):
+        """
+        Propagate memlets out of a nested sdfg.
 
-    :param parent_sdfg: The parent SDFG this nested SDFG is in.
-    :param parent_state: The state containing this nested SDFG.
-    :param nsdfg_node: The NSDFG node containing this nested SDFG.
-    :note: This operates in-place on the parent SDFG.
-    """
-    # We import late to avoid cyclic imports here.
-    from dace.transformation.helpers import unsqueeze_memlet
+        :param parent_sdfg: The parent SDFG this nested SDFG is in.
+        :param parent_state: The state containing this nested SDFG.
+        :param nsdfg_node: The NSDFG node containing this nested SDFG.
+        :note: This operates in-place on the parent SDFG.
+        """
+        # We import late to avoid cyclic imports here.
+        from dace.transformation.helpers import unsqueeze_memlet
 
-    # Build a map of connectors to associated 'border' memlets inside
-    # the nested SDFG. This map will be populated with memlets once they
-    # get propagated in the SDFG.
-    border_memlets = {
-        'in': {},
-        'out': {},
-    }
-    for connector in nsdfg_node.in_connectors:
-        border_memlets['in'][connector] = None
-    for connector in nsdfg_node.out_connectors:
-        border_memlets['out'][connector] = None
+        # Build a map of connectors to associated 'border' memlets inside
+        # the nested SDFG. This map will be populated with memlets once they
+        # get propagated in the SDFG.
+        border_memlets = {
+            'in': {},
+            'out': {},
+        }
+        for connector in nsdfg_node.in_connectors:
+            border_memlets['in'][connector] = None
+        for connector in nsdfg_node.out_connectors:
+            border_memlets['out'][connector] = None
 
-    sdfg = nsdfg_node.sdfg
-    outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
+        sdfg: dace.SDFG = nsdfg_node.sdfg
+        outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
+        # TODO: change this later to merge branches with full writes whose path conditions form a tautology 
 
-    # For each state, go through all access nodes corresponding to any in- or
-    # out-connectors to and from this SDFG. Given those access nodes, collect
-    # the corresponding memlets and use them to calculate the memlet volume and
-    # subset corresponding to the outside memlet attached to that connector.
-    # This is passed out via `border_memlets` and propagated along from there.
-    for state in sdfg.nodes():
-        for node in state.data_nodes():
-            for direction in border_memlets:
-                if (node.label not in border_memlets[direction]):
-                    continue
+        # add dummy state as a sink
+        dummy_sink = sdfg.add_state("dummy_state")
+        for sink_node in sdfg.sink_nodes():
+            if not sink_node is dummy_sink:
+                sdfg.add_edge(sink_node, dummy_sink, dace.sdfg.InterstateEdge())
+        
+        # get all the nodes that are executed unconditionally in the cfg a.k.a nodes that dominate the sink states
+        dominators = cfg.all_dominators(sdfg)
+        states = dominators[dummy_sink]
 
-                memlet = border_memlets[direction][node.label]
+        # remove dummy state 
+        sdfg.remove_node(dummy_sink)
+        
 
-                # Collect the edges to/from this access node, depending on the
-                # direction the connector leads in.
-                edges = []
-                if direction == 'in':
-                    edges = state.out_edges(node)
-                elif direction == 'out':
-                    edges = state.in_edges(node)
 
-                # Collect all memlets belonging to this access node, and
-                # accumulate the total volume between them.
-                memlets = []
-                for edge in edges:
-                    inside_memlet = edge.data
-                    memlets.append(inside_memlet)
+        # For each state, go through all access nodes corresponding to any in- or
+        # out-connectors to and from this SDFG. Given those access nodes, collect
+        # the corresponding memlets and use them to calculate the memlet volume and
+        # subset corresponding to the outside memlet attached to that connector.
+        # This is passed out via `border_memlets` and propagated along from there.
+        for state in states:
+            for node in state.data_nodes():
+                for direction in border_memlets:
+                    if (node.label not in border_memlets[direction]):
+                        continue
+
+                    memlet = border_memlets[direction][node.label]
+
+                    # Collect the edges to/from this access node, depending on the
+                    # direction the connector leads in.
+                    edges = []
+                    if direction == 'in':
+                        edges = state.out_edges(node)
+                    elif direction == 'out':
+                        edges = state.in_edges(node)
+
+                    # Collect all memlets belonging to this access node, and
+                    # accumulate the total volume between them.
+                    memlets = []
+                    for edge in edges:
+                        inside_memlet = approximation_dict[edge].data
+                        memlets.append(inside_memlet)
+
+                        if memlet is None:
+                            # Use the first encountered memlet as a 'border' memlet
+                            # and accumulate the sum on it.
+                            memlet = Memlet(data=inside_memlet.data, volume=0)
+                            memlet._is_data_src = True
+                            border_memlets[direction][node.label] = memlet
+
+                    # Given all of this access nodes' memlets, propagate the subset
+                    # according to the state's variable ranges.
+                    if len(memlets) > 0:
+                        params = []
+                        ranges = []
+                        for symbol in state.ranges:
+                            params.append(symbol)
+                            ranges.append(state.ranges[symbol][0])
+
+                        if len(params) == 0 or len(ranges) == 0:
+                            params = ['__dace_dummy']
+                            ranges = [(0, 0, 1)]
+
+                        # Propagate the subset based on the direction this memlet is
+                        # pointing. If we're accessing from an incoming connector,
+                        # propagate the source subset, if we're going to an outgoing
+                        # connector, propagate the destination subset.
+                        use_dst = False
+                        if direction == 'out':
+                            use_dst = True
+                        array = sdfg.arrays[node.label]
+                        subset = self.propagate_subset(memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
+
+                        # If the border memlet already has a set range, compute the
+                        # union of the ranges to merge the subsets.
+                        if memlet.subset is not None:
+                            if memlet.subset.dims() != subset.dims():
+                                raise ValueError('Cannot merge subset ranges of unequal dimension!')
+                            else:
+                                memlet.subset = subsets.list_union(memlet.subset, subset)
+                        else:
+                            memlet.subset = subset
+
+            if state in loop_write_dict.keys():
+                for node_label, loop_memlet in loop_write_dict[state].items():
+                    memlet = border_memlets["out"][node_label]
 
                     if memlet is None:
                         # Use the first encountered memlet as a 'border' memlet
                         # and accumulate the sum on it.
-                        memlet = Memlet(data=inside_memlet.data, volume=0)
+                        memlet = Memlet(data=loop_memlet.data, volume=0)
                         memlet._is_data_src = True
-                        border_memlets[direction][node.label] = memlet
+                        border_memlets["out"][node_label] = memlet
 
-                    if inside_memlet.wcr is not None:
-                        if (memlet.wcr is not None and memlet.wcr != inside_memlet.wcr):
-                            warnings.warn('Memlet appears with more than one type of write-conflict resolution.')
-                        memlet.wcr = inside_memlet.wcr
-
-                    if memlet.dynamic and memlet.volume == 0:
-                        # Dynamic unbounded - this won't change.
-                        continue
-                    elif ((inside_memlet.dynamic and inside_memlet.volume == 0)
-                          or (state.dynamic_executions and state.executions == 0)):
-                        # At least one dynamic unbounded memlet means the sum
-                        # must be dynamic unbounded.
-                        memlet.dynamic = True
-                        memlet.volume = 0
-                    else:
-                        memlet.volume += (inside_memlet.volume * state.executions)
-                        memlet.dynamic = (memlet.dynamic or inside_memlet.dynamic or state.dynamic_executions)
-
-                # Given all of this access nodes' memlets, propagate the subset
-                # according to the state's variable ranges.
-                if len(memlets) > 0:
                     params = []
                     ranges = []
                     for symbol in state.ranges:
@@ -1023,11 +1128,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                     # pointing. If we're accessing from an incoming connector,
                     # propagate the source subset, if we're going to an outgoing
                     # connector, propagate the destination subset.
-                    use_dst = False
-                    if direction == 'out':
-                        use_dst = True
-                    array = sdfg.arrays[node.label]
-                    subset = propagate_subset(memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
+                    use_dst = True
+                    array = sdfg.arrays[node_label]
+                    subset = self.propagate_subset([loop_memlet], array, params, subsets.Range(ranges), use_dst=use_dst).subset
 
                     # If the border memlet already has a set range, compute the
                     # union of the ranges to merge the subsets.
@@ -1035,446 +1138,712 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                         if memlet.subset.dims() != subset.dims():
                             raise ValueError('Cannot merge subset ranges of unequal dimension!')
                         else:
-                            memlet.subset = subsets.union(memlet.subset, subset)
-                            if memlet.subset is None:
-                                memlet.subset = subsets.Range.from_array(array)
+                            memlet.subset = subsets.list_union(memlet.subset, subset)
+                    else:
+                        memlet.subset = subset
+                    
+
+
+
+        # Make sure any potential NSDFG symbol mapping is correctly reversed
+        # when propagating out.
+        for direction in border_memlets:
+            for connector in border_memlets[direction]:
+                border_memlet = border_memlets[direction][connector]
+                if border_memlet is not None:
+                    border_memlet.replace(nsdfg_node.symbol_mapping)
+
+                    # Also make sure that there's no symbol in the border memlet's
+                    # range that only exists inside the nested SDFG. If that's the
+                    # case, use an empty set to stay correct.
+
+                    if border_memlet.src_subset is not None:
+                        if isinstance(border_memlet.src_subset, subsets.Subsetlist):
+                            _subsets = border_memlet.src_subset.subset_list
+                        else:
+                            _subsets = [border_memlet.src_subset]
+                        for subset in _subsets:
+                            for i, rng in enumerate(subset):
+                                fall_back = False
+                                for item in rng:
+                                    if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                        fall_back = True
+                                        break
+                                if fall_back:
+                                    subset = None
+                                    break
+                    if border_memlet.dst_subset is not None:
+                        if isinstance(border_memlet.dst_subset, subsets.Subsetlist):
+                            _subsets = border_memlet.dst_subset.subset_list
+                        else:
+                            _subsets = [border_memlets.dst_subset]
+                        for subset in _subsets:
+                            for i, rng in enumerate(subset):
+                                fall_back = False
+                                for item in rng:
+                                    if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                        fall_back = True
+                                        break
+                                if fall_back:
+                                    subset = None
+                                    break
+
+        # TODO: Make sure that this makes sense, especially the part in the try clause
+        # TODO: if oedge has no corresponding border memlet assign empty memlet to it. 
+        # TODO: Verify: Is this correct? What if there is nestedSDFG <--> nestedSDFG
+
+        # Propagate the inside 'border' memlets outside the SDFG by
+        # offsetting, and unsqueezing if necessary.
+        for edge in parent_state.in_edges(nsdfg_node):
+            iedge = approximation_dict[edge]
+            if iedge.dst_conn in border_memlets['in']:
+                internal_memlet = border_memlets['in'][iedge.dst_conn]
+                # iterate over all the subset in the Subsetlist of internal
+                if internal_memlet is None:
+                    iedge.data.subset = None
+                    iedge.data.src_subset = None
+                    approximation_dict[edge] = iedge
+                    continue
+                if isinstance(internal_memlet.subset, subsets.Subsetlist):
+                    _subsets = internal_memlet.subset.subset_list
+                else:
+                    _subsets = [internal_memlet.subset]
+
+                if isinstance(iedge.data.subset, subsets.Subsetlist):
+                    iedge.data.subset = iedge.data.subset.subset_list[0]
+                if isinstance(iedge.data.dst_subset, subsets.Subsetlist):
+                    iedge.data.dst_subset = iedge.data.dst_subset.subset_list[0]
+                if isinstance(iedge.data.src_subset, subsets.Subsetlist):
+                    iedge.data.src_subset = iedge.data.src_subset.subset_list[0]
+                
+                tmp_memlet = Memlet(
+                    data = internal_memlet.data,
+                    subset = internal_memlet.subset,
+                    other_subset= internal_memlet.other_subset,
+                    volume = internal_memlet.volume,
+                    dynamic=internal_memlet.dynamic,
+                    wcr=internal_memlet.wcr,
+                    wcr_nonatomic=internal_memlet.wcr_nonatomic,
+                    allow_oob=internal_memlet.allow_oob
+                )
+
+                for j, subset in enumerate(_subsets):
+                    if subset is None:
+                        continue
+                    tmp_memlet.subset = subset
+                    try:
+                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, iedge.data, False)
+                        # If no appropriate memlet found, use array dimension
+                        for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
+                            if rng[1] + 1 == s:
+                                unsqueezed_memlet.subset[i] = (unsqueezed_memlet.subset[i][0], s - 1, 1)
+                            if symbolic.issymbolic(unsqueezed_memlet.volume):
+                                if any(str(s) not in outer_symbols for s in unsqueezed_memlet.volume.free_symbols):
+                                    unsqueezed_memlet.subset = None
+                                    break
+                        subset = unsqueezed_memlet.subset
+                    except (ValueError, NotImplementedError):
+                        # In any case of memlets that cannot be unsqueezed fall back to empty subset
+                        subset = None
+                    _subsets[j] = subset
+                iedge.data = unsqueezed_memlet
+                iedge.data.subset = subsets.Subsetlist(_subsets)
+                approximation_dict[edge] = iedge
+                
+        for edge in parent_state.out_edges(nsdfg_node):
+            oedge = approximation_dict[edge]
+            if oedge.src_conn in border_memlets['out']:
+                internal_memlet = border_memlets['out'][oedge.src_conn]
+
+                if internal_memlet is None:
+                    oedge.data.subset = None
+                    oedge.data.dst_subset = None
+                    approximation_dict[edge] = oedge
+                    continue
+                if isinstance(internal_memlet.subset, subsets.Subsetlist):
+                    _subsets = internal_memlet.subset.subset_list
+                else:
+                    _subsets = [internal_memlet.subset]
+
+                if isinstance(oedge.data.subset, subsets.Subsetlist):
+                    oedge.data.subset = oedge.data.subset.subset_list[0]
+                if isinstance(oedge.data.dst_subset, subsets.Subsetlist):
+                    oedge.data.dst_subset = oedge.data.dst_subset.subset_list[0]
+                if isinstance(oedge.data.src_subset, subsets.Subsetlist):
+                    oedge.data.src_subset = oedge.data.src_subset.subset_list[0]
+                    
+                tmp_memlet = Memlet(
+                    data = internal_memlet.data,
+                    subset = internal_memlet.subset,
+                    other_subset= internal_memlet.other_subset,
+                    volume = internal_memlet.volume,
+                    dynamic=internal_memlet.dynamic,
+                    wcr=internal_memlet.wcr,
+                    wcr_nonatomic=internal_memlet.wcr_nonatomic,
+                    allow_oob=internal_memlet.allow_oob
+                )
+
+                for j, subset in enumerate(_subsets):
+                    if subset is None:
+                        continue
+                    tmp_memlet.subset = subset
+                    try:
+                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, oedge.data, False)
+                        # If no appropriate memlet found, use array dimension
+                        for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
+                            if rng[1] + 1 == s:
+                                unsqueezed_memlet.subset[i] = (unsqueezed_memlet.subset[i][0], s - 1, 1)
+                            if symbolic.issymbolic(unsqueezed_memlet.volume):
+                                if any(str(s) not in outer_symbols for s in unsqueezed_memlet.volume.free_symbols):
+                                    unsqueezed_memlet.subset = None
+                        subset = unsqueezed_memlet.subset
+                    except (ValueError, NotImplementedError):
+                        # In any case of memlets that cannot be unsqueezed (i.e.,
+                        # reshapes), use dynamic unbounded memlets.
+                        subset = None
+                    _subsets[j] = subset
+                oedge.data = unsqueezed_memlet
+                oedge.data.subset = subsets.Subsetlist(_subsets)
+                approximation_dict[edge] = oedge
+
+
+    def reset_state_annotations(self, sdfg):
+        """ Resets the state (loop-related) annotations of an SDFG.
+
+            :note: This operation is shallow (does not go into nested SDFGs).
+        """
+        for state in sdfg.nodes():
+            state.executions = 0
+            state.dynamic_executions = True
+            state.ranges = {}
+            state.condition_edge = None
+            state.is_loop_guard = False
+            state.itervar = None
+
+
+    def propagate_memlets_sdfg(self, sdfg):
+        """ Propagates memlets throughout an entire given SDFG. 
+        
+            :note: This is an in-place operation on the SDFG.
+        """
+        # Reset previous annotations first
+        #TODO: This is important for the loop analysis. Is just running this again OK?
+        self.reset_state_annotations(sdfg)
+
+        for state in sdfg.nodes():
+            self.propagate_memlets_state(sdfg, state)
+
+
+        loops = self._annotate_loop_ranges(sdfg,[])
+        loop_dict.update(loops)
+
+        
+        self.propagate_memlet_loop(sdfg, loops)
+
+
+        # TODO: Since we are not interested in the number of executions this is probably not necessary,
+        # but the loop annotation is definitely helpful
+        self.propagate_states(sdfg)
+
+    def propagate_memlet_loop(self, sdfg, loops: dict, loopheader:SDFGState = None):
+        # for each state in the loop body
+            # propagate each memlet out of the loop and store it in a border memlet similar to a nested sdfg
+            # maybe in a map that maps loop heads to border memlets
+            # if the state is again a loop head nested in the current loop
+                # call propagate_memlet_loop on the nested loop
+
+        # difference to propagate_memlets_nested_sdfg is that there are no border memlets
+        
+        if not loops:
+            return
+        # No loopheader was passed as an argument so we find the outermost loop
+
+        if loopheader == None:
+            top_loopheaders = []
+            for current_loop_header, current_loop in loops.items():
+                for other_loop_header, other_loop in loops.items():
+                    if other_loop_header is current_loop_header:
+                        continue
+                    _, _, other_loop_states, _, _ = other_loop
+                    if current_loop_header in other_loop_states:
+                        break
+                else:
+                    top_loopheaders.append(current_loop_header)
+
+        
+            if not top_loopheaders:
+                return
+            
+            for loopheader in top_loopheaders:
+                self.propagate_memlet_loop(sdfg, loops, loopheader)
+
+            return
+        
+
+        
+        current_loop = loops[loopheader]
+        begin, last_loop_state, loop_states, itvar, rng = current_loop
+        border_memlets = defaultdict(None)
+        ignore = []
+
+        # TODO: Only iterate over states that are executed unconditionally for now
+
+        for state in loop_states:
+            if state in loops.keys():
+                self.propagate_memlet_loop(sdfg, loops, state)
+                _, _, nested_loop_states, _, _ = loops[state]
+                ignore += nested_loop_states
+
+            if state in ignore:
+                continue
+            # iterate over the data_nodes that are actually in the current state
+            # plus the data_nodes that are overwritten in the corresponding loop body
+            # if the state is a loop header
+            # do i want accessNodes as the keys of the returned dictionary from loop_write_dict?
+
+            # iterate over acccessnodes in the state
+            for node in state.data_nodes():
+                # no writes associated with this access node
+                if state.in_degree(node) == 0:
+                    continue
+
+                edges = state.in_edges(node)
+                memlet = border_memlets.get(node.label)
+                memlets = []
+
+                # collect all the subsets of the incoming memlets for the current access node
+                for edge in edges:
+                    # TODO: ignore subsets that do not contain the iteration variable of the current loop
+                    inside_memlet = copy.copy(approximation_dict[edge].data)
+                    if isinstance(inside_memlet.subset, subsets.Subsetlist):
+                        filtered_subsets = [s for s in inside_memlet.subset.subset_list if itvar in s.free_symbols]
+                    else:
+                        filtered_subsets = [s for s in [inside_memlet.subset] if itvar in s.free_symbols]
+
+                    if not filtered_subsets:
+                        continue
+
+                    inside_memlet.subset = subsets.Subsetlist(filtered_subsets)
+                    memlets.append(inside_memlet)
+                
+                    if memlet is None:
+                        # Use the first encountered memlet as a 'border' memlet
+                        # and accumulate the sum on it.
+                        memlet = Memlet(data=inside_memlet.data, volume=0)
+                        memlet._is_data_src = True
+                        border_memlets[node.label] = memlet
+                    
+
+
+                if len(memlets) > 0:
+                    params = [itvar]
+                    ranges = [rng]
+
+                    # TODO: Is this even necessary. Can't hurt i guess
+                    if len(params) == 0 or len(ranges) == 0:
+                        params = ['__dace_dummy']
+                        ranges = [(0, 0, 1)]
+
+                    use_dst = True
+                    array = sdfg.arrays[node.label]
+                    subset = self.propagate_subset(memlets, array, params, rng, use_dst=use_dst).subset
+
+                    # If the border memlet already has a set range, compute the
+                    # union of the ranges to merge the subsets.
+                    if memlet.subset is not None:
+                        if memlet.subset.dims() != subset.dims():
+                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
+                        else:
+                            memlet.subset = subsets.list_union(memlet.subset, subset)
                     else:
                         memlet.subset = subset
 
-    # Make sure any potential NSDFG symbol mapping is correctly reversed
-    # when propagating out.
-    for direction in border_memlets:
-        for connector in border_memlets[direction]:
-            border_memlet = border_memlets[direction][connector]
-            if border_memlet is not None:
-                border_memlet.replace(nsdfg_node.symbol_mapping)
-
-                # Also make sure that there's no symbol in the border memlet's
-                # range that only exists inside the nested SDFG. If that's the
-                # case, use the entire range.
-                if border_memlet.src_subset is not None:
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.src_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.src_subset[i] = fallback_subset[i]
-                if border_memlet.dst_subset is not None:
-                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                    for i, rng in enumerate(border_memlet.dst_subset):
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            border_memlet.dst_subset[i] = fallback_subset[i]
-
-    # Propagate the inside 'border' memlets outside the SDFG by
-    # offsetting, and unsqueezing if necessary.
-    for iedge in parent_state.in_edges(nsdfg_node):
-        if iedge.dst_conn in border_memlets['in']:
-            internal_memlet = border_memlets['in'][iedge.dst_conn]
-            if internal_memlet is None:
+            if state not in loop_write_dict.keys():
                 continue
-            try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        iedge.data.subset[i] = (iedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(iedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in iedge.data.volume.free_symbols):
-                            iedge.data.volume = 0
-                            iedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                iedge.data.volume = 0
-                iedge.data.dynamic = True
-    for oedge in parent_state.out_edges(nsdfg_node):
-        if oedge.src_conn in border_memlets['out']:
-            internal_memlet = border_memlets['out'][oedge.src_conn]
-            if internal_memlet is None:
-                continue
-            try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
-                # If no appropriate memlet found, use array dimension
-                for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
-                    if rng[1] + 1 == s:
-                        oedge.data.subset[i] = (oedge.data.subset[i][0], s - 1, 1)
-                    if symbolic.issymbolic(oedge.data.volume):
-                        if any(str(s) not in outer_symbols for s in oedge.data.volume.free_symbols):
-                            oedge.data.volume = 0
-                            oedge.data.dynamic = True
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use dynamic unbounded memlets.
-                oedge.data.volume = 0
-                oedge.data.dynamic = True
+            # iterate over the accessnodes in the loopheader dict
+            for node_label, border_memlet in loop_write_dict[state].items():
+
+                if isinstance(border_memlet.subset, subsets.Subsetlist):
+                    filtered_subsets = [s for s in border_memlet.subset.subset_list if itvar in s.free_symbols]
+                else:
+                    filtered_subsets = [s for s in [border_memlet.subset] if itvar in s.free_symbols]
+
+                if not filtered_subsets:
+                    continue
+                
+                border_memlet.subset = subsets.Subsetlist(filtered_subsets)
+                    
 
 
-def reset_state_annotations(sdfg):
-    """ Resets the state (loop-related) annotations of an SDFG.
+                memlet = border_memlets.get(node_label)
+                if memlet is None:
+                    # Use the first encountered memlet as a 'border' memlet
+                    # and accumulate the sum on it.
+                    memlet = Memlet(data=border_memlet.data, volume=0)
+                    memlet._is_data_src = True
+                    border_memlets[node_label] = memlet
 
-        :note: This operation is shallow (does not go into nested SDFGs).
-    """
-    for state in sdfg.nodes():
-        state.executions = 0
-        state.dynamic_executions = True
-        state.ranges = {}
-        state.condition_edge = None
-        state.is_loop_guard = False
-        state.itervar = None
+                params = [itvar]
+                ranges = [rng]
 
+                if len(params) == 0 or len(ranges) == 0:
+                    params = ['__dace_dummy']
+                    ranges = [(0, 0, 1)]
 
-def propagate_memlets_sdfg(sdfg):
-    """ Propagates memlets throughout an entire given SDFG. 
-    
-        :note: This is an in-place operation on the SDFG.
-    """
-    # Reset previous annotations first
-    #TODO: eliminate effects on the SDFG that reset_state_annotations causes
-    reset_state_annotations(sdfg)
+                use_dst = True
+                array = sdfg.arrays[node_label]
+                subset = self.propagate_subset([border_memlet], array, params, rng, use_dst=use_dst).subset
 
-    for state in sdfg.nodes():
-        propagate_memlets_state(sdfg, state)
-
-    propagate_states(sdfg)
-
-
-def propagate_memlets_state(sdfg, state):
-    """ Propagates memlets throughout one SDFG state.
-
-        :param sdfg: The SDFG in which the state is situated.
-        :param state: The state to propagate in.
-        :note: This is an in-place operation on the SDFG state.
-    """
-    # Algorithm:
-    # 1. Start propagating information from tasklets outwards (their edges
-    #    are hardcoded).
-    #    NOTE: This process can be performed in parallel.
-    # 2. Traverse the neighboring nodes (topological sort, first forward to
-    #    outputs and then backward to inputs).
-    #    There are four possibilities:
-    #    a. If the neighboring node is a tasklet, skip (such edges are
-    #       immutable)
-    #    b. If the neighboring node is an array, make sure it is the correct
-    #       array. Otherwise, throw a mismatch exception.
-    #    c. If the neighboring node is a scope node, and its other edges are
-    #       not set, set the results per-array, using the union of the
-    #       obtained ranges in the previous depth.
-    #    d. If the neighboring node is a scope node, and its other edges are
-    #       already set, verify the results per-array, using the union of the
-    #       obtained ranges in the previous depth.
-    #    NOTE: The SDFG creation process ensures that all edges in the
-    #          multigraph are tagged with the appropriate array. In any case
-    #          of ambiguity, the function raises an exception.
-    # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
-    #    Accumulate information about each array in the target node.
-
-    # First, propagate nested SDFGs in a bottom-up fashion
-    for node in state.nodes():
-        if isinstance(node, nodes.NestedSDFG):
-
-            # Propagate memlets inside the nested SDFG.
-            propagate_memlets_sdfg(node.sdfg)
-
-            # Propagate memlets out of the nested SDFG.
-            propagate_memlets_nested_sdfg(sdfg, state, node)
-
-    # Process scopes from the leaves upwards
-    propagate_memlets_scope(sdfg, state, state.scope_leaves())
+                # If the border memlet already has a set range, compute the
+                # union of the ranges to merge the subsets.
+                if memlet.subset is not None:
+                    if memlet.subset.dims() != subset.dims():
+                        raise ValueError('Cannot merge subset ranges of unequal dimension!')
+                    else:
+                        memlet.subset = subsets.list_union(memlet.subset, subset)
+                else:
+                    memlet.subset = subset
+        
+        loop_write_dict[loopheader] = border_memlets
 
 
-def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
-    """ 
-    Propagate memlets from the given scopes outwards. 
+    def propagate_memlets_state(self, sdfg, state):
+        """ Propagates memlets throughout one SDFG state.
 
-    :param sdfg: The SDFG in which the scopes reside.
-    :param state: The SDFG state in which the scopes reside.
-    :param scopes: The ScopeTree object or a list thereof to start from.
-    :param propagate_entry: If False, skips propagating out of the scope entry node.
-    :param propagate_exit: If False, skips propagating out of the scope exit node.
-    :note: This operation is performed in-place on the given SDFG.
-    """
-    from dace.sdfg.scope import ScopeTree
+            :param sdfg: The SDFG in which the state is situated.
+            :param state: The state to propagate in.
+            :note: This is an in-place operation on the SDFG state.
+        """
+        # Algorithm:
+        # 1. Start propagating information from tasklets outwards (their edges
+        #    are hardcoded).
+        #    NOTE: This process can be performed in parallel.
+        # 2. Traverse the neighboring nodes (topological sort, first forward to
+        #    outputs and then backward to inputs).
+        #    There are four possibilities:
+        #    a. If the neighboring node is a tasklet, skip (such edges are
+        #       immutable)
+        #    b. If the neighboring node is an array, make sure it is the correct
+        #       array. Otherwise, throw a mismatch exception.
+        #    c. If the neighboring node is a scope node, and its other edges are
+        #       not set, set the results per-array, using the union of the
+        #       obtained ranges in the previous depth.
+        #    d. If the neighboring node is a scope node, and its other edges are
+        #       already set, verify the results per-array, using the union of the
+        #       obtained ranges in the previous depth.
+        #    NOTE: The SDFG creation process ensures that all edges in the
+        #          multigraph are tagged with the appropriate array. In any case
+        #          of ambiguity, the function raises an exception.
+        # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
+        #    Accumulate information about each array in the target node.
 
-    if isinstance(scopes, ScopeTree):
-        scopes_to_process = [scopes]
-    else:
-        scopes_to_process = scopes
+        # First, propagate nested SDFGs in a bottom-up fashion
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
 
-    next_scopes = set()
+                # Propagate memlets inside the nested SDFG.
+                self.propagate_memlets_sdfg(node.sdfg)
 
-    # Process scopes from the inputs upwards, propagating edges at the
-    # entry and exit nodes
-    while len(scopes_to_process) > 0:
-        for scope in scopes_to_process:
-            if scope.entry is None:
-                continue
+                # Propagate memlets out of the nested SDFG.
+                self.propagate_memlets_nested_sdfg(sdfg, state, node)
 
-            # Propagate out of entry
-            if propagate_entry:
-                _propagate_node(state, scope.entry)
+        # Process scopes from the leaves upwards
+        self.propagate_memlets_scope(sdfg, state, state.scope_leaves())
 
-            # Propagate out of exit
-            if propagate_exit:
-                _propagate_node(state, scope.exit)
 
-            # Add parent to next frontier
-            next_scopes.add(scope.parent)
-        scopes_to_process = next_scopes
+    def propagate_memlets_scope(self, sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
+        """ 
+        Propagate memlets from the given scopes outwards. 
+
+        :param sdfg: The SDFG in which the scopes reside.
+        :param state: The SDFG state in which the scopes reside.
+        :param scopes: The ScopeTree object or a list thereof to start from.
+        :param propagate_entry: If False, skips propagating out of the scope entry node.
+        :param propagate_exit: If False, skips propagating out of the scope exit node.
+        :note: This operation is performed in-place on the given SDFG.
+        """
+        from dace.sdfg.scope import ScopeTree
+
+        if isinstance(scopes, ScopeTree):
+            scopes_to_process = [scopes]
+        else:
+            scopes_to_process = scopes
+
         next_scopes = set()
 
+        # Process scopes from the inputs upwards, propagating edges at the
+        # entry and exit nodes
+        while len(scopes_to_process) > 0:
+            for scope in scopes_to_process:
+                if scope.entry is None:
+                    continue
 
-def _propagate_node(dfg_state, node):
-    if isinstance(node, nodes.EntryNode):
-        internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
-        external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
-        geticonn = lambda e: e.src_conn[4:]
-        geteconn = lambda e: e.dst_conn[3:]
-        use_dst = False
-    else:
-        internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
-        external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
-        geticonn = lambda e: e.dst_conn[3:]
-        geteconn = lambda e: e.src_conn[4:]
-        use_dst = True
+                # TODO: Maybe only propagate in one direction since we are only interested in writes
+                # Propagate out of entry
+                if propagate_entry:
+                    self._propagate_node(state, scope.entry)
 
-    for edge in external_edges:
-        if edge.data.is_empty():
-            new_memlet = Memlet()
+                # Propagate out of exit
+                if propagate_exit:
+                    self._propagate_node(state, scope.exit)
+
+                # Add parent to next frontier
+                next_scopes.add(scope.parent)
+            scopes_to_process = next_scopes
+            next_scopes = set()
+
+
+    def _propagate_node(self, dfg_state, node):
+        if isinstance(node, nodes.EntryNode):
+            internal_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
+            external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
+            geticonn = lambda e: e.src_conn[4:]
+            geteconn = lambda e: e.dst_conn[3:]
+            use_dst = False
         else:
-            internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
-            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
-        edge.data = new_memlet
+            internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
+            external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
+            geticonn = lambda e: e.dst_conn[3:]
+            geteconn = lambda e: e.src_conn[4:]
+            use_dst = True
+
+        # TODO: generalize this for subsetLists (?)
+        for edge in external_edges:
+            if approximation_dict[edge].data.is_empty():
+                new_memlet = Memlet()
+            else:
+                internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
+                aligned_memlet = self.align_memlet(dfg_state, internal_edge, dst=use_dst)
+                new_memlet = self.propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
+            approximation_dict[edge].data = new_memlet
 
 
-def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
-    is_src = e.data._is_data_src
-    # Memlet is already aligned
-    if is_src is None or (is_src and not dst) or (not is_src and dst):
-        return e.data
+    def align_memlet(self, state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
+        """Takes Multiconnectoredge in DFG """
 
-    # Data<->Code memlets always have one data container
-    mpath = state.memlet_path(e)
-    if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
-        return e.data
+        is_src = e.data._is_data_src
+        # Memlet is already aligned
+        if is_src is None or (is_src and not dst) or (not is_src and dst):
+            return approximation_dict[e].data
 
-    # Otherwise, find other data container
-    result = copy.deepcopy(e.data)
-    if dst:
-        node = mpath[-1].dst
-    else:
-        node = mpath[0].src
+        # Data<->Code memlets always have one data container
+        mpath = state.memlet_path(e)
+        if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
+            return approximation_dict[e].data
 
-    # Fix memlet fields
-    result.data = node.data
-    result.subset = e.data.other_subset
-    result.other_subset = e.data.subset
-    result._is_data_src = not is_src
-    return result
-
-
-# External API
-def propagate_memlet(dfg_state,
-                     memlet: Memlet,
-                     scope_node: nodes.EntryNode,
-                     union_inner_edges: bool,
-                     arr=None,
-                     connector=None):
-    """ Tries to propagate a memlet through a scope (computes the image of 
-        the memlet function applied on an integer set of, e.g., a map range) 
-        and returns a new memlet object.
-
-        :param dfg_state: An SDFGState object representing the graph.
-        :param memlet: The memlet adjacent to the scope node from the inside.
-        :param scope_node: A scope entry or exit node.
-        :param union_inner_edges: True if the propagation should take other
-                                  neighboring internal memlets within the same
-                                  scope into account.
-    """
-    use_dst = False
-    if isinstance(scope_node, nodes.EntryNode):
-        use_dst = False
-        entry_node = scope_node
-        neighboring_edges = dfg_state.out_edges(scope_node)
-        if connector is not None:
-            neighboring_edges = [e for e in neighboring_edges if e.src_conn and e.src_conn[4:] == connector]
-    elif isinstance(scope_node, nodes.ExitNode):
-        use_dst = True
-        entry_node = dfg_state.entry_node(scope_node)
-        neighboring_edges = dfg_state.in_edges(scope_node)
-        if connector is not None:
-            neighboring_edges = [e for e in neighboring_edges if e.dst_conn and e.dst_conn[3:] == connector]
-    else:
-        raise TypeError('Trying to propagate through a non-scope node')
-    if memlet.is_empty():
-        return Memlet()
-
-    sdfg = dfg_state.parent
-    scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-    defined_vars = [
-        symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
-                                                | sdfg.constants.keys()) if s not in scope_node_symbols
-    ]
-
-    # Find other adjacent edges within the connected to the scope node
-    # and union their subsets
-    if union_inner_edges:
-        aggdata = [e.data for e in neighboring_edges if e.data.data == memlet.data and e.data != memlet]
-    else:
-        aggdata = []
-
-    aggdata.append(memlet)
-
-    if arr is None:
-        if memlet.data not in sdfg.arrays:
-            raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
-
-        # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
-        #        so this test cannot be used
-        # If the data container is not specified on the memlet, use other data
-        # if memlet._is_data_src is not None:
-        #     if use_dst and memlet._is_data_src:
-        #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
-        #     elif not use_dst and not memlet._is_data_src:
-        #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
-
-        arr = sdfg.arrays[memlet.data]
-
-    # Propagate subset
-    if isinstance(entry_node, nodes.MapEntry):
-        mapnode = entry_node.map
-        return propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
-
-    elif isinstance(entry_node, nodes.ConsumeEntry):
-        # Nothing to analyze/propagate in consume
-        new_memlet = copy.copy(memlet)
-        new_memlet.subset = subsets.Range.from_array(arr)
-        new_memlet.other_subset = None
-        new_memlet.volume = 0
-        new_memlet.dynamic = True
-        return new_memlet
-    else:
-        raise NotImplementedError('Unimplemented primitive: %s' % type(entry_node))
-
-
-# External API
-def propagate_subset(memlets: List[Memlet],
-                     arr: data.Data,
-                     params: List[str],
-                     rng: subsets.Subset,
-                     defined_variables: Set[symbolic.SymbolicType] = None,
-                     use_dst: bool = False) -> Memlet:
-    """ Tries to propagate a list of memlets through a range (computes the 
-        image of the memlet function applied on an integer set of, e.g., a 
-        map range) and returns a new memlet object.
-
-        :param memlets: The memlets to propagate.
-        :param arr: Array descriptor for memlet (used for obtaining extents).
-        :param params: A list of variable names.
-        :param rng: A subset with dimensionality len(params) that contains the
-                    range to propagate with.
-        :param defined_variables: A set of symbols defined that will remain the
-                                  same throughout propagation. If None, assumes
-                                  that all symbols outside of `params` have been
-                                  defined.
-        :param use_dst: Whether to propagate the memlets' dst subset or use the
-                        src instead, depending on propagation direction.
-        :return: Memlet with propagated subset and volume.
-    """
-    # Argument handling
-    if defined_variables is None:
-        # Default defined variables is "everything but params"
-        defined_variables = set()
-        defined_variables |= rng.free_symbols
-        for memlet in memlets:
-            defined_variables |= memlet.free_symbols
-        defined_variables -= set(params)
-        defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
-
-    # Propagate subset
-    variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
-
-    new_subset = None
-    for md in memlets:
-        if md.is_empty():
-            continue
-
-        tmp_subset = None
-
-        subset = None
-        if use_dst and md.dst_subset is not None:
-            subset = md.dst_subset
-        elif not use_dst and md.src_subset is not None:
-            subset = md.src_subset
+        # Otherwise, find other data container
+        result = copy.deepcopy(approximation_dict[e].data)
+        if dst:
+            node = mpath[-1].dst
         else:
-            subset = md.subset
+            node = mpath[0].src
 
-        for pclass in MemletPattern.extensions():
-            pattern = pclass()
-            if pattern.can_be_applied([subset], variable_context, rng, [md]):
-                tmp_subset = pattern.propagate(arr, [subset], rng)
+        # Fix memlet fields
+        result.data = node.data
+        result.subset = approximation_dict[e].data.other_subset
+        result.other_subset = approximation_dict[e].data.subset
+        result._is_data_src = not is_src
+        return result
+
+
+    # External API
+    def propagate_memlet(self, dfg_state,
+                        memlet: Memlet,
+                        scope_node: nodes.EntryNode,
+                        union_inner_edges: bool,
+                        arr=None,
+                        connector=None):
+        """ Tries to propagate a memlet through a scope (computes the image of 
+            the memlet function applied on an integer set of, e.g., a map range) 
+            and returns a new memlet object.
+
+            :param dfg_state: An SDFGState object representing the graph.
+            :param memlet: The memlet adjacent to the scope node from the inside.
+            :param scope_node: A scope entry or exit node.
+            :param union_inner_edges: True if the propagation should take other
+                                    neighboring internal memlets within the same
+                                    scope into account.
+        """
+        use_dst = False
+        if isinstance(scope_node, nodes.EntryNode):
+            use_dst = False
+            entry_node = scope_node
+            neighboring_edges = dfg_state.out_edges(scope_node)
+            if connector is not None:
+                neighboring_edges = [e for e in neighboring_edges if e.src_conn and e.src_conn[4:] == connector]
+        elif isinstance(scope_node, nodes.ExitNode):
+            use_dst = True
+            entry_node = dfg_state.entry_node(scope_node)
+            neighboring_edges = dfg_state.in_edges(scope_node)
+            if connector is not None:
+                neighboring_edges = [e for e in neighboring_edges if e.dst_conn and e.dst_conn[3:] == connector]
+        else:
+            raise TypeError('Trying to propagate through a non-scope node')
+        if memlet.is_empty():
+            return Memlet()
+
+        sdfg = dfg_state.parent
+        scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
+        defined_vars = [
+            symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
+                                                    | sdfg.constants.keys()) if s not in scope_node_symbols
+        ]
+
+        # Find other adjacent edges within the connected to the scope node
+        # and union their subsets
+        if union_inner_edges:
+            aggdata = [approximation_dict[e].data for e in neighboring_edges if approximation_dict[e].data.data == memlet.data and approximation_dict[e].data != memlet]
+        else:
+            aggdata = []
+
+        aggdata.append(memlet)
+
+        if arr is None:
+            if memlet.data not in sdfg.arrays:
+                raise KeyError('Data descriptor (Array, Stream) "%s" not defined in SDFG.' % memlet.data)
+
+            # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
+            #        so this test cannot be used
+            # If the data container is not specified on the memlet, use other data
+            # if memlet._is_data_src is not None:
+            #     if use_dst and memlet._is_data_src:
+            #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
+            #     elif not use_dst and not memlet._is_data_src:
+            #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
+
+            arr = sdfg.arrays[memlet.data]
+
+        # Propagate subset
+        if isinstance(entry_node, nodes.MapEntry):
+            mapnode = entry_node.map
+            return self.propagate_subset(aggdata, arr, mapnode.params, mapnode.range, defined_vars, use_dst=use_dst)
+
+        elif isinstance(entry_node, nodes.ConsumeEntry):
+            # Nothing to analyze/propagate in consume
+            new_memlet = copy.copy(memlet)
+            new_memlet.subset = subsets.Range.from_array(arr)
+            new_memlet.other_subset = None
+            new_memlet.volume = 0
+            new_memlet.dynamic = True
+            return new_memlet
+        else:
+            raise NotImplementedError('Unimplemented primitive: %s' % type(entry_node))
+
+
+    # External API
+    def propagate_subset(self, memlets: List[Memlet],
+                        arr: data.Data,
+                        params: List[str],
+                        rng: subsets.Subset,
+                        defined_variables: Set[symbolic.SymbolicType] = None,
+                        use_dst: bool = False) -> Memlet:
+        """ Tries to propagate a list of memlets through a range (computes the 
+            image of the memlet function applied on an integer set of, e.g., a 
+            map range) and returns a new memlet object.
+
+            :param memlets: The memlets to propagate.
+            :param arr: Array descriptor for memlet (used for obtaining extents).
+            :param params: A list of variable names.
+            :param rng: A subset with dimensionality len(params) that contains the
+                        range to propagate with.
+            :param defined_variables: A set of symbols defined that will remain the
+                                    same throughout propagation. If None, assumes
+                                    that all symbols outside of `params` have been
+                                    defined.
+            :param use_dst: Whether to propagate the memlets' dst subset or use the
+                            src instead, depending on propagation direction.
+            :return: Memlet with propagated subset and volume.
+        """
+        # Argument handling
+        if defined_variables is None:
+            # Default defined variables is "everything but params"
+            defined_variables = set()
+            defined_variables |= rng.free_symbols
+            for memlet in memlets:
+                defined_variables |= memlet.free_symbols
+            defined_variables -= set(params)
+            defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+
+        # Propagate subset
+        variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
+
+        new_subset = None
+        # TODO: For each memlet propagate each Subset in the Subsetlist instead of only one subset
+        for md in memlets:
+            if md.is_empty():
+                continue
+
+            _subsets = None
+            if use_dst and md.dst_subset is not None:
+                _subsets = copy.deepcopy(md.dst_subset)
+            elif not use_dst and md.src_subset is not None:
+                _subsets = copy.deepcopy(md.src_subset)
+            else:
+                _subsets = copy.deepcopy(md.subset)
+            
+            if isinstance(_subsets, subsets.Subsetlist):
+                _subsets = _subsets.subset_list
+            else:
+                _subsets = [_subsets]
+            
+            if len(list(set(_subsets) - set([None]))) == 0 or _subsets == None:
                 break
-        else:
-            # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
-            entire_array = subsets.Range.from_array(arr)
-            paramset = set(map(str, params))
-            # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
 
-        # Union edges as necessary
-        if new_subset is None:
-            new_subset = tmp_subset
-        else:
-            old_subset = new_subset
-            new_subset = subsets.union(new_subset, tmp_subset)
+            # iterate over all the subsets in the Subsetlist of the current memlet and
+            # try to apply a memletpattern. If no pattern matches fall back to the empty set
+            for i, subset in enumerate(_subsets):
+                # find a pattern for the current subset
+                for pclass in MemletPattern.extensions():
+                    pattern = pclass()
+                    if pattern.can_be_applied([subset], variable_context, rng, [md]):
+                        subset = pattern.propagate(arr, [subset], rng)
+                        break
+                else:
+                    # No patterns found. Underapproximate the subset with an empty subset (so None)
+                    warnings.warn('Cannot find appropriate memlet pattern to '
+                                'propagate %s through %s' % (str(subset), str(rng)))
+                    subset = None
+                # FIXME: this overwrites the subset in the original edge. Make a deepcopy
+                _subsets[i] = subset
+    
+            # Union edges as necessary
             if new_subset is None:
-                warnings.warn('Subset union failed between %s and %s ' % (old_subset, tmp_subset))
-                break
+                new_subset = subsets.Subsetlist(_subsets)
+            else:
+                old_subset = new_subset
+                new_subset = subsets.list_union(new_subset, subsets.Subsetlist(_subsets))
+                if new_subset is None:
+                    warnings.warn('Subset union failed between %s and %s ' % (old_subset, _subsets))
+                    break
 
-    # Some unions failed
-    if new_subset is None:
-        new_subset = subsets.Range.from_array(arr)
-    ### End of subset propagation
 
-    # Create new memlet
-    new_memlet = copy.copy(memlets[0])
-    new_memlet.subset = new_subset
-    new_memlet.other_subset = None
+        # Create new memlet
+        new_memlet = copy.copy(memlets[0])
+        new_memlet.subset = new_subset
+        new_memlet.other_subset = None
 
-    # Propagate volume:
-    # Number of accesses in the propagated memlet is the sum of the internal
-    # number of accesses times the size of the map range set (unbounded dynamic)
-    new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
-    if any(m.dynamic for m in memlets):
-        new_memlet.dynamic = True
-    elif symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                        for s in new_memlet.volume.free_symbols):
-        new_memlet.dynamic = True
+        # Propagate volume:
+        # We do not care about the volume and if it is dynamic
+        # Number of accesses in the propagated memlet is the sum of the internal
+        # number of accesses times the size of the map range set (unbounded dynamic)
         new_memlet.volume = 0
+        
+        
+        # if any(m.dynamic for m in memlets):
+        #     new_memlet.dynamic = True
+        # elif symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
+        #                                                     for s in new_memlet.volume.free_symbols):
+        #     new_memlet.dynamic = True
+        #     new_memlet.volume = 0
 
-    return new_memlet
+        return new_memlet
 
 
-def _freesyms(expr):
-    """ 
-    Helper function that either returns free symbols for sympy expressions
-    or an empty set if constant.
-    """
-    if isinstance(expr, sympy.Basic):
-        return expr.free_symbols
-    return {}
+    def _freesyms(self, expr):
+        """ 
+        Helper function that either returns free symbols for sympy expressions
+        or an empty set if constant.
+        """
+        if isinstance(expr, sympy.Basic):
+            return expr.free_symbols
+        return {}
