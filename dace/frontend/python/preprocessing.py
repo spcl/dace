@@ -289,7 +289,7 @@ class FindConstants(ast.NodeVisitor):
                 elif target.id in self.constants:
                     self.invalids.add(target.id)
     
-    def visit_AnnAssign(self, node: AnnAssign):
+    def visit_AnnAssign(self, node: ast.AnnAssign):
         return self.visit_Assign(node)
 
 
@@ -317,7 +317,7 @@ class ReplaceConstants(ast.NodeTransformer):
             return node
         return None
     
-    def visit_AnnAssign(self, node: AnnAssign) -> ast.AnnAssign:
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
         return self.visit_Assign(node)
     
     def visit_Name(self, node: ast.Name):
@@ -1633,11 +1633,11 @@ def preprocess_dace_program(f: Callable[..., Any],
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
     
-    constant_finder = FindConstants()
-    constant_finder.visit(src_ast)
-    constants = {k: v for k, v in constant_finder.constants.items() if k not in constant_finder.invalids}
-    src_ast = ReplaceConstants(constants).visit(src_ast)
-    print(astutils.unparse(src_ast))
+    # constant_finder = FindConstants()
+    # constant_finder.visit(src_ast)
+    # constants = {k: v for k, v in constant_finder.constants.items() if k not in constant_finder.invalids}
+    # src_ast = ReplaceConstants(constants).visit(src_ast)
+    # print(astutils.unparse(src_ast))
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
