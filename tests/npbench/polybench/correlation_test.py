@@ -3,6 +3,7 @@
 import dace.dtypes
 import numpy as np
 import dace as dc
+import os
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
@@ -71,7 +72,10 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
         # Parse the SDFG and apply autopot
         sdfg = correlation_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
+        last_value = os.environ.get('DACE_testing_serialization', '0')
+        os.environ['DACE_testing_serialization'] = '0'
         corr = sdfg(float_n, data, M=M, N=N)
+        os.environ['DACE_testing_serialization'] = last_value
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         pass  # Not Yet Implemented
