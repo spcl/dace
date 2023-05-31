@@ -986,7 +986,7 @@ class Subsetlist(Subset):
             # return False if that's not the case for any of the subsets in self
             return False
         else:
-            return all(other.covers(s) for s in self.subset_list)
+            return any(s.covers(other) for s in self.subset_list)
 
     def __str__(self):
         string = ''
