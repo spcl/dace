@@ -48,8 +48,10 @@ class ExpandGemvPure(ExpandTransformation):
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
+        # TODO: Should check if storages are compatible
         if outer_array_a.storage != outer_array_x.storage:
-            raise ValueError("Input matrices must have same storage")
+            # raise ValueError("Input matrices must have same storage")
+            warnings.warn("Input matrices must have same storage")
         storage = outer_array_a.storage
 
         _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=storage)
