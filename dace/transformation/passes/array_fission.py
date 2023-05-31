@@ -144,7 +144,7 @@ class ArrayFission(ppl.Pass):
                         if not isinstance(edge[1], nd.AccessNode):
                             continue
                         if edge[1].data in names:
-                            return edge.dst.data
+                            return edge[1].data
 
             # if there is a phi node for the variable in the same state, return the variable name defined by the phi node
             if phi_nodes[state].get(var):
@@ -276,10 +276,13 @@ class ArrayFission(ppl.Pass):
                 newname = phi_node["name"]
                 parameters = phi_node["variables"]
 
+                candidate_states = set()
                 # check if the phi node belongs to a loopheader that completely overwrites the array and the loop does not read from the array
                 # if so, only rename nodes in the loop body and nodes dominated by the loopheader
                 if (state in loop_write_approximation.keys() and
-                        loop_write_approximation[state][original_var].subset.covers(subsets.Range.from_array(sdfg.arrays[original_var]))):
+                    original_var in loop_write_approximation[state].keys() and
+                    loop_write_approximation[state][original_var].subset.covers(subsets.Range.from_array(sdfg.arrays[original_var]))):
+                    
                     _, _, loop_states, _, _ = loops[state]
 
                     if not any(original_var in access_sets[s][0] for s in loop_states):
@@ -288,7 +291,7 @@ class ArrayFission(ppl.Pass):
 
                 # iterate over all the states that read from the variable and rename the occurences
                 for other_state, (reads, writes) in access_nodes[original_var].items():
-                    if loop_states and other_state not in candidate_states:
+                    if candidate_states and other_state not in candidate_states:
                         continue
                     ans = reads.union(writes)
                     for an in ans:
@@ -298,7 +301,7 @@ class ArrayFission(ppl.Pass):
                 # rename all the occurences in other phi nodes
                 # TODO: restrict the set of states here
                 for other_state, other_phi_dict in phi_nodes.items():
-                    if loop_states and other_state not in candidate_states:
+                    if candidate_states and other_state not in candidate_states:
                         continue
                     if original_var in other_phi_dict.keys():
                         other_phi_node = other_phi_dict[original_var]
@@ -310,7 +313,7 @@ class ArrayFission(ppl.Pass):
                 for parameter in parameters:
                     rename_dict[parameter] = newname
                 for other_state, other_accesses in access_sets.items():
-                    if loop_states and other_state not in candidate_states:
+                    if candidate_states and other_state not in candidate_states:
                         continue
                     if original_var in other_accesses[0]:
                         out_edges = sdfg.out_edges(other_state)
