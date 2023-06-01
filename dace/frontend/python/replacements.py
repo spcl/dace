@@ -694,7 +694,6 @@ def _log(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
 
 @oprepo.replaces('log10')
 @oprepo.replaces('dace.log10')
-@oprepo.replaces('numpy.log10')
 @oprepo.replaces('math.log10')
 def _log10(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log10')
