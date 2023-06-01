@@ -3,7 +3,7 @@ import numpy as np
 import dace
 from common import compare_numpy_output
 import math
-from numpy import exp, sin, cos, sqrt, log, conj, real, imag
+from numpy import exp, sin, cos, sqrt, log, log10, conj, real, imag
 import pytest
 
 M, N = 24, 24
@@ -32,6 +32,11 @@ def test_square_root(A: dace.complex64[M, N]):
 @compare_numpy_output(non_zero=True, positive=True)
 def test_logarithm(A: dace.complex64[M, N]):
     return log(A)
+
+
+@compare_numpy_output(non_zero=True, positive=True)
+def test_log10(A: dace.complex64[M, N]):
+    return log10(A)
 
 
 @compare_numpy_output()
@@ -159,6 +164,7 @@ if __name__ == '__main__':
     test_cosine()
     test_square_root()
     test_logarithm()
+    test_log10()
     test_conjugate()
     test_real_part()
     test_imag_part()
