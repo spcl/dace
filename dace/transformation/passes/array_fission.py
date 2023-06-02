@@ -228,10 +228,7 @@ class ArrayFission(ppl.Pass):
                     # check if there is a parallel write or read to/from the same array in the same state
                     # if so we cannot introduce a new variable
                     iedges = current_state.in_edges(node)
-                    if (any(write_approximation[e].data.subset.covers(array_set) for e in iedges) and
-                        not any(
-                            not (nx.has_path(current_state.nx, node, other_node) or
-                                 nx.has_path(current_state.nx, other_node, node)) for other_node in access_nodes[var][current_state][1])):
+                    if (any(write_approximation[e].data.subset.covers(array_set) for e in iedges)):
 
                         # rename the variable to the reaching definition
                         newdesc = desc.clone()
@@ -319,10 +316,11 @@ class ArrayFission(ppl.Pass):
                         out_edges = sdfg.out_edges(other_state)
                         for oedge in out_edges:
                             oedge.data.replace_dict(rename_dict)
-
-                definitions[original_var] -= definitions[original_var] - \
+                for parameter in parameters:
+                    sdfg.remove_data(parameter)
+                definitions[original_var] = definitions[original_var] - \
                     set(parameters)
-
+                
         import pprint
         print("phi_nodes")
         pprint.pprint(phi_nodes)
