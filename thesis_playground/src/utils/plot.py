@@ -264,16 +264,6 @@ def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tup
     ax.grid()
 
 
-def set_general_plot_style():
-    """
-    Sets style and other settings for matplotlib
-    """
-    plt.rcParams.update({'figure.figsize': (19, 10)})
-    plt.rcParams.update({'font.size': 12})
-    sns.set_style('whitegrid')
-    sns.set_palette('pastel')
-
-
 def save_plot(path: str):
     """
     Saves the current plot into the given filepath. Makes sure that all folders are created and prints a message where
@@ -297,3 +287,27 @@ def rotate_xlabels(ax: matplotlib.axis.Axis, angle: int = 45):
     :type angle: int, optional
     """
     ax.set_xticklabels(ax.get_xticklabels(), rotation=angle, horizontalalignment='right')
+
+
+def get_new_figure(number_of_colors: Optional[int] = None) -> matplotlib.figure.Figure:
+    """
+    Clean figure and axis and return a new figure
+
+    :param number_of_colors: Number of colors, if None will use a palette which does not require this information,
+    defaults to None
+    :type number_of_colors: Optional[int]
+    :return: New figure
+    :rtype: matplotlib.figure.Figure
+    """
+    plt.rcParams.update({'figure.figsize': (19, 10)})
+    plt.rcParams.update({'font.size': 12})
+    plt.cla()
+    plt.clf()
+    fig = plt.figure()
+    sns.set_style('whitegrid')
+    sns.set(font_scale=2)
+    if number_of_colors is None:
+        sns.set_palette('pastel')
+    else:
+        sns.set_palette('husl', number_of_colors)
+    return fig

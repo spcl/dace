@@ -3,7 +3,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 from utils.paths import get_complete_results_dir
-from utils.plot import save_plot, set_general_plot_style, rotate_xlabels
+from utils.plot import save_plot, rotate_xlabels, get_new_figure
 from utils.complete_results import get_roofline_dataframe
 from scripts import Script
 
@@ -19,10 +19,11 @@ class PlotMueClasses(Script):
         df['bw efficiency'] = df['achieved bandwidth'] / df['peak bandwidth']
         df['mue'] = df['io efficiency'] * df['bw efficiency']
 
-        set_general_plot_style()
+        fig = get_new_figure()
+        ax = fig.add_subplots(1, 1, 1)
         plot_data = df[['program', 'experiment name', 'io efficiency', 'bw efficiency', 'mue']]\
             .melt(id_vars=['program', 'experiment name'], value_vars=['io efficiency', 'bw efficiency', 'mue'])
-        ax = sns.barplot(data=plot_data, x='program', y='value', hue='variable')
+        sns.barplot(data=plot_data, x='program', y='value', hue='variable', ax=ax)
         ax.set_xlabel('')
         ax.set_ylabel('')
         rotate_xlabels(ax)

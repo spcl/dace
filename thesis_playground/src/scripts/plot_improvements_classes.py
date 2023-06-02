@@ -5,7 +5,7 @@ import os
 
 from scripts import Script
 from utils.paths import get_complete_results_dir
-from utils.plot import set_general_plot_style, save_plot, rotate_xlabels
+from utils.plot import save_plot, rotate_xlabels, get_new_figure
 from utils.complete_results import get_dataframe
 
 
@@ -26,10 +26,8 @@ class PlotImprovementsClasses(Script):
 
     @staticmethod
     def action(args):
-        set_general_plot_style()
-
         # Create subplots
-        figure = plt.figure()
+        figure = get_new_figure()
         ax_runtime_speedup_1 = figure.add_subplot(1, 2, 1)
         ax_runtime_speedup_2 = figure.add_subplot(1, 2, 2)
         figure.subplots_adjust(hspace=0.05)

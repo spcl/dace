@@ -11,12 +11,13 @@ from measurements.data import MeasurementRun
 from scripts import Script
 
 # sizes = [1e5, 2e5, 5e5]
-vert_sizes = [5e5, 2e5, 1e5]
+# vert_sizes = [5e5, 2e5, 1e5]
+vert_sizes = [4e5, 3e5]
 # vert_sizes = [5e5]
-# vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_5']
-# vert_versions = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_5', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
-#                  'cloudsc_vert_loop_7']
-vert_versions = ['cloudsc_vert_loop_4']
+vert_versions = ['cloudsc_vert_loop_7']
+# vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
+                 # 'cloudsc_vert_loop_7']
+# vert_versions = ['cloudsc_vert_loop_4']
 mwe_versions = ['cloudsc_vert_loop_orig_mwe_no_klon', 'cloudsc_vert_loop_mwe_no_klon']
 mwe_sizes = [5e4]
 

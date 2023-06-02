@@ -13,7 +13,7 @@ from utils.paths import get_thesis_playground_root_dir
 from utils.general import get_inputs, get_outputs, copy_to_device, get_programs_data, read_source, get_sdfg, \
                           optimize_sdfg
 from utils.execute_dace import RNG_SEED
-from utils.plot import set_general_plot_style, save_plot, rotate_xlabels
+from utils.plot import save_plot, rotate_xlabels, get_new_figure
 from scripts import Script
 
 
@@ -61,8 +61,7 @@ class PlotPatternDistribution(Script):
             df = pd.DataFrame.from_dict(nnz_data)
             df.to_csv(data_file)
 
-        set_general_plot_style()
-        figure = plt.figure()
+        figure = get_new_figure()
         figure.suptitle('Number of non zero entries per output')
         axes = figure.subplots(2, 4, gridspec_kw={'hspace': 0.5})
         for ax_row, program_row in zip(axes, [program_list[0:3], program_list[3:]]):
