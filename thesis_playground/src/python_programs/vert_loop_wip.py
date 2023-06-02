@@ -12,6 +12,39 @@ NCLDQL = dace.symbol('NCLDQL')
 NCLDQI = dace.symbol('NCLDQI')
 NCLDQS = dace.symbol('NCLDQS')
 
+# NCLDTOP = 2
+# KIDIA = 1
+# KFDIA = 1
+# NCLDQI = 2
+# NCLDQL = 3
+# NCLDQS = 5
+# NCLV = 10
+
+# KLEV = 4
+# KLON = 1
+# NBLOCKS = 5
+
+@dace.program
+def inner_loops_7(
+        PTSPHY: dace.float64,
+        RLMIN: dace.float64,
+        ZEPSEC: dace.float64,
+        RG: dace.float64,
+        RTHOMO: dace.float64,
+        ZALFAW: dace.float64,
+        PLU_NF: dace.float64[KLEV, KLON],
+        LDCUM_NF: dace.int32[KLON],
+        PSNDE_NF: dace.float64[KLEV, KLON],
+        PAPH_NF: dace.float64[KLEV+1, KLON],
+        PSUPSAT_NF: dace.float64[KLEV, KLON],
+        PT_NF: dace.float64[KLEV, KLON],
+        tendency_tmp_t_NF: dace.float64[KLEV, KLON],
+        PLUDE_NF: dace.float64[KLEV, KLON]
+        ):
+
+    for JK in range(NCLDTOP-1, KLEV):
+        PLUDE_NF[JK, 0] = JK
+
 
 @dace.program
 def vert_loop_wip(
@@ -21,47 +54,21 @@ def vert_loop_wip(
             RG: dace.float64,
             RTHOMO: dace.float64,
             ZALFAW: dace.float64,
-            PLU_NF: dace.float64[KLON, KLEV, NBLOCKS],
+            PLU_NF: dace.float64[KLEV, KLON, NBLOCKS],
             LDCUM_NF: dace.int32[KLON, NBLOCKS],
-            PSNDE_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PAPH_NF: dace.float64[KLON, KLEV+1, NBLOCKS],
-            PSUPSAT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PT_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            tendency_tmp_t_NF: dace.float64[KLON, KLEV, NBLOCKS],
-            PLUDE_NF: dace.float64[KLON, KLEV, NBLOCKS]
+            PSNDE_NF: dace.float64[KLEV, KLON, NBLOCKS],
+            PAPH_NF: dace.float64[KLEV+1, KLON, NBLOCKS],
+            PSUPSAT_NF: dace.float64[KLEV, KLON, NBLOCKS],
+            PT_NF: dace.float64[KLEV, KLON, NBLOCKS],
+            tendency_tmp_t_NF: dace.float64[KLEV, KLON, NBLOCKS],
+            PLUDE_NF: dace.float64[KLEV, KLON, NBLOCKS]
         ):
 
     for JN in dace.map[0:NBLOCKS:KLON]:
-        ZCONVSRCE = np.zeros([KLON, NCLV], dtype=np.float64)
-        ZSOLQA = np.zeros([KLON, NCLV, NCLV], dtype=np.float64)
-        ZDTGDP = np.zeros([KLON], dtype=np.float64)
-        ZDP = np.zeros([KLON], dtype=np.float64)
-        ZGDP = np.zeros([KLON], dtype=np.float64)
-        ZTP1 = np.zeros([KLON], dtype=np.float64)
-
-        for JK in range(NCLDTOP, KLEV-1):
-            for JL in range(KIDIA, KFDIA):
-                ZTP1[JL] = PT_NF[JL, JK, JN] + PTSPHY * tendency_tmp_t_NF[JL, JK, JN]
-                if PSUPSAT_NF[JL, JK, JN] > ZEPSEC:
-                    if ZTP1[JL] > RTHOMO:
-                        ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + PSUPSAT_NF[JL, JK, JN]
-                    else:
-                        ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + PSUPSAT_NF[JL, JK, JN]
-
-            for JL in range(KIDIA, KFDIA):
-                ZDP[JL] = PAPH_NF[JL, JK+1, JN]-PAPH_NF[JL, JK, JN]
-                ZGDP[JL] = RG/ZDP[JL]
-                ZDTGDP[JL] = PTSPHY*ZGDP[JL]
-
-            for JL in range(KIDIA, KFDIA):
-                PLUDE_NF[JL, JK, JN] = PLUDE_NF[JL, JK, JN]*ZDTGDP[JL]
-                if LDCUM_NF[JL, JN] and PLUDE_NF[JL, JK, JN] > RLMIN and PLU_NF[JL, JK+1, JN] > ZEPSEC:
-                    ZCONVSRCE[JL, NCLDQL] = ZALFAW*PLUDE_NF[JL, JK, JN]
-                    ZCONVSRCE[JL, NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JL, JK, JN]
-                    ZSOLQA[JL, NCLDQL, NCLDQL] = ZSOLQA[JL, NCLDQL, NCLDQL] + ZCONVSRCE[JL, NCLDQL]
-                    ZSOLQA[JL, NCLDQI, NCLDQI] = ZSOLQA[JL, NCLDQI, NCLDQI] + ZCONVSRCE[JL, NCLDQI]
-                else:
-                    PLUDE_NF[JL, JK, JN] = 0.0
-
-                if LDCUM_NF[JL, JN]:
-                    ZSOLQA[JL, NCLDQS, NCLDQS] = ZSOLQA[JL, NCLDQS, NCLDQS] + PSNDE_NF[JL, JK, JN] * ZDTGDP[JL]
+        # for JK in range(NCLDTOP-1, KLEV):
+        for JK in range(2,4):
+            PLUDE_NF[JK, 0, JN] = NCLDTOP
+        # inner_loops_7(
+        #     PTSPHY,  RLMIN,  ZEPSEC,  RG,  RTHOMO,  ZALFAW,  PLU_NF[:, :, JN],  LDCUM_NF[:, JN],  PSNDE_NF[:, :, JN],
+        #     PAPH_NF[:, :, JN], PSUPSAT_NF[:, :, JN],  PT_NF[:, :, JN],  tendency_tmp_t_NF[:, :, JN], PLUDE_NF[:, :, JN],
+        #     )
