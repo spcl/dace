@@ -373,6 +373,13 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
                 }
             ],
+            'cloudsc_vert_loop_7_1': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
             'cloudsc_vert_loop_mwe': [
                 {
                     'variables': ['PLUDE_NF'],

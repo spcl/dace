@@ -52,6 +52,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Simplification and loop parallelization
     transformed = True
+    print(f"Free symbols in graph: {sdfg.free_symbols}")
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
@@ -150,6 +151,7 @@ def auto_optimize(sdfg: SDFG,
         # Specialize for all known symbols
         known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
         known_symbols = {}
+        print(f"Free symbols in graph: {sdfg.free_symbols}")
         for (s, v) in symbols.items():
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
