@@ -10,24 +10,18 @@ from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_op
 
 NBLOCKS = dace.symbol('NBLOCKS')
 KLEV = dace.symbol('KLEV')
-NCLV = dace.symbol('NCLV')
 KLON = dace.symbol('KLON')
 NCLDTOP = dace.symbol('NCLDTOP')
-KFDIA = dace.symbol('KFDIA')
-KIDIA = dace.symbol('KIDIA')
-NCLDQL = dace.symbol('NCLDQL')
-NCLDQI = dace.symbol('NCLDQI')
-NCLDQS = dace.symbol('NCLDQS')
 
 
 @dace.program
-def kernel(PLUDE_NF: dace.float64[KLEV, KLON, NBLOCKS]):
-    PLUDE_NF[0, 0, 0] = 120.
-    PLUDE_NF[1, 0, 1] = 12.
-    PLUDE_NF[2, 0, 2] = 13.
+def kernel(PLUDE_NF: dace.float64[KLEV, NBLOCKS]):
     for JN in dace.map[0:NBLOCKS:KLON]:
-        for JK in range(2, 4):
-            PLUDE_NF[JK, 0, JN] = NCLDTOP
+        # Those two lines I'd expect to lead to the same output, but they are not
+        # for JK in range(2, 4):
+        for JK in range(NCLDTOP, KLEV):
+            PLUDE_NF[JK, JN] = KLEV
+            # PLUDE_NF[JK, JN] = NCLDTOP
 
 
 def eval_argument_shape(parameter: inspect.Parameter, symbols: Dict[str, int]) -> Tuple[int]:
@@ -127,13 +121,19 @@ def copy_to_device(host_data: Dict[str, Union[Number, np.ndarray]]) -> Dict[str,
     return device_data
 
 
-if __name__ == '__main__':
+def run(program: dace.frontend.python.parser.DaceProgram):
     symbols = {'KLON': 1, 'KLEV': 4, 'NBLOCKS': 5, 'NCLDTOP': 2, 'NCLV': 10}
-    args = gen_arguments(kernel, symbols)
-    sdfg = kernel.to_sdfg(validate=True, simplify=True)
+    sdfg = program.to_sdfg(validate=True, simplify=True)
     optimize_sdfg(sdfg, device=dace.DeviceType.GPU, symbols=symbols)
+    print(sdfg.name)
     csdfg = sdfg.compile()
-    arguments = gen_arguments(kernel, symbols)
+    arguments = gen_arguments(program, symbols)
     arguments_device = copy_to_device(arguments)
+    print(symbols)
+    # print(arguments_device['PLUDE_NF'].get())
     csdfg(**arguments_device, **symbols)
     print(arguments_device['PLUDE_NF'].get())
+
+
+if __name__ == '__main__':
+    run(kernel)
