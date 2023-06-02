@@ -18,8 +18,8 @@ NCLDTOP = dace.symbol('NCLDTOP')
 def kernel(PLUDE_NF: dace.float64[KLEV, NBLOCKS]):
     for JN in dace.map[0:NBLOCKS:KLON]:
         # Those two lines I'd expect to lead to the same output, but they are not
-        # for JK in range(2, 4):
-        for JK in range(NCLDTOP, KLEV):
+        for JK in range(2, 4):
+        # for JK in range(NCLDTOP, KLEV):
             PLUDE_NF[JK, JN] = KLEV
             # PLUDE_NF[JK, JN] = NCLDTOP
 
