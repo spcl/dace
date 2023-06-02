@@ -94,7 +94,6 @@ SUBROUTINE vert_loop_7_routine(&
             & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU_NF(JN,:,:), LDCUM_NF(JN,:), PSNDE_NF(JN,:,:), PAPH_NF(JN,:,:), &
             & PSUPSAT_NF(JN,:,:), PT_NF(JN,:,:), tendency_tmp_t_NF(JN,:,:), &
             & PLUDE_NF(JN,:,:))
-
     ENDDO
 
 END SUBROUTINE vert_loop_7_routine
@@ -145,15 +144,6 @@ SUBROUTINE inner_loops(&
     ZTP1(:) = 0.0
 
 
-
-    ! Loop from line 657
-    ! DO JK=1,KLEV
-    !     DO JL=KIDIA,KFDIA
-    !         ZTP1(JL,JK)        = PT_NF(JL,JK)+PTSPHY*tendency_tmp_t_NF(JL,JK)
-    !     ENDDO
-    ! ENDDO
-    ! To line 665
-
     DO JK=NCLDTOP,KLEV
         DO JL=KIDIA,KFDIA
             ZTP1(JL)        = PT_NF(JL,JK)+PTSPHY*tendency_tmp_t_NF(JL,JK)
@@ -174,6 +164,7 @@ SUBROUTINE inner_loops(&
             ZGDP(JL)    = RG/ZDP(JL)                    ! g/dp
             ZDTGDP(JL)  = PTSPHY*ZGDP(JL)               ! dt g/dp
         ENDDO
+
         ! To 919
 
         DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
