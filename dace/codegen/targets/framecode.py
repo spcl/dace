@@ -424,7 +424,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
             if sdfg.parent_nsdfg_node is None:
                 return TOP_SCHEDULE
-            return (sdfg.parent_nsdfg_node.schedule or TOP_SCHEDULE)
+
+            # Go one SDFG up
+            pstate = sdfg.parent
+            pscope = pstate.entry_node(sdfg.parent_nsdfg_node)
+            if pscope is not None:
+                return self._get_schedule(pscope)
+            return self._get_schedule(pstate)
         else:
             raise TypeError
 

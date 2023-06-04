@@ -1504,12 +1504,14 @@ def is_fpga_kernel(sdfg, state):
     at_least_one_fpga_array = False
     for n in data_nodes:
         desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
         if isinstance(desc, dt.Scalar):
             continue
         if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
                                 dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-        at_least_one_fpga_array = True
 
     return at_least_one_fpga_array
 
