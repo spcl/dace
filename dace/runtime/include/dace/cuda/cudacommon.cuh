@@ -151,6 +151,15 @@ DACE_DFI dace::vec<float, 4> log(dace::vec<float, 4> v) {
     return result;
 }
 
+DACE_DFI dace::vec<float, 4> log10(dace::vec<float, 4> v) {
+    dace::vec<float, 4> result;
+    result.x = log10(v.x);
+    result.y = log10(v.y);
+    result.z = log10(v.z);
+    result.w = log10(v.w);
+    return result;
+}
+
 DACE_DFI dace::vec<float, 4> tanh(dace::vec<float, 4> v) {
     dace::vec<float, 4> result;
     result.x = tanh(v.x);
@@ -171,6 +180,7 @@ DACE_DFI dace::vec<float, 4> heaviside(const dace::vec<float, 4>& a) {
 } } // namespace dace::math
 using dace::math::exp;
 using dace::math::log;
+using dace::math::log10;
 using dace::math::tanh;
 using dace::math::heaviside;
 #endif
