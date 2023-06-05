@@ -1110,12 +1110,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
 
         if not self._in_device_code:
-            # If we're not already generating kernel code we need to set up the
-            # kernel launch
-            subgraphs = [dfg_scope]
-            return self.generate_kernel(sdfg, sdfg.node(state_id),
-                                        dfg_scope.source_nodes()[0].map.label.replace(" ", "_"), subgraphs,
-                                        function_stream, callsite_stream)
+            # If we're not already generating kernel code, fail
+            raise cgx.CodegenError('FPGA kernel needs to be generated inside a device state.')
 
         self.generate_node(sdfg, dfg_scope, state_id, dfg_scope.source_nodes()[0], function_stream, callsite_stream)
 

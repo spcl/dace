@@ -1501,13 +1501,19 @@ def is_fpga_kernel(sdfg, state):
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
+    at_least_one_fpga_array = False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-    return True
+
+    return at_least_one_fpga_array
 
 
 def postdominators(
