@@ -185,8 +185,8 @@ def test_map_param():
 
     sdfg = map_uses_param.to_sdfg(simplify=True)
 
-    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
-    assert (num_tasklet_fusions == 1)
+    num_tasklet_fusions = sdfg.apply_transformations_repeated(TaskletFusion)
+    assert (num_tasklet_fusions == 3)
 
     A = np.zeros([10], dtype=np.float32)
     B = np.ones([10], dtype=np.float32)
