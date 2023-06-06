@@ -199,6 +199,9 @@ class TaskletFusion(pm.SingleStateTransformation):
         repldict = {}
         for in_edge in graph.in_edges(t1):
             old_value = in_edge.dst_conn
+            if old_value is None:
+                continue
+
             # Check if there is a conflict.
             if in_edge.dst_conn in inputs:
                 # Conflicts are ok if the Memlets are the same.

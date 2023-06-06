@@ -178,6 +178,28 @@ def test_tasklet_fusion_multiline():
     assert (result[0] == 11)
 
 
+def test_map_param():
+    @dace.program
+    def map_uses_param(A: dace.float32[10], B: dace.float32[10], C: dace.float32[10]):
+        for i in dace.map[0:10]:
+            a = i - A[i]
+            b = B[i] * i
+            C[i] = a + b
+
+    sdfg = map_uses_param.to_sdfg(simplify=True)
+
+    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
+    assert (num_tasklet_fusions == 1)
+
+    A = np.zeros([10], dtype=np.float32)
+    B = np.ones([10], dtype=np.float32)
+    C = np.empty([10], dtype=np.float32)
+    sdfg(A=A, B=B, C=C)
+
+    ref = np.array(range(0, 10, 1)) * 2.0
+    assert (C == ref).all()
+
+
 @pytest.mark.parametrize('with_data', [pytest.param(True), pytest.param(False)])
 @pytest.mark.parametrize('language', [pytest.param('CPP'), pytest.param('Python')])
 def test_map_with_tasklets(language: str, with_data: bool):
@@ -200,6 +222,7 @@ if __name__ == '__main__':
     test_same_name()
     test_same_name_different_memlet()
     test_tasklet_fusion_multiline()
+    test_map_param()
     test_map_with_tasklets(language='Python', with_data=False)
     test_map_with_tasklets(language='Python', with_data=True)
     test_map_with_tasklets(language='CPP', with_data=False)
