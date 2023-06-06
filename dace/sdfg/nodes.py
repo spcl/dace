@@ -645,6 +645,150 @@ class NestedSDFG(CodeNode):
 # ------------------------------------------------------------------------------
 
 
+@make_properties
+class ExternalNestedSDFG(CodeNode):
+    """ An SDFG state node that will contain an SDFG of its own. It has outside connectors, but lacks the nestedSDFG.
+        This node is used to represent a nested SDFG that is not yet defined, but will be defined later.
+
+        :note: A nested SDFG cannot create recursion (one of its parent SDFGs).
+    """
+
+    # NOTE: We cannot use SDFG as the type because of an import loop
+    sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
+    schedule = EnumProperty(dtype=dtypes.ScheduleType,
+                            desc="SDFG schedule",
+                            allow_none=True,
+                            default=dtypes.ScheduleType.Default)
+    symbol_mapping = DictProperty(key_type=str,
+                                  value_type=dace.symbolic.pystr_to_symbolic,
+                                  desc="Mapping between internal symbols and their values, expressed as "
+                                  "symbolic expressions")
+    debuginfo = DebugInfoProperty()
+    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
+
+    instrument = EnumProperty(dtype=dtypes.InstrumentationType,
+                              desc="Measure execution statistics with given method",
+                              default=dtypes.InstrumentationType.No_Instrumentation)
+
+    no_inline = Property(dtype=bool,
+                         desc="If True, this nested SDFG will not be inlined during "
+                         "simplification",
+                         default=False)
+
+    unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+
+    def __init__(self,
+                 label,
+                 sdfg,
+                 inputs: Set[str],
+                 outputs: Set[str],
+                 symbol_mapping: Dict[str, Any] = None,
+                 schedule=dtypes.ScheduleType.Default,
+                 location=None,
+                 debuginfo=None):
+        from dace.sdfg import SDFG
+        super(ExternalNestedSDFG, self).__init__(label, location, inputs, outputs)
+
+        # Properties
+        self.sdfg: SDFG = sdfg
+        self.symbol_mapping = symbol_mapping or {}
+        self.schedule = schedule
+        self.debuginfo = debuginfo
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, dcpy(v, memo))
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
+        return result
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace import SDFG  # Avoid import loop
+
+        # We have to load the SDFG first.
+        ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
+
+        dace.serialize.set_properties_from_json(ret, json_obj, context)
+
+        if context and 'sdfg_state' in context:
+            ret.sdfg.parent = context['sdfg_state']
+        if context and 'sdfg' in context:
+            ret.sdfg.parent_sdfg = context['sdfg']
+
+        ret.sdfg.parent_nsdfg_node = ret
+
+        ret.sdfg.update_sdfg_list([])
+
+        return ret
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        return set().union(*(map(str,
+                                 pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
+                           *(map(str,
+                                 pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+
+    def infer_connector_types(self, sdfg, state):
+        # Avoid import loop
+        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+
+        # Propagate aliasing information into SDFG
+        infer_aliasing(self, sdfg, state)
+
+        # Infer internal connector types
+        infer_connector_types(self.sdfg)
+
+    def __str__(self):
+        if not self.label:
+            return "SDFG"
+        else:
+            return self.label
+
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
+        if not dtypes.validate_name(self.label):
+            raise NameError('Invalid nested SDFG name "%s"' % self.label)
+        for in_conn in self.in_connectors:
+            if not dtypes.validate_name(in_conn):
+                raise NameError('Invalid input connector "%s"' % in_conn)
+        for out_conn in self.out_connectors:
+            if not dtypes.validate_name(out_conn):
+                raise NameError('Invalid output connector "%s"' % out_conn)
+        connectors = self.in_connectors.keys() | self.out_connectors.keys()
+        for conn in connectors:
+            if conn not in self.sdfg.arrays:
+                raise NameError(
+                    f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
+                    'Example: parameter passed to a function without a matching array within it.')
+        for dname, desc in self.sdfg.arrays.items():
+            # TODO(later): Disallow scalars without access nodes (so that this
+            #              check passes for them too).
+            if isinstance(desc, data.Scalar):
+                continue
+            if not desc.transient and dname not in connectors:
+                raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
+            if dname in connectors and desc.transient:
+                raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+
+        # Validate undefined symbols
+        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+        missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
+        if missing_symbols:
+            raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
+        extra_symbols = self.symbol_mapping.keys() - symbols
+        if len(extra_symbols) > 0:
+            # TODO: Elevate to an error?
+            warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
+
+        # Recursively validate nested SDFG
+        self.sdfg.validate(references)
+
+# ------------------------------------------------------------------------------
+
+
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
