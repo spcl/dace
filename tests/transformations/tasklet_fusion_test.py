@@ -10,6 +10,7 @@ np_datatype = np.float32
 M = 10
 N = 2 * M
 
+
 @dace.program
 def map_with_tasklets(A: datatype[N], B: datatype[M]):
     C = np.zeros_like(B)
@@ -42,15 +43,11 @@ def _make_sdfg(language: str, with_data: bool = False):
     outputs = {
         '__out': datatype,
     }
-    ta = state.add_tasklet(
-        'a', inputs, {
-            '__out1': datatype,
-            '__out2': datatype,
-            '__out3': datatype,
-        },
-        f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}',
-        lang
-    )
+    ta = state.add_tasklet('a', inputs, {
+        '__out1': datatype,
+        '__out2': datatype,
+        '__out3': datatype,
+    }, f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}', lang)
     tb = state.add_tasklet('b', inputs, outputs, f'__out = __inp1 * __inp2{endl}', lang)
     tc = state.add_tasklet('c', inputs, outputs, f'__out = __inp1 + __inp2{endl}', lang)
     td = state.add_tasklet('d', inputs, outputs, f'__out = __inp1 / __inp2{endl}', lang)
@@ -60,12 +57,12 @@ def _make_sdfg(language: str, with_data: bool = False):
     state.add_memlet_path(A, me, tb, memlet=dace.Memlet('A[2*i]'), dst_conn='__inp2')
     state.add_memlet_path(B, me, tc, memlet=dace.Memlet('B[i]'), dst_conn='__inp2')
     if with_data:
-        sdfg.add_array('tmp1', (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array('tmp2', (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array('tmp3', (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array('tmp4', (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array('tmp5', (1,), datatype, dtypes.StorageType.Default, None, True)
-        sdfg.add_array('tmp6', (1,), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp1', (1, ), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp2', (1, ), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp3', (1, ), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp4', (1, ), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp5', (1, ), datatype, dtypes.StorageType.Default, None, True)
+        sdfg.add_array('tmp6', (1, ), datatype, dtypes.StorageType.Default, None, True)
         atemp1 = state.add_access('tmp1')
         atemp2 = state.add_access('tmp2')
         atemp3 = state.add_access('tmp3')
@@ -101,7 +98,7 @@ def test_basic():
     def test_basic_tf(A: datatype[5, 5]):
         B = A + 1
         return B * 2
-    
+
     sdfg = test_basic_tf.to_sdfg(simplify=True)
 
     num_map_fusions = sdfg.apply_transformations(MapFusion)

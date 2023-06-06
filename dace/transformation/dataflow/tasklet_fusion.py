@@ -32,7 +32,6 @@ class PythonConnectorRenamer(ast.NodeTransformer):
 
 
 class CPPConnectorRenamer():
-
     def __init__(self, repl_dict: Dict[str, str]) -> None:
         self.repl_dict = repl_dict
 
@@ -44,7 +43,6 @@ class CPPConnectorRenamer():
 
 
 class PythonInliner(ast.NodeTransformer):
-
     def __init__(self, target_id, target_ast):
         self.target_id = target_id
         self.target_ast = target_ast
@@ -57,7 +55,6 @@ class PythonInliner(ast.NodeTransformer):
 
 
 class CPPInliner():
-
     def __init__(self, inline_target, inline_val):
         self.inline_target = inline_target
         self.inline_val = inline_val
@@ -144,10 +141,7 @@ class TaskletFusion(pm.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        return [
-            sdutil.node_path_graph(cls.t1, cls.data, cls.t2),
-            sdutil.node_path_graph(cls.t1, cls.t2)
-        ]
+        return [sdutil.node_path_graph(cls.t1, cls.data, cls.t2), sdutil.node_path_graph(cls.t1, cls.t2)]
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
         t1 = self.t1
@@ -191,9 +185,7 @@ class TaskletFusion(pm.SingleStateTransformation):
         t2_in_edge = graph.out_edges(data if data is not None else t1)[0]
 
         # Remove the connector from the second Tasklet.
-        inputs = {
-            k: v for k, v in t2.in_connectors.items() if k != t2_in_edge.dst_conn
-        }
+        inputs = {k: v for k, v in t2.in_connectors.items() if k != t2_in_edge.dst_conn}
 
         # Copy the first Tasklet's in connectors.
         repldict = {}
@@ -214,8 +206,8 @@ class TaskletFusion(pm.SingleStateTransformation):
                             break
                 else:
                     t2edge = conflict_edges[0]
-                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data or
-                    in_edge.data is None or in_edge.data.data is None):
+                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data
+                                           or in_edge.data is None or in_edge.data.data is None):
                     in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, set(inputs))
                     repldict[old_value] = in_edge.dst_conn
                 else:
@@ -231,9 +223,7 @@ class TaskletFusion(pm.SingleStateTransformation):
             if repldict:
                 assigned_value = PythonConnectorRenamer(repldict).visit(assigned_value)
 
-            new_code = [
-                PythonInliner(t2_in_edge.dst_conn, assigned_value).visit(line) for line in t2.code.code
-            ]
+            new_code = [PythonInliner(t2_in_edge.dst_conn, assigned_value).visit(line) for line in t2.code.code]
             new_code_str = '\n'.join(astunparse.unparse(line) for line in new_code)
         elif t1.language == Language.CPP:
             assigned_value = t1.code.as_string
@@ -255,9 +245,8 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             return
 
-        new_tasklet = graph.add_tasklet(
-            t1.label + '_fused_' + t2.label, inputs, t2.out_connectors, new_code_str, t1.language
-        )
+        new_tasklet = graph.add_tasklet(t1.label + '_fused_' + t2.label, inputs, t2.out_connectors, new_code_str,
+                                        t1.language)
 
         for in_edge in graph.in_edges(t1):
             graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
