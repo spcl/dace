@@ -1353,11 +1353,29 @@ class UnderapproximateWrites(ppl.Pass):
                 # call propagate_memlet_loop on the nested loop
 
         # difference to propagate_memlets_nested_sdfg is that there are no border memlets
+
+        def filter_subsets(itvar: str, s_itvars: List[str], range: subsets.Range, memlet: Memlet):
+            # if loop range is symbolic -> only propagate subsets that contain the iterator as a symbol
+            # if loop range is constant (and not empty) only propagate subsets that have iterator variables of current or surrounding loops in their definition     
+            if(range.free_symbols):
+                if isinstance(memlet.subset, subsets.Subsetlist):
+                    filtered_subsets = [s for s in memlet.subset.subset_list if itvar in s.free_symbols]
+                else:
+                    filtered_subsets = [s for s in [memlet.subset] if itvar in s.free_symbols]
+
+            # range is constant
+            else:
+                if isinstance(memlet.subset, subsets.Subsetlist):
+                    filtered_subsets = [s for s in memlet.subset.subset_list if (s_itvar in s.free_symbols for s_itvar in surrounding_itvars )]
+                else:
+                    filtered_subsets = [s for s in [memlet.subset] if (s_itvar in s.free_symbols for s_itvar in surrounding_itvars )]
+
+            return filtered_subsets
         
         if not loops:
             return
-        # No loopheader was passed as an argument so we find the outermost loop
-
+        
+        # No loopheader was passed as an argument so we find the outermost loops
         if loopheader == None:
             top_loopheaders = []
             for current_loop_header, current_loop in loops.items():
@@ -1370,7 +1388,6 @@ class UnderapproximateWrites(ppl.Pass):
                 else:
                     top_loopheaders.append(current_loop_header)
 
-        
             if not top_loopheaders:
                 return
             
@@ -1380,15 +1397,21 @@ class UnderapproximateWrites(ppl.Pass):
             return
         
 
-        
         current_loop = loops[loopheader]
         begin, last_loop_state, loop_states, itvar, rng = current_loop
         border_memlets = defaultdict(None)
         ignore = []
 
+        # TODO: change this later for more precision
+        # get all the nodes that are executed unconditionally in the cfg a.k.a nodes that dominate the sink states
+        dominators = cfg.all_dominators(sdfg)
+        states = dominators[last_loop_state].intersection(set(loop_states))
+        states.add(last_loop_state)
+
+
         # TODO: Only iterate over states that are executed unconditionally for now
 
-        for state in loop_states:
+        for state in states:
             if state in loops.keys():
                 self.propagate_memlet_loop(sdfg, loops, state)
                 _, _, nested_loop_states, _, _ = loops[state]
@@ -1400,7 +1423,7 @@ class UnderapproximateWrites(ppl.Pass):
             # plus the data_nodes that are overwritten in the corresponding loop body
             # if the state is a loop header
             # do i want accessNodes as the keys of the returned dictionary from loop_write_dict?
-
+            surrounding_itvars = state.ranges.keys()
             # iterate over acccessnodes in the state
             for node in state.data_nodes():
                 # no writes associated with this access node
@@ -1413,19 +1436,13 @@ class UnderapproximateWrites(ppl.Pass):
 
                 # collect all the subsets of the incoming memlets for the current access node
                 for edge in edges:
-                    # TODO: ignore subsets that do not contain the iteration variable of the current loop
                     inside_memlet = copy.copy(approximation_dict[edge].data)
-                    if isinstance(inside_memlet.subset, subsets.Subsetlist):
-                        filtered_subsets = [s for s in inside_memlet.subset.subset_list if itvar in s.free_symbols]
-                    else:
-                        filtered_subsets = [s for s in [inside_memlet.subset] if itvar in s.free_symbols]
-
+                    filtered_subsets = filter_subsets(itvar, surrounding_itvars, rng, inside_memlet)
                     if not filtered_subsets:
                         continue
 
                     inside_memlet.subset = subsets.Subsetlist(filtered_subsets)
                     memlets.append(inside_memlet)
-                
                     if memlet is None:
                         # Use the first encountered memlet as a 'border' memlet
                         # and accumulate the sum on it.
@@ -1433,48 +1450,17 @@ class UnderapproximateWrites(ppl.Pass):
                         memlet._is_data_src = True
                         border_memlets[node.label] = memlet
                     
-
-
-                if len(memlets) > 0:
-                    params = [itvar]
-                    ranges = [rng]
-
-                    # TODO: Is this even necessary. Can't hurt i guess
-                    if len(params) == 0 or len(ranges) == 0:
-                        params = ['__dace_dummy']
-                        ranges = [(0, 0, 1)]
-
-                    use_dst = True
-                    array = sdfg.arrays[node.label]
-                    subset = self.propagate_subset(memlets, array, params, rng, use_dst=use_dst).subset
-
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if memlet.subset is not None:
-                        if memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                        else:
-                            memlet.subset = subsets.list_union(memlet.subset, subset)
-                    else:
-                        memlet.subset = subset
+                self.propagate_loop_subset(sdfg, memlets, memlet, sdfg.arrays[node.label], itvar, rng)
 
             if state not in loop_write_dict.keys():
                 continue
             # iterate over the accessnodes in the loopheader dict
             for node_label, border_memlet in loop_write_dict[state].items():
-
-                if isinstance(border_memlet.subset, subsets.Subsetlist):
-                    filtered_subsets = [s for s in border_memlet.subset.subset_list if itvar in s.free_symbols]
-                else:
-                    filtered_subsets = [s for s in [border_memlet.subset] if itvar in s.free_symbols]
-
+                filtered_subsets = filter_subsets(itvar, surrounding_itvars, rng, border_memlet)
                 if not filtered_subsets:
                     continue
                 
                 border_memlet.subset = subsets.Subsetlist(filtered_subsets)
-                    
-
-
                 memlet = border_memlets.get(node_label)
                 if memlet is None:
                     # Use the first encountered memlet as a 'border' memlet
@@ -1483,29 +1469,33 @@ class UnderapproximateWrites(ppl.Pass):
                     memlet._is_data_src = True
                     border_memlets[node_label] = memlet
 
-                params = [itvar]
-                ranges = [rng]
-
-                if len(params) == 0 or len(ranges) == 0:
-                    params = ['__dace_dummy']
-                    ranges = [(0, 0, 1)]
-
-                use_dst = True
-                array = sdfg.arrays[node_label]
-                subset = self.propagate_subset([border_memlet], array, params, rng, use_dst=use_dst).subset
-
-                # If the border memlet already has a set range, compute the
-                # union of the ranges to merge the subsets.
-                if memlet.subset is not None:
-                    if memlet.subset.dims() != subset.dims():
-                        raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                    else:
-                        memlet.subset = subsets.list_union(memlet.subset, subset)
-                else:
-                    memlet.subset = subset
+                self.propagate_loop_subset(sdfg, [border_memlet], memlet, sdfg.arrays[node_label], itvar, rng)
         
         loop_write_dict[loopheader] = border_memlets
 
+
+    def propagate_loop_subset(self, sdfg: dace.SDFG, memlets: List[Memlet], dst_memlet: Memlet, arr:dace.data.Array, itvar:str, rng:subsets.Subset ):
+        if len(memlets) > 0:
+            params = [itvar]
+            ranges = [rng]
+
+            # TODO: Is this even necessary. Can't hurt i guess
+            if len(params) == 0 or len(ranges) == 0:
+                params = ['__dace_dummy']
+                ranges = [(0, 0, 1)]
+
+            use_dst = True
+            subset = self.propagate_subset(memlets, arr, params, rng, use_dst=use_dst).subset
+
+            # If the border memlet already has a set range, compute the
+            # union of the ranges to merge the subsets.
+            if dst_memlet.subset is not None:
+                if dst_memlet.subset.dims() != subset.dims():
+                    raise ValueError('Cannot merge subset ranges of unequal dimension!')
+                else:
+                    dst_memlet.subset = subsets.list_union(dst_memlet.subset, subset)
+            else:
+                dst_memlet.subset = subset
 
     def propagate_memlets_state(self, sdfg, state):
         """ Propagates memlets throughout one SDFG state.
