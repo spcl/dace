@@ -627,7 +627,7 @@ def auto_optimize(sdfg: SDFG,
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
                     known_symbols[s] = v
-                if isinstance(v, sympy.core.numbers.Integer):
+                if isinstance(v, sympy.Integer):
                     try:
                         known_symbols[s] = int(v)
                     except TypeError:

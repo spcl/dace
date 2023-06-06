@@ -13,10 +13,10 @@ import dace.library
 from dace import dtypes
 from dace.codegen import codeobject, targets, compiler, compiled_sdfg
 
-
 @pytest.fixture
 def cuda_helper():
     return _cuda_helper()
+
 
 def _cuda_helper():
     helper_code = """

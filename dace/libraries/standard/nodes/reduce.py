@@ -27,7 +27,7 @@ from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 
-import dace.libraries.standard.reduction_planner as red_planner
+from dace.libraries.standard import reduction_planner as red_planner
 
 
 @dace.library.expansion
