@@ -34,10 +34,9 @@ def vert_loop_7_3(
             PT_NF: dace.float64[KLEV, KLON, NBLOCKS],
             tendency_tmp_t_NF: dace.float64[KLEV, KLON, NBLOCKS],
             PLUDE_NF: dace.float64[KLEV, KLON, NBLOCKS],
-            ZSOLQA: dace.float64[KLON, NCLV, NCLV, NBLOCKS]
+            ZSOLQA_NF: dace.float64[NCLV, NCLV, KLON, NBLOCKS]
         ):
 
-    ZSOLQA = np.zeros([KLON, NCLV, NCLV, NBLOCKS], dtype=np.float64)
     for JN in dace.map[0:NBLOCKS:KLON]:
         ZCONVSRCE = np.zeros([KLON, NCLV], dtype=np.float64)
         ZDTGDP = np.zeros([KLON], dtype=np.float64)
@@ -52,9 +51,9 @@ def vert_loop_7_3(
                 ZTP1[JL] = PT_NF[JK, JL, JN] + PTSPHY * tendency_tmp_t_NF[JK, JL, JN]
                 if PSUPSAT_NF[JK, JL, JN] > ZEPSEC:
                     if ZTP1[JL] > RTHOMO:
-                        ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + PSUPSAT_NF[JK, JL, JN]
+                        ZSOLQA_NF[NCLDQL, NCLDQL, JL, JN] = ZSOLQA_NF[NCLDQL, NCLDQL, JL, JN] + PSUPSAT_NF[JK, JL, JN]
                     else:
-                        ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + PSUPSAT_NF[JK, JL, JN]
+                        ZSOLQA_NF[NCLDQI, NCLDQI, JL, JN] = ZSOLQA_NF[NCLDQI, NCLDQI, JL, JN] + PSUPSAT_NF[JK, JL, JN]
 
             # for JL in range(KIDIA-1, KFDIA):
             for JL in range(0, 1):
@@ -68,10 +67,10 @@ def vert_loop_7_3(
                 if LDCUM_NF[JL, JN] and PLUDE_NF[JK, JL, JN] > RLMIN and PLU_NF[JK+1, JL, JN] > ZEPSEC:
                     ZCONVSRCE[JL, NCLDQL] = ZALFAW*PLUDE_NF[JK, JL, JN]
                     ZCONVSRCE[JL, NCLDQI] = [1.0 - ZALFAW]*PLUDE_NF[JK, JL, JN]
-                    ZSOLQA[JL, NCLDQL, NCLDQL, JN] = ZSOLQA[JL, NCLDQL, NCLDQL, JN] + ZCONVSRCE[JL, NCLDQL]
-                    ZSOLQA[JL, NCLDQI, NCLDQI, JN] = ZSOLQA[JL, NCLDQI, NCLDQI, JN] + ZCONVSRCE[JL, NCLDQI]
+                    ZSOLQA_NF[NCLDQL, NCLDQL, JL, JN] = ZSOLQA_NF[NCLDQL, NCLDQL, JL, JN] + ZCONVSRCE[JL, NCLDQL]
+                    ZSOLQA_NF[NCLDQI, NCLDQI, JL, JN] = ZSOLQA_NF[NCLDQI, NCLDQI, JL, JN] + ZCONVSRCE[JL, NCLDQI]
                 else:
                     PLUDE_NF[JK, JL, JN] = 0.0
 
                 if LDCUM_NF[JL, JN]:
-                    ZSOLQA[JL, NCLDQS, NCLDQS, JN] = ZSOLQA[JL, NCLDQS, NCLDQS, JN] + PSNDE_NF[JK, JL, JN] * ZDTGDP[JL]
+                    ZSOLQA_NF[NCLDQS, NCLDQS, JL, JN] = ZSOLQA_NF[NCLDQS, NCLDQS, JL, JN] + PSNDE_NF[JK, JL, JN] * ZDTGDP[JL]
