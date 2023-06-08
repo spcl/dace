@@ -5,7 +5,7 @@ import json
 
 
 from utils.paths import get_results_dir
-from utils.general import get_programs_data, use_cache
+from utils.general import get_programs_data, use_cache, remove_build_folder
 from utils.print import print_with_time, print_results_v2, print_performance
 from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
                                gen_nsys_report
@@ -85,6 +85,8 @@ def main():
         if args.cache:
             if not use_cache(program):
                 return 1
+        else:
+            remove_build_folder(program)
 
         if not args.skip_test:
             if not test_program(program, run_config):

@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 
 from utils.paths import get_default_sdfg_file
-from utils.general import use_cache, enable_debug_flags
+from utils.general import use_cache, enable_debug_flags, remove_build_folder
 from utils.execute_dace import RunConfig, run_program, test_program
 from execute.parameters import ParametersProvider
 
@@ -33,6 +33,8 @@ def main():
     if args.cache:
         if not use_cache(args.program):
             return 1
+    else:
+        remove_build_folder(args.program)
 
     if args.only_test:
         additional_args = {}
