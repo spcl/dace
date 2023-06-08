@@ -13,6 +13,7 @@ class PrintMUEVertLoop(Script):
         parser.add_argument('--mwe', action='store_true', default=False)
         parser.add_argument('--file-regex', type=str, default=None,
                             help='Only incldue files which match the given regex (anywhere in the filename)')
+        parser.add_argument('--only-desc', type=str, default=None, help='Only show entries with the given short_desc')
 
     @staticmethod
     def action(args):
@@ -34,7 +35,6 @@ class PrintMUEVertLoop(Script):
         grouped_data['mue'] = grouped_data['io efficiency'] * grouped_data['bw efficiency']
         grouped_data['mue temp'] = grouped_data['io efficiency temp'] * grouped_data['bw efficiency']
         grouped_data['count'] = data['measured bytes'].groupby(by=indices).count()
-        grouped_data = grouped_data.reset_index()
 
         columns = {
                 'program': ('Program', None),
@@ -52,4 +52,8 @@ class PrintMUEVertLoop(Script):
                 'runtime': ('T [s]', '.3e'),
                 'count': ('#', ''),
                 }
-        print_dataframe(columns, grouped_data)
+
+        if args.only_desc is not None:
+            grouped_data = grouped_data.xs(args.only_desc, level='short_desc', drop_level=False)
+
+        print_dataframe(columns, grouped_data.sort_values(by=['size']).reset_index())

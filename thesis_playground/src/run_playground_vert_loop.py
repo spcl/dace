@@ -107,6 +107,7 @@ def action_profile(args):
     sizes = [args.NBLOCKS]
     if args.size_range:
         sizes = [int(5e5), int(4e5), int(3e5), int(2e5), int(1e5)]
+        # sizes = np.arange(int(5e5), int(1e6), int(1e5))
 
     if args.export:
         datafile = os.path.join(get_playground_results_dir(), 'python', args.export)

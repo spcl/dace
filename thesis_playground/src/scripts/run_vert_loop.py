@@ -1,10 +1,11 @@
 from argparse import ArgumentParser
 import os
 import json
+import numpy as np
 
 from utils.execute_dace import RunConfig, gen_ncu_report, profile_program, compile_for_profile
 from utils.paths import get_vert_loops_dir
-from utils.general import use_cache, disable_cache, insert_heap_size_limit, get_programs_data
+from utils.general import use_cache, disable_cache, insert_heap_size_limit, get_programs_data, remove_build_folder
 from utils.print import print_with_time
 from execute.data import ParametersProvider
 from measurements.data import MeasurementRun
@@ -12,9 +13,12 @@ from scripts import Script
 
 # sizes = [1e5, 2e5, 5e5]
 # vert_sizes = [5e5, 2e5, 1e5]
-vert_sizes = [4e5, 3e5]
+vert_sizes = [5e5, 4e5, 3e5, 2e5, 1e5]
+# vert_sizes = np.arange(int(6e5), int(9e5), int(1e5))
 # vert_sizes = [5e5]
-vert_versions = ['cloudsc_vert_loop_7']
+# vert_versions = ['cloudsc_vert_loop_7_2', 'cloudsc_vert_loop_7_3']
+vert_versions = ['cloudsc_vert_loop_6_ZSOLQA', 'cloudsc_vert_loop_6_1_ZSOLQA', 'cloudsc_vert_loop_4_ZSOLQA',
+                 'cloudsc_vert_loop_7_3']
 # vert_versions = ['cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1',
                  # 'cloudsc_vert_loop_7']
 # vert_versions = ['cloudsc_vert_loop_4']
@@ -90,6 +94,7 @@ class RunVertLoop(Script):
                     use_cache(version)
                 else:
                     disable_cache()
+                    remove_build_folder(version)
 
                 for size in sizes:
                     description = f"With {size:.0E} NBLOCKS"
@@ -113,6 +118,6 @@ class RunVertLoop(Script):
                         report_filename = os.path.join(res_dir, f"report_{version}_{size:.0E}_{index}.ncu-rep")
                         program_args = ['--NBLOCKS', str(int(size))]
                         if not specialise:
-                            program_args.append('--not-specialise-symbols')
+                            program_args.extend(['--not-specialise-symbols', '--cache'])
                         gen_ncu_report(version, report_filename, run_config, ['--set', 'full'],
                                        program_args=program_args)
