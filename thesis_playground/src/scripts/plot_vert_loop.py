@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
 import matplotlib
-import matplotlib.pyplot as plt
 from matplotlib.ticker import EngFormatter
 import os
 import json
@@ -9,11 +8,10 @@ from numbers import Number
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import copy
 
-from utils.plot import save_plot, get_new_figure
+from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines, get_arrowprops
 from utils.paths import get_vert_loops_dir
-from utils.vertical_loops import get_dataframe
+from utils.vertical_loops import get_dataframe, get_speedups, key_program_sort, switch_to_zsloqa_versions, limit_to_size
 from scripts import Script
 from run_playground_vert_loop import df_index_cols
 
@@ -27,24 +25,6 @@ program_names_map = {
     'specialised': 'stack'
 }
 hue_order = ['cloudsc_vert_loop_4', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1', 'cloudsc_vert_loop_7']
-
-
-def get_arrowprops(update: Dict[str, Union[str, Number]]) -> Dict[str, Union[str, Number]]:
-    props = dict(width=2.0, headwidth=7.0, headlength=7.0, shrink=0.01)
-    props.update(update)
-    return props
-
-
-def key_program_sort(programs):
-    """
-    Sort by program name/index/version
-    """
-    programs = programs.str.extract("cloudsc_vert_loop_([0-9])_?([0-9])?")
-    programs.fillna(0, inplace=True)
-    programs[0] = pd.to_numeric(programs[0])
-    programs[1] = pd.to_numeric(programs[1])
-    programs = programs[0].apply(lambda x: 10*x) + programs[1]
-    return programs
 
 
 def check_for_common_node_gpu(node_df: pd.DataFrame) -> Optional[Tuple[str]]:
@@ -61,42 +41,12 @@ def check_for_common_node_gpu(node_df: pd.DataFrame) -> Optional[Tuple[str]]:
     with open(hardware_filename) as node_file:
         node_data = json.load(node_file)
         nodes = node_df['node'].unique()
-        if len(nodes) == 1:
-            return (nodes[0], node_data['ault_nodes'][nodes[0]]['GPU'])
+        gpus = [node_data['ault_nodes'][nodes[0]]['GPU']]
+        node_str = ' and '.join(nodes)
+        if len(gpus) == 1:
+            return (node_str, gpus[0])
         else:
             return None
-
-
-def get_speedups(data: pd.DataFrame, baseline_program: Optional[str] = None,
-                 baseline_short_desc: Optional[str] = None) -> pd.DataFrame:
-    """
-    Compute the "speedups" for all "list based" metrics. This means to divide the baseline by the value for all values
-    in all programs. Removes any "non list" values except for program and size
-
-    :param data: The complete data
-    :type data: pd.DataFrame
-    :param baseline_program: The name of the baseline program
-    :type baseline_program: str
-    :param baseline_short_desc: The name of the baseline short_desc. If None will use respective short_desc for each
-    measurement. Defaults to None
-    :type baseline_short_desc: Optional[str]
-    :return: The speedup data
-    :rtype: pd.DataFrame
-    """
-    # Groupd by program and size, remove any other non-list columns
-    indices = ['program', 'size', 'short_desc']
-    avg_data = data.groupby(indices).mean()
-    speedup_data = avg_data.copy()
-
-    def compute_speedup(col: pd.Series) -> pd.Series:
-        if baseline_short_desc is None and baseline_program is not None:
-            return col.div(col[baseline_program, :, :]).apply(np.reciprocal)
-        elif baseline_short_desc is not None and baseline_program is not None:
-            return col.div(col[baseline_program, :, baseline_short_desc]).apply(np.reciprocal)
-        elif baseline_short_desc is not None and baseline_program is None:
-            return col.div(col[:, :, baseline_short_desc]).apply(np.reciprocal)
-
-    return speedup_data.apply(compute_speedup, axis='index')
 
 
 def better_program_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
@@ -117,7 +67,7 @@ def better_program_names(legend: matplotlib.legend.Legend, names_map: Optional[D
 
 
 def create_runtime_plot(data: pd.DataFrame, ax_low: matplotlib.axis.Axis, ax_high: matplotlib.axis.Axis,
-                        hue_order: List[str], legend=False, annotate_runtimes=False):
+                        hue_order: List[str], legend=False):
 
     # hide the spines between ax_low and ax_high
     ax_low.spines['top'].set_visible(False)
@@ -158,68 +108,16 @@ def create_runtime_plot(data: pd.DataFrame, ax_low: matplotlib.axis.Axis, ax_hig
         .groupby(['program', 'size', 'short_desc'])\
         .mean().reset_index()
 
-    if annotate_runtimes:
-        runtime_annotation_offsets_500 = {
-                ('cloudsc_vert_loop_4', 'specialised'): (0, 0.01),
-                ('cloudsc_vert_loop_6', 'specialised'): (-33000, 0.02),
-                ('cloudsc_vert_loop_6_1', 'specialised'): (33000, 0.02),
-                ('cloudsc_vert_loop_7', 'specialised'): (0, -0.03),
-                ('cloudsc_vert_loop_4', 'heap'): (0, 0.05),
-                ('cloudsc_vert_loop_6', 'heap'): (0, -0.05),
-                ('cloudsc_vert_loop_6_1', 'heap'): (0, -0.04),
-                ('cloudsc_vert_loop_7', 'heap'): (0, 0.04),
-                }
-
-        runtime_annotation_offsets_100 = {
-                ('cloudsc_vert_loop_4', 'specialised'): (0, 0.05),
-                ('cloudsc_vert_loop_6', 'specialised'): (-33000, 0.02),
-                ('cloudsc_vert_loop_6_1', 'specialised'): (33000, 0.03),
-                ('cloudsc_vert_loop_7', 'specialised'): (0, -0.03),
-                ('cloudsc_vert_loop_4', 'heap'): (0, 0.03),
-                ('cloudsc_vert_loop_6', 'heap'): (0, 0.01),
-                ('cloudsc_vert_loop_6_1', 'heap'): (0, 0.04),
-                ('cloudsc_vert_loop_7', 'heap'): (0, -0.04),
-                }
-        for index, row in runtimes[runtimes['size'] == 500000].iterrows():
-            hue_index = hue_order.index(row['program'])
-            for ax in [ax_low, ax_high]:
-                if (row['program'], row['short_desc']) in runtime_annotation_offsets_500:
-                    offsets = runtime_annotation_offsets_500[(row['program'], row['short_desc'])]
-                else:
-                    offsets = (0, 0)
-                x = row['size'] + offsets[0]
-                y = row['runtime'] + offsets[1]
-                ax.text(x, y, f"{row['runtime']:.3e}s", color=sns.color_palette()[hue_index],
-                        horizontalalignment='center')
-
-        for index, row in runtimes[runtimes['size'] == 100000].iterrows():
-            hue_index = hue_order.index(row['program'])
-            for ax in [ax_low, ax_high]:
-                if (row['program'], row['short_desc']) in runtime_annotation_offsets_100:
-                    offsets = runtime_annotation_offsets_100[(row['program'], row['short_desc'])]
-                else:
-                    offsets = (0, 0)
-                x = row['size'] + offsets[0]
-                y = row['runtime'] + offsets[1]
-                ax.text(x, y, f"{row['runtime']:.3e}s", color=sns.color_palette()[hue_index],
-                        horizontalalignment='center')
-
 
 def create_memory_plot(data: pd.DataFrame, ax: matplotlib.axis.Axis, hue_order: List[str]):
-    ax.set_title('Measured Transferred Bytes')
     sns.lineplot(data=data, x='size', y='measured bytes', hue='program', ax=ax, legend=True,
                  errorbar=('ci', 95), style='short_desc', markers=True, hue_order=hue_order,
                  err_style='bars')
-    ax.set_xlabel('NBLOCKS')
-    ax.set_ylabel('Transferred to/from global memory [byte]')
     sns.lineplot(data=data.reset_index()[['size', 'theoretical bytes']].drop_duplicates(), ax=ax, x='size',
                  y='theoretical bytes', linestyle='--', color='gray', label='theoretical bytes/size')
 
-    size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(data.reset_index()['size'].unique())
-    bytes_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}", unit='B')  # U+2009
-    ax.yaxis.set_major_formatter(bytes_formatter)
+    size_vs_y_plot(ax, 'Transferred to/from global memory [byte]', 'Measured Transferred Bytes', data)
+    ax.yaxis.set_major_formatter(get_bytes_formatter())
 
 
 def create_runtime_memory_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu: str):
@@ -260,32 +158,28 @@ def create_runtime_memory_plots(data: pd.DataFrame, run_count_str: str, node: st
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'runtime_memory.pdf'))
 
 
-def create_memory_order_only_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str):
+def create_memory_order_only_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str, legend_on_line: bool):
     # Create subplots
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
     create_memory_plot(data.drop(index='specialised', level='short_desc'), ax, hue_order)
-    ax.get_legend().remove()
-    ax.text(3e5, 8e10, program_names_map[hue_order[0]], color=sns.color_palette()[0], horizontalalignment='center')
-    ax.text(3e5, 6e10, program_names_map[hue_order[1]], color=sns.color_palette()[1], horizontalalignment='center')
-    ax.text(2e5, 1e10, program_names_map[hue_order[2]], color=sns.color_palette()[2], horizontalalignment='center',
-            verticalalignment='center', rotation=4)
-    ax.text(4e5, 2e10, program_names_map[hue_order[3]], color=sns.color_palette()[3], horizontalalignment='center')
-    ax.text(4.5e5, 0, 'theoretical limit (sum of sizes of arrays)', color='gray', horizontalalignment='center',
-            verticalalignment='center', rotation=2)
-    ax.annotate('', xytext=(4.5e5, 2e10), xy=(4.5e5, 7.5e9),
-                arrowprops=get_arrowprops({'color': sns.color_palette()[3]}))
+    if legend_on_line:
+        legend_on_lines(ax, [(3e5, 8e10), (3e5, 6e10), (2e5, 1e10), ((4e5, 2e10), (4.5e5, 7.5e9))],
+                        [program_names_map[p] for p in hue_order],
+                        rotations=[0, 0, 4, 0])
+        ax.text(4.5e5, 0, 'theoretical limit (sum of sizes of arrays)', color='gray', horizontalalignment='center',
+                verticalalignment='center', rotation=2)
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'memory_array_order.pdf'))
 
 
-def create_runtime_with_speedup_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str):
+def create_runtime_with_speedup_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str, legend_on_line: bool):
     # Create subplots
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
     # ax_runtime_high = figure.add_subplot(2, 1, 1, sharex=ax_runtime_low)
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
-    ax.set_title('Runtimes of original version to best improved')
+    size_vs_y_plot(ax, 'Runtime [s]', 'Runtimes of original version to best improved', data)
 
     # Plot runtime
     data_slowest = data.xs(('cloudsc_vert_loop_4', 'heap'), level=('program', 'short_desc'))
@@ -295,16 +189,11 @@ def create_runtime_with_speedup_plot(data: pd.DataFrame, run_count_str: str, nod
 
     hue_order = ['slowest', 'fastest']
     program_names = {'slowest': 'Original Version', 'fastest': 'Fastest improved Version'}
-    sns.lineplot(pd.concat([data_slowest, data_fastest]), x='size', y='runtime', hue='program', ax=ax, legend=False,
+    sns.lineplot(pd.concat([data_slowest, data_fastest]), x='size', y='runtime', hue='program', ax=ax,
                  hue_order=hue_order, errorbar=('ci', 95), err_style='bars')
-    ax.set_ylabel('Runtime [s]')
-    ax.set_xlabel('NBLOCKS')
-    sizes = data.reset_index()['size'].unique()
-    size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(sizes)
 
     avg_data = data.groupby(['program', 'size', 'short_desc']).mean()
+    sizes = data.reset_index()['size'].unique()
     for size in sizes:
         time1 = avg_data.xs(('cloudsc_vert_loop_4', size, 'heap'))['runtime']
         time2 = avg_data.xs(('cloudsc_vert_loop_7', size, 'specialised'))['runtime']
@@ -312,47 +201,38 @@ def create_runtime_with_speedup_plot(data: pd.DataFrame, run_count_str: str, nod
         ax.annotate('', xy=(size, time1), xytext=(size, time2), arrowprops=get_arrowprops({'facecolor': 'black'}))
         ax.text(size, time2 + 0.6, f"{speedup:.1f}x")
 
-    ax.text(2e5, 3.1, program_names[hue_order[0]], horizontalalignment='center', color=sns.color_palette()[0],
-            verticalalignment='center', rotation=10)
-    ax.text(3e5, 0.1, program_names[hue_order[1]], horizontalalignment='center', color=sns.color_palette()[1])
+    if legend_on_line:
+        legend_on_line(ax, ((2e5, 3.1), (3e5, 0.1)), [program_names[p] for p in hue_order], rotations=[10, 0])
+    else:
+        better_program_names(ax.get_legend())
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'runtime.pdf'))
 
 
-def create_runtime_stack_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str):
+def create_runtime_stack_plot(data: pd.DataFrame, run_count_str: str, node: str, gpu: str, legend_on_line: bool):
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
-    ax.set_title('Runtimes of stack allocated versions')
+    size_vs_y_plot(ax, 'Runtime [s]', 'Runtimes of stack allocated versions', data)
+    dashes = {program: '' for program in data.reset_index()['program'].unique()}
+    dashes['clouds_vert_loop_6_1'] = (1, 2)
     sns.lineplot(data=data.drop(index='heap', level='short_desc'), x='size', y='runtime', hue='program',
-                 ax=ax, hue_order=hue_order, errorbar=('ci', 95), err_style='bars', legend=False, style='program',
-                 linewidth=3,
-                 dashes={'cloudsc_vert_loop_4': '', 'cloudsc_vert_loop_6': '', 'cloudsc_vert_loop_6_1': (1, 2),
-                         'cloudsc_vert_loop_7': ''})
-    ax.set_ylabel('Runtime [s]')
-    ax.set_xlabel('NBLOCKS')
-    sizes = data.reset_index()['size'].unique()
-    size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(sizes)
-    ax.text(3e5, 0.084, program_names_map[hue_order[0]], horizontalalignment='center', color=sns.color_palette()[0],
-            verticalalignment='center', rotation=25)
-    ax.text(1.8e5, 0.009, program_names_map[hue_order[1]], horizontalalignment='center', color=sns.color_palette()[1],
-            verticalalignment='center', rotation=3)
-    ax.text(3.8e5, 0.015, program_names_map[hue_order[2]], horizontalalignment='center', color=sns.color_palette()[2],
-            verticalalignment='center', rotation=3)
-    ax.text(3.8e5, 0.005, program_names_map[hue_order[3]], horizontalalignment='center', color=sns.color_palette()[3],
-            verticalalignment='center', rotation=3)
-    # better_program_names(ax.get_legend())
+                 ax=ax, hue_order=hue_order, errorbar=('ci', 95), err_style='bars', style='program',
+                 linewidth=3, dashes=dashes)
+    if legend_on_line:
+        legend_on_line(ax, ((3e5, 0.084), (1.8e5, 0.009), (3.8e5, 0.015), (3.8e5, 0.005)),
+                       [program_names_map[p] for p in hue_order], rotations=[25, 3, 3, 3])
+    else:
+        better_program_names(ax.get_legend())
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'runtime_stack.pdf'))
 
 
-def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu: str):
+def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu: str, legend_on_line: bool):
 
     size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
     # Create subplots
     figure = get_new_figure(4)
-    ax1 = figure.add_subplot(1, 1, 1)
-    ax1.axhline(y=1, color='gray', linestyle='--')
+    ax = figure.add_subplot(1, 1, 1)
+    ax.axhline(y=1, color='gray', linestyle='--')
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
 
     # Plot speedup
@@ -361,22 +241,16 @@ def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu:
         .drop(index='specialised', level='short_desc')\
         .drop(index='cloudsc_vert_loop_4', level='program')\
         .reset_index()
-    ax1.set_title('Speedup achieved using different array layouts compared to original')
-    sns.lineplot(data=speedups, x='size', y='runtime', hue='program', ax=ax1, legend=False, marker='o',
-                 hue_order=hue_order)
-    ax1.set_xlabel('NBLOCKS')
-    ax1.set_ylabel('Speedup')
-    ax1.xaxis.set_major_formatter(size_formatter)
-    ax1.set_xticks(speedups['size'].unique())
-    # better_program_names(ax1.get_legend())
-    ax1.text(300000, 1.2, program_names_map['cloudsc_vert_loop_6'], color=sns.color_palette()[1],
-             horizontalalignment='center')
-    ax1.text(250000, 6.3, program_names_map['cloudsc_vert_loop_6_1'], color=sns.color_palette()[2],
-             horizontalalignment='center', verticalalignment='center', rotation=-12)
-    ax1.text(350000, 7.5, program_names_map['cloudsc_vert_loop_7'], color=sns.color_palette()[3],
-             horizontalalignment='center', verticalalignment='center', rotation=-15)
+
+    size_vs_y_plot(ax, 'Speedup', 'Speedup achieved using different array layouts compared to original', data)
+    sns.lineplot(data=speedups, x='size', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order)
+    if legend_on_line:
+        legend_on_line(ax, ((300000, 1.2), (250000, 6.3), (350000, 7.5)), [program_names_map[p] for p in hue_order[1:]],
+                       rotations=[0, -12, -15], color_palette_offset=1)
+    else:
+        better_program_names(ax.get_legend())
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'speedup_array_order.pdf'))
-    ymin, ymax = ax1.get_ylim()
+    ymin, ymax = ax.get_ylim()
 
     figure = get_new_figure(4)
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
@@ -388,16 +262,13 @@ def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu:
         .drop(index='cloudsc_vert_loop_4', level='program')\
         .reset_index()
     sns.lineplot(data=speedups[speedups['program'] == 'cloudsc_vert_loop_6'],
-                 x='size', y='runtime', hue='program', ax=ax, legend=False, marker='o',
-                 hue_order=hue_order)
-    ax.set_title('Speedup')
-    ax.set_xlabel('NBLOCKS')
-    ax.set_ylabel('Speedup')
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(speedups['size'].unique())
+                 x='size', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order)
+    size_vs_y_plot(ax, 'Speedup', 'Speedup', data)
     ax.set_ylim(ymin, ymax)
-    ax.text(300000, 1.2, program_names_map['cloudsc_vert_loop_6'], color=sns.color_palette()[1],
-            horizontalalignment='center')
+    if legend_on_line:
+        legend_on_line(ax, ((300000, 1.2)), [program_names_map['clouds_vert_loop_6']], color_palette_offset=1)
+    else:
+        better_program_names(ax.get_legend())
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'speedup_array_order_v1.pdf'))
 
     figure = get_new_figure(4)
@@ -408,55 +279,79 @@ def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu:
         .sort_values('program', key=key_program_sort)\
         .drop(index='heap', level='short_desc')\
         .reset_index()
-    sns.lineplot(data=speedups, hue='program',
-                 x='size', y='runtime', ax=ax, marker='o', legend=False)
-    ax.set_title('Speedup stack allocation vs heap allocation')
-    ax.set_xlabel('NBLOCKS')
-    ax.set_ylabel('Speedup')
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(speedups['size'].unique())
-    ax.text(1.5e5, 30, program_names_map[hue_order[0]], color=sns.color_palette()[0], horizontalalignment='center',
-            verticalalignment='center', rotation=-3)
-    ax.text(4e5, 350, program_names_map[hue_order[1]], color=sns.color_palette()[1], horizontalalignment='center',
-            verticalalignment='center', rotation=-10)
-    ax.text(4e5, 120, program_names_map[hue_order[2]], color=sns.color_palette()[2], horizontalalignment='center',
-            verticalalignment='center', rotation=0)
-    ax.text(3e5, 200, program_names_map[hue_order[3]], color=sns.color_palette()[3], horizontalalignment='center',
-            verticalalignment='center', rotation=0)
-    ax.annotate('', xy=(2e5, 85), xytext=(2e5, 185),
-                arrowprops=get_arrowprops({'color': sns.color_palette()[3]}))
-    ax.annotate('', xy=(4.5e5, 45), xytext=(4.5e5, 105),
-                arrowprops=get_arrowprops({'color': sns.color_palette()[2]}))
+    sns.lineplot(data=speedups, hue='program', x='size', y='runtime', ax=ax, marker='o')
+    size_vs_y_plot(ax, 'Speedup', 'Speedup stack allocation vs heap allocation', data)
+    if legend_on_line:
+        legend_on_line(ax, ((1.5e5, 30), (4e5, 350), ((4e5, 120), (4.5e5, 45)), ((3e5, 200), (2e5, 85))),
+                       [program_names_map[p] for p in hue_order], rotations=[-3, -10, 0, 0])
+    else:
+        better_program_names(ax.legend())
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'speedup_temp_location.pdf'))
 
 
-def create_speedup_py_plot(data: pd.DataFrame,  run_count_str: str, node: str, gpu: str):
-    size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
-    figure = get_new_figure(4)
+def create_speedup_py_plot(data: pd.DataFrame,  run_count_str: str, node: str, gpu: str, legen_on_line: bool):
+    figure = get_new_figure()
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
     ax = figure.add_subplot(1, 1, 1)
     ax.axhline(y=1, color='gray', linestyle='--')
     data.drop(index=['cloudsc_vert_loop_4', 'cloudsc_vert_loop_6', 'cloudsc_vert_loop_6_1'],
               level='program', inplace=True)
-    speedups = get_speedups(data, baseline_program='cloudsc_vert_loop_7')\
-        .sort_values('program', key=key_program_sort)\
-        .drop(index='heap', level='short_desc')\
-        .drop(index='cloudsc_vert_loop_7', level='program')\
-        .reset_index()
+
+    py_fortran_program_mapping = {
+        'py_vert_loop_7_1': 'cloudsc_vert_loop_7',
+        'py_vert_loop_7_2': 'cloudsc_vert_loop_7_2',
+        'py_vert_loop_7_3': 'cloudsc_vert_loop_7_3',
+    }
+
+    def compute_speedup(col: pd.Series) -> pd.Series:
+        speedup_col = col.copy()
+        for this_program_name in col.reset_index()['program'].unique():
+            if this_program_name in py_fortran_program_mapping:
+                fortran_program_name = py_fortran_program_mapping[this_program_name]
+                update_col = pd.concat([speedup_col.xs(this_program_name, level='program', drop_level=False),
+                                        speedup_col.xs(fortran_program_name, level='program', drop_level=False)])\
+                    .div(col.xs(fortran_program_name, level='program'))
+                speedup_col.update(update_col)
+        return speedup_col.apply(np.reciprocal)
+
+    speedups = data\
+        .xs('specialised', level='short_desc') \
+        .drop('cloudsc_vert_loop_4_ZSOLQA', level='program') \
+        .drop('cloudsc_vert_loop_6_ZSOLQA', level='program') \
+        .drop('cloudsc_vert_loop_6_1_ZSOLQA', level='program') \
+        .groupby(['program', 'size']).mean() \
+        .apply(compute_speedup, axis='index') \
+        .drop('cloudsc_vert_loop_7', level='program') \
+        .drop('cloudsc_vert_loop_7_2', level='program') \
+        .drop('cloudsc_vert_loop_7_3', level='program')
     hue_order = ['runtime', 'measured bytes']
-    sns.lineplot(data=pd.melt(speedups, id_vars=['program', 'size'], value_vars=['runtime', 'measured bytes']),
-                 hue='variable', x='size', y='value', ax=ax, marker='o', legend=False, hue_order=hue_order)
-    ax.set_title('Speedup of Python to Fortran version using caching and flipped arrays allocated on stack')
-    ax.set_xlabel('NBLOCKS')
-    ax.set_ylabel('Speedup / Bytes reduced by')
-    ax.xaxis.set_major_formatter(size_formatter)
-    ax.set_xticks(speedups['size'].unique())
-    program_names = {'measured bytes': 'Bytes transferred', 'runtime': 'Runtime'}
-    ax.text(2.5e5, 4.4, program_names[hue_order[0]], color=sns.color_palette()[0], horizontalalignment='center',
-            rotation=1)
-    ax.text(2.5e5, 3.6, program_names[hue_order[1]], color=sns.color_palette()[1], horizontalalignment='center',
-            rotation=1)
+    size_vs_y_plot(ax, 'Speedup / Bytes reduced by',
+                   'Speedup of Python to Fortran version using caching and flipped arrays allocated on stack', speedups)
+    sns.lineplot(data=pd.melt(speedups.reset_index(), id_vars=['program', 'size'],
+                              value_vars=['runtime', 'measured bytes']),
+                 hue='program', style='variable', x='size', y='value', ax=ax, marker='o', legend=True,
+                 style_order=hue_order)
+    program_names = {'py_vert_loop_7_1': 'With ZSOLQA but not returning it',
+                     'py_vert_loop_7_2': 'Without ZSOLQA',
+                     'py_vert_loop_7_3': 'With ZSOLQA and returning it'}
+    better_program_names(ax.legend(), program_names)
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'speedup_python.pdf'))
+
+    figure = get_new_figure()
+    figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
+    ax = figure.add_subplot(1, 1, 1)
+    ax.axhline(y=1, color='gray', linestyle='--')
+    sns.lineplot(data=pd.melt(speedups.drop('py_vert_loop_7_1', level='program').reset_index(),
+                              id_vars=['program', 'size'], value_vars=['runtime', 'measured bytes']),
+                 hue='program', style='variable', x='size', y='value', ax=ax, marker='o', legend=True,
+                 style_order=hue_order)
+
+    size_vs_y_plot(ax, 'Speedup / Bytes reduced by',
+                   'Speedup of Python to Fortran version using caching and flipped arrays allocated on stack', speedups)
+    program_names = {'py_vert_loop_7_2': 'Without ZSOLQA',
+                     'py_vert_loop_7_3': 'With ZSOLQA and returning it'}
+    better_program_names(ax.legend(), program_names)
+    save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'speedup_python_correct_versions.pdf'))
 
 
 class PlotVertLoop(Script):
@@ -465,6 +360,7 @@ class PlotVertLoop(Script):
 
     def add_args(self, parser: ArgumentParser):
         parser.add_argument('--python-data', type=str, default=None, help='Path to python data to include as well')
+        parser.add_argument('--legend-on-line', action='store_true', default=False)
 
     @staticmethod
     def action(args):
@@ -478,11 +374,14 @@ class PlotVertLoop(Script):
         else:
             run_count_str = f"between {run_counts.min()} and {run_counts.max()}"
 
-        create_memory_order_only_plot(data, run_count_str, node, gpu)
+        limit_to_size(data, max_size=int(5e5))
+        switch_to_zsloqa_versions(data)
+
+        create_memory_order_only_plot(data, run_count_str, node, gpu, args.legend_on_line)
         create_runtime_memory_plots(data, run_count_str, node, gpu)
-        create_speedup_plots(data, run_count_str, node, gpu)
-        create_runtime_with_speedup_plot(data, run_count_str, node, gpu)
-        create_runtime_stack_plot(data, run_count_str, node, gpu)
+        create_speedup_plots(data, run_count_str, node, gpu, args.legend_on_line)
+        create_runtime_with_speedup_plot(data, run_count_str, node, gpu, args.legend_on_line)
+        create_runtime_stack_plot(data, run_count_str, node, gpu, args.legend_on_line)
 
         if args.python_data is not None:
             py_data = pd.read_csv(args.python_data, index_col=df_index_cols).reset_index()
@@ -497,9 +396,11 @@ class PlotVertLoop(Script):
             py_data.set_index(['program', 'size', 'run_number', 'short_desc'], inplace=True)
             data = pd.concat([data, py_data])
 
+            limit_to_size(data, max_size=int(4e5))
+
             run_counts = data.reset_index().groupby(['program', 'size', 'short_desc']).count()['run number']
             if run_counts.min() == run_counts.max():
                 run_count_str = run_counts.min()
             else:
                 run_count_str = f"between {run_counts.min()} and {run_counts.max()}"
-            create_speedup_py_plot(data, run_count_str, node, gpu)
+            create_speedup_py_plot(data, run_count_str, node, gpu, args.legend_on_line)

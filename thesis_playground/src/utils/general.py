@@ -1,4 +1,5 @@
 import os
+import shutil
 import numpy as np
 from numpy import f2py
 from numbers import Number
@@ -248,6 +249,27 @@ def use_cache(program: Optional[str] = None, dacecache_folder: Optional[str] = N
     return True
 
 
+def remove_build_folder(program: Optional[str] = None, dacecache_folder: Optional[str] = None):
+    """
+    Removes the build folder of the given program
+
+    :param program: The name of the program, used for building the code. Can be None if dacecache_folder is given
+    instead.
+    :type program: Optional[str]
+    :param dacecache_folder: Name of the folder of the program in the .dacecache folder. If None will infer from program
+    name
+    :type dacecache_folder: Optional[str]
+    """
+    programs = get_programs_data()['programs']
+    dacecache_folder = f"{programs[program]}_routine" if dacecache_folder is None else dacecache_folder
+    dacecache_folder = os.path.join(get_dacecache(), dacecache_folder)
+    if os.path.exists(dacecache_folder):
+        print(f"Remove folder {dacecache_folder}")
+        shutil.rmtree(dacecache_folder)
+    else:
+        print(f"Folder {dacecache_folder} does not exist")
+
+
 def disable_cache():
     """
     Disables using the cache in the settings and env variables
@@ -319,7 +341,18 @@ def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = T
     return same
 
 
-def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection):
+def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: List[slice]):
+    """
+    Print matrix comparing two matrices
+
+    :param output_a: Matrix A
+    :type output_a: np.ndarray
+    :param output_b: Array B
+    :type output_b: np.ndarray
+    :param selection: List of slices. One for each dimension. Defines which part of the matrix should be looked at for
+    each dimension
+    :type selection: : List[slice]
+    """
     if len(selection) == 0:
         diff = np.isclose(output_a, output_b)
         if diff:
@@ -460,6 +493,7 @@ def insert_heap_size_limit(dacecache_folder_name: str, limit: str):
     src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
     if len(os.listdir(src_dir)) > 1:
         print(f"WARNING: More than one files in {src_dir}")
+    print(f"Source file exists: {os.path.exists(src_file)}")
     print(f"Adding heap limit of {limit} to {src_file}")
 
     lines = run(['grep', '-rn', 'cudaLaunchKernel', src_file], capture_output=True).stdout.decode('UTF-8')

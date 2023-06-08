@@ -1,17 +1,18 @@
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List, Union
 from numbers import Number
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.ticker import EngFormatter
 import seaborn as sns
 import math
 import os
+import pandas as pd
 
 from utils.general import convert_to_seconds
 from measurements.data import MeasurementRun, Measurement
 from measurements.flop_computation import FlopCount
 from utils.ncu import get_achieved_bytes, get_achieved_work, get_runtime
 from utils.ncu_report import IAction
-from utils.general import get_programs_data
 
 
 def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwidth: float, max_bandwidth_unit: str,
@@ -311,3 +312,87 @@ def get_new_figure(number_of_colors: Optional[int] = None) -> matplotlib.figure.
     else:
         sns.set_palette('husl', number_of_colors)
     return fig
+
+
+def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, titel: str, data: pd.DataFrame):
+    """
+    Adds x and y labels and x ticks based on data for a plot with size on x axis
+
+    :param ax: The axis to act on
+    :type ax: matplotlib.axis.Axis
+    :param ylabel: Label for y axis
+    :type ylabel: str
+    :param title: Title of the axis plot
+    :type title: str
+    :param data: The data, used to get x ticks
+    :type data: pd.DataFrame
+    """
+    ax.set_xlabel('NBLOCKS')
+    ax.set_ylabel(ylabel)
+    ax.xaxis.set_major_formatter(EngFormatter(places=0, sep="\N{THIN SPACE}"))
+    ax.set_xticks(data.reset_index()['size'].unique())
+
+
+def get_bytes_formatter() -> matplotlib.ticker.EngFormatter:
+    """
+    Returns formatter for bytes
+
+    :return: Formatter
+    :rtype: matplotlib.ticker.EngFormatter
+    """
+    return EngFormatter(places=0, sep="\N{THIN SPACE}", unit='B')
+
+
+def get_arrowprops(update: Dict[str, Union[str, Number]]) -> Dict[str, Union[str, Number]]:
+    """
+    Return properties dict for a simple arrow.
+
+    :param update: Dict with values to change
+    :type update: Dict[str, Union[str, Number]]
+    :return: The properties dict
+    :rtype: Dict[str, Union[str, Number]]
+    """
+    props = dict(width=2.0, headwidth=7.0, headlength=7.0, shrink=0.01)
+    props.update(update)
+    return props
+
+
+def legend_on_lines(ax: matplotlib.axis.Axis,
+                    positions: List[Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]],
+                    program_names: List[str],
+                    rotations: Optional[Union[List[float], Dict[str, float]]] = None,
+                    color_palette_offset: int = 0):
+    """
+    Put legend labels in the plot on given positions. Removes any pre existing legend
+
+    :param ax: The axis ot act on
+    :type ax: matplotlib.axis.Axis
+    :param positions: The positions. Each tuple is a xy position. If there is a tuple with two tuples inside, the first
+    gives the position of the text from which onwards an arrow will be drawn to the position given by the 2nd tuple
+    :type positions: List[Union[Tuple[float, float], Tuple[Tuple[float, float], Tuple[float, float]]]]
+    :param program_names: List of the legend names, needs to have same length as positions
+    :type program_names: List[str]
+    :param rotations: Rotation angles. Can either be a list, then it has to be the same length as positions, or a
+    dictionary mapping program name to angle. If none all angles are 0, defaults to None
+    :type rotations: Optional[Union[List[float], Dict[str, float]]], optional
+    :param color_palette_offset: Set to a non zero value if colors of lines do not start at index 0 for the color
+    palette, defaults to 0
+    :type color_palette_offset: int, optional
+    """
+    if ax.get_legend() is not None:
+        ax.get_legend().remove()
+    for index, (pos, program) in enumerate(zip(positions, program_names)):
+        angle = 0
+        if rotations is not None:
+            if isinstance(rotations, List[float]):
+                angle = rotations[index]
+            elif isinstance(rotations, Dict[str, float]):
+                angle = rotations[program]
+        text_pos = pos
+        if isinstance(pos, Tuple[Tuple[float, float], Tuple[float, float]]):
+            text_pos = pos[0]
+            ax.annotate('', xytext=text_pos, xy=pos[1],
+                        arrowprops=get_arrowprops({'color': sns.color_palette()[index + color_palette_offset]}))
+
+        ax.text(text_pos[0], text_pos[1], program, color=sns.color_palette()[index + color_palette_offset],
+                horizontalalignment='center', verticalalignment='center', rotation=angle)

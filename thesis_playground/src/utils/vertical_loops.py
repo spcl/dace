@@ -1,8 +1,11 @@
+"""
+Functions specific to the vertical loop results
+"""
 import os
 import re
 import numpy as np
 import json
-from typing import Dict, Union, List, Tuple
+from typing import Dict, Union, List, Tuple, Optional
 from numbers import Number
 import pandas as pd
 
@@ -132,3 +135,90 @@ def get_dataframe(version_regex: str = None) -> Tuple[pd.DataFrame]:
 
     df.set_index(['program', 'size', 'run number', 'short_desc'], inplace=True, verify_integrity=True)
     return (df, descriptions, nodes)
+
+
+def get_speedups(data: pd.DataFrame, baseline_program: Optional[str] = None,
+                 baseline_short_desc: Optional[str] = None) -> pd.DataFrame:
+    """
+    Compute the "speedups" for all "list based" metrics. This means to divide the baseline by the value for all values
+    in all programs. Removes any "non list" values except for program and size
+
+    :param data: The complete data
+    :type data: pd.DataFrame
+    :param baseline_program: The name of the baseline program
+    :type baseline_program: str
+    :param baseline_short_desc: The name of the baseline short_desc. If None will use respective short_desc for each
+    measurement. Defaults to None
+    :type baseline_short_desc: Optional[str]
+    :return: The speedup data
+    :rtype: pd.DataFrame
+    """
+    # Groupd by program and size, remove any other non-list columns
+    indices = ['program', 'size', 'short_desc']
+    avg_data = data.groupby(indices).mean()
+    speedup_data = avg_data.copy()
+
+    def compute_speedup(col: pd.Series) -> pd.Series:
+        if baseline_short_desc is None and baseline_program is not None:
+            return col.div(col[baseline_program, :, :]).apply(np.reciprocal)
+        elif baseline_short_desc is not None and baseline_program is not None:
+            return col.div(col[baseline_program, :, baseline_short_desc]).apply(np.reciprocal)
+        elif baseline_short_desc is not None and baseline_program is None:
+            return col.div(col[:, :, baseline_short_desc]).apply(np.reciprocal)
+
+    return speedup_data.apply(compute_speedup, axis='index')
+
+
+def key_program_sort(programs):
+    """
+    Sort by program name/index/version
+    """
+    programs = programs.str.extract("cloudsc_vert_loop_([0-9])_?([0-9])?")
+    programs.fillna(0, inplace=True)
+    programs[0] = pd.to_numeric(programs[0])
+    programs[1] = pd.to_numeric(programs[1])
+    programs = programs[0].apply(lambda x: 10*x) + programs[1]
+    return programs
+
+
+def switch_to_zsloqa_versions(data: pd.DataFrame):
+    """
+    Removes and renames all ZSLOQA version to the default once. Uses versions where ZSOLQA is passed out
+
+    :param data: The dataframe with the data
+    :type data: pd.DataFrame
+    """
+    rename_map = {
+            'cloudsc_vert_loop_4_ZSOLQA': 'cloudsc_vert_loop_4',
+            'cloudsc_vert_loop_6_ZSOLQA': 'cloudsc_vert_loop_6',
+            'cloudsc_vert_loop_6_1_ZSOLQA': 'cloudsc_vert_loop_6_1',
+            'cloudsc_vert_loop_7_3': 'cloudsc_vert_loop_7',
+        }
+    for program in rename_map.values():
+        data.drop(program, level='program', inplace=True)
+
+    indices = list(data.index.names)
+    data.reset_index(inplace=True)
+    data['program'] = data['program'].map(lambda p: rename_map[p] if p in rename_map else p)
+    data.set_index(indices, inplace=True)
+
+
+def limit_to_size(data: pd.DataFrame, min_size: Optional[int] = None, max_size: Optional[int] = None):
+    """
+    Limits the given dataframe to exclude measurements above or below a given size/NBLOCKS value. If min or max is not
+    set, will not limit in that direction
+
+    :param data: The data
+    :type data: pd.DataFrame
+    :param min_size: Remove all below this value, defaults to None
+    :type min_size: Optional[int], optional
+    :param max_size: Remove all above this value, defaults to None
+    :type max_size: Optional[int], optional
+    """
+    sizes = data.reset_index()['size'].unique()
+    if max_size is not None:
+        sizes = [s for s in sizes if s > max_size]
+    if min_size is not None:
+        sizes = [s for s in sizes if s < min_size]
+    for size in sizes:
+        data.drop(size, level='size', inplace=True)
