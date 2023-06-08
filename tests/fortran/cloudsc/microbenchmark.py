@@ -1,4 +1,6 @@
 from argparse import ArgumentParser
+from subprocess import run
+import os
 import copy
 import cupy as cp
 import cupyx as cpx
@@ -167,7 +169,20 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument('--loop', choices=['1', '2', '3', 'all', 'none'], default='all')
     parser.add_argument('--skip-test', action='store_true', default=False)
+    parser.add_argument('--cache', action='store_true', default=False)
     args = parser.parse_args()
+
+    if args.cache:
+        os.environ['DACE_compiler_use_cache'] = '1'
+        os.putenv('DACE_compiler_use_cache', '1')
+        print("Build it without regenerating the code")
+        for name in ['map_loop', 'map_loop2', 'map_loop3']:
+            build = run(['make'],
+                        cwd=os.path.join(os.getcwd(), '.dacecache', name, 'build'),
+                        capture_output=True)
+            if build.returncode != 0:
+                print("ERROR: Error encountered while building")
+                print(build.stderr.decode('UTF-8'))
 
     rng = np.random.default_rng(42)
 
