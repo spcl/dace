@@ -87,7 +87,14 @@ custom_parameters = {
         'KLON': 1,
         'KFDIA': 1,
         'KIDIA': 1,
-        # 'NBLOCKS': 3000,
+        'NBLOCKS': 20000
+    },
+    'cloudsc_vert_loop_4_ZSOLQA':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
         'NBLOCKS': 20000
     },
     'cloudsc_vert_loop_5':
@@ -106,7 +113,23 @@ custom_parameters = {
         'KIDIA': 1,
         'NBLOCKS': 200000
     },
+    'cloudsc_vert_loop_6_ZSOLQA':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
     'cloudsc_vert_loop_6_1':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_6_1_ZSOLQA':
     {
         'KLEV': 137,
         'KLON': 1,
@@ -123,6 +146,22 @@ custom_parameters = {
         'NBLOCKS': 200000
     },
     'cloudsc_vert_loop_7_1':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_7_2':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
+    'cloudsc_vert_loop_7_3':
     {
         'KLEV': 137,
         'KLON': 1,
@@ -184,9 +223,9 @@ custom_parameters = {
 
 
 # changes from the parameters dict for testing
-# testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
+testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
 # testing_parameters = {'KLON': 1, 'KLEV': 13, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 20}
-testing_parameters = {'KLON': 1, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 100}
+# testing_parameters = {'KLON': 1, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 100}
 
 
 class ParametersProvider:

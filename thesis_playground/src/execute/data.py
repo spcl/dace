@@ -159,6 +159,8 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'ZQXN2D': (params['KLON'], params['KLEV'], params['NCLV']),
         'ZSOLAC': (params['KLON'], ),
         'ZSOLQA': (params['KLON'], params['NCLV'], params['NCLV']),
+        'ZSOLQA_N': (params['KLON'], params['NCLV'], params['NCLV'], params['NBLOCKS']),
+        'ZSOLQA_NF': (params['NBLOCKS'],  params['KLON'], params['NCLV'], params['NCLV']),
         'ZSOLQA2': (params['KLON'], params['KLEV'], params['NCLV'], params['NCLV']),
         'ZSUPSAT': (params['KLON'], ),
         'ZTP1': (params['KLON'], params['KLEV']),
@@ -345,6 +347,18 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
                 }
             ],
+            'cloudsc_vert_loop_4_ZSOLQA': [
+                {
+                    'variables': ['PLUDE'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
+                },
+                {
+                    'variables': ['ZSOLQA_N'],
+                    'start': (params['KIDIA']-1, 0, 0, 0),
+                    'end': (params['KFDIA'], params['NCLV'], params['NCLV'], params['NBLOCKS'])
+                }
+            ],
             'cloudsc_vert_loop_5': [
                 {
                     'variables': ['PLUDE'],
@@ -359,11 +373,35 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
                 }
             ],
+            'cloudsc_vert_loop_6_ZSOLQA': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                },
+                {
+                    'variables': ['ZSOLQA_NF'],
+                    'start': (0, params['KIDIA']-1, 0, 0),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['NCLV'], params['NCLV'])
+                }
+            ],
             'cloudsc_vert_loop_6_1': [
                 {
                     'variables': ['PLUDE_NF'],
                     'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_6_1_ZSOLQA': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                },
+                {
+                    'variables': ['ZSOLQA_NF'],
+                    'start': (0, params['KIDIA']-1, 0, 0),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['NCLV'], params['NCLV'])
                 }
             ],
             'cloudsc_vert_loop_7': [
@@ -378,6 +416,25 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
                     'variables': ['PLUDE_NF'],
                     'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
                     'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_7_2': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                }
+            ],
+            'cloudsc_vert_loop_7_3': [
+                {
+                    'variables': ['PLUDE_NF'],
+                    'start': (0, params['KIDIA']-1, params['NCLDTOP']-1),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['KLEV'])
+                },
+                {
+                    'variables': ['ZSOLQA_NF'],
+                    'start': (0, params['KIDIA']-1, 0, 0),
+                    'end': (params['NBLOCKS'], params['KFDIA'], params['NCLV'], params['NCLV'])
                 }
             ],
             'cloudsc_vert_loop_mwe': [

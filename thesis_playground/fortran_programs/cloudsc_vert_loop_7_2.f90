@@ -1,5 +1,5 @@
-!Flipped arrrays and caching and trying out somethings about symbols/parameters
-PROGRAM vert_loop_7_1
+!Flipped arrrays and caching and no ZSOLQA computation
+PROGRAM vert_loop_7_2
 
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
@@ -29,16 +29,16 @@ PROGRAM vert_loop_7_1
     REAL(KIND=JPRB) PLUDE(NBLOCKS, KLON, KLEV)
 
 
-    CALL vert_loop_7_1_routine(&
+    CALL vert_loop_7_2_routine(&
         & 1, KLEV, NCLV, 1, 1, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, NBLOCKS, &
         & PTSPHY, RLMIN, ZEPSEC, RG, PLU, LDCUM, PAPH, &
         & PLUDE)
 
 END PROGRAM
 ! Base on lines 1096 to 1120 and others
-SUBROUTINE vert_loop_7_1_routine(&
+SUBROUTINE vert_loop_7_2_routine(&
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, NBLOCKS, &
-    & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU_NF, LDCUM_NF, PSNDE_NF, PAPH_NF, PSUPSAT_NF, PT_NF, tendency_tmp_t_NF, &
+    & PTSPHY, RLMIN, ZEPSEC, RG, PLU_NF, LDCUM_NF, PAPH_NF, &
     & PLUDE_NF)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
@@ -77,7 +77,7 @@ SUBROUTINE vert_loop_7_1_routine(&
 
     ENDDO
 
-END SUBROUTINE vert_loop_7_1_routine
+END SUBROUTINE vert_loop_7_2_routine
 
 SUBROUTINE inner_loops(&
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
@@ -103,6 +103,7 @@ SUBROUTINE inner_loops(&
     REAL(KIND=JPRB) ZDTGDP(KLON)
     REAL(KIND=JPRB) ZDP(KLON)
     REAL(KIND=JPRB) ZGDP(KLON)
+    ! Cut away KLEV dimension of ZTP1
 
     ! Not sure if this causes problems
     ZDTGDP(:) = 0.0
@@ -110,7 +111,6 @@ SUBROUTINE inner_loops(&
     ZGDP(:) = 0.0
 
     DO JK=NCLDTOP,KLEV
-        ! Loop from 907
         DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
             ZDP(JL)     = PAPH_NF(JL,JK+1)-PAPH_NF(JL,JK)     ! dp
             ZGDP(JL)    = RG/ZDP(JL)                    ! g/dp
@@ -118,16 +118,11 @@ SUBROUTINE inner_loops(&
         ENDDO
         ! To 919
 
-        DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
-
+        DO JL=KIDIA,KFDIA
             PLUDE_NF(JL,JK)=PLUDE_NF(JL,JK)*ZDTGDP(JL)
-
             IF (.NOT.(LDCUM_NF(JL).AND.PLUDE_NF(JL,JK) > RLMIN.AND.PLU_NF(JL,JK+1)> ZEPSEC)) THEN
                 PLUDE_NF(JL,JK)=0.0
             ENDIF
-            ! *convective snow detrainment source
-            IF (LDCUM_NF(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE_NF(JL,JK)*ZDTGDP(JL)
-
         ENDDO
     ENDDO ! on vertical level JK
 
