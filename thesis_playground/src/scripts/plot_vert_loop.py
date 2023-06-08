@@ -3,8 +3,7 @@ import matplotlib
 from matplotlib.ticker import EngFormatter
 import os
 import json
-from typing import Optional, Tuple, List, Dict, Union
-from numbers import Number
+from typing import Optional, Tuple, List, Dict
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -103,11 +102,6 @@ def create_runtime_plot(data: pd.DataFrame, ax_low: matplotlib.axis.Axis, ax_hig
     ax_high.plot([0, 1], [0, 0], transform=ax_high.transAxes, **kwargs)
     ax_low.plot([0, 1], [1, 1], transform=ax_low.transAxes, **kwargs)
 
-    # Add values of runtimes
-    runtimes = data.reset_index()[['program', 'size', 'runtime', 'short_desc']]\
-        .groupby(['program', 'size', 'short_desc'])\
-        .mean().reset_index()
-
 
 def create_memory_plot(data: pd.DataFrame, ax: matplotlib.axis.Axis, hue_order: List[str]):
     sns.lineplot(data=data, x='size', y='measured bytes', hue='program', ax=ax, legend=True,
@@ -154,7 +148,7 @@ def create_runtime_memory_plots(data: pd.DataFrame, run_count_str: str, node: st
     handles = [handles[i] for i in new_order]
     labels = [labels[i] for i in new_order]
 
-    better_program_names(figure.legend(handles, labels, loc='outside lower center', ncols=5, frameon=False))
+    better_program_names(figure.legend(handles, labels, loc='outside lower center', ncols=3, frameon=False))
     save_plot(os.path.join(get_vert_loops_dir(), 'plots', 'runtime_memory.pdf'))
 
 
@@ -214,7 +208,7 @@ def create_runtime_stack_plot(data: pd.DataFrame, run_count_str: str, node: str,
     figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
     size_vs_y_plot(ax, 'Runtime [s]', 'Runtimes of stack allocated versions', data)
     dashes = {program: '' for program in data.reset_index()['program'].unique()}
-    dashes['clouds_vert_loop_6_1'] = (1, 2)
+    dashes['cloudsc_vert_loop_6_1'] = (1, 2)
     sns.lineplot(data=data.drop(index='heap', level='short_desc'), x='size', y='runtime', hue='program',
                  ax=ax, hue_order=hue_order, errorbar=('ci', 95), err_style='bars', style='program',
                  linewidth=3, dashes=dashes)
@@ -228,7 +222,6 @@ def create_runtime_stack_plot(data: pd.DataFrame, run_count_str: str, node: str,
 
 def create_speedup_plots(data: pd.DataFrame, run_count_str: str, node: str, gpu: str, legend_on_line: bool):
 
-    size_formatter = EngFormatter(places=0, sep="\N{THIN SPACE}")  # U+2009
     # Create subplots
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
@@ -377,11 +370,12 @@ class PlotVertLoop(Script):
         limit_to_size(data, max_size=int(5e5))
         switch_to_zsloqa_versions(data)
 
-        create_memory_order_only_plot(data, run_count_str, node, gpu, args.legend_on_line)
-        create_runtime_memory_plots(data, run_count_str, node, gpu)
-        create_speedup_plots(data, run_count_str, node, gpu, args.legend_on_line)
-        create_runtime_with_speedup_plot(data, run_count_str, node, gpu, args.legend_on_line)
-        create_runtime_stack_plot(data, run_count_str, node, gpu, args.legend_on_line)
+        data_without_7_2 = data.drop('cloudsc_vert_loop_7_2', level='program')
+        create_memory_order_only_plot(data_without_7_2, run_count_str, node, gpu, args.legend_on_line)
+        create_runtime_memory_plots(data_without_7_2, run_count_str, node, gpu)
+        create_speedup_plots(data_without_7_2, run_count_str, node, gpu, args.legend_on_line)
+        create_runtime_with_speedup_plot(data_without_7_2, run_count_str, node, gpu, args.legend_on_line)
+        create_runtime_stack_plot(data_without_7_2, run_count_str, node, gpu, args.legend_on_line)
 
         if args.python_data is not None:
             py_data = pd.read_csv(args.python_data, index_col=df_index_cols).reset_index()
