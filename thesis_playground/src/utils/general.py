@@ -414,6 +414,12 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_auto_opt")
+
+    # Apply TrivialMapElimination after autoopt
+    # from dace.transformation.dataflow import TrivialMapElimination
+    # sdfg.apply_transformations_repeated(TrivialMapElimination)
+    # if verbose_name is not None:
+    #     save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
     return sdfg
 
 

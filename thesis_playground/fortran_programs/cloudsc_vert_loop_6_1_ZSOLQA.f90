@@ -99,7 +99,7 @@ SUBROUTINE vert_loop_6_1_zsolqa_routine(&
             & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
             & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU_NF(JN,:,:), LDCUM_NF(JN,:), PSNDE_NF(JN,:,:), PAPH_NF(JN,:,:), &
             & PSUPSAT_NF(JN,:,:), PT_NF(JN,:,:), tendency_tmp_t_NF(JN,:,:), &
-            & ZSOLQA_NF(JN,:,:,:), PLUDE_NF(JN,:,:))
+            & ZSOLQA_NF(JN,:,:,:), PLUDE_NF(JN,:,:), ZTP1(JN,:,:))
 
     ENDDO
 
@@ -108,7 +108,7 @@ END SUBROUTINE vert_loop_6_1_zsolqa_routine
 SUBROUTINE inner_loops(&
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
     & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU_NF, LDCUM_NF, PSNDE_NF, PAPH_NF, PSUPSAT_NF, PT_NF, tendency_tmp_t_NF, &
-    & ZSOLQA, PLUDE_NF)
+    & ZSOLQA, PLUDE_NF, ZTP1)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)

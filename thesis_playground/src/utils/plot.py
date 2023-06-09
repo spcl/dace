@@ -314,7 +314,7 @@ def get_new_figure(number_of_colors: Optional[int] = None) -> matplotlib.figure.
     return fig
 
 
-def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, titel: str, data: pd.DataFrame):
+def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, title: str, data: pd.DataFrame):
     """
     Adds x and y labels and x ticks based on data for a plot with size on x axis
 
@@ -329,6 +329,7 @@ def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, titel: str, data: pd.D
     """
     ax.set_xlabel('NBLOCKS')
     ax.set_ylabel(ylabel)
+    ax.set_title(title)
     ax.xaxis.set_major_formatter(EngFormatter(places=0, sep="\N{THIN SPACE}"))
     ax.set_xticks(data.reset_index()['size'].unique())
 
