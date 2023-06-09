@@ -520,11 +520,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
                 node.sdfg.parent = first_state
-            #we only want to add the node once!    
-            try:
-                first_state.add_node(node)
-            except:
-                pass
+            
+            first_state.add_node(node)
                 
             for conn in self.connections_to_make:
                 if node in conn[1]:
