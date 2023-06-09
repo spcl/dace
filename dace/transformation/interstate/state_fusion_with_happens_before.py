@@ -34,7 +34,9 @@ def top_level_nodes(state: SDFGState):
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.
-        The merge is made by identifying the source in the first state and the sink in the second state, and linking the bottom of the appropriate source subgraph in the first state with the top of the appropriate sink subgraph in the second state.
+        The merge is made by identifying the source in the first state and the sink in the second state, 
+        and linking the bottom of the appropriate source subgraph in the first state with the top of the
+        appropriate sink subgraph in the second state.
 
         State-fusion takes two states that are connected through a single edge,
         and fuses them into one state. If permissive, also applies if potential memory
