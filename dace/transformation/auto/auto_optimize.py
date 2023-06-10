@@ -515,7 +515,8 @@ def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
                   validate_all: bool = False,
-                  symbols: Dict[str, int] = None) -> SDFG:
+                  symbols: Dict[str, int] = None,
+                  thread_safe: bool = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -535,6 +536,7 @@ def auto_optimize(sdfg: SDFG,
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+    :param thread_safe: If True, it will not create persistent arrays.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -617,7 +619,8 @@ def auto_optimize(sdfg: SDFG,
     move_small_arrays_to_stack(sdfg)
 
     # Make all independent arrays persistent
-    make_transients_persistent(sdfg, device)
+    if not thread_safe:
+        make_transients_persistent(sdfg, device)
 
     if symbols:
         # Specialize for all known symbols
