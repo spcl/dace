@@ -141,7 +141,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                     return True
         # Path not found, check memlets
         if StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
-                                            second_read):
+                                                 second_read):
             return False
         return True
 
@@ -167,7 +167,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Check for intersection (if None, fusion is ok)
         if fail or not path_found:
             if StateFusionExtended.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
-                                                second_read):
+                                                     second_read):
                 return False
         return True
 
@@ -307,7 +307,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # Recreate fused connected component correspondences, and then
             # check for hazards
             resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(first_cc_input, first_cc_output,
-                                                                               second_cc_input, second_cc_output)
+                                                                                    second_cc_input, second_cc_output)
 
             # Check for data races
             for fused_cc in resulting_ccs:
@@ -387,14 +387,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                             if d in fused_cc.first_inputs:
                                 nodes_first = [n for n in first_input if n.data == d]
                                 if StateFusionExtended.memlets_intersect(first_state, nodes_first, True, second_state,
-                                                                    nodes_second, False):
+                                                                         nodes_second, False):
                                     self.connections_to_make.append([nodes_first, nodes_second])
                                     #return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
                                 if StateFusionExtended.memlets_intersect(first_state, nodes_first, False, second_state,
-                                                                    nodes_second, False):
+                                                                         nodes_second, False):
                                     self.connections_to_make.append([nodes_first, nodes_second])
                                     #return False
                     # End of data race check
@@ -437,8 +437,8 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         for outnode in fused_cc.first_output_nodes:
                             if outnode.data != inpnode.data:
                                 continue
-                            if StateFusionExtended.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
-                                                                True):
+                            if StateFusionExtended.memlets_intersect(first_state, [outnode], False, second_state,
+                                                                     [inpnode], True):
                                 # If found more than once, either there is a
                                 # path from one to another or it is ambiguous
                                 if found is not None:
@@ -520,9 +520,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if isinstance(node, nodes.NestedSDFG):
                 # update parent information
                 node.sdfg.parent = first_state
-            
-            first_state.add_node(node)
-                
+
+            #The node could have been added when adding connections by add_nedge hence the need to check
+            if node not in first_state.nodes():
+                first_state.add_node(node)
+
             for conn in self.connections_to_make:
                 if node in conn[1]:
                     for i in top2:
