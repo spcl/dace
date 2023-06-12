@@ -196,6 +196,15 @@
         "Restore"
       ]
     },
+    "CodeBlock": {
+      "metatype": "CodeBlock",
+      "desc": "Condition under which to trigger the instrumentation",
+      "category": "General",
+      "default": {
+        "string_data": "1",
+        "language": "CPP"
+      }
+    },
     "str": {
       "metatype": "str",
       "desc": "Name of the CodeNode",
@@ -208,15 +217,6 @@
       "category": "General",
       "default": []
     },
-    "CodeBlock": {
-      "metatype": "CodeBlock",
-      "desc": "Tasklet code",
-      "category": "General",
-      "default": {
-        "string_data": "",
-        "language": "Python"
-      }
-    },
     "InstrumentationType": {
       "metatype": "InstrumentationType",
       "desc": "Measure execution statistics with given method",
@@ -226,7 +226,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -256,7 +257,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "Range": {
@@ -310,6 +312,12 @@
         "CeilRange",
         "NumberOfTiles"
       ]
+    },
+    "type": {
+      "metatype": "type",
+      "desc": "Target to use for compilation",
+      "category": "General",
+      "default": null
     },
     "DeviceType": {
       "category": "General",
@@ -752,6 +760,12 @@
       "category": "General",
       "default": null
     },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
+    },
     "dtype": {
       "metatype": "typeclass",
       "desc": "",
@@ -1113,6 +1127,12 @@
       "category": "General",
       "default": null
     },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
+    },
     "dtype": {
       "metatype": "typeclass",
       "desc": "",
@@ -1310,6 +1330,12 @@
       "desc": "Specifies whether this array may have a value of None. If False, the array must not be None. If option is not set, it is inferred by other properties and the OptionalArrayInference pass.",
       "category": "General",
       "default": null
+    },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
     },
     "dtype": {
       "metatype": "typeclass",
@@ -1578,6 +1604,15 @@
         "Restore"
       ]
     },
+    "instrument_condition": {
+      "metatype": "CodeBlock",
+      "desc": "Condition under which to trigger the instrumentation",
+      "category": "General",
+      "default": {
+        "string_data": "1",
+        "language": "CPP"
+      }
+    },
     "in_connectors": {
       "metatype": "dict",
       "desc": "A set of input connectors for this node.",
@@ -1699,7 +1734,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -1821,7 +1857,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -1895,7 +1932,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "symbol_mapping": {
@@ -1934,7 +1972,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2034,7 +2073,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "unroll": {
@@ -2082,7 +2122,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2199,7 +2240,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "unroll": {
@@ -2242,7 +2284,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2328,7 +2371,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "chunksize": {
@@ -2369,7 +2413,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2453,7 +2498,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "chunksize": {
@@ -2490,7 +2536,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2577,7 +2624,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "unroll": {
@@ -2625,7 +2673,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2700,7 +2749,7 @@
       "value_type": "typeclass"
     }
   },
-  "Pipeline": {
+  "PipelineScope": {
     "init_size": {
       "metatype": "SymbolicProperty",
       "desc": "Number of initialization iterations.",
@@ -2772,7 +2821,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "unroll": {
@@ -2815,7 +2865,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -2884,7 +2935,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -2959,10 +3011,31 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
+    },
+    "symbol_instrument": {
+      "metatype": "DataInstrumentationType",
+      "desc": "Instrument symbol values when this state is executed",
+      "category": "General",
+      "default": "No_Instrumentation",
+      "choices": [
+        "No_Instrumentation",
+        "Save",
+        "Restore"
+      ]
+    },
+    "symbol_instrument_condition": {
+      "metatype": "CodeBlock",
+      "desc": "Condition under which to trigger the symbol instrumentation",
+      "category": "General",
+      "default": {
+        "string_data": "1",
+        "language": "CPP"
+      }
     },
     "executions": {
       "metatype": "SymbolicProperty",
@@ -3203,9 +3276,7 @@
       "metatype": "dict",
       "desc": "Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
       "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "str"
+      "default": {}
     },
     "condition": {
       "metatype": "CodeBlock",
@@ -3254,7 +3325,8 @@
         "No_Instrumentation",
         "Timer",
         "PAPI_Counters",
-        "LIKWID_Counters",
+        "LIKWID_CPU",
+        "LIKWID_GPU",
         "GPU_Events",
         "FPGA"
       ]
@@ -3352,6 +3424,28 @@
       "default": {},
       "key_type": "str",
       "value_type": "str"
+    }
+  },
+  "Pass": {},
+  "VisitorPass": {},
+  "StatePass": {},
+  "ScopePass": {},
+  "Pipeline": {
+    "passes": {
+      "metatype": "list",
+      "desc": "List of passes that this pipeline contains",
+      "category": "(Debug)",
+      "default": [],
+      "element_type": "Pass"
+    }
+  },
+  "FixedPointPipeline": {
+    "passes": {
+      "metatype": "list",
+      "desc": "List of passes that this pipeline contains",
+      "category": "(Debug)",
+      "default": [],
+      "element_type": "Pass"
     }
   },
   "PatternTransformation": {
@@ -3561,7 +3655,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -3614,9 +3709,11 @@
       "value_type": "typeclass"
     }
   },
+  "BLAS": {},
   "OpenBLAS": {},
   "IntelMKL": {},
   "cuBLAS": {},
+  "rocBLAS": {},
   "ExpandDotPure": {
     "sdfg_id": {
       "metatype": "int",
@@ -3910,7 +4007,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -4230,7 +4328,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -4367,7 +4466,63 @@
       "default": 0
     }
   },
+  "ExpandGemmGPUBLAS": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
   "ExpandGemmCuBLAS": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandGemmRocBLAS": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -4561,6 +4716,7 @@
         "MKL",
         "OpenBLAS",
         "cuBLAS",
+        "rocBLAS",
         "PBLAS",
         "FPGA1DSystolic"
       ]
@@ -4584,7 +4740,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -4759,7 +4916,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5077,7 +5235,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5286,7 +5445,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5443,7 +5603,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5549,7 +5710,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5677,7 +5839,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -5827,7 +5990,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -6077,6 +6241,34 @@
       "default": 0
     }
   },
+  "ExpandReduceGPUAuto": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
   "dace.libraries.standard.nodes.reduce.Reduce": {
     "axes": {
       "metatype": "list",
@@ -6115,7 +6307,8 @@
         "CUDA (device)",
         "CUDA (block)",
         "CUDA (block allreduce)",
-        "FPGAPartialReduction"
+        "FPGAPartialReduction",
+        "GPUAuto"
       ]
     },
     "schedule": {
@@ -6137,7 +6330,8 @@
         "GPU_Persistent",
         "FPGA_Device",
         "Snitch",
-        "Snitch_Multicore"
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
       ]
     },
     "debuginfo": {
@@ -6190,6 +6384,13 @@
       "value_type": "typeclass"
     }
   },
+  "StateReachability": {},
+  "SymbolAccessSets": {},
+  "AccessSets": {},
+  "FindAccessStates": {},
+  "FindAccessNodes": {},
+  "SymbolWriteScopes": {},
+  "ScalarWriteShadowScopes": {},
   "MapCollapse": {
     "sdfg_id": {
       "metatype": "int",
@@ -6254,10 +6455,11 @@
   },
   "MapDimShuffle": {
     "parameters": {
-      "metatype": "tuple",
+      "metatype": "list",
       "desc": "Desired order of map parameters",
       "category": "General",
-      "default": []
+      "default": [],
+      "element_type": "str"
     },
     "sdfg_id": {
       "metatype": "int",
@@ -6315,6 +6517,252 @@
     }
   },
   "TrivialMapRangeElimination": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "StreamTransient": {
+    "with_buffer": {
+      "metatype": "bool",
+      "desc": "Use an intermediate buffer for accumulation",
+      "category": "General",
+      "default": true
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "AccumulateTransient": {
+    "array": {
+      "metatype": "str",
+      "desc": "Array to create local storage for (if empty, first available)",
+      "category": "General",
+      "default": null
+    },
+    "identity": {
+      "metatype": "SymbolicProperty",
+      "desc": "Identity value to set",
+      "category": "General",
+      "default": null
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "LocalStorage": {
+    "array": {
+      "metatype": "str",
+      "desc": "Array to create local storage for (if empty, first available)",
+      "category": "General",
+      "default": null
+    },
+    "prefix": {
+      "metatype": "str",
+      "desc": "Prefix for new data node",
+      "category": "General",
+      "default": "trans_"
+    },
+    "create_array": {
+      "metatype": "bool",
+      "desc": "if false, it does not create a new array.",
+      "category": "General",
+      "default": true
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "InLocalStorage": {
+    "array": {
+      "metatype": "str",
+      "desc": "Array to create local storage for (if empty, first available)",
+      "category": "General",
+      "default": null
+    },
+    "prefix": {
+      "metatype": "str",
+      "desc": "Prefix for new data node",
+      "category": "General",
+      "default": "trans_"
+    },
+    "create_array": {
+      "metatype": "bool",
+      "desc": "if false, it does not create a new array.",
+      "category": "General",
+      "default": true
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "OutLocalStorage": {
+    "array": {
+      "metatype": "str",
+      "desc": "Array to create local storage for (if empty, first available)",
+      "category": "General",
+      "default": null
+    },
+    "prefix": {
+      "metatype": "str",
+      "desc": "Prefix for new data node",
+      "category": "General",
+      "default": "trans_"
+    },
+    "create_array": {
+      "metatype": "bool",
+      "desc": "if false, it does not create a new array.",
+      "category": "General",
+      "default": true
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "OTFMapFusion": {
+    "identity": {
+      "metatype": "SymbolicProperty",
+      "desc": "Identity value to set",
+      "category": "General",
+      "default": null
+    },
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -6673,190 +7121,24 @@
       "default": 0
     }
   },
-  "StreamTransient": {
-    "with_buffer": {
-      "metatype": "bool",
-      "desc": "Use an intermediate buffer for accumulation",
-      "category": "General",
-      "default": true
-    },
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "AccumulateTransient": {
-    "array": {
+  "GPUGridStridedTiling": {
+    "new_dim_prefix": {
       "metatype": "str",
-      "desc": "Array to create local storage for (if empty, first available)",
+      "desc": "Prefix for new dimension name",
       "category": "General",
-      "default": null
+      "default": "tile"
     },
-    "identity": {
+    "max_grid_dim": {
       "metatype": "SymbolicProperty",
-      "desc": "Identity value to set",
+      "desc": "Maximum grid dimension",
       "category": "General",
-      "default": null
+      "default": 65535
     },
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "LocalStorage": {
-    "array": {
-      "metatype": "str",
-      "desc": "Array to create local storage for (if empty, first available)",
+    "block_dim": {
+      "metatype": "Property",
+      "desc": "Block dimension",
       "category": "General",
-      "default": null
-    },
-    "prefix": {
-      "metatype": "str",
-      "desc": "Prefix for new data node",
-      "category": "General",
-      "default": "trans_"
-    },
-    "create_array": {
-      "metatype": "bool",
-      "desc": "if false, it does not create a new array.",
-      "category": "General",
-      "default": true
-    },
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "InLocalStorage": {
-    "array": {
-      "metatype": "str",
-      "desc": "Array to create local storage for (if empty, first available)",
-      "category": "General",
-      "default": null
-    },
-    "prefix": {
-      "metatype": "str",
-      "desc": "Prefix for new data node",
-      "category": "General",
-      "default": "trans_"
-    },
-    "create_array": {
-      "metatype": "bool",
-      "desc": "if false, it does not create a new array.",
-      "category": "General",
-      "default": true
-    },
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "OutLocalStorage": {
-    "array": {
-      "metatype": "str",
-      "desc": "Array to create local storage for (if empty, first available)",
-      "category": "General",
-      "default": null
-    },
-    "prefix": {
-      "metatype": "str",
-      "desc": "Prefix for new data node",
-      "category": "General",
-      "default": "trans_"
-    },
-    "create_array": {
-      "metatype": "bool",
-      "desc": "if false, it does not create a new array.",
-      "category": "General",
-      "default": true
+      "default": 128
     },
     "sdfg_id": {
       "metatype": "int",
@@ -7348,6 +7630,110 @@
       "desc": "The storage type of involved arrays will be set to the value of this property if they have Default storage type. ",
       "category": "General",
       "default": "CPU_Heap"
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "CodeObject": {
+    "name": {
+      "metatype": "str",
+      "desc": "Filename to use",
+      "category": "General",
+      "default": ""
+    },
+    "code": {
+      "metatype": "str",
+      "desc": "The code attached to this object",
+      "category": "General",
+      "default": ""
+    },
+    "language": {
+      "metatype": "str",
+      "desc": "Language used for this code (same as its file extension)",
+      "category": "General",
+      "default": ""
+    },
+    "target": {
+      "metatype": "type",
+      "desc": "Target to use for compilation",
+      "category": "General",
+      "default": null
+    },
+    "target_type": {
+      "metatype": "str",
+      "desc": "Sub-target within target (e.g., host or device code)",
+      "category": "General",
+      "default": ""
+    },
+    "title": {
+      "metatype": "str",
+      "desc": "Title of code for GUI",
+      "category": "General",
+      "default": ""
+    },
+    "extra_compiler_kwargs": {
+      "metatype": "dict",
+      "desc": "Additional compiler argument variables to add to template",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "linkable": {
+      "metatype": "bool",
+      "desc": "Should this file participate in overall linkage?",
+      "category": "General",
+      "default": false
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    }
+  },
+  "HbmTransform": {
+    "new_dim": {
+      "metatype": "str",
+      "desc": "Defines the map param of the outer unrolled map",
+      "category": "General",
+      "default": "k"
+    },
+    "move_to_FPGA_global": {
+      "metatype": "bool",
+      "desc": "All assigned arrays have their storage changed to  FPGA_Global",
+      "category": "General",
+      "default": true
+    },
+    "make_new_map_outermost": {
+      "metatype": "bool",
+      "desc": "Make the map with schedule unrolled the outermost of the scope",
+      "category": "General",
+      "default": true
     },
     "sdfg_id": {
       "metatype": "int",
@@ -7988,6 +8374,38 @@
       "default": []
     }
   },
+  "TemporalVectorization": {
+    "factor": {
+      "metatype": "int",
+      "desc": "The multi-pumping factor. E.g. double-pumping is a factor of 2.",
+      "category": "General",
+      "default": 2
+    },
+    "approach": {
+      "metatype": "int",
+      "desc": "Which approach to use. Can be 1 (increased throughput, same resources) or 2 (same throughput, reduced resourced).",
+      "category": "General",
+      "default": 2
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "ID of SDFG to transform",
+      "category": "General",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "ID of state to transform subgraph within, or -1 to transform the SDFG",
+      "category": "General",
+      "default": 0
+    },
+    "subgraph": {
+      "metatype": "set",
+      "desc": "Subgraph in transformation instance",
+      "category": "General",
+      "default": []
+    }
+  },
   "CompositeFusion": {
     "debug": {
       "metatype": "bool",
@@ -8074,5 +8492,283 @@
       "category": "General",
       "default": []
     }
-  }
+  },
+  "ArrayElimination": {},
+  "ConsolidateEdges": {},
+  "ConstantPropagation": {
+    "recursive": {
+      "metatype": "bool",
+      "desc": "Propagagte recursively through nested SDFGs",
+      "category": "General",
+      "default": true
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Show progress",
+      "category": "General",
+      "default": null
+    }
+  },
+  "DeadDataflowElimination": {
+    "skip_library_nodes": {
+      "metatype": "bool",
+      "desc": "If True, does not remove library nodes if their results are unused. Otherwise removes library nodes without side effects.",
+      "category": "General",
+      "default": false
+    },
+    "remove_persistent_memory": {
+      "metatype": "bool",
+      "desc": "If True, marks code with Persistent allocation lifetime as dead",
+      "category": "General",
+      "default": false
+    }
+  },
+  "DeadStateElimination": {},
+  "FuseStates": {
+    "permissive": {
+      "metatype": "bool",
+      "desc": "If True, ignores some race conditions checks.",
+      "category": "General",
+      "default": false
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Whether to print progress, or None for default (print after 5 seconds).",
+      "category": "General",
+      "default": null
+    }
+  },
+  "InlineSDFGs": {
+    "permissive": {
+      "metatype": "bool",
+      "desc": "If True, ignores some checks on inlining.",
+      "category": "General",
+      "default": false
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Whether to print progress, or None for default (print after 5 seconds).",
+      "category": "General",
+      "default": null
+    },
+    "multistate": {
+      "metatype": "bool",
+      "desc": "If True, include multi-state inlining.",
+      "category": "General",
+      "default": true
+    }
+  },
+  "OptionalArrayInference": {},
+  "PatternMatchAndApply": {
+    "transformations": {
+      "metatype": "list",
+      "desc": "The list of transformations to apply",
+      "category": "General",
+      "default": [],
+      "element_type": "PatternTransformation"
+    },
+    "permissive": {
+      "metatype": "bool",
+      "desc": "Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.",
+      "category": "General",
+      "default": false
+    },
+    "validate": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after all transformations have been applied.",
+      "category": "General",
+      "default": true
+    },
+    "validate_all": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after each transformation applies.",
+      "category": "General",
+      "default": false
+    },
+    "states": {
+      "metatype": "list",
+      "desc": "If not None, only applies transformations to the given states.",
+      "category": "General",
+      "default": null,
+      "element_type": "SDFGState"
+    },
+    "print_report": {
+      "metatype": "bool",
+      "desc": "Whether to show debug prints (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Whether to show progress printouts (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    }
+  },
+  "PatternMatchAndApplyRepeated": {
+    "order_by_transformation": {
+      "metatype": "bool",
+      "desc": "Whether or not to order by transformation.",
+      "category": "General",
+      "default": true
+    },
+    "transformations": {
+      "metatype": "list",
+      "desc": "The list of transformations to apply",
+      "category": "General",
+      "default": [],
+      "element_type": "PatternTransformation"
+    },
+    "permissive": {
+      "metatype": "bool",
+      "desc": "Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.",
+      "category": "General",
+      "default": false
+    },
+    "validate": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after all transformations have been applied.",
+      "category": "General",
+      "default": true
+    },
+    "validate_all": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after each transformation applies.",
+      "category": "General",
+      "default": false
+    },
+    "states": {
+      "metatype": "list",
+      "desc": "If not None, only applies transformations to the given states.",
+      "category": "General",
+      "default": null,
+      "element_type": "SDFGState"
+    },
+    "print_report": {
+      "metatype": "bool",
+      "desc": "Whether to show debug prints (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Whether to show progress printouts (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    }
+  },
+  "PatternApplyOnceEverywhere": {
+    "order_by_transformation": {
+      "metatype": "bool",
+      "desc": "Whether or not to order by transformation.",
+      "category": "General",
+      "default": true
+    },
+    "transformations": {
+      "metatype": "list",
+      "desc": "The list of transformations to apply",
+      "category": "General",
+      "default": [],
+      "element_type": "PatternTransformation"
+    },
+    "permissive": {
+      "metatype": "bool",
+      "desc": "Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.",
+      "category": "General",
+      "default": false
+    },
+    "validate": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after all transformations have been applied.",
+      "category": "General",
+      "default": true
+    },
+    "validate_all": {
+      "metatype": "bool",
+      "desc": "If True, validates the SDFG after each transformation applies.",
+      "category": "General",
+      "default": false
+    },
+    "states": {
+      "metatype": "list",
+      "desc": "If not None, only applies transformations to the given states.",
+      "category": "General",
+      "default": null,
+      "element_type": "SDFGState"
+    },
+    "print_report": {
+      "metatype": "bool",
+      "desc": "Whether to show debug prints (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    },
+    "progress": {
+      "metatype": "bool",
+      "desc": "Whether to show progress printouts (or None to use configuration file).",
+      "category": "General",
+      "default": null
+    }
+  },
+  "RemoveUnusedSymbols": {
+    "recursive": {
+      "metatype": "bool",
+      "desc": "Prune nested SDFGs recursively",
+      "category": "General",
+      "default": true
+    }
+  },
+  "ScalarToSymbolPromotion": {
+    "ignore": {
+      "metatype": "set",
+      "desc": "Fields that should not be promoted.",
+      "category": "General",
+      "default": []
+    },
+    "transients_only": {
+      "metatype": "bool",
+      "desc": "Promote only transients.",
+      "category": "General",
+      "default": true
+    },
+    "integers_only": {
+      "metatype": "bool",
+      "desc": "Allow promotion of integer scalars only.",
+      "category": "General",
+      "default": true
+    }
+  },
+  "SimplifyPass": {
+    "validate": {
+      "metatype": "bool",
+      "desc": "Whether to validate the SDFG at the end of the pipeline.",
+      "category": "General",
+      "default": false
+    },
+    "validate_all": {
+      "metatype": "bool",
+      "desc": "Whether to validate the SDFG after each pass.",
+      "category": "General",
+      "default": false
+    },
+    "skip": {
+      "metatype": "set",
+      "desc": "Set of pass names to skip.",
+      "category": "General",
+      "default": []
+    },
+    "verbose": {
+      "metatype": "bool",
+      "desc": "Whether to print reports after every pass.",
+      "category": "General",
+      "default": false
+    },
+    "passes": {
+      "metatype": "list",
+      "desc": "List of passes that this pipeline contains",
+      "category": "(Debug)",
+      "default": [],
+      "element_type": "Pass"
+    }
+  },
+  "TransientReuse": {}
 }
