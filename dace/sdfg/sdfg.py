@@ -2692,8 +2692,3 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
            :return: a Memlet that fully transfers array
         """
         return dace.Memlet.from_array(array, self.data(array))
-
-@make_properties    
-class SDFGShell(SDFG):
-    """ A shell SDFG that allows inputs, outputs and SDFG properties but does not contain the actual SDFG. Can be transformed into an SDFG by loading in the actual content.
-   """
