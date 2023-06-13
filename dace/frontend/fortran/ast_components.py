@@ -260,7 +260,6 @@ class InternalFortranAst:
                                                  (list,
                                                   tuple)) else [self.create_ast(child) for child in node.children]
 
-
     def create_ast(self, node=None):
         """
         Creates an AST from a FASTNode
@@ -397,18 +396,15 @@ class InternalFortranAst:
             return ast_internal_classes.Int_Literal_Node(value=str(
                 math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
                                                          line_number=line)
-        # TODO This needs a better translation
+        # This selects the smallest kind that can hold the given number of digits (fp64,fp32 or fp16)
         elif name.name == "__dace_selected_real_kind":
-            if args.args[0].value == '13' and args.args[1].value == '300':
+            if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
                 return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-            elif args.args[0].value == '2' and args.args[1].value == '1':
-                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
-            elif args.args[0].value == '4' and args.args[1].value == '2':
-                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
-            elif args.args[0].value == '6' and args.args[1].value == '37':
+            elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
                 return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
             else:
-                raise NotImplementedError("Only real*8 is supported")
+                return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
+
         func_types = {
             "__dace_int": "INT",
             "__dace_dble": "DOUBLE",

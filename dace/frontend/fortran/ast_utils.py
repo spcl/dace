@@ -27,7 +27,7 @@ fortrantypes2dacetypes = {
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
     "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
-    #"BOOL": dtypes.int32,
+    
 }
 
 

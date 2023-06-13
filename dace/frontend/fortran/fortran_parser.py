@@ -659,7 +659,7 @@ class AST_translator:
             else:
                 raise NameError("Variable name not found: " + ast_utils.get_name(i))
 
-            # print("Context change:",i.name," ",var.shape)
+            
             if not hasattr(var, "shape") or len(var.shape) == 0:
                 memlet = ""
             elif (len(var.shape) == 1 and var.shape[0] == 1):
@@ -785,10 +785,7 @@ class AST_translator:
         substate = ast_utils.add_simple_state_to_sdfg(
             self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]))
 
-        #input_names_tasklet = [i_t + "_in" for i_t in input_names]
         output_names_changed = [o_t + "_out" for o_t in output_names]
-        #output_names_changed = [o_t for o_t in output_names_tasklet]
-        #output_names_dict = {on: dace.pointer(dace.int32) for on in output_names_changed}
 
         tasklet = ast_utils.add_tasklet(substate, "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
                                          input_names_tasklet, output_names_changed, "text", node.line_number,

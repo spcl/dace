@@ -24,9 +24,6 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
     Yield all direct child nodes of *node*, that is, all fields that are nodes
     and all items of fields that are lists of nodes.
     """
-    #print("CLASS: ",node.__class__)
-    #if isinstance(node,DeclRefExpr):
-    #print("NAME: ", node.name)
 
     for name, field in iter_fields(node):
         #print("NASME:",name)
@@ -546,7 +543,10 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         i.lval, ast_internal_classes.Structure_Constructor_Node):
                     function_statement_name = i.lval.name
                     is_actually_function_statement = False
-                    #In Fortran, function statement are defined as scalar values, but called as arrays, so by identifiying that it is called as a call_expr or structure_constructor, we also need to match the specification part and see that it is scalar rather than an array.
+                    # In Fortran, function statement are defined as scalar values, 
+                    # but called as arrays, so by identifiying that it is called as 
+                    # a call_expr or structure_constructor, we also need to match
+                    # the specification part and see that it is scalar rather than an array.
                     found = False
                     for j in spec:
                         if found:
@@ -562,9 +562,9 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                     if is_actually_function_statement:
                         to_change.append([i.lval, i.rval])
                         new_exec.remove(i)
-                        print("Function statement found and removed: ", function_statement_name)
+                        
                     else:
-                        #There are no function statements after the first one that isn't
+                        #There are no function statements after the first one that isn't a function statement
                         break
     still_changing = True
     while still_changing:
