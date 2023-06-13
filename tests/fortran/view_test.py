@@ -19,6 +19,9 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_view_test():
+    """
+    Tests to check whether Fortran array slices are correctly translates to DaCe views.
+    """
     test_name = "view_test"
     test_string = """
                     PROGRAM """ + test_name + """_program
@@ -71,6 +74,9 @@ END SUBROUTINE viewlens
 
 
 def test_fortran_frontend_view_test_2():
+    """
+    Tests to check whether Fortran array slices are correctly translates to DaCe views. This case necessitates multiple views per array in the same context.
+    """
     test_name = "view2_test"
     test_string = """
                     PROGRAM """ + test_name + """_program
@@ -124,6 +130,8 @@ END SUBROUTINE viewlens
 
 
 def test_fortran_frontend_view_test_3():
+    """
+    Tests to check whether Fortran array slices are correctly translates to DaCe views. This test generates multiple views from the same array in the same context.    """
     test_name = "view3_test"
     test_string = """
                     PROGRAM """ + test_name + """_program

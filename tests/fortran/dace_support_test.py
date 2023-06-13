@@ -20,6 +20,9 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_simplify():
+    """ 
+    Test that the DaCe simplify works with the input SDFG provided by the Fortran frontend.
+    """
     test_string = """
                     PROGRAM symbol_test
                     implicit none

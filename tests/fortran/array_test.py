@@ -7,7 +7,6 @@ import sys, os
 import numpy as np
 import pytest
 
-
 from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
@@ -20,6 +19,9 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_array_access():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
     test_string = """
                     PROGRAM access_test
                     implicit none
@@ -44,6 +46,9 @@ def test_fortran_frontend_array_access():
 
 
 def test_fortran_frontend_array_ranges():
+    """
+    Tests that the Fortran frontend can parse multidimenstional arrays with vectorized ranges and that the accessed indices are correct.
+    """
     test_string = """
                     PROGRAM ranges_test
                     implicit none
@@ -76,6 +81,9 @@ def test_fortran_frontend_array_ranges():
 
 
 def test_fortran_frontend_array_3dmap():
+    """
+    Tests that the normalization of multidimensional array indices works correctly.
+    """
     test_string = """
                     PROGRAM array_3dmap_test
                     implicit none
@@ -102,6 +110,9 @@ def test_fortran_frontend_array_3dmap():
 
 
 def test_fortran_frontend_twoconnector():
+    """
+    Tests that the multiple connectors to one array are handled correctly.
+    """
     test_string = """
                     PROGRAM twoconnector_test
                     implicit none
@@ -126,6 +137,9 @@ def test_fortran_frontend_twoconnector():
 
 
 def test_fortran_frontend_input_output_connector():
+    """
+    Tests that the presence of input and output connectors for the same array is handled correctly.
+    """
     test_string = """
                     PROGRAM ioc_test
                     implicit none

@@ -20,6 +20,9 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
 
 def test_fortran_frontend_real_kind_selector():
+    """
+    Tests that the size intrinsics are correctly parsed and translated to DaCe.
+    """
     test_string = """
                     PROGRAM real_kind_selector_test
                     implicit none
@@ -48,6 +51,9 @@ def test_fortran_frontend_real_kind_selector():
 
 
 def test_fortran_frontend_if1():
+    """
+    Tests that the if/else construct is correctly parsed and translated to DaCe.
+    """
     test_string = """
                     PROGRAM if1_test
                     implicit none
@@ -82,6 +88,10 @@ def test_fortran_frontend_if1():
 
 
 def test_fortran_frontend_loop1():
+    """
+    Tests that the loop construct is correctly parsed and translated to DaCe.
+    """
+    
     test_string = """
                     PROGRAM loop1_test
                     implicit none
@@ -116,6 +126,10 @@ def test_fortran_frontend_loop1():
 
 
 def test_fortran_frontend_function_statement1():
+    """
+    Tests that the function statement are correctly removed recursively.
+    """
+    
     test_string = """
                     PROGRAM function_statement1_test
                     implicit none
@@ -148,6 +162,9 @@ def test_fortran_frontend_function_statement1():
 
 
 def test_fortran_frontend_pow1():
+    """
+    Tests that the power intrinsic is correctly parsed and translated to DaCe. (should become a*a)
+    """
     test_string = """
                     PROGRAM pow1_test
                     implicit none
@@ -176,6 +193,10 @@ def test_fortran_frontend_pow1():
 
 
 def test_fortran_frontend_pow2():
+    """
+    Tests that the power intrinsic is correctly parsed and translated to DaCe (this time it's p sqrt p).
+    """
+    
     test_string = """
                     PROGRAM pow2_test
                     implicit none
@@ -204,6 +225,9 @@ def test_fortran_frontend_pow2():
 
 
 def test_fortran_frontend_sign1():
+    """
+    Tests that the sign intrinsic is correctly parsed and translated to DaCe.
+    """
     test_string = """
                     PROGRAM sign1_test
                     implicit none
