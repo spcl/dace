@@ -319,10 +319,23 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
 
 
 def find_fast_library(device: dtypes.DeviceType) -> List[str]:
+    from dace.codegen.common import get_gpu_backend
+
     # Returns the optimized library node implementations for the given target
     # device
     if device is dtypes.DeviceType.GPU:
-        return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
+        try:
+            backend = get_gpu_backend()
+        except RuntimeError:
+            backend = 'none'
+
+        if backend == 'cuda':
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
+        elif backend == 'hip':
+            return ['rocBLAS', 'GPUAuto', 'pure']
+        else:
+            return ['GPUAuto', 'pure']
+
     elif device is dtypes.DeviceType.FPGA:
         return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
     elif device is dtypes.DeviceType.CPU:
@@ -614,7 +627,7 @@ def auto_optimize(sdfg: SDFG,
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
                     known_symbols[s] = v
-                if isinstance(v, sympy.core.numbers.Integer):
+                if isinstance(v, sympy.Integer):
                     try:
                         known_symbols[s] = int(v)
                     except TypeError:

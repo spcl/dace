@@ -58,7 +58,10 @@ class ReloadableDLL(object):
             return True
         if not os.path.isfile(self._stub_filename):
             return False
-        self._stub = ctypes.CDLL(self._stub_filename)
+        try:
+            self._stub = ctypes.CDLL(self._stub_filename)
+        except OSError:
+            return False
 
         # Set return types of stub functions
         self._stub.load_library.restype = ctypes.c_void_p
@@ -215,6 +218,8 @@ class CompiledSDFG(object):
             
             :return: the ctypes.Structure representation of the state struct.
         """
+        if not self._libhandle:
+            raise ValueError('Library was not initialized')
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 

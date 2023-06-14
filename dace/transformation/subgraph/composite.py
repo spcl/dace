@@ -9,7 +9,7 @@ from dace.transformation.subgraph import stencil_tiling
 import dace.transformation.transformation as transformation
 from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
-import dace.transformation.subgraph.helpers as helpers
+from dace.transformation.subgraph import helpers
 
 from dace import dtypes, registry, symbolic, subsets, data
 from dace.properties import EnumProperty, make_properties, Property, ShapeProperty

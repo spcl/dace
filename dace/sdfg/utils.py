@@ -825,6 +825,12 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     in_edge = in_edges[0]
     out_edge = out_edges[0]
 
+    # Check if there is a 'views' connector
+    if in_edge.dst_conn and in_edge.dst_conn == 'views':
+        return in_edge
+    if out_edge.src_conn and out_edge.src_conn == 'views':
+        return out_edge
+
     # If there is one incoming and one outgoing edge, and one leads to a code
     # node, the one that leads to an access node is the viewed data.
     inmpath = state.memlet_path(in_edge)
@@ -850,12 +856,6 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
-
-    # Check if there is a 'views' connector
-    if in_edge.dst_conn and in_edge.dst_conn == 'views':
-        return in_edge
-    if out_edge.src_conn and out_edge.src_conn == 'views':
-        return out_edge
 
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
@@ -1501,13 +1501,19 @@ def is_fpga_kernel(sdfg, state):
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
+    at_least_one_fpga_array = False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-    return True
+
+    return at_least_one_fpga_array
 
 
 def postdominators(

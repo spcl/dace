@@ -46,7 +46,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         src_nodes = subgraph.source_nodes()
         dst_nodes = subgraph.sink_nodes()
         srcdst_nodes = src_nodes + dst_nodes
-        srcdst_arrays = [sdfg.arrays[node.data] for node in srcdst_nodes]
+        srcdst_arrays = [sdfg.arrays[node.data] for node in srcdst_nodes if isinstance(node, nodes.AccessNode)]
         access_nodes = [
             node for node in subgraph.nodes() if isinstance(node, nodes.AccessNode) and not node in srcdst_nodes
         ]

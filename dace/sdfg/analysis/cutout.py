@@ -247,8 +247,7 @@ class SDFGCutout(SDFG):
         # Remove remaining dangling connectors from scope nodes and add new data containers corresponding to accesses
         # for dangling connectors on other nodes.
         translation_add_pairs: Set[Tuple[nd.AccessNode, nd.AccessNode]] = set()
-        for orig_node in in_translation.keys():
-            new_node = in_translation[orig_node]
+        for orig_node, new_node in in_translation.items():
             if isinstance(new_node, nd.Node):
                 if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
                     used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
