@@ -102,3 +102,7 @@ def get_playground_results_dir() -> str:
     :rtype: str
     """
     return join(get_thesis_playground_root_dir(), 'playground_results')
+
+
+def get_results_2_folder() -> str:
+    return join(get_thesis_playground_root_dir(), 'results_v2')

@@ -221,4 +221,3 @@ def get_cycles(action: IAction) -> int:
     :rtype: int
     """
     return action.metric_by_name('gpc__cycles_elapsed.max').as_uint64()
-

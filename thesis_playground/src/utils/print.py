@@ -153,13 +153,13 @@ def print_dataframe(columns: Dict[str, Tuple[str, Optional[str]]], df: pd.DataFr
         headers.append(columns[c][0])
         if df[c].dtype == np.float64:
             floatfmt.append(columns[c][1])
-            intfmt.append(None)
+            intfmt.append('')
         elif df[c].dtype == np.int64:
-            floatfmt.append(None)
+            floatfmt.append('')
             intfmt.append(columns[c][1])
         else:
-            floatfmt.append(None)
-            intfmt.append(None)
+            floatfmt.append('')
+            intfmt.append('')
 
     print(tabulate(df[df_columns], headers=headers, floatfmt=floatfmt, intfmt=intfmt, showindex=False,
                    tablefmt=tablefmt))

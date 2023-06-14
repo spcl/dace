@@ -20,6 +20,8 @@ def main():
     parser.add_argument('--NBLOCKS', type=int)
     parser.add_argument('--KLEV', type=int)
     parser.add_argument('--KLON', type=int)
+    parser.add_argument('--KIDIA', type=int)
+    parser.add_argument('--KFDIA', type=int)
     parser.add_argument('--read-sdfg', action='store_true')
     parser.add_argument('--not-specialise-symbols', action='store_true', default=False)
 
