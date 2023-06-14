@@ -108,6 +108,7 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'tendency_tmp_q': (params['KLON'], params['KLEV']),
         'tendency_tmp_a': (params['KLON'], params['KLEV']),
         'tendency_tmp_cld': (params['KLON'], params['KLEV'], params['NCLV']),
+        'tendency_tmp_cld_N': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
         'ZA': (params['KLON'], params['KLEV']),
         'ZAORIG': (params['KLON'], params['KLEV']),
         'ZCLDTOPDIST': (params['KLON'], ),
@@ -466,6 +467,18 @@ def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]
             ],
             'microbenchmark_v3': [
                 {'variables': ['OUTPUT_F'], 'start': (2, 0), 'end': (params['KLEV'], params['NBLOCKS'])}
+            ],
+            'cloudsc_vert_loop_10': [
+                {
+                    'variables': ['PLUDE'],
+                    'start': (params['KIDIA']-1, params['NCLDTOP']-1, 0),
+                    'end': (params['KFDIA'], params['KLEV'], params['NBLOCKS'])
+                },
+                {
+                    'variables': ['ZSOLQA_N'],
+                    'start': (params['KIDIA']-1, 0, 0, 0),
+                    'end': (params['KFDIA'], params['NCLV'], params['NCLV'], params['NBLOCKS'])
+                }
             ],
     }
     return ranges[program]

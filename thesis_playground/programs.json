@@ -32,6 +32,7 @@
         "cloudsc_vert_loop_mwe_no_klon": "vert_loop_mwe_no_klon",
         "cloudsc_vert_loop_orig_mwe_no_klon": "vert_loop_orig_mwe_no_klon",
         "cloudsc_vert_loop_mwe_wip": "vert_loop_mwe_wip",
+        "cloudsc_vert_loop_10": "vert_loop_10",
         "microbenchmark_v1": "map_loop_1",
         "microbenchmark_v3": "map_loop_3"
     },
@@ -84,6 +85,8 @@
         "cloudsc_vert_loop_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["KLEV", "NCLV", "NCLDTOP", "NBLOCKS"],
         "cloudsc_vert_loop_mwe_wip": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDTOP", "NBLOCKS"],
+        "cloudsc_vert_loop_10": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDQV", "NCLDTOP",
+                                "NBLOCKS"],
         "microbenchmark_v1": ["KLEV", "NBLOCKS"],
         "microbenchmark_v3": ["KLEV", "NBLOCKS"]
     },
@@ -137,6 +140,8 @@
         "cloudsc_vert_loop_mwe_no_klon": ["PTSPHY", "PAPH_NFS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["PTSPHY", "PAPH_NS"],
         "cloudsc_vert_loop_mwe_wip": ["PTSPHY", "PAPH_NF"],
+        "cloudsc_vert_loop_10": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
+                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N", "tendency_tmp_cld_N", "PCLV_N"],
         "microbenchmark_v1": ["INPUT"],
         "microbenchmark_v3": ["INPUT_F"]
 
@@ -174,6 +179,7 @@
         "cloudsc_vert_loop_mwe_no_klon": ["PLUDE_NFS"],
         "cloudsc_vert_loop_orig_mwe_no_klon": ["PLUDE_NS"],
         "cloudsc_vert_loop_mwe_wip": ["PLUDE_NF"],
+        "cloudsc_vert_loop_10": ["ZSOLQA_N", "PLUDE"],
         "microbenchmark_v1": ["OUTPUT"],
         "microbenchmark_v3": ["OUTPUT_F"]
     }
