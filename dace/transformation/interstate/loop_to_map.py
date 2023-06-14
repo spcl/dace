@@ -551,6 +551,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 intermediate_nodes.append(node)
 
+        # Evaluate symbols for map range first
+        if isinstance(start, symbolic.symbol):
+            start = start.evalf(subs=sdfg.constants)
+        if isinstance(end, symbolic.symbol):
+            end = end.evalf(subs=sdfg.constants)
+        if isinstance(step, symbolic.symbol):
+            step = step.evalf(subs=sdfg.constants)
+
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
         exit = nodes.MapExit(map)

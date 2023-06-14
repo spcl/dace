@@ -48,8 +48,9 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    debugprint = True
 
+    if symbols:
+        specialise_symbols(sdfg, symbols)
     # Simplification and loop parallelization
     transformed = True
     # print(f"Free symbols in graph: {sdfg.free_symbols}")
@@ -148,29 +149,42 @@ def auto_optimize(sdfg: SDFG,
     make_transients_persistent(sdfg, device)
 
     if symbols:
-        # Specialize for all known symbols
-        known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
-        known_symbols = {}
-        # print(f"Free symbols in graph: {sdfg.free_symbols}")
-        for (s, v) in symbols.items():
-            if s in sdfg.free_symbols:
-                if isinstance(v, (int, float)):
-                    known_symbols[s] = v
-                if isinstance(v, sympy.core.numbers.Integer):
-                    try:
-                        known_symbols[s] = int(v)
-                    except TypeError:
-                        pass
-
-        if debugprint and len(known_symbols) > 0:
-            print("Specializing the SDFG for symbols", known_symbols)
-        sdfg.specialize(known_symbols)
-
+        specialise_symbols(sdfg, symbols)
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
 
     return sdfg
+
+
+def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
+    """
+    Specialise known sybols
+
+    :param sdfg: The SDFG to act upon
+    :type sdfg: dace.SDFG
+    :param symbols: The dictionary with the known symbols and their value
+    :type symbols: Dict[str, int]
+    """
+    debugprint = True
+    # Specialize for all known symbols
+    known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
+    known_symbols = {}
+    # print(f"Free symbols in graph: {sdfg.free_symbols}")
+    for (s, v) in symbols.items():
+        if s in sdfg.free_symbols:
+            if isinstance(v, (int, float)):
+                known_symbols[s] = v
+            if isinstance(v, sympy.core.numbers.Integer):
+                try:
+                    known_symbols[s] = int(v)
+                except TypeError:
+                    pass
+
+    if debugprint and len(known_symbols) > 0:
+        print("Specializing the SDFG for symbols", known_symbols)
+    sdfg.specialize(known_symbols)
+
 
 
 def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False, program: str = None) -> SDFG:
