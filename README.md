@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/spcl/dace/branch/master/graph/badge.svg)](https://codecov.io/gh/spcl/dace)
 
 
-![D](dace.svg)aCe - Data-Centric Parallel Programming
+![D](dace.svg)aCe - Data-Centric Parallel Programming 
 =====================================================
 
 _Decoupling domain science from performance optimization._
