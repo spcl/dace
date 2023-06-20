@@ -116,29 +116,29 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
         opt['dtype'] = cdesc.dtype.ctype
 
         code = '''
-        const MKL_INT group_count = 1;
-        MKL_INT group_sizes[group_count] = {{ {BATCH} }};
-        MKL_INT m_array[group_count] = {{ {M} }};
-        MKL_INT n_array[group_count] = {{ {N} }};
-        MKL_INT k_array[group_count] = {{ {K} }};
-        char transa[group_count] = {{ '{ta}' }};
-        char transb[group_count] = {{ '{tb}' }};
-        {dtype} alpha_array[group_count] = {{ {alpha} }};
-        {dtype} beta_array[group_count] = {{ {beta} }};
-        MKL_INT lda_array[group_count] = {{ {lda} }};
-        MKL_INT ldb_array[group_count] = {{ {ldb} }};
-        MKL_INT ldc_array[group_count] = {{ {ldc} }};
+        const MKL_INT __group_count = 1;
+        MKL_INT __group_sizes[__group_count] = {{ {BATCH} }};
+        MKL_INT __m_array[__group_count] = {{ {M} }};
+        MKL_INT __n_array[__group_count] = {{ {N} }};
+        MKL_INT __k_array[__group_count] = {{ {K} }};
+        char __transa[__group_count] = {{ '{ta}' }};
+        char __transb[__group_count] = {{ '{tb}' }};
+        {dtype} __alpha_array[__group_count] = {{ {alpha} }};
+        {dtype} __beta_array[__group_count] = {{ {beta} }};
+        MKL_INT __lda_array[__group_count] = {{ {lda} }};
+        MKL_INT __ldb_array[__group_count] = {{ {ldb} }};
+        MKL_INT __ldc_array[__group_count] = {{ {ldc} }};
 
-        const {dtype}** A = new const {dtype}*[{BATCH}];
-        const {dtype}** B = new const {dtype}*[{BATCH}];
-        {dtype}** C = new {dtype}*[{BATCH}];
+        const {dtype}** __A = new const {dtype}*[{BATCH}];
+        const {dtype}** __B = new const {dtype}*[{BATCH}];
+        {dtype}** __C = new {dtype}*[{BATCH}];
         for (int __ib = 0; __ib < {BATCH}; __ib++) {{
-            A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
-            B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
-            C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
+            __A[__ib] = (({dtype}*){x}) + __ib*{stride_a};
+            __B[__ib] = (({dtype}*){y}) + __ib*{stride_b};
+            __C[__ib] = (({dtype}*)_c) + __ib*{stride_c};
         }}
 
-        {prefix}gemm_batch(transa, transb, m_array, n_array, k_array, alpha_array, A, lda_array, B, ldb_array, beta_array, C, ldc_array, &group_count, group_sizes);'''.format_map(
+        {prefix}gemm_batch(__transa, __transb, __m_array, __n_array, __k_array, __alpha_array, __A, __lda_array, __B, __ldb_array, __beta_array, __C, __ldc_array, &__group_count, __group_sizes);'''.format_map(
             opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
