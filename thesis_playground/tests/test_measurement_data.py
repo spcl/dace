@@ -1,6 +1,7 @@
 import json
 
-from measurement_data import Measurement, ProgramMeasurement, MeasurementRun
+from measurements.data import Measurement, ProgramMeasurement, MeasurementRun
+from execute.parameters import ParametersProvider
 
 
 class TestMeasurement:
@@ -66,11 +67,14 @@ class TestProgramMeasurement:
         assert measurement3 != measurement2
 
     def test_serde(self):
-        measurement = ProgramMeasurement("Test", {'foo': 2})
+        params = ParametersProvider('test_program', update={'foo': 2})
+        measurement = ProgramMeasurement("Test", params)
         measurement.add_measurement("m1", "s", data=[1.0, 2.0], kernel_name="kernel1")
         parsed_measurement = json.loads(
                 json.dumps(measurement, default=ProgramMeasurement.to_json),
                 object_hook=ProgramMeasurement.from_json)
+        print(measurement.parameters)
+        print(parsed_measurement.parameters)
         assert measurement == parsed_measurement
 
 
@@ -85,12 +89,12 @@ class TestMeasurementRun:
         assert run1 != run2
         assert run3 != run2
 
-        run1.add_program_data(ProgramMeasurement("m1", "s",
+        run1.add_program_data(ProgramMeasurement("m1", ParametersProvider('p1'),
                                                  measurements={'time': [
                                                     Measurement("time", "s", data=[1.0, 2.0], kernel_name="kernel1")
                                                     ]}))
         assert run1 != run3
-        run3.add_program_data(ProgramMeasurement("m1", "s", 
+        run3.add_program_data(ProgramMeasurement("m1", ParametersProvider('p1'),
                                                  measurements={'time': [
                                                     Measurement("time", "s", data=[1.0, 2.0], kernel_name="kernel1")
                                                     ]}))
@@ -98,7 +102,7 @@ class TestMeasurementRun:
 
     def test_serde(self):
         run = MeasurementRun("run 1")
-        run.add_program_data(ProgramMeasurement("m1", "s",
+        run.add_program_data(ProgramMeasurement("m1", ParametersProvider('p1'),
                                                 measurements={'time': [
                                                     Measurement("time", "s", data=[1.0, 2.0], kernel_name="kernel1")
                                                     ]}))
