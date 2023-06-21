@@ -1682,6 +1682,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 if not cur_memlet.is_empty():
                     if propagate:
                         cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
+                elif propagate:
+                    cur_memlet = mm.Memlet()
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)
