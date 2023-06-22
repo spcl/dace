@@ -494,7 +494,7 @@ def convert_to_bytes(value: Number, unit: str) -> float:
         print(f"ERROR: No factor recorded for {unit}")
 
 
-def insert_heap_size_limit(dacecache_folder_name: str, limit: str):
+def insert_heap_size_limit(dacecache_folder_name: str, limit: str, debug_prints: bool = False):
     src_dir = os.path.join(get_dacecache(), dacecache_folder_name, 'src', 'cuda')
     src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
     if len(os.listdir(src_dir)) > 1:
@@ -507,10 +507,13 @@ def insert_heap_size_limit(dacecache_folder_name: str, limit: str):
     line_number = int(last_line.split(':')[0]) - 1
 
     set_heap_limit_str = f"size_t required_heap_size = ({limit}) * NBLOCKS * 8 * 2;\n" + \
-                         "cudaError_t limit_error = cudaDeviceSetLimit(cudaLimitMallocHeapSize, required_heap_size)" + \
-                         ";\nprintf(\"Set heap size to %zu (%.3f GB)\\n\", required_heap_size, required_heap_size*1.0/1e9);\n" + \
-                         "printf(\"Setting Limit with %s (%i)\\n\", cudaGetErrorString(limit_error), limit_error);\n" + \
-                         "printf(\"KLON: %d, KLEV: %d, NCLV: %i, NBLOCKS: %i\\n\", KLON, KLEV, NCLV, NBLOCKS);\n"
+                         "cudaError_t limit_error = cudaDeviceSetLimit(cudaLimitMallocHeapSize, required_heap_size);\n"
+    if debug_prints:
+        set_heap_limit_str += "printf(\"Set heap size to %zu (%.3f GB)\\n\", required_heap_size, " + \
+                              "required_heap_size*1.0/1e9);\n" + \
+                              "printf(\"Setting Limit with %s (%i)\\n\", cudaGetErrorString(limit_error), " + \
+                              "limit_error);\n" + \
+                              "printf(\"KLON: %d, KLEV: %d, NCLV: %i, NBLOCKS: %i\\n\", KLON, KLEV, NCLV, NBLOCKS);\n"
 
     with open(src_file, 'r') as f:
         contents = f.readlines()

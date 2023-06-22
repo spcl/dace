@@ -110,7 +110,7 @@ class ProfileConfig:
         return action
 
     def compile(self, params: ParametersProvider, run_config: RunConfig,
-                specialise_changing_sizes: bool = True) -> dace.SDFG:
+                specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
         """
         Compiles the program for the given parameters and run config
 
@@ -120,11 +120,14 @@ class ProfileConfig:
         :type run_config: RunConfig
         :param specialise_changing_sizes: Set to true if also the symbols in self.size_identifiers should be
         specialised, defaults to True
+        :param debug_mode: Set to true if compile for debugging, defaults to False
+        :type debug_mode: bool
         :return: The compiled sdfg
         :rtype: dace.SDFG
         """
         remove_build_folder(self.program)
-        enable_debug_flags()
+        if debug_mode:
+            enable_debug_flags()
         params_dict = params.get_dict()
         if not specialise_symbols:
             for symbol in self.size_identifiers:
@@ -140,7 +143,7 @@ class ProfileConfig:
         return sdfg
 
     def profile(self, run_config: RunConfig, ncu_report_path: Optional[str] = None,
-                sdfg_path: Optional[str] = None) -> pd.DataFrame:
+                sdfg_path: Optional[str] = None, debug_mode: bool = False) -> pd.DataFrame:
         """
         Profile this configuration
 
@@ -150,6 +153,8 @@ class ProfileConfig:
         :type sdfg_path: Optional[str], optional
         :param ncu_report_path: Path to store the ncu report in. If None stores in /tmp, defaults to None
         :type ncu_report_path: Optional[str], optional
+        :param debug_mode: Set to true if compile for debugging, defaults to False
+        :type debug_mode: bool
         :return: The collected data in long format
         :rtype: pd.DataFrame
         """
@@ -168,10 +173,11 @@ class ProfileConfig:
         #     sdfg = SDFG.from_file(sdfg_path)
 
         for params in self.sizes:
-            sdfg = self.compile(params, run_config)
+            sdfg = self.compile(params, run_config, debug_mode=debug_mode)
             sdfg.save('/tmp/sdfg.sdfg')
             sdfg_path = '/tmp/sdfg.sdfg'
-            specialise_symbols(sdfg, params.get_dict())
+            # if run_config.specialise_symbols:
+            #     specialise_symbols(sdfg, params.get_dict())
 
             rng = np.random.default_rng(RNG_SEED)
             inputs = get_inputs(self.program, rng, params)

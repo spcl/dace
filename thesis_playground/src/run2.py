@@ -19,10 +19,10 @@ from measurements.data2 import get_data_wideformat, average_data
 
 
 def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5, nblock_max: Number = 6e5,
-                      nblock_step: Number = 1e5):
+                      nblock_step: Number = 1e5, debug_mode: bool = False):
     programs = [
-            # 'cloudsc_vert_loop_4_ZSOLQA',
-            # 'cloudsc_vert_loop_6_ZSOLQA',
+            'cloudsc_vert_loop_4_ZSOLQA',
+            'cloudsc_vert_loop_6_ZSOLQA',
             'cloudsc_vert_loop_6_1_ZSOLQA',
             'cloudsc_vert_loop_7_3'
             ]
@@ -35,20 +35,21 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
         profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=1,
-                                             tot_time_repetitions=1))
+                                             tot_time_repetitions=5))
 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
         experiment_desc += f" with {additional_desc}"
     # print_with_time("[run2::do_vertical_loops] run stack profile")
-    # profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True)
+    # profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True,
+    #         debug_mode=debug_mode)
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
         profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
                                         "KLON * (KLEV - 1) + 4 * KLON"
     print_with_time("[run2::do_vertical_loops] run heap profile")
     profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc, [('temp allocation', 'heap')],
-            ncu_report=True)
+            ncu_report=True, debug_mode=debug_mode)
 
 
 base_experiments = {
@@ -58,7 +59,7 @@ base_experiments = {
 
 def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experiment_description: str,
             additional_columns: List[Tuple[str, Union[Number, str]]] = [], ncu_report: bool = True,
-            append_to_last_experiment: bool = False):
+            append_to_last_experiment: bool = False, debug_mode: bool = False):
     """
     Profile the given programs with the given configurations
 
@@ -77,6 +78,8 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
     Should only be used when calling this function twice consecutively. Will not write to experiments.csv is set to
     True. defaults to False.
     :type append_to_last_experiment: bool
+    :param debug_mode: Set to true if compile for debugging, defaults to False
+    :type debug_mode: bool
     """
     experiment_list_df = get_experiment_list_df()
     if 'experiment id' in experiment_list_df.reset_index().columns and len(experiment_list_df.index) > 0:
@@ -117,6 +120,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         # sdfg.save(sdfg_path)
         additional_args = {}
         # additional_args['sdfg_path'] = sdfg_path
+        additional_args['debug_mode'] = debug_mode
         if ncu_report:
             additional_args['ncu_report_path'] = f"{program_config.program}_{new_experiment_id}_" + \
                                                  '_'.join(additional_columns_values) + \
