@@ -24,7 +24,6 @@ class RunConfig:
     pattern: str
     use_dace_auto_opt: bool
     device: dace.DeviceType
-    # CONTINUE
     specialise_symbols: bool
 
     def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
