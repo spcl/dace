@@ -119,11 +119,13 @@ SUBROUTINE inner_loops(&
         ! To 919
 
         DO JL=KIDIA,KFDIA
-            PLUDE_NF(JL,JK)=PLUDE_NF(JL,JK)*ZDTGDP(JL)
-            IF (.NOT.(LDCUM_NF(JL).AND.PLUDE_NF(JL,JK) > RLMIN.AND.PLU_NF(JL,JK+1)> ZEPSEC)) THEN
-                PLUDE_NF(JL,JK)=0.0
-            ENDIF
-        ENDDO
+            IF (JK < KLEV .AND. JK>=NCLDTOP) THEN
+                PLUDE_NF(JL,JK)=PLUDE_NF(JL,JK)*ZDTGDP(JL)
+                IF (.NOT.(LDCUM_NF(JL).AND.PLUDE_NF(JL,JK) > RLMIN.AND.PLU_NF(JL,JK+1)> ZEPSEC)) THEN
+                    PLUDE_NF(JL,JK)=0.0
+                ENDIF
+            ENDDO
+        ENDIF
     ENDDO ! on vertical level JK
 
 END SUBROUTINE inner_loops
