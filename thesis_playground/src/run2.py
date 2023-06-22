@@ -8,60 +8,47 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import json
-from subprocess import run
 
-from utils.print import print_dataframe
-from utils.execute_dace import RunConfig, gen_ncu_report
-from utils.paths import get_results_2_folder, get_thesis_playground_root_dir
+from utils.print import print_dataframe, print_with_time
+from utils.execute_dace import RunConfig, gen_ncu_report, test_program
+from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file
+from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
 from measurements.profile_config import ProfileConfig
-from measurements.data2 import get_data_wideformat
-
-experiment_list_df_path = os.path.join(get_results_2_folder(), 'experiments.csv')
+from measurements.data2 import get_data_wideformat, average_data
 
 
-def do_vertical_loops(additional_desc: Optional[str] = None, selected_program: Optional[str] = None):
+def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5, nblock_max: Number = 6e5,
+                      nblock_step: Number = 1e5):
     programs = [
             'cloudsc_vert_loop_4_ZSOLQA',
             'cloudsc_vert_loop_6_ZSOLQA',
             'cloudsc_vert_loop_6_1_ZSOLQA',
             'cloudsc_vert_loop_7_3'
             ]
-    if selected_program is None:
-        for program in programs:
-            function_args = {'selected_program': program}
-            if additional_desc is not None:
-                function_args['additional_desc'] = additional_desc
-            # can try start_new_session=True
-            print(f"Starting a new process calling itself with {function_args}")
-            run(['python3', __file__, 'profile', 'vert-loop', '--args', json.dumps(function_args)])
-    else:
-        print()
-        print(f" *** Profile only program {selected_program} ***")
-        print()
-        programs = [selected_program]
-        profile_configs = []
-        for program in programs:
-            params_list = []
-            # for nblock in [4e5]:
-            for nblock in np.arange(6e5, 1e4, -1e5):
-            # for nblock in np.arange(3e3, 1e3, -1e3):
-                params = ParametersProvider(program,
-                                            update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
-                params_list.append(params)
-            profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=0,
-                tot_time_repetitions=1))
+    profile_configs = []
+    for program in programs:
+        test_program(program, RunConfig())
+        params_list = []
+        for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
+            params = ParametersProvider(program,
+                                        update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
+            params_list.append(params)
+        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=1,
+                                             tot_time_repetitions=5))
 
-        experiment_desc = "Vertical loops with ZSOLQA"
-        if additional_desc is not None:
-            experiment_desc += f" with {additional_desc}"
-        profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=False)
-        for profile_config in profile_configs:
-            profile_config.set_heap_limit = True
-            profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
-                                                "KLON * (KLEV - 1) + 4 * KLON"
-        profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc, [('temp allocation', 'heap')],
-                ncu_report=False)
+    experiment_desc = "Vertical loops with ZSOLQA"
+    if additional_desc is not None:
+        experiment_desc += f" with {additional_desc}"
+    print_with_time("[run2::do_vertical_loops] run stack profile")
+    profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True)
+    for profile_config in profile_configs:
+        profile_config.set_heap_limit = True
+        profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
+                                        "KLON * (KLEV - 1) + 4 * KLON"
+    print_with_time("[run2::do_vertical_loops] run heap profile")
+    profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc, [('temp allocation', 'heap')],
+            ncu_report=True)
 
 
 base_experiments = {
@@ -69,16 +56,9 @@ base_experiments = {
 }
 
 
-def get_experiment_list_df() -> pd.DataFrame():
-    if not os.path.exists(experiment_list_df_path):
-        os.makedirs(os.path.dirname(experiment_list_df_path), exist_ok=True)
-        return pd.DataFrame()
-    else:
-        return pd.read_csv(experiment_list_df_path, index_col=['experiment id'])
-
-
 def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experiment_description: str,
-            additional_columns: List[Tuple[str, Union[Number, str]]] = [], ncu_report: bool = True):
+            additional_columns: List[Tuple[str, Union[Number, str]]] = [], ncu_report: bool = True,
+            append_to_last_experiment: bool = False):
     """
     Profile the given programs with the given configurations
 
@@ -93,44 +73,54 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
     :type additional_columns: List[Tuple[str, Union[Number, str]]], optional
     :param ncu_report: If a full ncu report should be created and stored, defaults to True
     :type ncu_report: bool
+    :param append_to_last_experiment: Set to true the experiment id should be the same as the last one. Use carefully.
+    Should only be used when calling this function twice consecutively. Will not write to experiments.csv is set to
+    True. defaults to False.
+    :type append_to_last_experiment: bool
     """
     experiment_list_df = get_experiment_list_df()
     if 'experiment id' in experiment_list_df.reset_index().columns and len(experiment_list_df.index) > 0:
-        new_experiment_id = experiment_list_df.reset_index()['experiment id'].max() + 1
+        if append_to_last_experiment:
+            new_experiment_id = experiment_list_df.reset_index()['experiment id'].max()
+        else:
+            new_experiment_id = experiment_list_df.reset_index()['experiment id'].max() + 1
     else:
         new_experiment_id = 0
 
-
-    git_hash = check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=get_thesis_playground_root_dir())\
-        .decode('UTF-8').replace('\n', '')
-    node = check_output(['uname', '-a']).decode('UTF-8').split(' ')[1].split('.')[0]
-    this_experiment_data = {
-        'experiment id': new_experiment_id,
-        'description': experiment_description,
-        'git hash': git_hash, 'node': node,
-        'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-    for key, value in additional_columns:
-        this_experiment_data.update({key: value})
-    experiment_list_df = pd.concat([experiment_list_df,
-                                   pd.DataFrame([this_experiment_data]).set_index(['experiment id'])])
-    experiment_list_df.to_csv(experiment_list_df_path)
+    if not append_to_last_experiment:
+        git_hash = check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=get_thesis_playground_root_dir())\
+            .decode('UTF-8').replace('\n', '')
+        node = check_output(['uname', '-a']).decode('UTF-8').split(' ')[1].split('.')[0]
+        this_experiment_data = {
+            'experiment id': new_experiment_id,
+            'description': experiment_description,
+            'git hash': git_hash, 'node': node,
+            'datetime': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        for key, value in additional_columns:
+            this_experiment_data.update({key: value})
+        experiment_list_df = pd.concat([experiment_list_df,
+                                       pd.DataFrame([this_experiment_data]).set_index(['experiment id'])])
+        experiment_list_df.to_csv(get_experiments_2_file())
 
     for program_config in program_configs:
         experiment_folder = os.path.join(get_results_2_folder(), program_config.program, str(new_experiment_id))
         os.makedirs(experiment_folder, exist_ok=True)
+        additional_columns_values = [col[1] for col in additional_columns]
+
+        # Generate SDFG only once -> save runtime
+        # sdfg_name = f"{program_config.program}_{new_experiment_id}_" + '_'.join(additional_columns_values) + ".sdfg"
+        # sdfg_path = os.path.join(experiment_folder, sdfg_name)
+        # print_with_time(f"[run2::profile] Generate SDFG and save it into {sdfg_path}")
+        # sdfg = program_config.compile(program_config.sizes[0], run_config, specialise_changing_sizes=False)
+        # sdfg.save(sdfg_path)
+        additional_args = {}
+        # additional_args['sdfg_path'] = sdfg_path
         if ncu_report:
-            program_config.compile(program_config.sizes[0], run_config)
-            additional_columns_values = [col[1] for col in additional_columns]
-            report_name = f"{program_config.program}_{new_experiment_id}" + '_'.join(additional_columns_values) + \
-                          ".ncu-rep"
-            gen_ncu_report(program_config.program,
-                           os.path.join(experiment_folder, report_name),
-                           run_config,
-                           ncu_args=['--set', 'full'],
-                           program_args=program_config.get_program_command_line_arguments(program_config.sizes[0],
-                                                                                          run_config))
-        program_config.profile(run_config).to_csv(os.path.join(experiment_folder, 'results.csv'))
+            additional_args['ncu_report_path'] = f"{program_config.program}_{new_experiment_id}_" + \
+                                                 '_'.join(additional_columns_values) + \
+                                                 ".ncu-rep"
+        program_config.profile(run_config, **additional_args).to_csv(os.path.join(experiment_folder, 'results.csv'))
         for index, params in enumerate(program_config.sizes):
             with open(os.path.join(experiment_folder, f"{index}_params.json"), 'w') as file:
                 json.dump(params.get_dict(), file)
@@ -153,10 +143,7 @@ def action_print(args):
     }
 
     df = get_data_wideformat(args.experiment_ids).dropna()
-    index_cols = list(df.index.names)
-    index_cols.remove('run number')
-    df = df.reset_index().groupby(index_cols).mean()
-    df = df.join(get_experiment_list_df(), on='experiment id')
+    df = average_data(df).reset_index().join(get_experiment_list_df(), on='experiment id')
     print_dataframe(columns, df.reset_index(), args.tablefmt)
 
 
@@ -173,7 +160,7 @@ def action_list_experiments(args):
 def action_remove_experiment(args):
     experiment_ids = []
     if args.all_to is None:
-        experiment_ids = args.experiment_id
+        experiment_ids = [args.experiment_id]
     else:
         experiment_ids = np.arange(args.experiment_id, args.all_to+1)
     for experiment_id in experiment_ids:
@@ -184,7 +171,7 @@ def action_remove_experiment(args):
                 print(f"Remove {exp_dir}")
                 shutil.rmtree(exp_dir)
         experiments = get_experiment_list_df().drop(int(experiment_id), axis='index')
-        experiments.to_csv(experiment_list_df_path)
+        experiments.to_csv(get_experiments_2_file())
 
 
 def main():

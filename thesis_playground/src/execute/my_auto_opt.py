@@ -186,7 +186,6 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
     sdfg.specialize(known_symbols)
 
 
-
 def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False, program: str = None) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first

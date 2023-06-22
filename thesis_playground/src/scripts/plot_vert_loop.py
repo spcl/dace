@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines, get_arrowprops
+from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines, \
+                       get_arrowprops, replace_legend_names
 from utils.paths import get_vert_loops_dir
 from utils.vertical_loops import get_dataframe, get_speedups, key_program_sort, switch_to_zsloqa_versions, limit_to_size
 from scripts import Script
@@ -60,9 +61,7 @@ def better_program_names(legend: matplotlib.legend.Legend, names_map: Optional[D
     """
     if names_map is None:
         names_map = program_names_map
-    for text in legend.get_texts():
-        if text.get_text() in names_map:
-            text.set(text=names_map[text.get_text()])
+    replace_legend_names(legend, names_map)
 
 
 def create_runtime_plot(data: pd.DataFrame, ax_low: matplotlib.axis.Axis, ax_high: matplotlib.axis.Axis,

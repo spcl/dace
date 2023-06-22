@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 from numbers import Number
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union, Dict
 import os
 from subprocess import run
 from argparse import Namespace
@@ -165,14 +165,15 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         sdfg(**inputs, **outputs)
 
 
-def compile_for_profile(program: str, params: ParametersProvider, run_config: RunConfig) -> dace.SDFG:
+def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str, Number]],
+                        run_config: RunConfig) -> dace.SDFG:
     """
     Compile the given program for profiliation. Meaning a total runtime timer is added
 
     :param program: Name of the program
     :type program: str
     :param params: The parameters to use.
-    :type params: ParametersProvider
+    :type params: Union[ParametersProvider, Dict[str, Number]]
     :param run_config: Configuration how to run it
     :type run_config: RunConfig
     :return: Generated SDFG
@@ -183,8 +184,11 @@ def compile_for_profile(program: str, params: ParametersProvider, run_config: Ru
     program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name)
     add_args = {}
+    params_dict = params
+    if isinstance(params, ParametersProvider):
+        params_dict = params.get_dict()
     if run_config.specialise_symbols:
-        add_args['symbols'] = params.get_dict()
+        add_args['symbols'] = params_dict
     optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer

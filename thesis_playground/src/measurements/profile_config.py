@@ -14,6 +14,7 @@ from utils.general import copy_to_device, get_programs_data, remove_build_folder
 from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, RNG_SEED
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
+from execute.my_auto_opt import specialise_symbols
 from measurements.flop_computation import get_number_of_bytes_2
 
 
@@ -108,7 +109,8 @@ class ProfileConfig:
             print(f"WARNING: Found more than one actions, there are {len(actions)}, taking the first ({action})")
         return action
 
-    def compile(self, params: ParametersProvider, run_config: RunConfig) -> dace.SDFG:
+    def compile(self, params: ParametersProvider, run_config: RunConfig,
+                specialise_changing_sizes: bool = True) -> dace.SDFG:
         """
         Compiles the program for the given parameters and run config
 
@@ -116,11 +118,17 @@ class ProfileConfig:
         :type params: ParametersProvider
         :param run_config: The run configuration to used
         :type run_config: RunConfig
+        :param specialise_changing_sizes: Set to true if also the symbols in self.size_identifiers should be
+        specialised, defaults to True
         :return: The compiled sdfg
         :rtype: dace.SDFG
         """
         remove_build_folder(self.program)
-        sdfg = compile_for_profile(self.program, params, run_config)
+        params_dict = params.get_dict()
+        if not specialise_symbols:
+            for symbol in self.size_identifiers:
+                del params_dict[symbol]
+        sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
             if self.heap_limit_str == "":
                 print("WARNING: Should set heap string, but it is empty")
@@ -130,13 +138,39 @@ class ProfileConfig:
             use_cache(self.program)
         return sdfg
 
-    def profile(self, run_config: RunConfig) -> pd.DataFrame:
+    def profile(self, run_config: RunConfig, ncu_report_path: Optional[str] = None,
+                sdfg_path: Optional[str] = None) -> pd.DataFrame:
+        """
+        Profile this configuration
+
+        :param run_config: The cun config to use
+        :type run_config: RunConfig
+        :param sdfg_path: Path to the SDFG to use. If None compiles the sdfg first, defaults to None
+        :type sdfg_path: Optional[str], optional
+        :param ncu_report_path: Path to store the ncu report in. If None stores in /tmp, defaults to None
+        :type ncu_report_path: Optional[str], optional
+        :return: The collected data in long format
+        :rtype: pd.DataFrame
+        """
         data = []
         programs = get_programs_data()['programs']
         routine_name = f"{programs[self.program]}_routine"
+        ncu_report_path = '/tmp/profile.ncu-rep' if ncu_report_path is None else ncu_report_path
+
+        # if sdfg_path is None:
+        #     print_with_time("[ProfileConfig::profile] Compile unfixed SDFG for profiling")
+        #     sdfg = self.compile(self.sizes[0], run_config)
+        #     sdfg.save('/tmp/sdfg.sdfg')
+        #     sdfg_path = '/tmp/sdfg.sdfg'
+        # else:
+        #     print_with_time(f"[ProfileConfig::profile] Read SDFG from {sdfg_path} for profiling")
+        #     sdfg = SDFG.from_file(sdfg_path)
 
         for params in self.sizes:
             sdfg = self.compile(params, run_config)
+            sdfg.save('/tmp/sdfg.sdfg')
+            sdfg_path = '/tmp/sdfg.sdfg'
+            specialise_symbols(sdfg, params.get_dict())
 
             rng = np.random.default_rng(RNG_SEED)
             inputs = get_inputs(self.program, rng, params)
@@ -145,8 +179,8 @@ class ProfileConfig:
                 set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
 
             sdfg.clear_instrumentation_reports()
-            print_with_time(f"Run {self.program} {self.tot_time_repetitions} times to measure total runtime "
-                            f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+            print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.tot_time_repetitions} times to measure "
+                            f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
                             f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
             inputs_device = copy_to_device(copy.deepcopy(inputs))
             outputs_device = copy_to_device(copy.deepcopy(outputs))
@@ -169,14 +203,16 @@ class ProfileConfig:
                     'value': report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0],
                     **size_data}
                 data.append(this_data)
-            print_with_time(f"Run {self.program} {self.ncu_repetitions} times with ncu "
+            print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.ncu_repetitions} times with ncu "
                             f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
                             f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
             for index in range(self.ncu_repetitions):
-                gen_ncu_report(self.program, '/tmp/profile.ncu-rep', run_config,
-                               program_args=self.get_program_command_line_arguments(params, run_config),
+                program_args = self.get_program_command_line_arguments(params, run_config)
+                program_args.extend(['--sdfg-file', sdfg_path])
+                gen_ncu_report(self.program, ncu_report_path, run_config,
+                               program_args=program_args,
                                ncu_args=['--set', 'full'])
-                action = self.get_action('/tmp/profile.ncu-rep')
+                action = self.get_action(ncu_report_path)
                 data.append({'program': self.program, 'run number': index, 'measurement': 'gpu frequency',
                              'value': get_frequencies(action)[0], **size_data})
                 data.append({'program': self.program, 'run number': index, 'measurement': 'memory frequency',
