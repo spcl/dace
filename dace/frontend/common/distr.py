@@ -372,6 +372,7 @@ def _gather(pv: 'ProgramVisitor',
 
 ##### Point-To-Point Communication
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: 'ProgramVisitor',
           sdfg: SDFG,
@@ -572,6 +573,7 @@ def _pgrid_isend(pv: 'ProgramVisitor',
     return req
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Recv')
 @oprepo.replaces('dace.comm.Recv')
 def _recv(pv: 'ProgramVisitor',
           sdfg: SDFG,

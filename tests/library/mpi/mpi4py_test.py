@@ -175,14 +175,13 @@ def test_3mm():
 
 @pytest.mark.mpi
 def test_isend_irecv():
-
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
 
     @dace.program
-    def chain(rank: dace.int32, size: dace.int32):
+    def mpi4py_isend_irecv(rank: dace.int32, size: dace.int32):
         src = (rank - 1) % size
         dst = (rank + 1) % size
         req = np.empty((2, ), dtype=MPI.Request)
@@ -192,21 +191,49 @@ def test_isend_irecv():
         req[1] = commworld.Irecv(rbuf, src, tag=0)
         MPI.Request.Waitall(req)
         return rbuf
-    
+
     sdfg = None
     if rank == 0:
-        sdfg = chain.to_sdfg(simplify=True)
+        sdfg = mpi4py_isend_irecv.to_sdfg(simplify=True)
     func = utils.distributed_compile(sdfg, commworld)
 
     val = func(rank=rank, size=size)
-    ref = chain.f(rank, size)
+    ref = mpi4py_isend_irecv.f(rank, size)
 
-    assert(val[0] == ref[0])
+    assert (val[0] == ref[0])
+
+
+@pytest.mark.mpi
+def test_send_recv():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_send_recv(rank: dace.int32, size: dace.int32):
+        src = np.full([1], (rank - 1) % size, dtype=np.int32)
+        dst = np.full([1], (rank + 1) % size, dtype=np.int32)
+        sbuf = np.full((1,), rank, dtype=np.int32)
+        commworld.Send(sbuf, dst, tag=0)
+        rbuf = np.empty((1, ), dtype=np.int32)
+        commworld.Recv(rbuf, src, tag=0)
+        return rbuf
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_send_recv.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    val = func(rank=rank, size=size)
+    ref = mpi4py_send_recv.f(rank, size)
+
+    assert (val[0] == ref[0])
 
 
 if __name__ == "__main__":
-
     # test_process_grid_bcast()
     # test_sub_grid_bcast()
     # test_3mm()
     test_isend_irecv()
+    test_send_recv()
