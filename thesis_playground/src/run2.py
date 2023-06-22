@@ -40,9 +40,9 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
         experiment_desc += f" with {additional_desc}"
-    # print_with_time("[run2::do_vertical_loops] run stack profile")
-    # profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True,
-    #         debug_mode=debug_mode)
+    print_with_time("[run2::do_vertical_loops] run stack profile")
+    profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True,
+            debug_mode=debug_mode)
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
         profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
