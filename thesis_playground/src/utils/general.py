@@ -507,7 +507,10 @@ def insert_heap_size_limit(dacecache_folder_name: str, limit: str):
     line_number = int(last_line.split(':')[0]) - 1
 
     set_heap_limit_str = f"size_t required_heap_size = ({limit}) * NBLOCKS * 8 * 2;\n" + \
-                         "cudaError_t limit_error = cudaDeviceSetLimit(cudaLimitMallocHeapSize, required_heap_size);\n"
+                         "cudaError_t limit_error = cudaDeviceSetLimit(cudaLimitMallocHeapSize, required_heap_size)" + \
+                         ";\nprintf(\"Set heap size to %zu (%.3f GB)\\n\", required_heap_size, required_heap_size*1.0/1e9);\n" + \
+                         "printf(\"Setting Limit with %s (%i)\\n\", cudaGetErrorString(limit_error), limit_error);\n" + \
+                         "printf(\"KLON: %d, KLEV: %d, NCLV: %i, NBLOCKS: %i\\n\", KLON, KLEV, NCLV, NBLOCKS);\n"
 
     with open(src_file, 'r') as f:
         contents = f.readlines()

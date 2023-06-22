@@ -10,7 +10,7 @@ from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_perfor
                       get_achieved_bytes, get_achieved_performance, get_runtime, get_cycles, get_all_actions
 from utils.ncu_report import IAction
 from utils.general import copy_to_device, get_programs_data, remove_build_folder, insert_heap_size_limit, get_inputs, \
-                          get_outputs, use_cache
+                          get_outputs, use_cache, enable_debug_flags
 from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, RNG_SEED
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
@@ -124,6 +124,7 @@ class ProfileConfig:
         :rtype: dace.SDFG
         """
         remove_build_folder(self.program)
+        enable_debug_flags()
         params_dict = params.get_dict()
         if not specialise_symbols:
             for symbol in self.size_identifiers:
@@ -185,6 +186,7 @@ class ProfileConfig:
             inputs_device = copy_to_device(copy.deepcopy(inputs))
             outputs_device = copy_to_device(copy.deepcopy(outputs))
             for i in range(self.tot_time_repetitions):
+                print_with_time(f"[ProfileConfig::profile] Starting run {i} for total time")
                 sdfg(**inputs_device, **outputs_device)
 
             reports = sdfg.get_instrumentation_reports()

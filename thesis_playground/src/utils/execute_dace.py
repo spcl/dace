@@ -156,7 +156,9 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         sdfg.compile()
 
     rng = np.random.default_rng(RNG_SEED)
-    inputs = copy_to_device(get_inputs(program, rng, params))
+    inputs = get_inputs(program, rng, params)
+    print(f"[execute_dace::run_program] KLON: {inputs['KLON']}, KLEV: {inputs['KLEV']}, NCLV: {inputs['NCLV']}, NBLOCKS: {inputs['NBLOCKS']}")
+    inputs = copy_to_device(inputs)
     outputs = copy_to_device(get_outputs(program, rng, params))
     if run_config.pattern is not None:
         set_input_pattern(inputs, outputs, params, program, run_config.pattern)

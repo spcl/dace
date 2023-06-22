@@ -21,8 +21,8 @@ from measurements.data2 import get_data_wideformat, average_data
 def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5, nblock_max: Number = 6e5,
                       nblock_step: Number = 1e5):
     programs = [
-            'cloudsc_vert_loop_4_ZSOLQA',
-            'cloudsc_vert_loop_6_ZSOLQA',
+            # 'cloudsc_vert_loop_4_ZSOLQA',
+            # 'cloudsc_vert_loop_6_ZSOLQA',
             'cloudsc_vert_loop_6_1_ZSOLQA',
             'cloudsc_vert_loop_7_3'
             ]
@@ -35,13 +35,13 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
         profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=1,
-                                             tot_time_repetitions=5))
+                                             tot_time_repetitions=1))
 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
         experiment_desc += f" with {additional_desc}"
-    print_with_time("[run2::do_vertical_loops] run stack profile")
-    profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True)
+    # print_with_time("[run2::do_vertical_loops] run stack profile")
+    # profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True)
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
         profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
@@ -104,6 +104,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         experiment_list_df.to_csv(get_experiments_2_file())
 
     for program_config in program_configs:
+        print_with_time(f"\n[run2::profile] Run {program_config.program} with experiment id {new_experiment_id}")
         experiment_folder = os.path.join(get_results_2_folder(), program_config.program, str(new_experiment_id))
         os.makedirs(experiment_folder, exist_ok=True)
         additional_columns_values = [col[1] for col in additional_columns]
