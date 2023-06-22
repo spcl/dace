@@ -138,7 +138,8 @@ class ProfileConfig:
                 print("WARNING: Should set heap string, but it is empty")
             else:
                 programs = get_programs_data()['programs']
-                insert_heap_size_limit(f"{programs[self.program]}_routine", self.heap_limit_str)
+                insert_heap_size_limit(f"{programs[self.program]}_routine", self.heap_limit_str,
+                                       debug_prints=debug_mode)
             use_cache(self.program)
         return sdfg
 
