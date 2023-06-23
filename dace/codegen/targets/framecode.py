@@ -295,8 +295,9 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
     return __state;
 }}
 
-DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
+DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 {{
+    int __err = 0;
 """, sdfg)
 
         # Instrumentation saving
@@ -315,7 +316,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
-                callsite_stream.write('__dace_exit_%s(__state);' % target.target_name, sdfg)
+                callsite_stream.write(
+                    f'''
+    int __err_{target.target_name} = __dace_exit_{target.target_name}(__state);
+    if (__err_{target.target_name}) {{
+        __err = __err_{target.target_name};
+    }}
+''', sdfg)
         for env in reversed(self.environments):
             finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
             if finalize_code:
@@ -323,7 +330,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write('delete __state;\n}\n', sdfg)
+        callsite_stream.write('delete __state;\n', sdfg)
+        callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
 

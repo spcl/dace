@@ -31,7 +31,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     exit_params = (sdfg.name, sdfg.name)
     proto += 'typedef void * %sHandle_t;\n' % sdfg.name
     proto += 'extern "C" %sHandle_t __dace_init_%s(%s);\n' % init_params
-    proto += 'extern "C" void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+    proto += 'extern "C" int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
     proto += 'extern "C" void __program_%s(%sHandle_t handle%s);\n' % params
     return proto
 
@@ -69,15 +69,16 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
 int main(int argc, char **argv) {{
     {sdfg.name}Handle_t handle;
+    int err;
 {allocations}
 
     handle = __dace_init_{sdfg.name}({init_params});
     __program_{sdfg.name}(handle{params});
-    __dace_exit_{sdfg.name}(handle);
+    err = __dace_exit_{sdfg.name}(handle);
 
 {deallocations}
 
-    return 0;
+    return err;
 }}
 '''
 

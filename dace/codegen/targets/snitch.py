@@ -1080,7 +1080,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         hdrs += 'typedef void * %sHandle_t;\n' % sdfg.name
         hdrs += '#ifdef __cplusplus\nextern "C" {\n#endif\n'
         hdrs += '%sHandle_t __dace_init_%s(%s);\n' % init_params
-        hdrs += 'void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+        hdrs += 'int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
         hdrs += 'void __program_%s(%sHandle_t handle%s);\n' % params
         hdrs += '#ifdef __cplusplus\n}\n#endif\n'
 

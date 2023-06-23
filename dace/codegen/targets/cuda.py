@@ -346,7 +346,7 @@ class CUDACodeGen(TargetCodeGenerator):
 {file_header}
 
 DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *__state{params});
-DACE_EXPORTED void __dace_exit_cuda({sdfg.name}_t *__state);
+DACE_EXPORTED int __dace_exit_cuda({sdfg.name}_t *__state);
 
 {other_globalcode}
 
@@ -388,8 +388,12 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-void __dace_exit_cuda({sdfg.name}_t *__state) {{
+int __dace_exit_cuda({sdfg.name}_t *__state) {{
     {exitcode}
+
+    // Synchronize and check for CUDA errors
+    int __err = 0;
+    __err = static_cast<int>({backend}DeviceSynchronize());
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
@@ -400,6 +404,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     }}
 
     delete __state->gpu_context;
+    return __err;
 }}
 
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)

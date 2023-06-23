@@ -144,3 +144,41 @@ def get_gpu_backend() -> str:
                        'set the DaCe configuration entry ``compiler.cuda.backend`` '
                        'or the ``DACE_compiler_cuda_backend`` environment variable '
                        'to either "cuda" or "hip".')
+
+
+def get_gpu_runtime_library() -> ctypes.CDLL:
+    backend = get_gpu_backend()
+    if backend == 'cuda':
+        libpath = ctypes.util.find_library('cudart')
+    elif backend == 'hip':
+        libpath = ctypes.util.find_library('amdhip64')
+    else:
+        raise RuntimeError(f'Cannot obtain GPU runtime library for backend {backend}')
+
+    if not libpath:
+        raise RuntimeError(f'GPU runtime library for {backend} not found. Please set LD_LIBRARY_PATH appropriately.')
+
+    return ctypes.CDLL(libpath)
+
+
+def get_gpu_runtime_error_string(err: int) -> str:
+    lib = get_gpu_runtime_library()
+
+    # Obtain the error string
+    geterrorstring = getattr(lib, f'{get_gpu_backend()}GetErrorString')
+    geterrorstring.restype = ctypes.c_char_p
+    return geterrorstring(err).decode('utf-8')
+
+
+def get_gpu_runtime_last_error() -> str:
+    lib = get_gpu_runtime_library()
+
+    getlasterror = getattr(lib, f'{get_gpu_backend()}GetLastError')
+    res: int = getlasterror()
+    if res == 0:
+        return None
+
+    # Obtain the error string
+    geterrorstring = getattr(lib, f'{get_gpu_backend()}GetErrorString')
+    geterrorstring.restype = ctypes.c_char_p
+    return geterrorstring(res).decode('utf-8')
