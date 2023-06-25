@@ -596,21 +596,26 @@ class UnderapproximateWrites(ppl.Pass):
         """
         approximation_dict.clear()
         loop_write_dict.clear()
+        loop_dict.clear()
 
         # fill the approximation dictionary with the original edges as keys and the edges with the
         # approximated memlets as values
         for (edge, parent) in sdfg.all_edges_recursive():
             if isinstance(parent, SDFGState):
-                approximation_dict[edge] = copy.deepcopy(edge)
-                if not isinstance(approximation_dict[edge].data.subset, subsets.Subsetlist) and not approximation_dict[edge].data.subset == None:
-                    approximation_dict[edge].data.subset = subsets.Subsetlist([approximation_dict[edge].data.subset])
-                if not isinstance(approximation_dict[edge].data.dst_subset, subsets.Subsetlist) and not approximation_dict[edge].data.dst_subset == None:
-                    approximation_dict[edge].data.dst_subset = subsets.Subsetlist([approximation_dict[edge].data.dst_subset])
-                if not isinstance(approximation_dict[edge].data.src_subset, subsets.Subsetlist) and not approximation_dict[edge].data.src_subset == None:
-                    approximation_dict[edge].data.src_subset = subsets.Subsetlist([approximation_dict[edge].data.src_subset])
+                approximation_dict[edge] = copy.deepcopy(edge.data)
+                if not isinstance(approximation_dict[edge].subset, subsets.Subsetlist) and not approximation_dict[edge].subset == None:
+                    approximation_dict[edge].subset = subsets.Subsetlist([approximation_dict[edge].subset])
+                if not isinstance(approximation_dict[edge].dst_subset, subsets.Subsetlist) and not approximation_dict[edge].dst_subset == None:
+                    approximation_dict[edge].dst_subset = subsets.Subsetlist([approximation_dict[edge].dst_subset])
+                if not isinstance(approximation_dict[edge].src_subset, subsets.Subsetlist) and not approximation_dict[edge].src_subset == None:
+                    approximation_dict[edge].src_subset = subsets.Subsetlist([approximation_dict[edge].src_subset])
 
         self.propagate_memlets_sdfg(sdfg)
 
+        # TODO: make sure that no Memlet contains None as subset in the first place
+        for entry in approximation_dict.values():
+            if entry.subset is None:
+                entry.subset = subsets.Subsetlist([])
         return  {
             "approximation": approximation_dict,
             "loop_approximation": loop_write_dict,
@@ -1060,7 +1065,7 @@ class UnderapproximateWrites(ppl.Pass):
                     # accumulate the total volume between them.
                     memlets = []
                     for edge in edges:
-                        inside_memlet = approximation_dict[edge].data
+                        inside_memlet = approximation_dict[edge]
                         memlets.append(inside_memlet)
 
                         if memlet is None:
@@ -1092,7 +1097,8 @@ class UnderapproximateWrites(ppl.Pass):
                             use_dst = True
                         array = sdfg.arrays[node.label]
                         subset = self.propagate_subset(memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
-
+                        if not subset:
+                            continue
                         # If the border memlet already has a set range, compute the
                         # union of the ranges to merge the subsets.
                         if memlet.subset is not None:
@@ -1105,6 +1111,8 @@ class UnderapproximateWrites(ppl.Pass):
 
             if state in loop_write_dict.keys():
                 for node_label, loop_memlet in loop_write_dict[state].items():
+                    if (node_label not in border_memlets["out"]):
+                        continue
                     memlet = border_memlets["out"][node_label]
 
                     if memlet is None:
@@ -1157,64 +1165,70 @@ class UnderapproximateWrites(ppl.Pass):
                     # range that only exists inside the nested SDFG. If that's the
                     # case, use an empty set to stay correct.
 
+                    #TODO: write subset back to the subset list --> for i, subset in enumerate(_subsets)
                     if border_memlet.src_subset is not None:
                         if isinstance(border_memlet.src_subset, subsets.Subsetlist):
                             _subsets = border_memlet.src_subset.subset_list
                         else:
                             _subsets = [border_memlet.src_subset]
-                        for subset in _subsets:
-                            for i, rng in enumerate(subset):
+                        for i, subset in enumerate(_subsets):
+                            for rng in subset:
                                 fall_back = False
                                 for item in rng:
                                     if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
                                         fall_back = True
                                         break
                                 if fall_back:
-                                    subset = None
+                                    _subsets[i] = None
                                     break
+                        border_memlet.src_subset = subsets.Subsetlist(_subsets)
                     if border_memlet.dst_subset is not None:
                         if isinstance(border_memlet.dst_subset, subsets.Subsetlist):
                             _subsets = border_memlet.dst_subset.subset_list
                         else:
                             _subsets = [border_memlets.dst_subset]
-                        for subset in _subsets:
-                            for i, rng in enumerate(subset):
+                        for i, subset in enumerate(_subsets):
+                            for rng in subset:
                                 fall_back = False
                                 for item in rng:
                                     if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
                                         fall_back = True
                                         break
                                 if fall_back:
-                                    subset = None
+                                    _subsets[i] = None
                                     break
+                        border_memlet.dst_subset = subsets.Subsetlist(_subsets)
 
         # TODO: Make sure that this makes sense, especially the part in the try clause
         # TODO: if oedge has no corresponding border memlet assign empty memlet to it. 
         # TODO: Verify: Is this correct? What if there is nestedSDFG <--> nestedSDFG
 
+
         # Propagate the inside 'border' memlets outside the SDFG by
         # offsetting, and unsqueezing if necessary.
         for edge in parent_state.in_edges(nsdfg_node):
-            iedge = approximation_dict[edge]
-            if iedge.dst_conn in border_memlets['in']:
-                internal_memlet = border_memlets['in'][iedge.dst_conn]
+            in_memlet = approximation_dict[edge]
+            if edge.dst_conn in border_memlets['in']:
+                internal_memlet = border_memlets['in'][edge.dst_conn]
                 # iterate over all the subset in the Subsetlist of internal
                 if internal_memlet is None:
-                    iedge.data.subset = None
-                    iedge.data.src_subset = None
-                    approximation_dict[edge] = iedge
+                    in_memlet.subset = None
+                    in_memlet.src_subset = None
+                    approximation_dict[edge] = in_memlet
                     continue
+
+                # handle subsets that aren't subsetlists yet
                 if isinstance(internal_memlet.subset, subsets.Subsetlist):
                     _subsets = internal_memlet.subset.subset_list
                 else:
                     _subsets = [internal_memlet.subset]
 
-                if isinstance(iedge.data.subset, subsets.Subsetlist):
-                    iedge.data.subset = iedge.data.subset.subset_list[0]
-                if isinstance(iedge.data.dst_subset, subsets.Subsetlist):
-                    iedge.data.dst_subset = iedge.data.dst_subset.subset_list[0]
-                if isinstance(iedge.data.src_subset, subsets.Subsetlist):
-                    iedge.data.src_subset = iedge.data.src_subset.subset_list[0]
+                if isinstance(in_memlet.subset, subsets.Subsetlist):
+                    in_memlet.subset = in_memlet.subset.subset_list[0]
+                if isinstance(in_memlet.dst_subset, subsets.Subsetlist):
+                    in_memlet.dst_subset = in_memlet.dst_subset.subset_list[0]
+                if isinstance(in_memlet.src_subset, subsets.Subsetlist):
+                    in_memlet.src_subset = in_memlet.src_subset.subset_list[0]
                 
                 tmp_memlet = Memlet(
                     data = internal_memlet.data,
@@ -1232,7 +1246,7 @@ class UnderapproximateWrites(ppl.Pass):
                         continue
                     tmp_memlet.subset = subset
                     try:
-                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, iedge.data, False)
+                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, in_memlet, False)
                         # If no appropriate memlet found, use array dimension
                         for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
                             if rng[1] + 1 == s:
@@ -1246,31 +1260,38 @@ class UnderapproximateWrites(ppl.Pass):
                         # In any case of memlets that cannot be unsqueezed fall back to empty subset
                         subset = None
                     _subsets[j] = subset
-                iedge.data = unsqueezed_memlet
-                iedge.data.subset = subsets.Subsetlist(_subsets)
-                approximation_dict[edge] = iedge
+
+                # if the unsqueezing failed for all the subsets of the border memlet return empty subset
+                if all(s is None for s in _subsets):
+                    in_memlet.subset = None
+                    in_memlet.src_subset = None
+                    approximation_dict[edge] = in_memlet
+                else:
+                    in_memlet = unsqueezed_memlet
+                    in_memlet.subset = subsets.Subsetlist(_subsets)
+                    approximation_dict[edge] = in_memlet
                 
         for edge in parent_state.out_edges(nsdfg_node):
-            oedge = approximation_dict[edge]
-            if oedge.src_conn in border_memlets['out']:
-                internal_memlet = border_memlets['out'][oedge.src_conn]
+            out_memlet = approximation_dict[edge]
+            if edge.src_conn in border_memlets['out']:
+                internal_memlet = border_memlets['out'][edge.src_conn]
 
                 if internal_memlet is None:
-                    oedge.data.subset = None
-                    oedge.data.dst_subset = None
-                    approximation_dict[edge] = oedge
+                    out_memlet.subset = None
+                    out_memlet.dst_subset = None
+                    approximation_dict[edge] = out_memlet
                     continue
                 if isinstance(internal_memlet.subset, subsets.Subsetlist):
                     _subsets = internal_memlet.subset.subset_list
                 else:
                     _subsets = [internal_memlet.subset]
 
-                if isinstance(oedge.data.subset, subsets.Subsetlist):
-                    oedge.data.subset = oedge.data.subset.subset_list[0]
-                if isinstance(oedge.data.dst_subset, subsets.Subsetlist):
-                    oedge.data.dst_subset = oedge.data.dst_subset.subset_list[0]
-                if isinstance(oedge.data.src_subset, subsets.Subsetlist):
-                    oedge.data.src_subset = oedge.data.src_subset.subset_list[0]
+                if isinstance(out_memlet.subset, subsets.Subsetlist):
+                    out_memlet.subset = out_memlet.subset.subset_list[0]
+                if isinstance(out_memlet.dst_subset, subsets.Subsetlist):
+                    out_memlet.dst_subset = out_memlet.dst_subset.subset_list[0]
+                if isinstance(out_memlet.src_subset, subsets.Subsetlist):
+                    out_memlet.src_subset = out_memlet.src_subset.subset_list[0]
                     
                 tmp_memlet = Memlet(
                     data = internal_memlet.data,
@@ -1288,7 +1309,7 @@ class UnderapproximateWrites(ppl.Pass):
                         continue
                     tmp_memlet.subset = subset
                     try:
-                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, oedge.data, False)
+                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, out_memlet, False)
                         # If no appropriate memlet found, use array dimension
                         for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
                             if rng[1] + 1 == s:
@@ -1302,9 +1323,14 @@ class UnderapproximateWrites(ppl.Pass):
                         # reshapes), use dynamic unbounded memlets.
                         subset = None
                     _subsets[j] = subset
-                oedge.data = unsqueezed_memlet
-                oedge.data.subset = subsets.Subsetlist(_subsets)
-                approximation_dict[edge] = oedge
+
+                if all(s is None for s in _subsets):
+                    out_memlet.subset = None
+                    out_memlet.dst_subset = None
+                else:
+                    out_memlet = unsqueezed_memlet
+                    out_memlet.subset = subsets.Subsetlist(_subsets)
+                    approximation_dict[edge] = out_memlet
 
 
     def reset_state_annotations(self, sdfg):
@@ -1353,12 +1379,21 @@ class UnderapproximateWrites(ppl.Pass):
                 # call propagate_memlet_loop on the nested loop
 
         # difference to propagate_memlets_nested_sdfg is that there are no border memlets
+        # FIXME: If the loop has a break statement, don't propagate out of this loop
+        # break statement if loop body has an edge whose destination is outside of the loop body
+        # or if loop body contains a state which is not dominated by the loop guard
 
         def filter_subsets(itvar: str, s_itvars: List[str], range: subsets.Range, memlet: Memlet):
             # if loop range is symbolic -> only propagate subsets that contain the iterator as a symbol
-            # if loop range is constant (and not empty) only propagate subsets that have iterator variables of current or surrounding loops in their definition     
+            # if loop range is constant (and not empty) only propagate subsets that have iterator variables of current or surrounding loops in their definition   
+            
+            if memlet.subset is None:
+                return None
+              
             if(range.free_symbols):
                 if isinstance(memlet.subset, subsets.Subsetlist):
+                    if None in memlet.subset.subset_list:
+                        print("hello")
                     filtered_subsets = [s for s in memlet.subset.subset_list if itvar in s.free_symbols]
                 else:
                     filtered_subsets = [s for s in [memlet.subset] if itvar in s.free_symbols]
@@ -1366,9 +1401,9 @@ class UnderapproximateWrites(ppl.Pass):
             # range is constant
             else:
                 if isinstance(memlet.subset, subsets.Subsetlist):
-                    filtered_subsets = [s for s in memlet.subset.subset_list if (s_itvar in s.free_symbols for s_itvar in surrounding_itvars )]
+                    filtered_subsets = [s for s in memlet.subset.subset_list if (s_itvar in s.free_symbols for s_itvar in s_itvars )]
                 else:
-                    filtered_subsets = [s for s in [memlet.subset] if (s_itvar in s.free_symbols for s_itvar in surrounding_itvars )]
+                    filtered_subsets = [s for s in [memlet.subset] if (s_itvar in s.free_symbols for s_itvar in s_itvars )]
 
             return filtered_subsets
         
@@ -1399,6 +1434,10 @@ class UnderapproximateWrites(ppl.Pass):
 
         current_loop = loops[loopheader]
         begin, last_loop_state, loop_states, itvar, rng = current_loop
+
+        if rng.num_elements() == 0:
+            return
+        
         border_memlets = defaultdict(None)
         ignore = []
 
@@ -1436,7 +1475,8 @@ class UnderapproximateWrites(ppl.Pass):
 
                 # collect all the subsets of the incoming memlets for the current access node
                 for edge in edges:
-                    inside_memlet = copy.copy(approximation_dict[edge].data)
+                    inside_memlet = copy.copy(approximation_dict[edge])
+
                     filtered_subsets = filter_subsets(itvar, surrounding_itvars, rng, inside_memlet)
                     if not filtered_subsets:
                         continue
@@ -1599,13 +1639,13 @@ class UnderapproximateWrites(ppl.Pass):
 
         # TODO: generalize this for subsetLists (?)
         for edge in external_edges:
-            if approximation_dict[edge].data.is_empty():
+            if approximation_dict[edge].is_empty():
                 new_memlet = Memlet()
             else:
                 internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
                 aligned_memlet = self.align_memlet(dfg_state, internal_edge, dst=use_dst)
                 new_memlet = self.propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
-            approximation_dict[edge].data = new_memlet
+            approximation_dict[edge] = new_memlet
 
 
     def align_memlet(self, state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
@@ -1614,15 +1654,16 @@ class UnderapproximateWrites(ppl.Pass):
         is_src = e.data._is_data_src
         # Memlet is already aligned
         if is_src is None or (is_src and not dst) or (not is_src and dst):
-            return approximation_dict[e].data
+            res = approximation_dict[e]
+            return res
 
         # Data<->Code memlets always have one data container
         mpath = state.memlet_path(e)
         if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
-            return approximation_dict[e].data
+            return approximation_dict[e]
 
         # Otherwise, find other data container
-        result = copy.deepcopy(approximation_dict[e].data)
+        result = copy.deepcopy(approximation_dict[e])
         if dst:
             node = mpath[-1].dst
         else:
@@ -1630,8 +1671,8 @@ class UnderapproximateWrites(ppl.Pass):
 
         # Fix memlet fields
         result.data = node.data
-        result.subset = approximation_dict[e].data.other_subset
-        result.other_subset = approximation_dict[e].data.subset
+        result.subset = approximation_dict[e].other_subset
+        result.other_subset = approximation_dict[e].subset
         result._is_data_src = not is_src
         return result
 
@@ -1682,7 +1723,7 @@ class UnderapproximateWrites(ppl.Pass):
         # Find other adjacent edges within the connected to the scope node
         # and union their subsets
         if union_inner_edges:
-            aggdata = [approximation_dict[e].data for e in neighboring_edges if approximation_dict[e].data.data == memlet.data and approximation_dict[e].data != memlet]
+            aggdata = [approximation_dict[e]for e in neighboring_edges if approximation_dict[e].data == memlet.data and approximation_dict[e] != memlet]
         else:
             aggdata = []
 
