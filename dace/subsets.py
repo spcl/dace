@@ -60,6 +60,133 @@ class Subset(object):
                 return False
 
             return True
+        
+    def covers_precise(self, other):
+
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            try:
+                # TODO: Fix in symbol definition, not here
+                for sym in list(expr.free_symbols):
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+                return expr
+            except AttributeError:  # No free_symbols in expr
+                return expr
+
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+        # TODO: the following code only checks if the lower bound of self is smaller smaller equal than lower bound of other
+        # and upper bound of self is bigger equal than upper bound of other
+        # to be exact this is only valid if additionally the step size of self divides the step size of other
+        # and self.start % self.step == other.start % other.step
+        if not symbolic_positive:
+            try:
+                bounding_box_cover = all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
+                                                        other.min_element_approx(), other.max_element_approx())])
+                
+                if not bounding_box_cover:
+                    return False
+                
+                # if self is an index no further distinction is needed
+                if isinstance(self, Indices):
+                    return bounding_box_cover
+                
+                # if self is a range there are two cases
+                # - other is a range 
+                # - other is an index
+                if isinstance(self, Range):
+
+                    # other is an index so we need to check if the step of self is such that other is covered
+                    # self.start % self.step == other.index % self.step
+                    if isinstance(other, Indices):
+                        try: 
+                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                            for start,_,step, i in zip(self.ranges, other.indices)])
+                        except:
+                            return False
+                    
+                    # other is a range so in every dimension self.step has to divide other.step and
+                    # self.start % self.step = other.start % other.step
+                    if isinstance(other, Range):
+                        try: 
+                            return all([ostep % step == 0 and
+                                (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True
+                            for start,step,ostart,ostep in zip(self.min_element(), self.step, other.min_element(), other.step)])
+                        except:
+                            return False
+
+            except TypeError:
+                return False
+            
+        else:
+            try:
+                for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
+                                            other.min_element_approx(), other.max_element_approx()):
+                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
+                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+
+                    # lower bound: first check whether symbolic positive condition applies
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+                            return False
+
+                    # upper bound: first check whether symbolic positive condition applies
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+                            return False
+            except TypeError:
+                return False
+            
+                        
+            # if self is an index no further distinction is needed
+            if isinstance(self, Indices):
+                return bounding_box_cover
+            
+            # if self is a range there are two cases
+            # - other is a range 
+            # - other is an index
+            if isinstance(self, Range):
+
+                # other is an index so we need to check if the step of self is such that other is covered
+                # self.start % self.step == other.index % self.step
+                if isinstance(other, Indices):
+                    try: 
+                        return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                        for start,_,step, i in zip(self.ranges, other.indices)])
+                    except TypeError:
+                        return False
+                
+                # other is a range so in every dimension self.step has to divide other.step and
+                # self.start % self.step = other.start % other.step or self.start == other.start
+                if isinstance(other, Range):
+                    try: 
+                        self_steps = [r[2] for r in self.ranges]
+                        other_steps = [r[2] for r in other.ranges]
+                        for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
+                            start_mod = sympy.Mod(symbolic.simplify_ext(nng(start)), symbolic.simplify_ext(nng(step))) == sympy.Mod(symbolic.simplify_ext(nng(ostart)), symbolic.simplify_ext(nng(ostep)))
+                            mod1 = sympy.Mod(symbolic.simplify_ext(nng(start)), symbolic.simplify_ext(nng(step)))
+                            mod2 = sympy.Mod(symbolic.simplify_ext(nng(ostart)), symbolic.simplify_ext(nng(ostep)))
+                            if not (ostep % step == 0 and 
+                                    ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                    (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                                return False
+                            
+
+                    except TypeError:
+                        return False
+
+
+            return True
+
+
+        return
+
 
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
@@ -960,7 +1087,7 @@ class Indices(Subset):
 class Subsetlist(Subset):
 
     def __init__(self, subset_list: list[Subset]):
-        self.subset_list: list[Subset] = subset_list
+        self.subset_list: list[Subset] =  [x for x in list(set(subset_list)) if x is not None]
 
 
     def covers(self, other):
@@ -968,15 +1095,6 @@ class Subsetlist(Subset):
             subset. If other is another SubsetList then self and other will
             only return true if self is other. If other is a different type of subset
             true is returned when one of the subsets in self is equal to other """
-        def nng(expr):
-            # When dealing with set sizes, assume symbols are non-negative
-            try:
-                # TODO: Fix in symbol definition, not here
-                for sym in list(expr.free_symbols):
-                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-                return expr
-            except AttributeError:  # No free_symbols in expr
-                return expr
 
         if isinstance(other, Subsetlist):
             for subset in self.subset_list:
@@ -987,6 +1105,22 @@ class Subsetlist(Subset):
             return False
         else:
             return any(s.covers(other) for s in self.subset_list)
+        
+    def covers_precise(self, other):
+        """ Returns True if this Subsetlist covers another
+            subset. If other is another SubsetList then self and other will
+            only return true if self is other. If other is a different type of subset
+            true is returned when one of the subsets in self is equal to other """
+
+        if isinstance(other, Subsetlist):
+            for subset in self.subset_list:
+                # check if ther is a subset in self that covers every subset in other
+                if all(subset.covers_precise(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
+        else:
+            return any(s.covers_precise(other) for s in self.subset_list)
 
     def __str__(self):
         string = ''
@@ -1159,6 +1293,10 @@ def list_union(subset_a: Subset, subset_b: Subset)-> Subset:
             return Subsetlist(subset_a.subset_list + subset_b.subset_list)
         else:
             return Subsetlist([subset_a,subset_b])
+
+        # for subset in subset_list_a:
+        #     for other_subset in subset_list_b:
+        #         if subset.
 
     except TypeError:  # cannot determine truth value of Relational
         return None
