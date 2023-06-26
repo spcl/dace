@@ -357,7 +357,6 @@ class AST_translator:
 
         # First we need to check if the parameters are literals or variables
         for arg_i, variable in enumerate(variables_in_call):
-            # print(i.__class__)
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
@@ -494,7 +493,7 @@ class AST_translator:
                             ins_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
                         if local_name.name in write_names:
                             outs_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
-                        #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][local_name.name])
+                        
 
                         indices = 0
                         if isinstance(variable_in_call, ast_internal_classes.Array_Subscript_Node):
@@ -569,7 +568,7 @@ class AST_translator:
                         ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     if i in write_names:
                         outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
-                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    
                     array_in_global = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -594,7 +593,7 @@ class AST_translator:
                         ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     if i in write_names:
                         outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
-                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    
                     array = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
@@ -614,7 +613,7 @@ class AST_translator:
                         ins_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
                     if i in write_names:
                         outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
-                    #inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    
                     array = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
