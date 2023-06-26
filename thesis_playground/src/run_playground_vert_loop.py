@@ -10,7 +10,7 @@ import pandas as pd
 import seaborn as sns
 
 from python_programs import vert_loop_7, vert_loop_7_1, vert_loop_7_1_no_klon, vert_loop_7_1_no_temp, \
-                            vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset
+                            vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset, small_wip
 from execute.parameters import ParametersProvider
 from utils.general import optimize_sdfg, copy_to_device, use_cache, enable_debug_flags, get_programs_data, \
                           read_source, get_fortran, remove_build_folder, reset_graph_files, print_compare_matrix
@@ -19,7 +19,7 @@ from utils.ncu import get_all_actions_filtered, get_achieved_performance, get_pe
 from utils.paths import get_thesis_playground_root_dir, get_playground_results_dir
 from utils.print import print_dataframe
 from utils.python import gen_arguments, get_size_of_parameters, get_dacecache_folder, df_index_cols, \
-                         description_df_path, get_joined_df
+                         description_df_path, get_joined_df, convert_to_plain_python
 from utils.plot import get_new_figure, save_plot
 
 
@@ -38,12 +38,29 @@ kernels = {
     'vert_loop_7_1_no_temp': vert_loop_7_1_no_temp,
     'vert_loop_wip': vert_loop_wip,
     'vert_loop_wip_scalar_offset': vert_loop_wip_scalar_offset,
+    'small_wip': small_wip,
 }
 
 
-def run_function_dace(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, int], save_graphs: bool = False,
-                      define_symbols: bool = False) -> Dict:
+def generate_sdfg(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, int], save_graphs: bool = False,
+                  define_symbols: bool = False, use_dace_auto_opt: bool = False) -> dace.SDFG:
+    """
+    Generates the SDFG for the given dace program
 
+    :param f: The dace program for which to generate the SDFG
+    :type f: dace.frontend.python.parser.DaceProgram
+    :param symbols: The symbols used to specialise the SDFG
+    :type symbols: Dict[str, int]
+    :param save_graphs: If intermediate SDFGs should be stored, defaults to False
+    :type save_graphs: bool, optional
+    :param define_symbols: If symbols should be specialised, defaults to False
+    :type define_symbols: bool, optional
+    :param use_dace_auto_opt: Set to true if DaCe default auto opt should be used, defaults to False
+    :type use_dace_auto_opt: bool
+    :return: The generated SDFG
+    :rtype: dace.SDFG
+    """
+    print(symbols)
     sdfg = f.to_sdfg(validate=True, simplify=True)
     additional_args = {}
     if save_graphs:
@@ -55,11 +72,17 @@ def run_function_dace(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[
         additional_args['symbols'] = copy.deepcopy(symbols)
         for symbol in decrement_symbols:
             additional_args['symbols'][symbol] -= 1
+    if use_dace_auto_opt:
+        additional_args['use_my_auto_opt'] = False
 
-    from dace.transformation.interstate import TrivialLoopElimination
-    sdfg.apply_transformations_repeated(TrivialLoopElimination)
     optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
-    csdfg = sdfg.compile()
+    return sdfg
+
+
+def run_function_dace(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, int], save_graphs: bool = False,
+                      define_symbols: bool = False) -> Dict:
+
+    csdfg = generate_sdfg(f, symbols, save_graphs, define_symbols).compile()
     arguments = gen_arguments(f, symbols)
     arguments_device = copy_to_device(arguments)
     csdfg(**arguments_device, **symbols)
@@ -190,26 +213,30 @@ def action_test(args):
         if args.cache:
             use_cache(dacecache_folder=get_dacecache_folder(args.program))
         else:
-            remove_build_folder(dacecache_folder=get_dacecache_folder(args.program))
+            remove_build_folder(dacecache_folder=get_dacecache_folder(program))
         dace_f = kernels[program]
         arguments = gen_arguments(dace_f, symbols)
-        # Does not work because it can not convert the symbol NBLOCKS
-        # vert_loop_symbol_wrapper(**symbols, func=dace_f.f, func_args=arguments)
-        # dace_f.f(**arguments, **symbols)
-        globals = {}
-        globals['arguments'] = arguments
-        globals['dace_f'] = dace_f
-        for k, v in symbols.items():
-            globals[k] = v
-        # eval('dace_f.f(**arguments)', globals)
+
+        py_code = convert_to_plain_python(dace_f, symbols)
+        py_code += f"{dace_f.f.__name__}({', '.join([k for k in arguments])})"
 
         arguments_device = copy_to_device(copy.deepcopy(arguments))
-        sdfg = dace_f.to_sdfg(validate=True, simplify=True)
-        optimize_sdfg(sdfg, device=dace.DeviceType.GPU)
-        csdfg = sdfg.compile()
-        csdfg(**arguments, **symbols)
+        exec(py_code, arguments)
+        arguments = {k: arguments[k] for k in arguments_device}
 
-        assert cp.allclose(cp.asarray(arguments), arguments_device)
+        sdfg = dace_f.to_sdfg(validate=True, simplify=True)
+        optimize_sdfg(sdfg, device=dace.DeviceType.GPU, use_my_auto_opt=not args.use_dace_auto_opt)
+        csdfg = sdfg.compile()
+        csdfg(**arguments_device, **symbols)
+
+        arguments_py = copy_to_device(arguments)
+        for key in arguments_py:
+            if not cp.allclose(arguments_py[key], arguments_device[key]):
+                print(f"{key} are not the same")
+                print("Python")
+                print(arguments_py[key])
+                print("DaCe")
+                print(arguments_device[key])
 
 
 def action_print(args):
@@ -277,6 +304,14 @@ def action_compare_fortran(args):
                     print_compare_matrix(outputs_py[param], arguments_f[param], [slice(end) for end in shape])
 
 
+def action_gen_graph(args):
+    symbols.update({'NBLOCKS': 100000})
+    sdfg = generate_sdfg(kernels[args.program], symbols, True, True, args.use_dace_auto_opt)
+    if args.gen_code:
+        sdfg.compile()
+        print(f"Generated code is at: {sdfg.build_folder}")
+
+
 def main():
     parser = ArgumentParser()
     subparsers = parser.add_subparsers(
@@ -309,6 +344,7 @@ def main():
     test_parser = subparsers.add_parser('test', description='Test given kernels')
     test_parser.add_argument('programs', type=str, nargs='+')
     test_parser.add_argument('--cache', action='store_true', default=False)
+    test_parser.add_argument('--use-dace-auto-opt', action='store_true', help='Use default DaCe auto opt')
     test_parser.set_defaults(func=action_test)
 
     compare_fortran_parser = subparsers.add_parser('compare-fortran', description='Compare output to fortran version')
@@ -322,6 +358,12 @@ def main():
     plot_parser = subparsers.add_parser('plot')
     plot_parser.add_argument('files', type=str, nargs='+', help=f"Files in {get_playground_results_dir()}/python")
     plot_parser.set_defaults(func=action_plot)
+
+    gen_graph_parser = subparsers.add_parser('gen-graphs')
+    gen_graph_parser.add_argument('program', type=str)
+    gen_graph_parser.add_argument('--gen-code', action='store_true', help='Generate CUDA code')
+    gen_graph_parser.add_argument('--use-dace-auto-opt', action='store_true', help='Use default DaCe auto opt')
+    gen_graph_parser.set_defaults(func=action_gen_graph)
 
     args = parser.parse_args()
     args.func(args)
