@@ -8,7 +8,7 @@ from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_form
                        get_arrowprops, replace_legend_names
 
 hue_order = ['cloudsc_vert_loop_4_ZSOLQA', 'cloudsc_vert_loop_6_ZSOLQA', 'cloudsc_vert_loop_6_1_ZSOLQA',
-             'cloudsc_vert_loop_7_ZSOLQA']
+             'cloudsc_vert_loop_7_3']
 
 
 def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line: bool = False):
@@ -26,7 +26,7 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line
     size_vs_y_plot(ax, 'Speedup', 'Speedup achieved using different array layouts compared to original', speedups,
                    size_var_name='NBLOCKS')
     sns.lineplot(data=speedups, x='NBLOCKS', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order)
-    program_names_map = get_program_infos()['base description'].to_dict()
+    program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
         legend_on_line(ax, ((300000, 1.2), (250000, 6.3), (350000, 7.5)), [program_names_map[p] for p in hue_order[1:]],
                        rotations=[0, -12, -15], color_palette_offset=1)
@@ -47,7 +47,7 @@ def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, legend_on_
 
     sns.lineplot(data=speedups, hue='program', x='NBLOCKS', y='runtime', ax=ax, marker='o', hue_order=hue_order)
     size_vs_y_plot(ax, 'Speedup', 'Speedup stack allocation vs heap allocation', speedups, size_var_name='NBLOCKS')
-    program_names_map = get_program_infos()['base description'].to_dict()
+    program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
         legend_on_line(ax, ((1.5e5, 30), (4e5, 350), ((4e5, 120), (4.5e5, 45)), ((3e5, 200), (2e5, 85))),
                        [program_names_map[p] for p in hue_order], rotations=[-3, -10, 0, 0])

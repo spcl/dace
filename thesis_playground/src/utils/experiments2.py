@@ -2,7 +2,6 @@
 Module with methods concered with metadata for the results_v2 folders
 """
 import os
-from typing import Dict
 import pandas as pd
 
 from utils.paths import get_experiments_2_file, get_results_2_folder
