@@ -5,6 +5,8 @@
 #if defined(__HIPCC__) || defined(WITH_HIP)
 typedef hipStream_t gpuStream_t;
 typedef hipEvent_t gpuEvent_t;
+#define gpuGetLastError hipGetLastError
+#define gpuGetErrorString hipGetErrorString
 
 #define DACE_CUDA_CHECK(err) do {                                            \
     hipError_t errr = (err);                                                 \
@@ -18,6 +20,8 @@ typedef hipEvent_t gpuEvent_t;
 
 typedef cudaStream_t gpuStream_t;
 typedef cudaEvent_t gpuEvent_t;
+#define gpuGetLastError cudaGetLastError
+#define gpuGetErrorString cudaGetErrorString
 
 #define DACE_CUDA_CHECK(err) do {                                            \
     cudaError_t errr = (err);                                                \
@@ -28,6 +32,16 @@ typedef cudaEvent_t gpuEvent_t;
     }                                                                        \
 } while(0)
 #endif
+
+#define DACE_KERNEL_LAUNCH_CHECK(kernel_name, gdimx, gdimy, gdimz, bdimx, bdimy, bdimz) do { \
+    auto err = gpuGetLastError();                                                            \
+    if (err != decltype(err)(0)) {                                                           \
+        printf("ERROR launching kernel %s: %s (%d). Grid dimensions: "                       \
+               "(%d, %d, %d); Block dimensions: (%d, %d, %d).\n", kernel_name,               \
+               gpuGetErrorString(err), (int)err, gdimx, gdimy, gdimz, bdimx, bdimy, bdimz);  \
+        throw;                                                                               \
+    }                                                                                        \
+} while(0)
 
 namespace dace {
 namespace cuda {

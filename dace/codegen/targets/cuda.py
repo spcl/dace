@@ -1583,17 +1583,24 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 sdfg, state_id, scope_entry)
 
+        gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
+        bdims = ', '.join(_topy(block_dims))
         self._localcode.write(
             '''
 void  *{kname}_args[] = {{ {kargs} }};
 {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''.format(
                 kname=kernel_name,
                 kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
-                gdims='dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims)),
-                bdims=', '.join(_topy(block_dims)),
+                gdims=gdims,
+                bdims=bdims,
                 dynsmem=_topy(dynsmem_size),
                 stream=cudastream,
                 backend=self.backend), sdfg, state_id, scope_entry)
+
+        # Check kernel launch for errors
+        if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+            self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK("{kernel_name}", {gdims}, {bdims});')
+
         self._emit_sync(self._localcode)
 
         # Close the runkernel function
