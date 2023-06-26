@@ -66,7 +66,7 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-void __dace_exit_mpi({sdfg.name}_t *__state) {{
+int __dace_exit_mpi({sdfg.name}_t *__state) {{
     MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
