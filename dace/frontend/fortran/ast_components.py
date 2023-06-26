@@ -1,6 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from fparser.two import Fortran2008
-from fparser.two import Fortran2003
+from fparser.two import Fortran2008 as f08
+from fparser.two import Fortran2003 as f03
 from fparser.two import symbol_table
 
 import copy
@@ -101,7 +101,7 @@ class InternalFortranAst:
     for each entry in the dictionary, the key is the name of the class in the fparser AST and the value
     is the name of the function that will be used to translate the fparser AST to our AST
     """
-    def __init__(self, ast: Fortran2003.Program, tables: symbol_table.SymbolTables):
+    def __init__(self, ast: f03.Program, tables: symbol_table.SymbolTables):
         """
         Initialization of the AST converter
         :param ast: the fparser AST
@@ -494,12 +494,12 @@ class InternalFortranAst:
 
         #decide if its a intrinsic variable type or a derived type
 
-        type_of_node = get_child(node, [Fortran2003.Intrinsic_Type_Spec, Fortran2003.Declaration_Type_Spec])
+        type_of_node = get_child(node, [f03.Intrinsic_Type_Spec, f03.Declaration_Type_Spec])
 
-        if isinstance(type_of_node, Fortran2003.Intrinsic_Type_Spec):
+        if isinstance(type_of_node, f03.Intrinsic_Type_Spec):
             derived_type = False
             basetype = type_of_node.items[0]
-        elif isinstance(type_of_node, Fortran2003.Declaration_Type_Spec):
+        elif isinstance(type_of_node, f03.Declaration_Type_Spec):
             derived_type = True
             basetype = type_of_node.items[1].string
         else:
@@ -532,7 +532,7 @@ class InternalFortranAst:
         names_list = get_child(node, ["Entity_Decl_List", "Component_Decl_List"])
 
         #get the names out of the name list
-        names = get_children(names_list, [Fortran2003.Entity_Decl, Fortran2003.Component_Decl])
+        names = get_children(names_list, [f03.Entity_Decl, f03.Component_Decl])
 
         #get the attributes of the variables being defined
         # alloc relates to whether it is statically (False) or dynamically (True) allocated
@@ -560,7 +560,7 @@ class InternalFortranAst:
                 size = []
                 for dim in array_sizes.children:
                     #sanity check
-                    if isinstance(dim, Fortran2003.Explicit_Shape_Spec):
+                    if isinstance(dim, f03.Explicit_Shape_Spec):
                         dim_expr = [i for i in dim.children if i is not None]
                         if len(dim_expr) == 1:
                             dim_expr = dim_expr[0]
@@ -571,7 +571,7 @@ class InternalFortranAst:
             #handle initializiation
             init = None
 
-            initialization = get_children(var, Fortran2003.Initialization)
+            initialization = get_children(var, f03.Initialization)
             if len(initialization) == 1:
                 initialization = initialization[0]
                 #if there is an initialization, the actual expression is in the second child, with the first being the equals sign
@@ -957,11 +957,11 @@ class InternalFortranAst:
 
     def specification_part(self, node: FASTNode):
         #TODO this can be refactored to consider more fortran declaration options. Currently limited to what is encountered in code.
-        others = [self.create_ast(i) for i in node.children if not isinstance(i, Fortran2008.Type_Declaration_Stmt)]
+        others = [self.create_ast(i) for i in node.children if not isinstance(i, f08.Type_Declaration_Stmt)]
 
-        decls = [self.create_ast(i) for i in node.children if isinstance(i, Fortran2008.Type_Declaration_Stmt)]
+        decls = [self.create_ast(i) for i in node.children if isinstance(i, f08.Type_Declaration_Stmt)]
 
-        uses = [self.create_ast(i) for i in node.children if isinstance(i, Fortran2008.Use_Stmt)]
+        uses = [self.create_ast(i) for i in node.children if isinstance(i, f08.Use_Stmt)]
         tmp = [self.create_ast(i) for i in node.children]
         typedecls = [i for i in tmp if isinstance(i, ast_internal_classes.Type_Decl_Node)]
         symbols = []
