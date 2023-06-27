@@ -136,8 +136,8 @@ class CUDACodeGen(TargetCodeGenerator):
 
     def _emit_sync(self, codestream: CodeIOStream):
         if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            codestream.write('''DACE_CUDA_CHECK({backend}GetLastError());
-            DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
+            codestream.write('''DACE_GPU_CHECK({backend}GetLastError());
+            DACE_GPU_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Determine GPU backend
@@ -368,8 +368,8 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
 
     // Initialize {backend} before we run the application
     float *dev_X;
-    {backend}Malloc((void **) &dev_X, 1);
-    {backend}Free(dev_X);
+    DACE_GPU_CHECK({backend}Malloc((void **) &dev_X, 1));
+    DACE_GPU_CHECK({backend}Free(dev_X));
 
     {pool_header}
 
@@ -377,10 +377,10 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        {backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking);
+        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
-        {backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming);
+        DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
     }}
 
     {initcode}
@@ -397,10 +397,10 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        {backend}StreamDestroy(__state->gpu_context->streams[i]);
+        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->streams[i]));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
-        {backend}EventDestroy(__state->gpu_context->events[i]);
+        DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
     }}
 
     delete __state->gpu_context;
@@ -587,14 +587,17 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
                 cudastream = getattr(node, '_cuda_stream', 'nullptr')
                 if cudastream != 'nullptr':
                     cudastream = f'__state->gpu_context->streams[{cudastream}]'
-                result_alloc.write(f'{self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream});\n')
+                result_alloc.write(
+                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
+                )
                 self._emit_sync(result_alloc)
             else:
                 # Strides are left to the user's discretion
-                result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
+                result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
+                                   (self.backend, dataname, arrsize_malloc))
 
             if node.setzero:
-                result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, dataname, arrsize_malloc))
+                result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
                 result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
@@ -603,7 +606,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
@@ -723,9 +726,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not nodedesc.pool:  # If pooled, will be freed somewhere else
-                callsite_stream.write('%sFree(%s);\n' % (self.backend, dataname), sdfg, state_id, node)
+                callsite_stream.write('DACE_GPU_CHECK(%sFree(%s));\n' % (self.backend, dataname), sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
-            callsite_stream.write('%sFreeHost(%s);\n' % (self.backend, dataname), sdfg, state_id, node)
+            callsite_stream.write('DACE_GPU_CHECK(%sFreeHost(%s));\n' % (self.backend, dataname), sdfg, state_id, node)
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared or \
              nodedesc.storage == dtypes.StorageType.Register:
             pass  # Do nothing
@@ -994,7 +997,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     current_dst_expr = dst_expr + " + " + "+ ".join(
                         ["(__copyidx{} * ({}))".format(d, sym2cpp(s)) for d, s in enumerate(dst_strides[:-2])])
                     callsite_stream.write(
-                        '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                        'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
                         (self.backend, current_dst_expr,
                          _topy(dst_strides[-2]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, current_src_expr,
                          sym2cpp(src_strides[-2]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
@@ -1011,7 +1014,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 copysize += ' * sizeof(%s)' % dtype.ctype
 
                 callsite_stream.write(
-                    '%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                    'DACE_GPU_CHECK(%sMemcpyAsync(%s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
                     (self.backend, dst_expr, src_expr, copysize, self.backend, src_location, dst_location, cudastream),
                     sdfg, state_id, [src_node, dst_node])
                 node_dtype = dst_node.desc(sdfg).dtype
@@ -1023,27 +1026,27 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             tclass = field_type.type
                             length = node_dtype._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
-                            callsite_stream.write('{backend}Malloc(&{dst}[__idx].{fname}, '
-                                                  '{sz});'.format(dst=str(dst_node),
-                                                                  fname=field_name,
-                                                                  sz=size,
-                                                                  backend=self.backend))
+                            callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
+                                                  '{sz}));'.format(dst=str(dst_node),
+                                                                   fname=field_name,
+                                                                   sz=size,
+                                                                   backend=self.backend))
                             callsite_stream.write(
-                                '{backend}MemcpyAsync({dst}[__idx].{fname}, '
+                                'DACE_GPU_CHECK({backend}MemcpyAsync({dst}[__idx].{fname}, '
                                 '{src}[__idx].{fname}, {sz}, '
-                                '{backend}Memcpy{sloc}To{dloc}, {stream});'.format(dst=str(dst_node),
-                                                                                   src=str(src_node),
-                                                                                   fname=field_name,
-                                                                                   sz=size,
-                                                                                   sloc=src_location,
-                                                                                   dloc=dst_location,
-                                                                                   stream=cudastream,
-                                                                                   backend=self.backend), sdfg,
+                                '{backend}Memcpy{sloc}To{dloc}, {stream}));'.format(dst=str(dst_node),
+                                                                                    src=str(src_node),
+                                                                                    fname=field_name,
+                                                                                    sz=size,
+                                                                                    sloc=src_location,
+                                                                                    dloc=dst_location,
+                                                                                    stream=cudastream,
+                                                                                    backend=self.backend), sdfg,
                                 state_id, [src_node, dst_node])
                     callsite_stream.write('}')
             elif dims == 1 and ((src_strides[-1] != 1 or dst_strides[-1] != 1)):
                 callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
                     (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
                      src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
                      'sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
@@ -1051,7 +1054,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     [src_node, dst_node])
             elif dims == 2:
                 callsite_stream.write(
-                    '%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s);\n' %
+                    'DACE_GPU_CHECK(%sMemcpy2DAsync(%s, %s, %s, %s, %s, %s, %sMemcpy%sTo%s, %s));\n' %
                     (self.backend, dst_expr, _topy(dst_strides[0]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype,
                      src_expr, sym2cpp(src_strides[0]) + ' * sizeof(%s)' % src_node.desc(sdfg).dtype.ctype,
                      sym2cpp(copy_shape[1]) + ' * sizeof(%s)' % dst_node.desc(sdfg).dtype.ctype, sym2cpp(
@@ -1068,8 +1071,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     syncstream = '__state->gpu_context->streams[%d]' % streamid
                     callsite_stream.write(
                         '''
-    {backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0);
+    DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
+    DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));
                     '''.format(ev=event, src_stream=cudastream, dst_stream=syncstream, backend=self.backend), sdfg,
                         state_id, [src_node, dst_node])
 
@@ -1219,7 +1222,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
 
-                callsite_stream.write(f'{backend}Free({ptrname});\n', sd)
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}Free({ptrname}));\n', sd)
                 self._emit_sync(callsite_stream)
                 to_remove.add((sd, name))
             for sd, name in to_remove:
@@ -1249,8 +1252,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        '%sStreamSynchronize(__state->gpu_context->streams[%d]);' % (self.backend, stream), sdfg,
-                        sdfg.node_id(state))
+                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
+                        (self.backend, stream), sdfg, sdfg.node_id(state))
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1518,8 +1521,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s %s(%s) {\n' % (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg,
-            state_id, node)
+            '__global__ void %s %s(%s) {\n' %
+            (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg, state_id, node)
 
         # Write constant expressions in GPU code
         self._frame.generate_constants(sdfg, self._localcode)
@@ -1550,7 +1553,7 @@ void __dace_runkernel_{fname}({fargs})
         if is_persistent:
             self._localcode.write('''
 int dace_number_SMs;
-{backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0);
+DACE_GPU_CHECK({backend}DeviceGetAttribute(&dace_number_SMs, {backend}DevAttrMultiProcessorCount, 0));
 int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy};
                 '''.format(fraction=Config.get('compiler', 'cuda', 'persistent_map_SM_fraction'),
                            occupancy=Config.get('compiler', 'cuda', 'persistent_map_occupancy'),
@@ -1600,18 +1603,17 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         self._localcode.write(
             '''
 void  *{kname}_args[] = {{ {kargs} }};
-{backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''.format(
-                kname=kernel_name,
-                kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
-                gdims=gdims,
-                bdims=bdims,
-                dynsmem=_topy(dynsmem_size),
-                stream=cudastream,
-                backend=self.backend), sdfg, state_id, scope_entry)
+gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
+            .format(kname=kernel_name,
+                    kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
+                    gdims=gdims,
+                    bdims=bdims,
+                    dynsmem=_topy(dynsmem_size),
+                    stream=cudastream,
+                    backend=self.backend), sdfg, state_id, scope_entry)
 
         # Check kernel launch for errors
-        if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-            self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK("{kernel_name}", {gdims}, {bdims});')
+        self._localcode.write(f'DACE_KERNEL_LAUNCH_CHECK(__err, "{kernel_name}", {gdims}, {bdims});')
 
         self._emit_sync(self._localcode)
 
@@ -1633,7 +1635,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             if hasattr(e, '_cuda_event'):
                 ev = e._cuda_event
                 callsite_stream.write(
-                    'DACE_CUDA_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
+                    'DACE_GPU_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
                         ev=ev, backend=self.backend), sdfg, state_id, [e.src, e.dst])
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),

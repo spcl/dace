@@ -213,7 +213,7 @@ namespace dace {
     void ResetGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         void *args_reset[1] = { &stream };
-        DACE_CUDA_CHECK(gpuLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>,
+        DACE_GPU_CHECK(gpuLaunchKernel((void *)&ResetGPUStream_kernel<T, IS_POW2>,
                                          dim3(1, 1, 1), dim3(1, 1, 1), 
                                          args_reset, 0, (gpuStream_t)0));
     }
@@ -229,7 +229,7 @@ namespace dace {
     void PushToGPUStream(GPUStream<T, IS_POW2>& stream, const T& item)
     {
         void *args_push[2] = { &stream, &item };
-        DACE_CUDA_CHECK(gpuLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>,
+        DACE_GPU_CHECK(gpuLaunchKernel((void *)&PushToGPUStream_kernel<T, IS_POW2>,
                                          dim3(1, 1, 1), dim3(1, 1, 1), 
                                          args_push, 0, (gpuStream_t)0));
     }
@@ -242,12 +242,12 @@ namespace dace {
     GPUStream<T, IS_POW2> AllocGPUArrayStreamView(T *ptr, uint32_t capacity)
     {
         uint32_t *gStart, *gEnd, *gPending;
-        DACE_CUDA_CHECK(gpuMalloc(&gStart, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(gpuMalloc(&gEnd, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(gpuMalloc(&gPending, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(gpuMemset(gStart, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(gpuMemset(gEnd, 0, sizeof(uint32_t)));
-        DACE_CUDA_CHECK(gpuMemset(gPending, 0, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMalloc(&gStart, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMalloc(&gEnd, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMalloc(&gPending, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMemset(gStart, 0, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMemset(gEnd, 0, sizeof(uint32_t)));
+        DACE_GPU_CHECK(gpuMemset(gPending, 0, sizeof(uint32_t)));
         return GPUStream<T, IS_POW2>(ptr, capacity, gStart, gEnd, gPending);
     }
 
@@ -255,23 +255,23 @@ namespace dace {
     GPUStream<T, IS_POW2> AllocGPUStream(uint32_t capacity)
     {
         T *gData;
-        DACE_CUDA_CHECK(gpuMalloc(&gData, capacity * sizeof(T)));
+        DACE_GPU_CHECK(gpuMalloc(&gData, capacity * sizeof(T)));
         return AllocGPUArrayStreamView<T, IS_POW2>(gData, capacity);
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(gpuFree(stream.m_start));
-        DACE_CUDA_CHECK(gpuFree(stream.m_end));
-        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
+        DACE_GPU_CHECK(gpuFree(stream.m_start));
+        DACE_GPU_CHECK(gpuFree(stream.m_end));
+        DACE_GPU_CHECK(gpuFree(stream.m_pending));
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(gpuFree(stream.m_data));
+        DACE_GPU_CHECK(gpuFree(stream.m_data));
     }
 
 }  // namespace dace
