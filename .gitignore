@@ -190,3 +190,8 @@ _build/
 
 .*cache/
 /doc/source/config_schema.rst
+
+# Results
+results_v2
+# Plots
+plots_v2
