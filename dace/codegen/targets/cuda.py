@@ -1503,10 +1503,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if create_grid_barrier:
             extra_kernel_args_typed.append('cub::GridBarrier __gbar')
 
-        # Write kernel prototype
         node = dfg_scope.source_nodes()[0]
+
+        # Set kernel launch bounds
+        if node.gpu_launch_bounds == "-1":
+            launch_bounds = ''
+        elif node.gpu_launch_bounds == "0":
+            if any(symbolic.issymbolic(b) for b in block_dims):
+                launch_bounds = ''
+            else:
+                launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+        else:
+            launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+
+        # Write kernel prototype
         self._localcode.write(
-            '__global__ void %s(%s) {\n' % (kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg,
+            '__global__ void %s %s(%s) {\n' % (launch_bounds, kernel_name, ', '.join(kernel_args_typed + extra_kernel_args_typed)), sdfg,
             state_id, node)
 
         # Write constant expressions in GPU code
@@ -1755,7 +1767,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             if block_size is None:
                 if has_dtbmap:
                     if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
-                        block_size = ['max', 1, 1]
+                        raise NotImplementedError('max dynamic block size unimplemented')
                     else:
                         block_size = [
                             int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
@@ -1766,7 +1778,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                       Config.get('compiler', 'cuda', 'default_block_size'))
 
                     if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
-                        block_size = ['max', 1, 1]
+                        raise NotImplementedError('max dynamic block size unimplemented')
                     else:
                         block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
 
