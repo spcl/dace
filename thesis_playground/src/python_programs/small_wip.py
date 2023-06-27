@@ -3,7 +3,8 @@ import numpy as np
 
 KLEV = dace.symbol('KLEV')
 NBLOCKS = dace.symbol('NBLOCKS')
-KLON = 4
+KLON = dace.symbol('KLON')
+# KLON = 1
 
 
 @dace.program

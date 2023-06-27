@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 import sympy
 
 import dace
@@ -11,8 +11,10 @@ from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_f
                                                    move_small_arrays_to_stack, make_transients_persistent
 
 # Transformations
-from dace.transformation.dataflow import TrivialMapElimination, MapCollapse
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf
+from dace.sdfg.nodes import MapEntry
+from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop, \
+                                         MapExpansion
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf, SwapLoopOrder
 from dace.transformation import helpers as xfh
 
 from utils.general import save_graph
@@ -57,6 +59,28 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
+
+    sdfg.simplify(validate=False, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
+
+    if program is not None:
+        save_graph(sdfg, program, "after_map_interchange")
+
+    # My not working attempt at switching loop order on the for-loop-level (before they get transformed to maps)
+    # while transformed:
+    #     sdfg.simplify(validate=False, validate_all=validate_all)
+    #     if program is not None:
+    #         save_graph(sdfg, program, "after_simplify")
+    #     for s in sdfg.sdfg_list:
+    #         xfh.split_interstate_edges(s)
+    #     if program is not None:
+    #         save_graph(sdfg, program, "after_splitting_interstate_edges")
+    #     transformed = sdfg.apply_transformations_repeated(SwapLoopOrder, validate=validate, validate_all=validate_all) > 0
+    #     transformed = False
+    #     if program is not None:
+    #         save_graph(sdfg, program, "after_swap_loop_order")
+
     if device == dace.DeviceType.GPU:
         loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
@@ -65,12 +89,33 @@ def auto_optimize(sdfg: SDFG,
             save_graph(sdfg, program, "after_simplify")
         for s in sdfg.sdfg_list:
             xfh.split_interstate_edges(s)
+        if program is not None:
+            save_graph(sdfg, program, "after_splitting_interstate_edges")
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
         if program is not None:
             save_graph(sdfg, program, "after_loop_to_map")
+
+    # For some reason this causes a valueError: Found cycles with vert_loop_10
+    # sdfg.apply_transformations_repeated(TrivialMapElimination)
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_trivial_map_elimination")
+
+    make_klev_outermost_map(sdfg)
+    if program is not None:
+        save_graph(sdfg, program, "after_make_klev_outermost")
+
+    # make_klev_loops_again(sdfg)
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_make_klev_loop_again")
+
+    # xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapFusion])]
+    # print(f"Number of possible MapFusion transformations: {len(xforms)}")
+
+    k_caching_prototype_v1(sdfg, validate, validate_all, program)
+
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
@@ -186,7 +231,6 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
     sdfg.specialize(known_symbols)
 
 
-
 def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False, program: str = None) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first
@@ -242,3 +286,56 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
             save_graph(sdfg, program, "after_outer_loop_to_map")
 
     return sdfg
+
+
+def make_klev_outermost_map(sdfg: SDFG):
+    transformed = True
+    number_transformed = 0
+    while transformed:
+        transformations = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapInterchange])]
+        transformed = False
+        for xform in transformations:
+            if xform.inner_map_entry.range.ranges[0][1] == 137 or xform.inner_map_entry.range.ranges[0][1] == 136:
+                xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
+                transformed = True
+                number_transformed += 1
+    print(f"Applied {number_transformed} transformation to move KLEV-loop outside")
+
+
+def make_klev_loops_again(sdfg: SDFG):
+    # Throws an error
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop])]
+    print(f"Number of possible MapToForLoop transformations: {len(xforms)}")
+    for xform in xforms:
+        if isinstance(xform.map_entry, MapEntry) and xform.map_entry.map.range.ranges[0][1] == 137:
+            print(xform.map_entry.map.range)
+            xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
+
+
+def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, program: Optional[str] = None):
+    # if program is not None:
+    #     save_graph(sdfg, program, "before_trivial_map_elimination")
+    # sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_trivial_map_elimination")
+
+    if program is not None:
+        save_graph(sdfg, program, "before_map_expansion")
+    sdfg.apply_transformations_repeated([MapExpansion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_expansion")
+    # Force KLEV loop with vertical dependency into a map
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
+    if len(xforms) > 0:
+        for xform in xforms:
+            if 'KLEV' in sdfg.sdfg_list[xform.sdfg_id].edges_between(xform.loop_guard, xform.loop_begin)[0].data.free_symbols:
+                xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
+    else:
+        print("WARNING: To transformation found to force KLEV to a map")
+    if program is not None:
+        save_graph(sdfg, program, "after_force_klev_to_map")
+
+    # TODO: There are 0 possible map fusions, maybe need to remove unneccessary nodes between and maybe our more
+    # difficult nature of the transient is a problem
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapFusion], permissive=True)]
+    print(f"Number of possible MapFusion transformations: {len(xforms)}")

@@ -17,3 +17,4 @@ from .trivial_loop_elimination import TrivialLoopElimination
 from .multistate_inline import InlineMultistateSDFG
 
 from .move_assignment_outside_if import MoveAssignmentOutsideIf
+from .swap_loop_order import SwapLoopOrder

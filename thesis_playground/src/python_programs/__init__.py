@@ -6,3 +6,4 @@ from .vert_loop_7_1_no_klon import vert_loop_7_1_no_klon
 from .vert_loop_7_1_no_temp import vert_loop_7_1_no_temp
 from .vert_loop_wip import vert_loop_wip
 from .vert_loop_wip_scalar_offset import vert_loop_wip_scalar_offset
+from .small_wip import small_wip
