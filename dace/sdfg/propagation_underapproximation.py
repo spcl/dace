@@ -67,9 +67,33 @@ class SeparableMemlet(MemletPattern):
         data_dims = len(expressions[0])
         self.patterns_per_dim = [None] * data_dims
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                                           re.approx if isinstance(re, symbolic.SymExpr) else re,
-                                           rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
+
+        # Return False if index appears in multiple dimensions
+        params = variable_context[-1]
+        for expr in expressions:
+            for param in params:
+                occured_before = False
+                for dim in range(data_dims):
+                    free_symbols = []
+                    if isinstance(expr[dim], symbolic.SymExpr):
+                        free_symbols += expr[dim].expr.free_symbols
+                    elif isinstance(expr[dim], tuple):
+                        free_symbols += expr[dim][0].expr.free_symbols if isinstance(expr[dim][0], symbolic.SymExpr) else [expr[dim][0]]
+                        free_symbols += expr[dim][1].expr.free_symbols if isinstance(expr[dim][1], symbolic.SymExpr) else [expr[dim][1]]
+                        free_symbols += expr[dim][2].expr.free_symbols if isinstance(expr[dim][2], symbolic.SymExpr) else [expr[dim][2]]
+                    else:
+                        free_symbols += [expr[dim]]
+                    
+                    if param in free_symbols:
+                        if occured_before:
+                            return False
+                        occured_before = True
+                        
+
+
+        overapprox_range = subsets.Range([(rb.expr if isinstance(rb, symbolic.SymExpr) else rb,
+                                           re.expr if isinstance(re, symbolic.SymExpr) else re,
+                                           rs.expr if isinstance(rs, symbolic.SymExpr) else rs)
                                           for rb, re, rs in node_range])
 
         for dim in range(data_dims):
@@ -77,11 +101,11 @@ class SeparableMemlet(MemletPattern):
             dexprs = []
             for expr in expressions:
                 if isinstance(expr[dim], symbolic.SymExpr):
-                    dexprs.append(expr[dim].approx)
+                    dexprs.append(expr[dim].expr)
                 elif isinstance(expr[dim], tuple):
-                    dexprs.append((expr[dim][0].approx if isinstance(expr[dim][0], symbolic.SymExpr) else expr[dim][0],
-                                   expr[dim][1].approx if isinstance(expr[dim][1], symbolic.SymExpr) else expr[dim][1],
-                                   expr[dim][2].approx if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
+                    dexprs.append((expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else expr[dim][0],
+                                   expr[dim][1].expr if isinstance(expr[dim][1], symbolic.SymExpr) else expr[dim][1],
+                                   expr[dim][2].expr if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
                 else:
                     dexprs.append(expr[dim])
 
@@ -96,9 +120,9 @@ class SeparableMemlet(MemletPattern):
     def propagate(self, array, expressions, node_range):
         result = [(None, None, None)] * len(self.patterns_per_dim)
 
-        overapprox_range = subsets.Range([(rb.approx if isinstance(rb, symbolic.SymExpr) else rb,
-                                           re.approx if isinstance(re, symbolic.SymExpr) else re,
-                                           rs.approx if isinstance(rs, symbolic.SymExpr) else rs)
+        overapprox_range = subsets.Range([(rb.expr if isinstance(rb, symbolic.SymExpr) else rb,
+                                           re.expr if isinstance(re, symbolic.SymExpr) else re,
+                                           rs.expr if isinstance(rs, symbolic.SymExpr) else rs)
                                           for rb, re, rs in node_range])
 
         for i, smpattern in enumerate(self.patterns_per_dim):
@@ -106,11 +130,11 @@ class SeparableMemlet(MemletPattern):
             dexprs = []
             for expr in expressions:
                 if isinstance(expr[i], symbolic.SymExpr):
-                    dexprs.append(expr[i].approx)
+                    dexprs.append(expr[i].expr)
                 elif isinstance(expr[i], tuple):
-                    dexprs.append((expr[i][0].approx if isinstance(expr[i][0], symbolic.SymExpr) else expr[i][0],
-                                   expr[i][1].approx if isinstance(expr[i][1], symbolic.SymExpr) else expr[i][1],
-                                   expr[i][2].approx if isinstance(expr[i][2], symbolic.SymExpr) else expr[i][2],
+                    dexprs.append((expr[i][0].expr if isinstance(expr[i][0], symbolic.SymExpr) else expr[i][0],
+                                   expr[i][1].expr if isinstance(expr[i][1], symbolic.SymExpr) else expr[i][1],
+                                   expr[i][2].expr if isinstance(expr[i][2], symbolic.SymExpr) else expr[i][2],
                                    expr.tile_sizes[i]))
                 else:
                     dexprs.append(expr[i])
@@ -126,6 +150,8 @@ class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
         of the form `a * {index} + b`.
     """
+    # FIXME: this returns overapproximations/falls back to the full array range. Even for seemingly
+    # manageable cases like A[3 * i]
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
@@ -262,6 +288,7 @@ class AffineSMemlet(SeparableMemletPattern):
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
 
+        # TODO: What is this??? Makes no sense for underapproximation!! Also why is 1 added to re-rb
         # Special case: i:i+stride for a begin:end:stride range
         if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
             return (node_rb, node_re, 1, 1)
@@ -1388,8 +1415,6 @@ class UnderapproximateWrites(ppl.Pass):
               
             if(range.free_symbols):
                 if isinstance(memlet.subset, subsets.Subsetlist):
-                    if None in memlet.subset.subset_list:
-                        print("hello")
                     filtered_subsets = [s for s in memlet.subset.subset_list if itvar in s.free_symbols]
                 else:
                     filtered_subsets = [s for s in [memlet.subset] if itvar in s.free_symbols]
@@ -1450,17 +1475,18 @@ class UnderapproximateWrites(ppl.Pass):
         states.add(last_loop_state)
 
         for state in states:
+            if state in ignore:
+                continue
+
+            # recursively propagate nested loops and ignore the nested states
             if state in loops.keys():
                 self.propagate_memlet_loop(sdfg, loops, state)
                 _, _, nested_loop_states, _, _ = loops[state]
                 ignore += nested_loop_states
 
-            if state in ignore:
-                continue
             # iterate over the data_nodes that are actually in the current state
             # plus the data_nodes that are overwritten in the corresponding loop body
             # if the state is a loop header
-            # do i want accessNodes as the keys of the returned dictionary from loop_write_dict?
             surrounding_itvars = state.ranges.keys()
             # iterate over acccessnodes in the state
             for node in state.data_nodes():
