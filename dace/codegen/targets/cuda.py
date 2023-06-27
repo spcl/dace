@@ -1602,13 +1602,16 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         bdims = ', '.join(_topy(block_dims))
 
         # Prepare an empty-grid check for runtime grids
-        dimcheck = 'false'
+        dimcheck = ''
         if is_persistent:
             dimcheck = 'dace_number_blocks > 0'
         else:
             for gdim in grid_dims:
                 if symbolic.issymbolic(gdim) and (gdim > 0) != True:
-                    dimcheck += f' || ({_topy(gdim)}) == 0'
+                    if not dimcheck:
+                        dimcheck = f'({_topy(gdim)}) == 0'
+                    else:
+                        dimcheck += f' || ({_topy(gdim)}) == 0'
 
         emptygrid_warning = ''
         if Config.get('debugprint') == 'verbose' or Config.get_bool('compiler', 'cuda', 'syncdebug'):
