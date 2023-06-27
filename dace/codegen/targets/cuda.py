@@ -392,8 +392,9 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
-    int __err = 0;
-    __err = static_cast<int>({backend}DeviceSynchronize());
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    if (__err == 0)
+        __err = static_cast<int>({backend}DeviceSynchronize());
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{

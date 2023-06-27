@@ -22,20 +22,20 @@ typedef cudaError_t gpuError_t;
     if (errr != (gpuError_t)0) {                                          \
       printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
              gpuGetErrorString(err), errr);                               \
-      throw;                                                              \
+      __state->gpu_context->lasterror = errr;                             \
     }                                                                     \
   } while (0)
 
 #define DACE_KERNEL_LAUNCH_CHECK(err, kernel_name, gdimx, gdimy, gdimz, bdimx, \
                                  bdimy, bdimz)                                 \
   do {                                                                         \
-    if (err != decltype(err)(0)) {                                             \
+    if (err != (gpuError_t)0) {                                                \
       printf(                                                                  \
           "ERROR launching kernel %s: %s (%d). Grid dimensions: "              \
           "(%d, %d, %d); Block dimensions: (%d, %d, %d).\n",                   \
           kernel_name, gpuGetErrorString(err), (int)err, gdimx, gdimy, gdimz,  \
           bdimx, bdimy, bdimz);                                                \
-      throw;                                                                   \
+      __state->gpu_context->lasterror = err;                                   \
     }                                                                          \
   } while (0)
 
@@ -46,8 +46,9 @@ struct Context {
   int num_events;
   gpuStream_t *streams;
   gpuEvent_t *events;
+  gpuError_t lasterror;
   Context(int nstreams, int nevents)
-      : num_streams(nstreams), num_events(nevents) {
+      : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0) {
     streams = new gpuStream_t[nstreams];
     events = new gpuEvent_t[nevents];
   }
