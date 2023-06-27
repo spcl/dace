@@ -343,7 +343,13 @@ class CompiledSDFG(object):
                     self._cfunc(self._libhandle, *argtuple)
 
             if self.has_gpu_code:
-                lasterror = common.get_gpu_runtime_last_error()
+                # Optionally get errors from call
+                try:
+                    lasterror = common.get_gpu_runtime_last_error()
+                except RuntimeError as ex:
+                    warnings.warn(f'Could not get last error from GPU runtime: {ex}')
+                    lasterror = None
+
                 if lasterror is not None:
                     raise RuntimeError(
                         f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
