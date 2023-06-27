@@ -160,8 +160,9 @@ def plot_memory_transfers(data: pd.DataFrame, folder: str, legend_on_line: bool 
 
     sns.lineplot(data, x='NBLOCKS', y='measured bytes', hue='program', ax=ax, hue_order=hue_order, errorbar=('ci', 95),
                  err_style='bars', **additional_args)
-    # sns.lineplot(data=data.reset_index()[['size', 'theoretical bytes']].drop_duplicates(), ax=ax, x='size',
-    #              y='theoretical bytes', linestyle='--', color='gray', label='theoretical bytes/size')
+    sns.lineplot(data['theoretical bytes total'].dropna().reset_index(),
+                 ax=ax, x='NBLOCKS', y='theoretical bytes total', linestyle='--', color='gray',
+                 label='theoretical bytes/size')
     ax.yaxis.set_major_formatter(get_bytes_formatter())
     program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
