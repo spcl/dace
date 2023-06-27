@@ -10,7 +10,7 @@ import pandas as pd
 import json
 
 from utils.print import print_dataframe, print_with_time
-from utils.execute_dace import RunConfig, gen_ncu_report, test_program
+from utils.execute_dace import RunConfig, test_program
 from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file
 from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
@@ -18,7 +18,7 @@ from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
 
 
-def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5, nblock_max: Number = 6e5,
+def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 5e5,
                       nblock_step: Number = 1e5, debug_mode: bool = False):
     programs = [
             'cloudsc_vert_loop_4_ZSOLQA',

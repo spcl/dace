@@ -61,7 +61,6 @@ def average_data(wide_df: pd.DataFrame) -> pd.DataFrame:
     :rtype: pd.DataFrame
     """
     index_cols = list(wide_df.index.names)
-    print(index_cols)
     index_cols.remove('run number')
     return wide_df.groupby(index_cols).mean()
 
