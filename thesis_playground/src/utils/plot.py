@@ -314,7 +314,7 @@ def get_new_figure(number_of_colors: Optional[int] = None) -> matplotlib.figure.
     return fig
 
 
-def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, title: str, data: pd.DataFrame):
+def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, title: str, data: pd.DataFrame, size_var_name: str = 'size'):
     """
     Adds x and y labels and x ticks based on data for a plot with size on x axis
 
@@ -326,12 +326,14 @@ def size_vs_y_plot(ax: matplotlib.axis.Axis, ylabel: str, title: str, data: pd.D
     :type title: str
     :param data: The data, used to get x ticks
     :type data: pd.DataFrame
+    :param size_var_name: Name of the size variable/column. Defaults to 'size'
+    :type size_var_name: str
     """
     ax.set_xlabel('NBLOCKS')
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.xaxis.set_major_formatter(EngFormatter(places=0, sep="\N{THIN SPACE}"))
-    ax.set_xticks(data.reset_index()['size'].unique())
+    ax.set_xticks(data.reset_index()[size_var_name].unique())
 
 
 def get_bytes_formatter() -> matplotlib.ticker.EngFormatter:
@@ -397,3 +399,17 @@ def legend_on_lines(ax: matplotlib.axis.Axis,
 
         ax.text(text_pos[0], text_pos[1], program, color=sns.color_palette()[index + color_palette_offset],
                 horizontalalignment='center', verticalalignment='center', rotation=angle)
+
+
+def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
+    """
+    Replace the program names in the legend by more discriptive ones
+
+    :param legend: The legend object where the labels should be changed
+    :type legend: matplotlib.legend.Leged
+    :param names_map: Dictionay mapping the names/labels to change.
+    :type names_map: Dict[str, str]
+    """
+    for text in legend.get_texts():
+        if text.get_text() in names_map:
+            text.set(text=names_map[text.get_text()])

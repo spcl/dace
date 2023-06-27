@@ -12,6 +12,7 @@ import pandas as pd
 from utils.paths import get_vert_loops_dir
 from utils.ncu import get_achieved_bytes, get_all_actions, get_achieved_performance, get_peak_performance, \
                       action_list_to_dict, get_runtime
+from utils.data_analysis import compute_speedups
 from measurements.flop_computation import get_number_of_bytes_2
 from measurements.data import MeasurementRun
 
@@ -157,16 +158,17 @@ def get_speedups(data: pd.DataFrame, baseline_program: Optional[str] = None,
     indices = ['program', 'size', 'short_desc']
     avg_data = data.groupby(indices).mean()
     speedup_data = avg_data.copy()
+    if baseline_short_desc is None and baseline_program is not None:
+        col_keys = (baseline_program)
+        col_levels = ('program')
+    elif baseline_short_desc is not None and baseline_program is not None:
+        col_keys = (baseline_program, baseline_short_desc)
+        col_levels = ('program', 'short_desc')
+    elif baseline_short_desc is not None and baseline_program is None:
+        col_keys = (baseline_short_desc)
+        col_levels = ('short_desc')
 
-    def compute_speedup(col: pd.Series) -> pd.Series:
-        if baseline_short_desc is None and baseline_program is not None:
-            return col.div(col[baseline_program, :, :]).apply(np.reciprocal)
-        elif baseline_short_desc is not None and baseline_program is not None:
-            return col.div(col[baseline_program, :, baseline_short_desc]).apply(np.reciprocal)
-        elif baseline_short_desc is not None and baseline_program is None:
-            return col.div(col[:, :, baseline_short_desc]).apply(np.reciprocal)
-
-    return speedup_data.apply(compute_speedup, axis='index')
+    return compute_speedups(speedup_data, col_keys, col_levels)
 
 
 def key_program_sort(programs):

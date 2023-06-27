@@ -1,6 +1,20 @@
 from typing import List
 from os.path import join, dirname, split, abspath, exists
-from os import getcwd, listdir
+from os import getcwd, listdir, makedirs
+
+
+def create_if_not_exist(path: str) -> str:
+    """
+    Creates the folders in the given path and returns the path itself.
+
+    :param path: The path
+    :type path: str
+    :return: The given path
+    :rtype: str
+    """
+    if not exists(path):
+        makedirs(path)
+    return path
 
 
 def get_results_dir(folder_name: str = 'results') -> str:
@@ -105,4 +119,12 @@ def get_playground_results_dir() -> str:
 
 
 def get_results_2_folder() -> str:
-    return join(get_thesis_playground_root_dir(), 'results_v2')
+    return create_if_not_exist(join(get_thesis_playground_root_dir(), 'results_v2'))
+
+
+def get_experiments_2_file() -> str:
+    return join(get_results_2_folder(), 'experiments.csv')
+
+
+def get_plots_2_folder() -> str:
+    return create_if_not_exist(join(get_thesis_playground_root_dir(), 'plots_v2'))

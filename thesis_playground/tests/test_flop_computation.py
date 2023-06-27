@@ -1,4 +1,4 @@
-from flop_computation import FlopCount
+from measurements.flop_computation import FlopCount
 
 
 class TestFlopCount:

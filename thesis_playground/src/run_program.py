@@ -22,12 +22,16 @@ def main():
     parser.add_argument('--KLON', type=int)
     parser.add_argument('--KIDIA', type=int)
     parser.add_argument('--KFDIA', type=int)
-    parser.add_argument('--read-sdfg', action='store_true')
+    parser.add_argument('--read-sdfg', action='store_true', help='Read sdfg from .dacecache folder')
+    parser.add_argument('--sdfg-file', type=str, default=None, help='File to read sdfg from')
     parser.add_argument('--not-specialise-symbols', action='store_true', default=False)
 
     args = parser.parse_args()
     run_config = RunConfig()
     run_config.set_from_args(args)
+
+    if args.sdfg_file is not None:
+        args.read_sdfg = True
 
     if args.debug:
         enable_debug_flags()
@@ -38,17 +42,17 @@ def main():
     else:
         remove_build_folder(args.program)
 
-    if args.only_test:
-        additional_args = {}
-        if args.read_sdfg:
+    additional_args = {}
+    if args.read_sdfg:
+        if args.sdfg_file is not None:
+            additional_args['sdfg_file'] = args.sdfg_file
+        else:
             additional_args['sdfg_file'] = get_default_sdfg_file(args.program)
+    if args.only_test:
         test_program(args.program, run_config, **additional_args)
     else:
         params = ParametersProvider(args.program)
         params.update_from_args(args)
-        additional_args = {}
-        if args.read_sdfg:
-            additional_args['sdfg_file'] = get_default_sdfg_file(args.program)
 
         run_program(args.program, run_config, params, repetitions=args.repetitions, **additional_args)
 

@@ -89,7 +89,7 @@ SUBROUTINE vert_loop_4_zsolqa_routine(&
     ! output
     REAL(KIND=JPRB) PLUDE(KLON, KLEV, NBLOCKS)
 
-    DO JN=1,NBLOCKS,KLON
+    DO JN=1,NBLOCKS-1,KLON
         CALL inner_loops(&
             & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
             & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU(:,:,JN), LDCUM(:,JN), PSNDE(:,:,JN), PAPH_N(:,:,JN), &
@@ -174,24 +174,25 @@ SUBROUTINE inner_loops(&
         ENDDO
         ! To 919
 
-        DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
+        IF (JK < KLEV .AND. JK>=NCLDTOP) THEN
+            DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
 
-            PLUDE(JL,JK)=PLUDE(JL,JK)*ZDTGDP(JL)
+                PLUDE(JL,JK)=PLUDE(JL,JK)*ZDTGDP(JL)
 
-            IF(LDCUM(JL).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
-                ZCONVSRCE(JL,NCLDQL) = ZALFAW*PLUDE(JL,JK)
-                ZCONVSRCE(JL,NCLDQI) = (1.0 - ZALFAW)*PLUDE(JL,JK)
-                ZSOLQA(JL,NCLDQL,NCLDQL) = ZSOLQA(JL,NCLDQL,NCLDQL)+ZCONVSRCE(JL,NCLDQL)
-                ZSOLQA(JL,NCLDQI,NCLDQI) = ZSOLQA(JL,NCLDQI,NCLDQI)+ZCONVSRCE(JL,NCLDQI)
-            ELSE
+                IF(LDCUM(JL).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
+                    ZCONVSRCE(JL,NCLDQL) = ZALFAW*PLUDE(JL,JK)
+                    ZCONVSRCE(JL,NCLDQI) = (1.0 - ZALFAW)*PLUDE(JL,JK)
+                    ZSOLQA(JL,NCLDQL,NCLDQL) = ZSOLQA(JL,NCLDQL,NCLDQL)+ZCONVSRCE(JL,NCLDQL)
+                    ZSOLQA(JL,NCLDQI,NCLDQI) = ZSOLQA(JL,NCLDQI,NCLDQI)+ZCONVSRCE(JL,NCLDQI)
+                ELSE
 
-                PLUDE(JL,JK)=0.0
+                    PLUDE(JL,JK)=0.0
 
-            ENDIF
-            ! *convective snow detrainment source
-            IF (LDCUM(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
-
-        ENDDO
+                ENDIF
+                ! *convective snow detrainment source
+                IF (LDCUM(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
+            ENDDO
+        ENDIF
     ENDDO ! on vertical level JK
 
 END SUBROUTINE inner_loops

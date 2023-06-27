@@ -272,6 +272,9 @@ class ParametersProvider:
     def __contains__(self, key: str) -> bool:
         return key in self.parameters
 
+    def __eq__(self, other: 'ParametersProvider') -> bool:
+        return self.get_dict() == other.get_dict()
+
     def get_dict(self) -> Dict[str, Number]:
         return copy.deepcopy(self.parameters)
 

@@ -171,24 +171,27 @@ SUBROUTINE inner_loops(&
         ENDDO
         ! To 919
 
-        DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
+        IF (JK < KLEV .AND. JK>=NCLDTOP) THEN
+            DO JL=KIDIA,KFDIA   ! LOOP CLASS 3
 
-            PLUDE(JL,JK)=PLUDE(JL,JK)*ZDTGDP(JL)
 
-            IF(LDCUM(JL).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
-                ZCONVSRCE(JL,NCLDQL) = ZALFAW*PLUDE(JL,JK)
-                ZCONVSRCE(JL,NCLDQI) = (1.0 - ZALFAW)*PLUDE(JL,JK)
-                ZSOLQA(JL,NCLDQL,NCLDQL) = ZSOLQA(JL,NCLDQL,NCLDQL)+ZCONVSRCE(JL,NCLDQL)
-                ZSOLQA(JL,NCLDQI,NCLDQI) = ZSOLQA(JL,NCLDQI,NCLDQI)+ZCONVSRCE(JL,NCLDQI)
-            ELSE
+                PLUDE(JL,JK)=PLUDE(JL,JK)*ZDTGDP(JL)
 
-                PLUDE(JL,JK)=0.0
+                IF(LDCUM(JL).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
+                    ZCONVSRCE(JL,NCLDQL) = ZALFAW*PLUDE(JL,JK)
+                    ZCONVSRCE(JL,NCLDQI) = (1.0 - ZALFAW)*PLUDE(JL,JK)
+                    ZSOLQA(JL,NCLDQL,NCLDQL) = ZSOLQA(JL,NCLDQL,NCLDQL)+ZCONVSRCE(JL,NCLDQL)
+                    ZSOLQA(JL,NCLDQI,NCLDQI) = ZSOLQA(JL,NCLDQI,NCLDQI)+ZCONVSRCE(JL,NCLDQI)
+                ELSE
 
-            ENDIF
-            ! *convective snow detrainment source
-            IF (LDCUM(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
+                    PLUDE(JL,JK)=0.0
 
-        ENDDO
+                ENDIF
+                ! *convective snow detrainment source
+                IF (LDCUM(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
+
+            ENDDO
+        ENDIF
     ENDDO ! on vertical level JK
 
 END SUBROUTINE inner_loops
