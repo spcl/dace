@@ -1165,7 +1165,6 @@ class UnderapproximateWrites(ppl.Pass):
                     # range that only exists inside the nested SDFG. If that's the
                     # case, use an empty set to stay correct.
 
-                    #TODO: write subset back to the subset list --> for i, subset in enumerate(_subsets)
                     if border_memlet.src_subset is not None:
                         if isinstance(border_memlet.src_subset, subsets.Subsetlist):
                             _subsets = border_memlet.src_subset.subset_list
@@ -1379,9 +1378,6 @@ class UnderapproximateWrites(ppl.Pass):
                 # call propagate_memlet_loop on the nested loop
 
         # difference to propagate_memlets_nested_sdfg is that there are no border memlets
-        # FIXME: If the loop has a break statement, don't propagate out of this loop
-        # break statement if loop body has an edge whose destination is outside of the loop body
-        # or if loop body contains a state which is not dominated by the loop guard
 
         def filter_subsets(itvar: str, s_itvars: List[str], range: subsets.Range, memlet: Memlet):
             # if loop range is symbolic -> only propagate subsets that contain the iterator as a symbol
@@ -1435,7 +1431,14 @@ class UnderapproximateWrites(ppl.Pass):
         current_loop = loops[loopheader]
         begin, last_loop_state, loop_states, itvar, rng = current_loop
 
+        
+
         if rng.num_elements() == 0:
+            return
+        
+        dominators = cfg.all_dominators(sdfg)
+
+        if any(begin not in dominators[s] and not begin is s for s in loop_states):
             return
         
         border_memlets = defaultdict(None)
@@ -1443,12 +1446,8 @@ class UnderapproximateWrites(ppl.Pass):
 
         # TODO: change this later for more precision
         # get all the nodes that are executed unconditionally in the cfg a.k.a nodes that dominate the sink states
-        dominators = cfg.all_dominators(sdfg)
         states = dominators[last_loop_state].intersection(set(loop_states))
         states.add(last_loop_state)
-
-
-        # TODO: Only iterate over states that are executed unconditionally for now
 
         for state in states:
             if state in loops.keys():
