@@ -6,7 +6,7 @@ import seaborn as sns
 from utils.data_analysis import compute_speedups
 from utils.experiments2 import get_program_infos
 from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines, \
-                       get_arrowprops, replace_legend_names
+                       replace_legend_names
 
 hue_order = ['cloudsc_vert_loop_4_ZSOLQA', 'cloudsc_vert_loop_6_ZSOLQA', 'cloudsc_vert_loop_6_1_ZSOLQA',
              'cloudsc_vert_loop_7_3']
@@ -39,8 +39,8 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line
     sns.lineplot(data=speedups, x='NBLOCKS', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order)
     program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
-        legend_on_line(ax, ((300000, 1.2), (250000, 6.3), (350000, 7.5)), [program_names_map[p] for p in hue_order[1:]],
-                       rotations=[0, -12, -15], color_palette_offset=1)
+        legend_on_lines(ax, ((300000, 1.2), (250000, 6.3), (350000, 7.5)), [program_names_map[p] for p in hue_order[1:]],
+                        rotations=[0, -12, -15], color_palette_offset=1)
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     save_plot(os.path.join(folder, 'speedup_array_order.pdf'))
@@ -70,8 +70,8 @@ def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, legend_on_
     size_vs_y_plot(ax, 'Speedup', 'Speedup of kernel runtime stack allocation vs heap allocation', speedups, size_var_name='NBLOCKS')
     program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
-        legend_on_line(ax, ((1.5e5, 30), (4e5, 350), ((4e5, 120), (4.5e5, 45)), ((3e5, 200), (2e5, 85))),
-                       [program_names_map[p] for p in hue_order], rotations=[-3, -10, 0, 0])
+        legend_on_lines(ax, ((1.5e5, 30), (4e5, 350), ((4e5, 120), (4.5e5, 45)), ((3e5, 200), (2e5, 85))),
+                        [program_names_map[p] for p in hue_order], rotations=[-3, -10, 0, 0])
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     save_plot(os.path.join(folder, 'speedup_temp_allocation.pdf'))
@@ -119,8 +119,8 @@ def plot_runtime(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
                  err_style='bars', **additional_args)
     program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
-        legend_on_line(ax, ((3e5, 0.084), (1.8e5, 0.009), (3.8e5, 0.015), (3.8e5, 0.005)),
-                       [program_names_map[p] for p in hue_order], rotations=[25, 3, 3, 3])
+        legend_on_lines(ax, ((3e5, 0.084), (1.8e5, 0.009), (3.8e5, 0.015), (3.8e5, 0.005)),
+                        [program_names_map[p] for p in hue_order], rotations=[25, 3, 3, 3])
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     save_plot(os.path.join(folder, filename))
@@ -155,22 +155,18 @@ def plot_memory_transfers(data: pd.DataFrame, folder: str, legend_on_line: bool 
     # figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
     size_vs_y_plot(ax, 'Transferred to/from global memory [byte]', title, data, size_var_name='NBLOCKS')
     additional_args = {}
-    if limit_temp_allocation_to == 'stack':
-        # dashes = {program: '' for program in data.reset_index()['program'].unique()}
-        # dashes['cloudsc_vert_loop_6_1_ZSOLQA'] = (2, 2)
-        # additional_args['linewidth'] = 3
-        # additional_args['dashes'] = dashes
-        # additional_args['style'] = 'program'
-        pass
-    elif limit_temp_allocation_to is None:
+    if limit_temp_allocation_to is None:
         additional_args['style'] = 'temp allocation'
 
     sns.lineplot(data, x='NBLOCKS', y='measured bytes', hue='program', ax=ax, hue_order=hue_order, errorbar=('ci', 95),
                  err_style='bars', **additional_args)
+    # sns.lineplot(data=data.reset_index()[['size', 'theoretical bytes']].drop_duplicates(), ax=ax, x='size',
+    #              y='theoretical bytes', linestyle='--', color='gray', label='theoretical bytes/size')
+    ax.yaxis.set_major_formatter(get_bytes_formatter())
     program_names_map = get_program_infos()['full description'].to_dict()
     if legend_on_line:
-        legend_on_line(ax, ((3e5, 0.084), (1.8e5, 0.009), (3.8e5, 0.015), (3.8e5, 0.005)),
-                       [program_names_map[p] for p in hue_order], rotations=[25, 3, 3, 3])
+        legend_on_lines(ax, ((3e5, 0.084), (1.8e5, 0.009), (3.8e5, 0.015), (3.8e5, 0.005)),
+                        [program_names_map[p] for p in hue_order], rotations=[25, 3, 3, 3])
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     save_plot(os.path.join(folder, filename))
