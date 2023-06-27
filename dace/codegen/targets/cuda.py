@@ -1600,9 +1600,28 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         gdims = 'dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims))
         bdims = ', '.join(_topy(block_dims))
+
+        # Prepare an empty-grid check for runtime grids
+        dimcheck = 'false'
+        if is_persistent:
+            dimcheck = 'dace_number_blocks > 0'
+        else:
+            for gdim in grid_dims:
+                if symbolic.issymbolic(gdim) and (gdim > 0) != True:
+                    dimcheck += f' || ({_topy(gdim)}) == 0'
+
+        emptygrid_warning = ''
+        if Config.get('debugprint') == 'verbose' or Config.get_bool('compiler', 'cuda', 'syncdebug'):
+            emptygrid_warning = (f'printf("Warning: Skipping launching kernel \\"{kernel_name}\\" '
+                                 'due to an empty grid.\\n");')
+
         self._localcode.write(
             '''
 void  *{kname}_args[] = {{ {kargs} }};
+if ({dimcheck}) {{
+    {emptygrid_warning}
+    return;
+}}
 gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''
             .format(kname=kernel_name,
                     kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
@@ -1610,6 +1629,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     bdims=bdims,
                     dynsmem=_topy(dynsmem_size),
                     stream=cudastream,
+                    dimcheck=dimcheck,
+                    emptygrid_warning=emptygrid_warning,
                     backend=self.backend), sdfg, state_id, scope_entry)
 
         # Check kernel launch for errors
