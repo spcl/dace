@@ -25,7 +25,6 @@ typedef cudaError_t gpuError_t;
       throw;                                                              \
     }                                                                     \
   } while (0)
-#endif
 
 #define DACE_KERNEL_LAUNCH_CHECK(err, kernel_name, gdimx, gdimy, gdimz, bdimx, \
                                  bdimy, bdimz)                                 \
