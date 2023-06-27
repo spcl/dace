@@ -3,11 +3,11 @@ from collections import defaultdict
 from dace import data, dtypes
 from dace.codegen.tools import type_inference
 from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, nodes, validation
 from dace.sdfg import nodes
-from dace.sdfg.graph import Edge
+from dace.sdfg.graph import Edge, SubgraphView
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Union
 
 #############################################################################
 # Connector type inference
@@ -123,156 +123,272 @@ def infer_connector_types(sdfg: SDFG):
 # Default schedule and storage type inference
 
 
-def set_default_schedule_and_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
+def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.EntryNode],
+                                           parent_schedules: List[dtypes.ScheduleType] = None,
+                                           use_parent_schedule: bool = False,
+                                           state: SDFGState = None,
+                                           child_nodes: Dict[nodes.Node, List[nodes.Node]] = None):
     """ 
     Sets default storage and schedule types throughout SDFG in-place.
-    Replaces `ScheduleType.Default` and `StorageType.Default`
+    Replaces ``ScheduleType.Default`` and ``StorageType.Default``
     with the corresponding types according to the parent scope's schedule. 
     
     The defaults for storage types are determined by the
     ``dtypes.SCOPEDEFAULT_STORAGE`` dictionary (for example, a GPU device 
-    schedule, by default, will allocate containers on the shared memory); and
-    similarly for schedules by ``dtypes.SCOPEDEFAULT_SCHEDULE`` (e.g., a map
-    nested in a CPU multi-core map will by default run within a single thread).
-
-    :param sdfg: The SDFG to infer.
-    :param toplevel_schedule: The default top-level schedule for "global" nodes
-                              (without parent scope nodes).
+    schedule, by default, will allocate containers on the shared memory).
+    Following storage type inference for a scope, nested scopes (e.g., map entry, nested SDFG)
+    are evaluated using the ``dtypes.STORAGEDEFAULT_SCHEDULE`` dictionary (for example, a
+    default map with only GPU arrays connected to it will execute on the GPU). This decision
+    is superseded if the schedule is specified in ``dtypes.SCOPEDEFAULT_SCHEDULE`` (e.g.,
+    a map nested in a CPU multi-core map will by default run within a single thread).
+    If no default schedule is found while traversing the parent scopes, the chosen schedule will be
+    determined based on the SDFG's device, as specified in ``dtypes.DEFAULT_TOPLEVEL_STORAGE`` and
+    ``dtypes.DEFAULT_TOPLEVEL_SCHEDULE``.
+    May raise ``InvalidSDFGNodeError`` if a default scope is ambiguous based on surrounding
+    storage types.
+    :param scope: The SDFG, state, or scope to infer.
+    :param parent_schedules: A list of ScheduleType elements representing
+                             an ordered list of schedules, from the global schedule
+                             on the top-level SDFG (usually ``None``), up to this
+                             point.
+    :param use_parent_schedule: If True, uses the parent scope's schedule type
+                                directly, instead of the default schedule type.
+                                Used when expanding nested SDFGs to preserve their
+                                top-level schedule.
+    :param state: (Use when working with a single scope) The parent state.
+    :param child_nodes: (Use when working with a single scope) A mapping of each scope entry
+                        node to its children.
     """
-    _set_default_schedule_types(sdfg, toplevel_schedule)
-    _set_default_storage_types(sdfg, toplevel_schedule)
+    parent_schedules = parent_schedules or [None]
 
+    # TODO(later): Remove GPU_Default
+    if parent_schedules[-1] == dtypes.ScheduleType.GPU_Default and use_parent_schedule:
+        use_parent_schedule = False
 
-def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
-    """ Returns a set of scopes where a thread-block (or dynamic thread-block)
-        sub-scopes exist. Used, e.g., to modify storage defaults. """
-    scopes_with_tbmaps = set()
-    for scope_entry in scopes:
-        subgraph = state.scope_subgraph(scope_entry)
-        has_tb_map = False
-        # Append thread-block maps from subgraph and nested SDFGs
-        for node in subgraph.nodes():
-            if isinstance(node, nodes.EntryNode) and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
-                                                                       dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
-                has_tb_map = True
-                break
-            elif isinstance(node, nodes.NestedSDFG):
-                for n in node.sdfg.all_nodes_recursive():
-                    if isinstance(node,
-                                  nodes.EntryNode) and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
-                                                                         dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
-                        has_tb_map = True
-                        break
-                if has_tb_map:
-                    break
-        if has_tb_map:
-            scopes_with_tbmaps.add(scope_entry)
-    return scopes_with_tbmaps
+    if isinstance(scope, SDFG):
+        # Set device for default top-level schedules and storages
+        for state in scope.nodes():
+            set_default_schedule_and_storage_types(state,
+                                                   parent_schedules,
+                                                   use_parent_schedule=use_parent_schedule,
+                                                   state=state,
+                                                   child_nodes=state.scope_children())
 
+        # Take care of remaining scalars without access nodes
+        for aname, desc in scope.arrays.items():
+            # If not transient in a nested SDFG, take storage from parent, regardless of current type
+            if not desc.transient and scope.parent_sdfg is not None:
+                desc.storage = _get_storage_from_parent(aname, scope)
+            elif ((desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default):
+                # Indeterminate storage type, set to register
+                desc.storage = dtypes.StorageType.Register
+        return
 
-def _set_default_schedule_in_scope(parent_node: nodes.Node,
-                                   parent_schedule: dtypes.ScheduleType,
-                                   reverse_scope_dict: Dict[nodes.Node, List[nodes.Node]],
-                                   use_parent_schedule: bool = False):
-    for node in reverse_scope_dict[parent_node]:
-        if use_parent_schedule:
-            child_schedule = parent_schedule
-            if parent_schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Default):
-                child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
+    # Setup arguments
+    parent_node = None if isinstance(scope, SDFGState) else scope
+    if state is None:
+        if isinstance(scope, SDFGState):
+            state = scope
         else:
-            child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
-        # Set default schedule type
-        if isinstance(node, nodes.MapEntry):
-            if node.map.schedule is dtypes.ScheduleType.Default:
-                node.map.schedule = child_schedule
-            # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.map.schedule, reverse_scope_dict)
-        elif isinstance(node, nodes.ConsumeEntry):
-            if node.consume.schedule is dtypes.ScheduleType.Default:
-                node.consume.schedule = child_schedule
+            raise ValueError('SDFG state cannot be None when inferring a scope')
+    if child_nodes is None:
+        child_nodes = state.scope_children()
 
-            # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.consume.schedule, reverse_scope_dict)
-        elif isinstance(node, nodes.NestedSDFG):
-            # Nested SDFGs retain same schedule as their parent scope
-            if node.schedule is dtypes.ScheduleType.Default:
-                node.schedule = parent_schedule
-            _set_default_schedule_types(node.sdfg, node.schedule)
-        elif getattr(node, 'schedule', False):
-            if node.schedule is dtypes.ScheduleType.Default:
-                node.schedule = (child_schedule
-                                 if isinstance(node, nodes.EntryNode) or parent_schedule is None else parent_schedule)
+    ############################################
+
+    # Set default storage types in this scope
+    _set_default_storage_in_scope(state, parent_node, parent_schedules, child_nodes)
+
+    # Set default schedules in this scope based on parent schedule and inferred storage types
+    nested_scopes = _set_default_schedule_in_scope(state, parent_node, parent_schedules, child_nodes,
+                                                   use_parent_schedule)
+
+    # Loop over internal nested SDFGs and scope entry nodes
+    for nnode in nested_scopes:
+        # Continue through nested SDFGs
+        if isinstance(nnode, nodes.NestedSDFG):
+            nscope = nnode.sdfg
+            child_nodes = None
+            extra_parent_schedules = []
+            # TODO(later): Remove GPU_Default
+            if nnode.schedule == dtypes.ScheduleType.GPU_Default:
+                extra_parent_schedules.append(nnode.schedule)
+        else:
+            nscope = nnode
+            extra_parent_schedules = [nnode.schedule]
+        set_default_schedule_and_storage_types(nscope,
+                                               parent_schedules + extra_parent_schedules,
+                                               use_parent_schedule=False,
+                                               state=state,
+                                               child_nodes=child_nodes)
 
 
-def _set_default_schedule_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType, use_parent_schedule: bool = False):
-    for state in sdfg.nodes():
-        reverse_scope_dict = state.scope_children()
+def _determine_child_schedule(parent_schedules: List[dtypes.ScheduleType]) -> Optional[dtypes.ScheduleType]:
+    for sched in reversed(parent_schedules):
+        if sched is not None and sched in dtypes.SCOPEDEFAULT_SCHEDULE:
+            child_sched = dtypes.SCOPEDEFAULT_SCHEDULE[sched]
+            if child_sched is not None:
+                return child_sched
+    return None
 
-        # Start with top-level nodes and call recursively
-        _set_default_schedule_in_scope(None, toplevel_schedule, reverse_scope_dict, use_parent_schedule)
+
+def _determine_child_storage(parent_schedules: List[dtypes.ScheduleType]) -> Optional[dtypes.StorageType]:
+    for sched in reversed(parent_schedules):
+        if (sched is not None and sched in dtypes.SCOPEDEFAULT_STORAGE and sched != dtypes.ScheduleType.Sequential):
+            child_sched = dtypes.SCOPEDEFAULT_STORAGE[sched]
+            if child_sched is not None:
+                return child_sched
+    return None
 
 
-def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
-    for state in sdfg.nodes():
-        scope_dict = state.scope_dict()
-        scopes_with_tbmaps = _scopes_with_tbmaps(state, [
-            n
-            for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.schedule in [dtypes.ScheduleType.GPU_Device]
-        ])
+def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Optional[dtypes.ScheduleType]:
+    child_schedule = None
+    memlets: Set[str] = set()
+    if node is None or isinstance(node, nodes.NestedSDFG):  # State or nested SDFG
+        pass
+    elif isinstance(node, nodes.EntryNode):
+        # Test for storage of the scope by collecting all neighboring memlets
+        memlets = set(e.data.data for e in state.out_edges(node) if not e.data.is_empty())
+        exit_node = state.exit_node(node)
+        memlets.update(e.data.data for e in state.in_edges(exit_node) if not e.data.is_empty())
+    else:
+        # Other nodes only need neighboring memlets
+        memlets = set(e.data.data for e in state.all_edges(node) if not e.data.is_empty())
 
-        for node in state.nodes():
-            if not isinstance(node, nodes.AccessNode):
-                continue
-            desc = node.desc(sdfg)
-            # Only set transients if nested
-            if ((desc.transient or sdfg.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
-                # Special cases
-                parent_node = scope_dict[node]
-                if parent_node is None:
-                    parent_schedule = toplevel_schedule
+    # From memlets, use non-scalar data descriptors for decision
+    constraints: Set[dtypes.ScheduleType] = set()
+    sdfg = state.parent
+    for dname in memlets:
+        if isinstance(sdfg.arrays[dname], data.Scalar):
+            continue  # Skip scalars
+
+        storage = sdfg.arrays[dname].storage
+        if storage not in dtypes.STORAGEDEFAULT_SCHEDULE:
+            continue
+        sched = dtypes.STORAGEDEFAULT_SCHEDULE[storage]
+        if sched is None:
+            continue
+        constraints.add(sched)
+
+    if not constraints:  # No constraints found
+        child_schedule = None
+    elif len(constraints) > 1:
+        raise validation.InvalidSDFGNodeError(
+            f'Cannot determine default schedule for node {node}. '
+            'Multiple arrays that point to it say that it should be the following schedules: '
+            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+    else:
+        child_schedule = next(iter(constraints))
+
+    # If no valid schedules are found and there are no conflicts with storage, use default top-level schedule
+    if child_schedule is None:
+        child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[None]
+
+    return child_schedule
+
+
+def _set_default_schedule_in_scope(state: SDFGState,
+                                   parent_node: nodes.Node,
+                                   parent_schedules: List[dtypes.ScheduleType],
+                                   child_nodes: Dict[nodes.Node, List[nodes.Node]],
+                                   use_parent_schedule: bool = False) -> List[Union[nodes.EntryNode, nodes.NestedSDFG]]:
+    nested_scopes: List[Union[nodes.EntryNode, nodes.NestedSDFG]] = []
+
+    # Try to determine schedule based on parent schedule(s)
+    if use_parent_schedule:
+        child_schedule = parent_schedules[-1]
+    else:
+        child_schedule = _determine_child_schedule(parent_schedules)
+
+    # Set child schedule type in scope
+    for node in child_nodes[parent_node]:
+        # Set default schedule types
+        if isinstance(node, (nodes.EntryNode, nodes.NestedSDFG)):
+            nested_scopes.append(node)
+            if node.schedule == dtypes.ScheduleType.Default:
+                # If parent schedules do not determine child schedule,
+                # test for storage of the scope by collecting all neighboring memlets
+                if child_schedule is None:
+                    local_child_schedule = _determine_schedule_from_storage(state, node)
                 else:
-                    parent_schedule = parent_node.map.schedule
-                    # Skip sequential maps to determine storage
-                    while parent_schedule == dtypes.ScheduleType.Sequential:
-                        parent_node = scope_dict[parent_node]
-                        if parent_node is None:
-                            parent_schedule = toplevel_schedule
-                            break
-                        parent_schedule = parent_node.map.schedule
-                # Determine default GPU schedule based on existence of
-                # thread-block maps
-                if parent_schedule == dtypes.ScheduleType.GPU_Device:
-                    if parent_node not in scopes_with_tbmaps:
-                        parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
-                # End of special cases
+                    local_child_schedule = child_schedule
+                node.schedule = local_child_schedule
+        elif getattr(node, 'schedule', False) and not isinstance(node, nodes.ExitNode):
+            if node.schedule == dtypes.ScheduleType.Default:
+                if child_schedule is None:
+                    local_child_schedule = _determine_schedule_from_storage(state, node)
+                else:
+                    local_child_schedule = child_schedule
+                node.schedule = local_child_schedule
 
-                # Set default storage type
-                desc.storage = dtypes.SCOPEDEFAULT_STORAGE[parent_schedule]
+    return nested_scopes
 
-    # Take care of remaining arrays/scalars, e.g., code->code edges
-    for desc in sdfg.arrays.values():
-        if ((desc.transient or sdfg.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
-            desc.storage = dtypes.StorageType.Register
 
-    for state in sdfg.nodes():
-        # Loop again after all default storages have been set to set nested
-        # SDFGs
-        for node in state.nodes():
-            if not isinstance(node, nodes.NestedSDFG):
-                continue
-            for name, desc in node.sdfg.arrays.items():
-                if (not desc.transient and desc.storage is dtypes.StorageType.Default):
-                    # Find connector and ensure storage types match
-                    for e in state.in_edges(node):
-                        if e.dst_conn == name:
-                            desc.storage = sdfg.arrays[e.data.data].storage
-                            break
-                    for e in state.out_edges(node):
-                        if e.src_conn == name:
-                            desc.storage = sdfg.arrays[e.data.data].storage
-                            break
-            _set_default_storage_types(node.sdfg, node.schedule)
+def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.Node],
+                                  parent_schedules: List[dtypes.ScheduleType], child_nodes: Dict[nodes.Node,
+                                                                                                 List[nodes.Node]]):
+    # Special case for GPU maps without explicit thread-block assignment
+    if (dtypes.ScheduleType.GPU_Device in parent_schedules
+            and dtypes.ScheduleType.GPU_ThreadBlock not in parent_schedules
+            and dtypes.ScheduleType.GPU_ThreadBlock_Dynamic not in parent_schedules):
+        from dace.transformation.helpers import gpu_map_has_explicit_threadblocks  # Avoid import loops
+        # Find GPU scopes without thread-block maps
+        if not gpu_map_has_explicit_threadblocks(state, parent_node):
+            # Do not modify external list
+            parent_schedules = parent_schedules + [dtypes.ScheduleType.GPU_ThreadBlock]
+    # End of special case
 
+    sdfg = state.parent
+    child_storage = _determine_child_storage(parent_schedules)
+    if child_storage is None:
+        child_storage = dtypes.SCOPEDEFAULT_STORAGE[None]
+
+    exit_nodes = [state.exit_node(n) for n in child_nodes[parent_node] if isinstance(n, nodes.EntryNode)]
+    scope_subgraph = SubgraphView(state, child_nodes[parent_node] + exit_nodes)
+
+    # Loop over access nodes
+    for node in scope_subgraph.nodes():
+        if not isinstance(node, nodes.AccessNode):
+            continue
+        desc = node.desc(sdfg)
+        # If not transient in a nested SDFG, take storage from parent, regardless of current type
+        if not desc.transient and sdfg.parent is not None:
+            desc.storage = _get_storage_from_parent(node.data, sdfg)
+        elif desc.storage == dtypes.StorageType.Default:
+            desc.storage = child_storage
+
+    # Take care of code->code edges that do not have access nodes
+    for edge in scope_subgraph.edges():
+        if not edge.data.is_empty():
+            desc = sdfg.arrays[edge.data.data]
+            # If not transient in a nested SDFG, take storage from parent, regardless of current type
+            if not desc.transient and sdfg.parent is not None:
+                desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
+            elif desc.storage == dtypes.StorageType.Default:
+                desc.storage = child_storage
+
+
+def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
+    """
+    Retrieves the storage type of an array from its parent SDFG.
+
+    :param data_name: The name of the data descriptor.
+    :param sdfg: The parent SDFG.
+    :return: The storage type of the data descriptor.
+    """
+    nsdfg_node = sdfg.parent_nsdfg_node
+    parent_state = sdfg.parent
+    parent_sdfg = parent_state.parent
+
+    # Find data descriptor in parent SDFG
+    if data_name in nsdfg_node.in_connectors:
+        e = next(iter(parent_state.in_edges_by_connector(nsdfg_node, data_name)))
+        return parent_sdfg.arrays[e.data.data].storage
+    elif data_name in nsdfg_node.out_connectors:
+        e = next(iter(parent_state.out_edges_by_connector(nsdfg_node, data_name)))
+        return parent_sdfg.arrays[e.data.data].storage
+
+    raise ValueError(f'Could not find data descriptor {data_name} in parent SDFG')
 
 def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:
     """

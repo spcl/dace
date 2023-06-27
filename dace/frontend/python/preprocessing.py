@@ -563,8 +563,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     parent_object = value.__self__
 
                 # If it is a callable object
+                # NumPy array dispatchers have an _implementation field and are NOT regarded as functions by Python
                 if (not inspect.isfunction(value) and not inspect.ismethod(value) and not inspect.isbuiltin(value)
-                        and hasattr(value, '__call__')):
+                        and hasattr(value, '__call__') and not hasattr(value, '_implementation')):
                     parent_object = value
                     value = value.__call__
 
