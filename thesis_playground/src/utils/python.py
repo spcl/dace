@@ -1,6 +1,7 @@
 import inspect
 import os
-from typing import Dict, Tuple, Union, Callable, List
+import re
+from typing import Dict, Tuple, Union, List
 from numbers import Number
 import dace
 import sympy
@@ -80,23 +81,6 @@ def get_size_of_parameters(dace_f: dace.frontend.python.parser.DaceProgram, symb
     return int(size * 8)
 
 
-def vert_loop_symbol_wrapper(NBLOCKS: int, KLEV: int, NCLV: int, KLON: int, NCLDTOP: int, KFDIA: int, KIDIA: int,
-                             NCLDQL: int, NCLDQI: int, NCLDQS: int, func: Callable,
-                             func_args: Dict[str, Union[Number, np.ndarray]]):
-
-    # NBLOCKS = dace.symbol('NBLOCKS')
-    # KLEV = dace.symbol('KLEV')
-    # NCLV = dace.symbol('NCLV')
-    # KLON = dace.symbol('KLON')
-    # NCLDTOP = dace.symbol('NCLDTOP')
-    # KFDIA = dace.symbol('KFDIA')
-    # KIDIA = dace.symbol('KIDIA')
-    # NCLDQL = dace.symbol('NCLDQL')
-    # NCLDQI = dace.symbol('NCLDQI')
-    # NCLDQS = dace.symbol('NCLDQS')
-    func(**func_args)
-
-
 def get_dacecache_folder(program_name: str) -> str:
     """
     Get path to the dacecache folder given name of program/kernel. Assumes that the program is located inside the
@@ -126,3 +110,39 @@ def get_joined_df(paths: List[str]) -> pd.DataFrame:
         path = os.path.join(get_playground_results_dir(), 'python', file)
         df = pd.read_csv(path, index_col=df_index_cols)
         return pd.concat([joined_df, df])
+
+
+def convert_to_plain_python(dace_f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, Number]) -> str:
+    """
+    Converts a dace python function into code for a plain/vanilla python function
+
+    :param dace_f: The dace function
+    :type dace_f: dace.frontend.python.parser.DaceProgram
+    :param symbols: Dictionary with symbols used in the dace function
+    :type symbols: Dict[str, Number]
+    :return: Source code for the function with symbols definition before it
+    :rtype: str
+    """
+    assert inspect.isfunction(dace_f.f)
+    py_code = inspect.getsource(dace_f.f)
+    py_code = "import numpy as np\n" + py_code
+    for name, value in symbols.items():
+        py_code = f"{name} = {value}\n" + py_code
+
+    matches = re.findall(r"dace\.map\[([A-z0-9-+*]*):([A-z0-9-+*]*):?([A-z0-9-+*]?)\]:", py_code)
+    # replace dace.map calls
+    for match in matches:
+        if match[2] == '':
+            match = (match[0], match[1])
+        dace_range = f"dace.map[{':'.join(match)}]"
+        py_range = f"range({','.join(match)})"
+        py_code = py_code.replace(dace_range, py_range)
+
+    # remove @dace.program decorator
+    py_code = py_code.replace("@dace.program", "")
+
+    # replace dace.float64 or similar with corresponding numpy versions
+    matches = re.findall(r"dace\.(float64|float32|int32|int64)\[([A-z0-9, +*\-]*)\]", py_code)
+    for match in matches:
+        py_code = py_code.replace(f"dace.{match[0]}[{match[1]}]", f"np.ndarray(({match[1]}))")
+    return py_code
