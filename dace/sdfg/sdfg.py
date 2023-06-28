@@ -2251,7 +2251,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
-                self.save(os.path.join('_dacegraphs', 'failing.sdfg'))
+                fpath = os.path.join('_dacegraphs', 'failing.sdfg')
+                self.save(fpath)
+                print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
 
             # Generate the program folder and write the source files

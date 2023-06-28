@@ -224,7 +224,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
-        sdfg.save(os.path.join('_dacegraphs', 'invalid.sdfg'), exception=ex)
+        fpath = os.path.join('_dacegraphs', 'invalid.sdfg')
+        sdfg.save(fpath, exception=ex)
+        print(f'Invalid SDFG saved for inspection in {os.path.abspath(fpath)}')
         raise
 
 
