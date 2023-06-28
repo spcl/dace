@@ -173,7 +173,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                     eid = sdfg.edge_id(edge)
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in interstate edge', sdfg, eid)
+                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
             # Add edge symbols into defined symbols
             symbols.update(issyms)
@@ -220,7 +220,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 if not _accessible(sdfg, container, context):
                     raise InvalidSDFGInterstateEdgeError(
                         f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in interstate edge', sdfg, eid)
+                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
