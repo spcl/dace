@@ -568,7 +568,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if pn.schedule in dtypes.GPU_SCHEDULES:
                         memlet_context['in_gpu'] = True
                         break
-                    if pn.schedule in dtypes.ScheduleType.FPGA_Device:
+                    if pn.schedule == dtypes.ScheduleType.FPGA_Device:
                         memlet_context['in_fpga'] = True
                         break
 
@@ -589,7 +589,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and (isinstance(e.src, nd.Tasklet) or isinstance(e.dst, nd.Tasklet) or isinstance(e.dst, nd.MapEntry))):
             if not _accessible(sdfg, e.data.data, memlet_context):
                 raise InvalidSDFGEdgeError(
-                    f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data]} but accessed in host',
+                    f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} but accessed in host',
                     sdfg,
                     state_id,
                     eid,
