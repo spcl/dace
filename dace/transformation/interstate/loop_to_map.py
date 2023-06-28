@@ -673,6 +673,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Reset all nested SDFG parent pointers
         if nsdfg is not None:
+            if isinstance(nsdfg, nodes.NestedSDFG):
+                nsdfg = nsdfg.sdfg
+
             for nstate in nsdfg.nodes():
                 for nnode in nstate.nodes():
                     if isinstance(nnode, nodes.NestedSDFG):
