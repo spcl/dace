@@ -564,7 +564,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         memlet_context = copy.copy(context)
         for pe in path:
             for pn in (pe.src, pe.dst):
-                if isinstance(pn, nd.EntryNode):
+                if isinstance(pn, (nd.EntryNode, nd.ExitNode)):
                     if pn.schedule in dtypes.GPU_SCHEDULES:
                         memlet_context['in_gpu'] = True
                         break

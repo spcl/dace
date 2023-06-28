@@ -1605,7 +1605,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
         # Prepare an empty-grid check for runtime grids
         dimcheck = ''
         if is_persistent:
-            dimcheck = 'dace_number_blocks > 0'
+            dimcheck = 'dace_number_blocks == 0'
         else:
             for gdim in grid_dims:
                 if symbolic.issymbolic(gdim) and (gdim > 0) != True:

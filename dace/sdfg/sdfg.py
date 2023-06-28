@@ -2598,7 +2598,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                   validate_all=False,
                                   permissive=False,
                                   sequential_innermaps=True,
-                                  register_transients=True):
+                                  register_transients=True,
+                                  simplify=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2614,7 +2615,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients),
+                                                register_trans=register_transients, simplify=simplify),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
