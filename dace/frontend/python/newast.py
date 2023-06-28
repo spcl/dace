@@ -3067,11 +3067,11 @@ class ProgramVisitor(ExtNodeVisitor):
                           arr_type: data.Data = None):
 
         if name in self.sdfg.arrays:
-            return (name, None)
+            return (name, rng)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
-            return (self.variables[name], None)
+            return (self.variables[name], rng)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
