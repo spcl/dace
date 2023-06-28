@@ -571,6 +571,11 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if pn.schedule == dtypes.ScheduleType.FPGA_Device:
                         memlet_context['in_fpga'] = True
                         break
+                    if pn.schedule == dtypes.ScheduleType.Default:
+                        # Default schedule memlet accessibility validation is deferred
+                        # to after schedule/storage inference
+                        memlet_context['in_default'] = True
+                        break
 
         # Check if memlet data matches src or dst nodes
         if (e.data.data is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
@@ -587,7 +592,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Check accessibility of scalar memlet data in tasklets and dynamic map ranges
         if (not e.data.is_empty() and _is_scalar(e, path)
                 and (isinstance(e.src, nd.Tasklet) or isinstance(e.dst, nd.Tasklet) or isinstance(e.dst, nd.MapEntry))):
-            if not _accessible(sdfg, e.data.data, memlet_context):
+            if not memlet_context.get('in_default', False) and not _accessible(sdfg, e.data.data, memlet_context):
                 raise InvalidSDFGEdgeError(
                     f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} but accessed in host',
                     sdfg,
