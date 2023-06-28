@@ -226,7 +226,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # If the SDFG is invalid, save it
         fpath = os.path.join('_dacegraphs', 'invalid.sdfg')
         sdfg.save(fpath, exception=ex)
-        print(f'Invalid SDFG saved for inspection in {os.path.abspath(fpath)}')
+        ex.path = fpath
         raise
 
 
@@ -740,6 +740,7 @@ class InvalidSDFGError(Exception):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
+        self.path = None
 
     def _getlineinfo(self, obj) -> str:
         """
@@ -781,6 +782,9 @@ class InvalidSDFGError(Exception):
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
 
+        if self.path:
+            locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
+
         return f'{self.message}{suffix}{locinfo}'
 
 
@@ -790,6 +794,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
+        self.path = None
 
     def to_json(self):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, isedge_id=self.edge_id)
@@ -822,6 +827,9 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         else:
             locinfo = ''
 
+        if self.path:
+            locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
+
         return f'{self.message}{edgestr}{locinfo}'
 
 
@@ -832,6 +840,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.node_id = node_id
+        self.path = None
 
     def to_json(self):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, node_id=self.node_id)
@@ -852,6 +861,9 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
 
+        if self.path:
+            locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
+
         return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
 
 
@@ -871,6 +883,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         self.sdfg = sdfg
         self.state_id = state_id
         self.edge_id = edge_id
+        self.path = None
 
     def to_json(self):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, edge_id=self.edge_id)
@@ -894,5 +907,8 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
 
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
+
+        if self.path:
+            locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
         return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
