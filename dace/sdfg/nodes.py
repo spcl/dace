@@ -612,6 +612,13 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.sdfg.parent_nsdfg_node is not self:
+            raise ValueError('Parent nested SDFG node not properly set')
+        if self.sdfg.parent is not state:
+            raise ValueError('Parent state not properly set for nested SDFG node')
+        if self.sdfg.parent_sdfg is not sdfg:
+            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
             if conn not in self.sdfg.arrays:
