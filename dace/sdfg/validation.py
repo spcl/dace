@@ -264,7 +264,7 @@ def _is_scalar(edge: 'gr.MultiConnectorEdge[Memlet]', memlet_path: List['gr.Mult
             return False
 
     # If the memlet is dynamically accessed, it may also not be a scalar
-    if edge.data.dynamic and edge.data.volume == -1:
+    if edge.data.dynamic and (edge.data.volume == -1 or edge.data.volume == 0):
         return False
 
     # If the memlet has more than one element, it is definitely not a scalar
