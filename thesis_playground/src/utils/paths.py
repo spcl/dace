@@ -128,3 +128,7 @@ def get_experiments_2_file() -> str:
 
 def get_plots_2_folder() -> str:
     return create_if_not_exist(join(get_thesis_playground_root_dir(), 'plots_v2'))
+
+
+def get_sdfg_gen_code_folder() -> str:
+    return create_if_not_exist(join(get_thesis_playground_root_dir(), 'sdfg_gen_code'))
