@@ -32,9 +32,11 @@ typedef cudaError_t gpuError_t;
     if (err != (gpuError_t)0) {                                                \
       printf(                                                                  \
           "ERROR launching kernel %s: %s (%d). Grid dimensions: "              \
-          "(%d, %d, %d); Block dimensions: (%d, %d, %d).\n",                   \
-          kernel_name, gpuGetErrorString(err), (int)err, gdimx, gdimy, gdimz,  \
-          bdimx, bdimy, bdimz);                                                \
+          "(%u, %u, %u); Block dimensions: (%u, %u, %u).\n",                   \
+          kernel_name, gpuGetErrorString(err), (int)err,                       \
+          (unsigned int)(gdimx), (unsigned int)(gdimy), (unsigned int)(gdimz), \
+          (unsigned int)(bdimx), (unsigned int)(bdimy),                        \
+          (unsigned int)(bdimz));                                              \
       __state->gpu_context->lasterror = err;                                   \
     }                                                                          \
   } while (0)
