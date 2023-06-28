@@ -1802,14 +1802,27 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                             int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
                         ]
                 else:
-                    if Config.get_bool('debugprint'):
-                        warnings.warn('Thread-block maps not found in kernel, assuming block size of (%s)' %
-                                      Config.get('compiler', 'cuda', 'default_block_size'))
+                    def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
+                    warnings.warn(f'No ``gpu_block_size`` property specified on map "{kernelmap_entry.map.label}". '
+                                  f'Falling back to the configured ``default_block_size``: {def_bsize}. '
+                                  'You can either specify the block size to use with the gpu_block_size property, '
+                                  'or by adding nested ``GPU_Threadblock`` maps, which map work to individual threads. '
+                                  'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
 
                     if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
                         raise NotImplementedError('max dynamic block size unimplemented')
                     else:
                         block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
+
+                    block_ndim = sum(1 if b != 1 else 0 for b in block_size)
+                    grid_ndim = sum(1 if g != 1 else 0 for g in grid_size)
+                    if block_ndim > grid_ndim:
+                        linearized_remainder = prod(block_size[grid_ndim:])
+                        block_size = block_size[:grid_ndim] + [1] * (3 - grid_ndim)
+                        block_size[grid_ndim - 1] *= linearized_remainder
+                        warnings.warn(f'Default block size has more dimensions ({block_ndim}) than kernel dimensions '
+                                      f'({grid_ndim}) in map "{kernelmap_entry.map.label}". Linearizing block '
+                                      f'size to {block_size}. Consider setting the ``gpu_block_size`` property.')
 
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
