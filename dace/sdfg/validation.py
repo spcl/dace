@@ -593,12 +593,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         if (not e.data.is_empty() and _is_scalar(e, path)
                 and (isinstance(e.src, nd.Tasklet) or isinstance(e.dst, nd.Tasklet) or isinstance(e.dst, nd.MapEntry))):
             if not memlet_context.get('in_default', False) and not _accessible(sdfg, e.data.data, memlet_context):
-                raise InvalidSDFGEdgeError(
-                    f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} but accessed in host',
-                    sdfg,
-                    state_id,
-                    eid,
-                )
+                # Rerun slightly more expensive but foolproof test
+                memlet_context['in_gpu'] = is_devicelevel_gpu(sdfg, state, e.dst)
+                memlet_context['in_fpga'] = is_devicelevel_fpga(sdfg, state, e.dst)
+                if not _accessible(sdfg, e.data.data, memlet_context):
+                    raise InvalidSDFGEdgeError(
+                        f'Data container "{e.data.data}" is stored as {sdfg.arrays[e.data.data].storage} '
+                        'but accessed on host', sdfg, state_id, eid)
 
         # Check memlet subset validity with respect to source/destination nodes
         if e.data.data is not None and e.data.allow_oob == False:
