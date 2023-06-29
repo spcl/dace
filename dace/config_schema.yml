@@ -249,7 +249,7 @@ required:
 
                     openmp_sections:
                         type: bool
-                        default: true
+                        default: false
                         title: Use OpenMP sections
                         description: >
                             If set to true, multiple connected components will
