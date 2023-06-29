@@ -9,7 +9,7 @@ from dace.transformation.subgraph import stencil_tiling
 import dace.transformation.transformation as transformation
 from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
-import dace.transformation.subgraph.helpers as helpers
+from dace.transformation.subgraph import helpers
 
 from dace import dtypes, registry, symbolic, subsets, data
 from dace.properties import EnumProperty, make_properties, Property, ShapeProperty
@@ -64,6 +64,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 # deepcopy
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
+                sdfg_copy.reset_sdfg_list()
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
                 expansion.sdfg_id = sdfg_copy.sdfg_id

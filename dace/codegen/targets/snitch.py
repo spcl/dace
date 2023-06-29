@@ -1090,8 +1090,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         code._code = code._code.replace('dace::float64', '(double)')
         code._code = code._code.replace('dace::int64', '(int64_t)')
         code._code = code._code.replace('dace::math::pow', 'pow')
-        # __unused is reserved in C
-        code._code = code._code.replace('__unused', '_unused_var')
 
         # change new/delete to malloc/free
         code._code = re.sub(r"new (.+) \[(\d*)\];", r"(\1*)malloc(\2*sizeof(\1));", code._code)

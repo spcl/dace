@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.7,'3.10']
+        python-version: [3.7,'3.11']
         simplify: [0,1,autoopt]
 
     steps:
@@ -31,8 +31,10 @@ jobs:
         sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
         sudo apt-get install -y verilator # RTL simulation dependencies
         python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage codecov
+        pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
 
     - name: Test dependencies
       run: |
@@ -44,7 +46,6 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
             export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
@@ -52,8 +53,8 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack"
-        codecov
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack and not datainstrument"
+        ./codecov
 
     - name: Test OpenBLAS LAPACK
       run: |
@@ -61,7 +62,6 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
             export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
@@ -70,12 +70,12 @@ jobs:
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
-        codecov
+        ./codecov
 
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
+        export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
@@ -83,4 +83,4 @@ jobs:
         ./tests/polybench_test.sh
         ./tests/xform_test.sh
         coverage combine .; coverage report; coverage xml
-        codecov
+        ./codecov

@@ -27,7 +27,7 @@ from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 
-import dace.libraries.standard.reduction_planner as red_planner
+from dace.libraries.standard import reduction_planner as red_planner
 
 
 @dace.library.expansion
@@ -1359,7 +1359,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             input_subset = input_subset[:-2]
             input_subset.append(f'0:{schedule.sequential[0]}')
             input_subset.append('_g * 32 + _b1')
-            inmm = dace.Memlet(f'_in[{",".join(input_subset)}]')
+            inmm = dace.Memlet(f'_in[{",".join(input_subset)}]', dynamic=True)
 
             if schedule.multi_axes:
                 # Add initialization

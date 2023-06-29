@@ -17,7 +17,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             make_properties)
+                             CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView
 from dace.sdfg.propagation import propagate_memlet
@@ -725,6 +725,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
 
+    symbol_instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                                     desc="Instrument symbol values when this state is executed",
+                                     default=dtypes.DataInstrumentationType.No_Instrumentation)
+    symbol_instrument_condition = CodeProperty(desc="Condition under which to trigger the symbol instrumentation",
+                                               default=CodeBlock("1", language=dtypes.Language.CPP))
+
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
                                   "executed (0 stands for unbounded)")
@@ -761,6 +767,22 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        for node in result.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                try:
+                    node.sdfg.parent = result
+                except AttributeError:
+                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
+                    # TODO: Investigate why this happens.
+                    pass
+        return result
 
     @property
     def parent(self):
@@ -815,6 +837,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_node(self, node):
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
+        # Correct nested SDFG's parent attributes
+        if isinstance(node, nd.NestedSDFG):
+            node.sdfg.parent = self
+            node.sdfg.parent_sdfg = self.parent
+            node.sdfg.parent_nsdfg_node = node
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
 

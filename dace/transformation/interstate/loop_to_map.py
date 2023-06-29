@@ -8,7 +8,7 @@ import sympy as sp
 import networkx as nx
 from typing import Dict, List, Optional, Set, Tuple
 
-from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
+from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, nodes
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
@@ -122,7 +122,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
 
         # Find all loop-body states
-        states: List[SDFGState] = in_order_states[loop_begin_idx:loop_end_idx + 1]
+        states: List[SDFGState] = list(sdutil.dfs_conditional(sdfg, [begin], lambda _, c: c is not guard))
 
         assert (body_end in states)
 
@@ -142,7 +142,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 read_symbols -= symbols_that_may_be_used
                 used_before_assignment |= read_symbols
                 # If symbol was read before it is assigned, the loop cannot be parallel
-                if e.data.assignments.keys() & used_before_assignment:
+                assigned_symbols = set()
+                for k, v in e.data.assignments.items():
+                    try:
+                        fsyms = symbolic.pystr_to_symbolic(v).free_symbols
+                    except AttributeError:
+                        fsyms = set()
+                    if not k in fsyms:
+                        assigned_symbols.add(k)
+                if assigned_symbols & used_before_assignment:
                     return False
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
@@ -213,7 +221,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Check that the iteration variable and other symbols are not used on other edges or states
         # before they are reassigned
-        for state in in_order_states[loop_end_idx + 1:]:
+        for state in in_order_states[loop_begin_idx + 1:]:
+            if state in states:
+                continue
             # Don't continue in this direction, as all loop symbols have been reassigned
             if not symbols_that_may_be_used:
                 break
@@ -292,6 +302,48 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         return True
 
+    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+        """
+        This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
+        i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
+
+        For simplicity, it is assumed that the for-loop can be safely transformed to a Map. The method applies only to
+        bodies that become a NestedSDFG.
+
+        :param name: The name of array.
+        :param itervar: The for-loop iteration variable.
+        :param sdfg: The SDFG containing the states that comprise the body of the for-loop.
+        :param states: A list of states that comprise the body of the for-loop.
+        :return: True if the array is thread-local, otherwise False.
+        """
+
+        desc = sdfg.arrays[name]
+        if not isinstance(desc, dt.Array):
+            # Scalars are always thread-local.
+            return True
+        if itervar in (str(s) for s in desc.free_symbols):
+            # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
+            return True
+        for state in states:
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                for e in state.out_edges(node):
+                    src_subset = e.data.get_src_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if src_subset and itervar in src_subset.free_symbols:
+                        return False
+                for e in state.in_edges(node):
+                    dst_subset = e.data.get_dst_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if dst_subset and itervar in dst_subset.free_symbols:
+                        return False
+        return True
+
     def apply(self, _, sdfg: sd.SDFG):
         from dace.sdfg.propagation import align_memlet
 
@@ -356,7 +408,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if (isinstance(node, nodes.AccessNode) and node.data == name):
                             found = True
                             break
-                if not found:
+                if not found and self._is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
             # Find NestedSDFG's connectors
@@ -455,6 +507,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     desc.transient = False
                     nsdfg.sdfg.add_datadesc(sym, desc)
                     body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
+            for name, desc in nsdfg.sdfg.arrays.items():
+                if desc.transient and not self._is_array_thread_local(name, itervar, nsdfg.sdfg, nsdfg.sdfg.states()):
+                    odesc = copy.deepcopy(desc)
+                    sdfg.arrays[name] = odesc
+                    desc.transient = False
+                    wnode = body.add_access(name)
+                    nsdfg.add_out_connector(name)
+                    body.add_edge(nsdfg, name, wnode, None, memlet.Memlet.from_array(name, odesc))
 
             nstate = nsdfg.sdfg.node(0)
             init_state = nsdfg.sdfg.add_state_before(nstate)
@@ -468,6 +528,24 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
+
+        # Check intermediate notes
+        intermediate_nodes = []
+        for node in body.nodes():
+            if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
+                # Scalars written without WCR must be thread-local
+                if isinstance(node.desc(sdfg), dt.Scalar) and any(e.data.wcr is None for e in body.in_edges(node)):
+                    continue
+                # Arrays written with subsets that do not depend on the loop variable must be thread-local
+                map_dependency = False
+                for e in state.in_edges(node):
+                    subset = e.data.get_dst_subset(e, state)
+                    if any(str(s) == itervar for s in subset.free_symbols):
+                        map_dependency = True
+                        break
+                if not map_dependency:
+                    continue
+                intermediate_nodes.append(node)
 
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
@@ -519,6 +597,16 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
+        intermediate_sinks = {}
+        for n in intermediate_nodes:
+            if isinstance(sdfg.arrays[n.data], dt.View):
+                continue
+            if n.data in intermediate_sinks:
+                sink = intermediate_sinks[n.data]
+            else:
+                sink = body.add_access(n.data)
+                intermediate_sinks[n.data] = sink
+            helpers.make_map_internal_write_external(sdfg, body, exit, n, sink)
 
         # Here we handle the direct edges among source and sink access nodes.
         for e in direct_edges:
@@ -578,5 +666,5 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
         for sym in symbols_to_remove:
-            if helpers.is_symbol_unused(sdfg, sym):
+            if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)

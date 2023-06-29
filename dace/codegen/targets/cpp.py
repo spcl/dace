@@ -8,6 +8,7 @@ import copy
 import functools
 import itertools
 import math
+import numbers
 import warnings
 
 import sympy as sp
@@ -16,7 +17,7 @@ from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
-from dace.codegen import cppunparse
+from dace.codegen import common, cppunparse
 from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
@@ -641,7 +642,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
             # If False or indeterminate, the range may
             # overlap across iterations
-            if ((re - rb) > m[a] * step) != False:
+            if ((re - rb) >= m[a] * step) != False:
                 continue
 
             m = re.match(a * itersym + b)
@@ -848,14 +849,14 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                    % (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
+                    % (node._cuda_stream, common.get_gpu_backend()),
                     sdfg,
                     state_id,
                     node,
                 )
             else:
                 callsite_stream.write(
-                    '%sStream_t __dace_current_stream = nullptr;' % Config.get('compiler', 'cuda', 'backend'),
+                    '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
                     sdfg,
                     state_id,
                     node,
@@ -1251,12 +1252,13 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if isinstance(node.op, ast.Pow):
             from dace.frontend.python import astutils
             try:
-                unparsed = symbolic.pystr_to_symbolic(
-                    astutils.evalnode(node.right, {
-                        **self.constants, 'dace': dace,
-                        'math': math
-                    }))
-                evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
+                evaluated_node = astutils.evalnode(node.right, {**self.constants, 'dace': dace,'math': math})
+                unparsed = symbolic.pystr_to_symbolic(evaluated_node)
+                evaluated_constant = symbolic.evaluate(unparsed, self.constants)
+                evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
+                value = ast.parse(evaluated).body[0].value
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.n:
+                    raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)
@@ -1312,12 +1314,11 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     state_dfg = sdfg.nodes()[state_id]
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
-    backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
         if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
             cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
-                "%sStreamSynchronize(%s);" % (backend, cudastream),
+                "%sStreamSynchronize(%s);" % (common.get_gpu_backend(), cudastream),
                 sdfg,
                 state_id,
                 [e.src, e.dst],
@@ -1328,7 +1329,6 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
-    backend = Config.get('compiler', 'cuda', 'backend')
     if max_streams >= 0:
         cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
     else:  # Only default stream is used
@@ -1350,6 +1350,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
         # If we are the ones to remove the last terminator, release memory
         terminators.remove(scope_exit)
         if len(terminators) == 0:
+            backend = common.get_gpu_backend()
             desc = sd.arrays[name]
             ptrname = ptr(name, desc, sd, codegen._frame)
             if isinstance(desc, data.Array) and desc.start_offset != 0:
@@ -1372,6 +1373,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
     # Synchronize end of kernel with output data (multiple kernels
     # lead to same data node)
     if max_streams >= 0 and hasattr(node, "_cuda_stream"):
+        backend = common.get_gpu_backend()
+
         for edge in dfg.out_edges(scope_exit):
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')

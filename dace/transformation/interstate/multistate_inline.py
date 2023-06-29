@@ -143,8 +143,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
 
-        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -419,6 +419,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Remove nested SDFG and state
         sdfg.remove_node(outer_state)
+
+        sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
         return nsdfg.nodes()
 

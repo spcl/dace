@@ -173,7 +173,7 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
             w = new_state.add_write(name)
             new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
 
-        # Part (2) 
+        # Part (2)
         if out_state is not None:
             extra_state = sdfg.add_state('symbolic_output')
             for e in sdfg.out_edges(new_state):
@@ -707,28 +707,30 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
                      preserve_minima: bool = False,
                      use_src_subset: bool = False,
-                     use_dst_subset: bool = False) -> Memlet:
+                     use_dst_subset: bool = False,
+                     internal_offset: Tuple[int] = None,
+                     external_offset: Tuple[int] = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
-
-        :param internal_memlet: The internal memlet (inside nested SDFG)
-                                before modification.
+        :param internal_memlet: The internal memlet (inside nested SDFG) before modification.
         :param external_memlet: The external memlet before modification.
         :param preserve_minima: Do not change the subset's minimum elements.
-        :param use_src_subset: If both sides of the memlet refer to same array,
-                               prefer source subset.
-        :param use_dst_subset: If both sides of the memlet refer to same array,
-                               prefer destination subset.
+        :param use_src_subset: If both sides of the memlet refer to same array, prefer source subset.
+        :param use_dst_subset: If both sides of the memlet refer to same array, prefer destination subset.
+        :param internal_offset: The internal memlet's data descriptor offset.
+        :param external_offset: The external memlet's data descriptor offset.
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
+    internal_offset = internal_offset or [0] * len(internal_subset)
+    external_offset = external_offset or [0] * len(external_memlet.subset)
+    internal_subset = internal_subset.offset_new(internal_offset, False)
     result = Memlet.from_memlet(internal_memlet)
     result.subset = internal_subset
 
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
-
         # Special case: If internal memlet is one element and the top
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
@@ -738,39 +740,56 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         else:
             to_unsqueeze = ones
 
+        # NOTE: There can be an issue where a unitary dimension wasn't squeezed, e.g., when using the dataflow syntax.
+        # In such cases, more ones than necessary will be detected.
+        # TODO: Find a better solution
+        if len(internal_subset) + len(to_unsqueeze) > len(external_memlet.subset):
+            external_subset = external_memlet.subset.offset_new(external_offset, False)
+            to_unsqueeze = [i for i, d in enumerate(shape) if d == 1 and external_subset[i] != (0, 0, 1)]
+        if len(internal_subset) + len(to_unsqueeze) != len(external_memlet.subset):
+            raise NotImplementedError
+
         result.subset.unsqueeze(to_unsqueeze)
+        internal_offset = list(internal_offset)
+        for axis in sorted(to_unsqueeze):
+            internal_offset.insert(axis, external_offset[axis])
     elif len(internal_subset) > len(external_memlet.subset):
         # Try to squeeze internal memlet
-        result.subset.squeeze()
+        remaining = result.subset.squeeze()
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Unexpected extra dimensions in internal memlet '
                              'while un-squeezing memlet.\nExternal memlet: %s\n'
                              'Internal memlet: %s' % (external_memlet, internal_memlet))
+        internal_offset = [internal_offset[idx] for idx in range(len(internal_offset)) if idx in remaining]
 
-    result.subset.offset(external_memlet.subset, False)
+    external_subset = external_memlet.subset.offset_new(external_offset, False)
+    result.subset.offset(external_subset, False)
+    result.subset.offset(external_offset, True)
 
     if preserve_minima:
         if len(result.subset) != len(external_memlet.subset):
             raise ValueError('Memlet specifies reshape that cannot be un-squeezed.\n'
                              'External memlet: %s\nInternal memlet: %s' % (external_memlet, internal_memlet))
-
         original_minima = external_memlet.subset.min_element()
         for i in set(range(len(original_minima))):
             rb, re, rs = result.subset.ranges[i]
             result.subset.ranges[i] = (original_minima[i], re, rs)
-
     # TODO: Offset rest of memlet according to other_subset
     if external_memlet.other_subset is not None:
         raise NotImplementedError
 
     # Actual result preserves 'other subset' and placement of subsets in memlet
     actual_result = Memlet.from_memlet(internal_memlet)
-    if actual_result.subset != internal_subset and actual_result.other_subset:
-        actual_result.other_subset = result.subset
+    actual_result.data = external_memlet.data
+    if actual_result.other_subset:
+        if internal_memlet.data == external_memlet.data:
+            actual_result.subset = result.subset
+        else:
+            actual_result.other_subset = actual_result.subset
+            actual_result.subset = result.subset
+            actual_result._is_data_src = not actual_result._is_data_src
     else:
-        actual_result.data = external_memlet.data
         actual_result.subset = result.subset
-    actual_result._is_data_src = internal_memlet._is_data_src
 
     return actual_result
 
@@ -1316,13 +1335,11 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode)
-                and isinstance(graph.parent.arrays[node.data], data.Stream)):
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
             nodedesc = graph.parent.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
-                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned,
-                    dtypes.StorageType.CPU_ThreadLocal
+                    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
             ]:
                 return False
 
@@ -1339,3 +1356,115 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
     return True
+
+
+def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
+                                     sink: nodes.AccessNode):
+    """
+    Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
+    Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
+    transient.
+
+    :param sdfg: The SDFG in which the Access node resides.
+    :param state: The State in which the Access node resides.
+    :param map_exit: The exit node of the Map.
+    :param access: The Access node being written inside the Map.
+    :param sink: The Access node to be written outside the Map.
+    """
+
+    # Special case for scalars: if there is no write conflict resolution, then abort, since it is implied that the
+    # scalar is thread-local.
+    if isinstance(access.desc(sdfg), data.Scalar):
+        if any(e.data.wcr is None for e in state.in_edges(access)):
+            return
+    # Ignore views
+    if isinstance(access.desc(sdfg), data.View):
+        return
+
+    # Compute the union of the destination subsets of the edges that write to `access.`
+    in_union = None
+    map_dependency = False
+    for e in state.in_edges(access):
+        subset = e.data.get_dst_subset(e, state)
+        if any(str(s) in map_exit.map.params for s in subset.free_symbols):
+            map_dependency = True
+        if in_union is None:
+            in_union = subset
+        else:
+            in_union = in_union.union(subset)
+
+    # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
+    if not map_dependency:
+        return
+
+    # Check if the union covers the output edges of `access.`
+    covers_out = True
+    if in_union is None:
+        covers_out = False
+    else:
+        for e in state.out_edges(access):
+            subset = e.data.get_src_subset(e, state)
+            if not in_union.covers(subset):
+                covers_out = False
+                break
+
+    # If the union covers the output edges of `access`, then we can remove `access` and replace it with a transient.
+    if covers_out:
+        shape = in_union.size()
+        if shape == [1]:
+            name, _ = sdfg.add_scalar(access.data, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        else:
+            name, _ = sdfg.add_array(access.data, shape, access.desc(sdfg).dtype, transient=True, find_new_name=True)
+        new_n = state.add_access(name)
+        visited = set()
+        for e in state.in_edges(access):
+            if e in visited:
+                continue
+            offset = e.data.get_dst_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                dst = new_n if e2.dst is access else e2.dst
+                state.add_edge(
+                    e2.src, e2.src_conn, dst, e2.dst_conn,
+                    Memlet(data=name, subset=dst_subset.offset_new(offset, negative=True), other_subset=src_subset))
+            src_subset = e.data.get_src_subset(e, state)
+            dst_subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(new_n,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(dst_subset),
+                                                other_subset=dst_subset.offset_new(dst_subset, negative=True)))
+        for e in state.out_edges(access):
+            if e in visited:
+                continue
+            offset = e.data.get_src_subset(e, state)
+            # NOTE: There can be nested Maps. Therefore, we need to iterate over the MemletTree.
+            for e2 in state.memlet_tree(e):
+                if e2 in visited:
+                    continue
+                visited.add(e2)
+                src_subset = e2.data.get_src_subset(e2, state)
+                dst_subset = e2.data.get_dst_subset(e2, state)
+                src = new_n if e2.src is access else e2.src
+                state.add_edge(
+                    src, e2.src_conn, e2.dst, e2.dst_conn,
+                    Memlet(data=name, subset=src_subset.offset_new(offset, negative=True), other_subset=dst_subset))
+        for e in visited:
+            state.remove_edge(e)
+        state.remove_node(access)
+    # Otherwise, we only add a memlet path to the sink.
+    else:
+        for e in state.in_edges(access):
+            subset = e.data.get_dst_subset(e, state)
+            state.add_memlet_path(access,
+                                  map_exit,
+                                  sink,
+                                  memlet=Memlet(data=sink.data,
+                                                subset=copy.deepcopy(subset),
+                                                other_subset=copy.deepcopy(subset)))

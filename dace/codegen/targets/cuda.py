@@ -16,7 +16,7 @@ from dace import data as dt
 from dace import dtypes, registry
 from dace import sdfg as sd
 from dace import subsets, symbolic
-from dace.codegen import cppunparse
+from dace.codegen import common, cppunparse
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
@@ -61,8 +61,6 @@ class CUDACodeGen(TargetCodeGenerator):
     _in_device_code = False
 
     def __init__(self, frame_codegen, sdfg: SDFG):
-        self.backend = Config.get('compiler', 'cuda', 'backend')
-        self.language = 'cu' if self.backend == 'cuda' else 'cpp'
         self._frame = frame_codegen
         self._dispatcher = frame_codegen.dispatcher
         dispatcher = self._dispatcher
@@ -77,13 +75,6 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
         self._scope_has_collaborative_copy = False
-        target_type = "" if self.backend == 'cuda' else self.backend
-        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
-                                      '',
-                                      self.language,
-                                      CUDACodeGen,
-                                      'CUDA',
-                                      target_type=target_type)
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
         self._initcode = CodeIOStream()
@@ -149,6 +140,17 @@ class CUDACodeGen(TargetCodeGenerator):
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
+        # Determine GPU backend
+        self.backend = common.get_gpu_backend()
+        self.language = 'cu' if self.backend == 'cuda' else 'cpp'
+        target_type = "" if self.backend == 'cuda' else self.backend
+        self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
+                                      '',
+                                      self.language,
+                                      CUDACodeGen,
+                                      'CUDA',
+                                      target_type=target_type)
+
         # Find GPU<->GPU strided copies that cannot be represented by a single copy command
         from dace.transformation.dataflow import CopyToMap
         for e, state in list(sdfg.all_edges_recursive()):
@@ -229,7 +231,7 @@ class CUDACodeGen(TargetCodeGenerator):
             # Lazily compute reachability and access nodes
             if reachability is None:
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
-                access_nodes = ap.FindAccessNodes().apply_pass(top_sdfg, {})
+                access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
 
             reachable = reachability[sdfg.sdfg_id]
             access_sets = access_nodes[sdfg.sdfg_id]
@@ -400,6 +402,22 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     delete __state->gpu_context;
 }}
 
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
+{{
+    if (streamid < 0 || streamid >= {nstreams})
+        return false;
+
+    __state->gpu_context->streams[streamid] = stream;
+
+    return true;
+}}
+
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
+{{
+    for (int i = 0; i < {nstreams}; ++i)
+        __state->gpu_context->streams[i] = stream;
+}}
+
 {localcode}
 """.format(params=params_comma,
            initcode=initcode.getvalue(),
@@ -457,7 +475,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 Config.get('compiler', 'cuda', 'path').replace('\\', '/')))
 
         # Get CUDA architectures from configuration
-        backend = Config.get('compiler', 'cuda', 'backend')
+        backend = common.get_gpu_backend()
         if backend == 'cuda':
             cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
             cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
@@ -983,7 +1001,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         callsite_stream.write("}")
 
             if dims == 1 and not (src_strides[-1] != 1 or dst_strides[-1] != 1):
-                copysize = ' * '.join([cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in copy_shape])
+                copysize = ' * '.join(_topy(copy_shape))
                 array_length = copysize
                 copysize += ' * sizeof(%s)' % dtype.ctype
 
@@ -1186,7 +1204,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Free pooled memory that needs to be released here
             to_remove = set()
-            backend = Config.get('compiler', 'cuda', 'backend')
+            backend = self.backend
             for (sd, name), (pstate, terminators) in self.pool_release.items():
                 if sd is not sdfg or state is not pstate:
                     continue
@@ -1582,6 +1600,10 @@ void  *{kname}_args[] = {{ {kargs} }};
             (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
             scope_entry)
 
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('{', sdfg, state_id, scope_entry)
+
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             if hasattr(e, '_cuda_event'):
@@ -1600,6 +1622,10 @@ void  *{kname}_args[] = {{ {kargs} }};
              ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
                                       for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
             scope_entry)
+
+        # If there are dynamic Map inputs, put the kernel invocation in its own scope to avoid redefinitions.
+        if dace.sdfg.has_dynamic_map_inputs(state, scope_entry):
+            callsite_stream.write('}', sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream, self)
 
@@ -1821,14 +1847,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             for i in range(min(len(krange), 3)):
                 varname = kernel_map.params[-i - 1]
 
+                # If we defaulted to a fixed number of threads per block, offset by thread ID
+                block_expr = 'blockIdx.%s' % _named_idx(min(i, 2))
+                if not has_tbmap or has_dtbmap:
+                    block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+
                 # Delinearize third dimension if necessary
                 if i == 2 and len(krange) > 3:
-                    block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, kdims[3:], 1))
-                else:
-                    block_expr = 'blockIdx.%s' % _named_idx(i)
-                    # If we defaulted to 32 threads per block, offset by thread ID
-                    if not has_tbmap or has_dtbmap:
-                        block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
+                    block_expr = f'({block_expr} / ({_topy(functools.reduce(sympy.Mul, kdims[3:], 1))}))'
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
@@ -1839,8 +1865,14 @@ void  *{kname}_args[] = {{ {kargs} }};
             if len(krange) > 3:
                 for i in range(3, len(krange)):
                     varname = kernel_map.params[-i - 1]
+
+                    block_expr = 'blockIdx.z'
+                    if not has_tbmap or has_dtbmap:
+                        block_expr = '(%s * %s + threadIdx.z)' % (block_expr, _topy(block_dims[2]))
+
                     # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                    block_expr = '((%s / (%s)) %% (%s))' % (
+                        block_expr,
                         _topy(functools.reduce(sympy.Mul, kdims[i + 1:], 1)),
                         _topy(kdims[i]),
                     )
@@ -1949,8 +1981,6 @@ void  *{kname}_args[] = {{ {kargs} }};
                     raise ValueError('Block size has to be constant for block-wide dynamic map schedule (got %s)' %
                                      str(bdim))
                 total_block_size *= bdim
-            if _expr(scope_map.range[0][2]) != 1:
-                raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
 
             ##### TODO (later): Generalize
             # Find thread-block param map and its name
@@ -1977,15 +2007,26 @@ void  *{kname}_args[] = {{ {kargs} }};
                                          _topy(subsets.Range(outer_scope.map.range[::-1]).max_element()[0] + 1)), sdfg,
                 state_id, scope_entry)
 
+            # NOTE: Dynamic map inputs must be defined both outside and inside the dynamic Map schedule.
+            # They define inside the schedule the bounds of the any nested Maps.
+            # They define outside the schedule the bounds of the dynamic Map's for-loop invocation.
+            # NOTE: The value of the dynamic Map's variable may differ inside and outside the schedule.
             for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
                 callsite_stream.write(
                     self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
                                                         e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
 
+            dynmap_var = scope_map.params[0]
+            dynmap_begin = scope_map.range[0][0]
+            dynmap_end = scope_map.range[0][1] + 1
+            dynmap_step = scope_map.range[0][2]
+            if dynmap_step != 1:
+                dynmap_var = f'{dynmap_var}_idx'
+                dynmap_begin = 0
+                dynmap_end = f'int_ceil({dynmap_end - dynmap_begin}, {dynmap_step})'
             callsite_stream.write(
                 '__dace_dynmap_begin = {begin};\n'
-                '__dace_dynmap_end = {end};'.format(begin=scope_map.range[0][0], end=scope_map.range[0][1] + 1), sdfg,
-                state_id, scope_entry)
+                '__dace_dynmap_end = {end};'.format(begin=dynmap_begin, end=dynmap_end), sdfg, state_id, scope_entry)
 
             # close if
             callsite_stream.write('}', sdfg, state_id, scope_entry)
@@ -1998,7 +2039,17 @@ void  *{kname}_args[] = {{ {kargs} }};
                     'compiler', 'cuda', 'dynamic_map_fine_grained') else 'false'),
                                           bsize=total_block_size,
                                           kmapIdx=outer_scope.map.params[0],
-                                          param=scope_map.params[0]), sdfg, state_id, scope_entry)
+                                          param=dynmap_var), sdfg, state_id, scope_entry)
+
+            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                callsite_stream.write(
+                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
+
+            if dynmap_step != 1:
+                callsite_stream.write(
+                    f'auto {scope_map.params[0]} = {scope_map.range[0][0]} + {dynmap_step} * {dynmap_var};', sdfg,
+                    state_id, scope_entry)
 
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
             dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
@@ -2415,8 +2466,8 @@ void  *{kname}_args[] = {{ {kargs} }};
 def _topy(arr):
     """ Converts an array of symbolic variables (or one) to C++ strings. """
     if not isinstance(arr, list):
-        return cppunparse.pyexpr2cpp(symbolic.symstr(arr))
-    return [cppunparse.pyexpr2cpp(symbolic.symstr(d)) for d in arr]
+        return cppunparse.pyexpr2cpp(symbolic.symstr(arr, cpp_mode=True))
+    return [cppunparse.pyexpr2cpp(symbolic.symstr(d, cpp_mode=True)) for d in arr]
 
 
 def _named_idx(idx):

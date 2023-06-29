@@ -20,10 +20,12 @@ jobs:
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage codecov
+        pip install flake8 pytest-xdist coverage
         pip install mpi4py pytest-mpi
         pip uninstall -y dace
         pip install -e ".[testing]"
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
 
     - name: Test dependencies
       run: |
@@ -32,10 +34,8 @@ jobs:
     - name: Run parallel pytest 
       run: |
         export DACE_cache=unique
-        export DACE_optimizer_interface=" "
         . /opt/setupenv
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi"
-        codecov
+        pytest --cov-report=xml --cov=dace --tb=short -m "verilator or mkl or papi or datainstrument"
 
     - name: Run MPI tests
       run: |
@@ -53,7 +53,6 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_interface=" "
         mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "mpi"
     
     - name: Test ScaLAPACK PBLAS with pytest
@@ -62,9 +61,8 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
-        export DACE_optimizer_interface=" "
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
-        for i in {1..8}
+        for i in {1..4}
         do
           mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "scalapack"
         done
@@ -74,4 +72,10 @@ jobs:
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         . /opt/setupenv
         coverage combine . */; coverage report; coverage xml
-        codecov
+        reachable=0
+        ping -W 2 -c 1 codecov.io || reachable=$?
+        if [ $reachable -eq 0 ]; then
+          ./codecov
+        else
+          echo "Codecov.io is unreachable"
+        fi

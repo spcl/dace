@@ -163,6 +163,30 @@ def test_augassign_wcr4():
         assert np.allclose(val, ref)
 
 
+def test_augassign_scalar_in_map():
+
+    @dace.program
+    def tester(a: dace.float64[20], b: dace.float64[20, 2], c: dace.float64[20, 2]):
+        for i in dace.map[0:20]:
+            tmp: dace.float64 = 0
+            if i % 2 == 0:
+                tmp += b[i, 0] * c[i, 0]
+            else:
+                tmp += b[i, 1] * c[i, 1]
+            a[i] = tmp
+
+    a = np.random.rand(20)
+    b = np.random.rand(20, 2)
+    c = np.random.rand(20, 2)
+    ref = np.zeros(20)
+    ref[::2] = (b * c)[::2, 0]
+    ref[1::2] = (b * c)[1::2, 1]
+
+    tester(a, b, c)
+
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     test_augassign_wcr()
     test_augassign_wcr2()
@@ -170,3 +194,4 @@ if __name__ == "__main__":
     test_augassign_wcr4()
     test_augassign_no_wcr()
     test_augassign_no_wcr2()
+    test_augassign_scalar_in_map()

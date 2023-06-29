@@ -70,7 +70,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
         from dace.codegen.targets.cpp import cpp_array_expr
 
         def replace_param(param):
-            param = symbolic.symstr(param)
+            param = symbolic.symstr(param, cpp_mode=False)
             for p, pval in param_to_edge.items():
                 # TODO: Correct w.r.t. connector type
                 param = param.replace(p, cpp_array_expr(nsdfg, pval.data))

@@ -226,6 +226,8 @@ class AccessNode(Node):
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
                               desc="Instrument data contents at this access",
                               default=dtypes.DataInstrumentationType.No_Instrumentation)
+    instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
+                                        default=CodeBlock("1", language=dtypes.Language.CPP))
 
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
@@ -247,6 +249,7 @@ class AccessNode(Node):
         node._data = self._data
         node._setzero = self._setzero
         node._instrument = self._instrument
+        node._instrument_condition = dcpy(self._instrument_condition, memo=memo)
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
@@ -546,6 +549,16 @@ class NestedSDFG(CodeNode):
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, dcpy(v, memo))
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
+        return result
 
     @staticmethod
     def from_json(json_obj, context=None):

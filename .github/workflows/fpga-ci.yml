@@ -20,9 +20,11 @@ jobs:
         rm -rf .dacecache tests/.dacecache
         . /opt/setupenv
         python -m pip install --upgrade pip
-        pip install pytest-xdist flake8 coverage codecov
+        pip install pytest-xdist flake8 coverage
         pip uninstall -y dace
         pip install -e ".[testing]"
+        curl -Os https://uploader.codecov.io/latest/linux/codecov
+        chmod +x codecov
 
     - name: Run FPGA Tests
       run: |
@@ -32,5 +34,11 @@ jobs:
         faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         coverage report
         coverage xml
-        codecov
+        reachable=0
+        ping -W 2 -c 1 codecov.io || reachable=$?
+        if [ $reachable -eq 0 ]; then
+          ./codecov
+        else
+          echo "Codecov.io is unreachable"
+        fi
         killall -9 xsim xsimk || true

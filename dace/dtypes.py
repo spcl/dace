@@ -217,6 +217,18 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
 }
 
+# Maps from StorageType to a preferred ScheduleType for helping determine schedules.
+# If mapped to None or does not exist in this dictionary, does not affect decision.
+# Scalar data containers also do not affect this decision.
+STORAGEDEFAULT_SCHEDULE = {
+    StorageType.CPU_Heap: ScheduleType.CPU_Multicore,
+    StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
+    StorageType.GPU_Global: ScheduleType.GPU_Device,
+    StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
+    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
+    StorageType.SVE_Register: ScheduleType.SVE_Map,
+}
+
 # Translation of types to C types
 _CTYPES = {
     None: "void",
@@ -599,6 +611,7 @@ class opaque(typeclass):
 
         try:
             typeclass = json_to_typeclass(json_obj['ctype'], context)
+            return typeclass()
         except KeyError:
             typeclass = json_obj['ctype']
 
