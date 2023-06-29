@@ -164,6 +164,35 @@ def test_block_size_mismatch_error():
         sdfg.generate_code()
 
 
+def test_block_size_too_large():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:1024, 0:1024] @ dace.ScheduleType.GPU_Device:
+            a[i, j] = 1
+
+    sdfg = tester.to_sdfg()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.GPU_Device:
+            n.gpu_block_size = [64, 32, 1]
+
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
+def test_highdim_block_size_too_large():
+    BX, BY, BZ, BW = 64, 2, 2, 2
+
+    @dace.program
+    def tester(a: dace.float64[1024, 2, 2, 20] @ dace.StorageType.GPU_Global):
+        for i, j, k, l in dace.map[0:16, 0:1, 0:1, 0:10:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj, bk, bl in dace.map[0:BX, 0:BY, 0:BZ, 0:BW] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj, k + bk, l + bl] = 1
+
+    sdfg = tester.to_sdfg()
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_cpu()
     test_gpu()
@@ -172,3 +201,5 @@ if __name__ == "__main__":
     test_highdim_default_block_size()
     test_block_size_mismatch_warning()
     test_block_size_mismatch_error()
+    test_block_size_too_large()
+    test_highdim_block_size_too_large()

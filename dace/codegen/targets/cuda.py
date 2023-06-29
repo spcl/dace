@@ -1888,8 +1888,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if is_persistent:
             grid_size = ['gridDim.x', '1', '1']
 
-        # Check block size against configured maximum values
-        # TODO "to increase this limit, modify the ``bla`` configuration entry"
+        # Check block size against configured maximum values, if those can be determined
+        total_bsize = prod(block_size)
+        total_limit = Config.get('compiler', 'cuda', 'block_size_limit')
+        lastdim_limit = Config.get('compiler', 'cuda', 'block_size_lastdim_limit')
+        if (total_bsize > total_limit) == True:
+            raise ValueError(f'Block size for kernel "{kernelmap_entry.map.label}" ({block_size}) '
+                             f'is larger than the possible number of threads per block ({total_limit}). '
+                             'The kernel will potentially not run, please reduce the thread-block size. '
+                             'To increase this limit, modify the `compiler.cuda.block_size_limit` '
+                             'configuration entry.')
+        if (block_size[-1] > lastdim_limit) == True:
+            raise ValueError(f'Last block size dimension for kernel "{kernelmap_entry.map.label}" ({block_size}) '
+                             'is larger than the possible number of threads in the last block dimension '
+                             f'({lastdim_limit}). The kernel will potentially not run, please reduce the '
+                             'thread-block size. To increase this limit, modify the '
+                             '`compiler.cuda.block_size_lastdim_limit` configuration entry.')
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
