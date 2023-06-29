@@ -10,7 +10,8 @@ import pandas as pd
 import seaborn as sns
 
 from python_programs import vert_loop_7, vert_loop_7_1, vert_loop_7_1_no_klon, vert_loop_7_1_no_temp, \
-                            vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset, small_wip
+                            vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset, small_wip, \
+                            small_wip_2
 from execute.parameters import ParametersProvider
 from utils.general import optimize_sdfg, copy_to_device, use_cache, enable_debug_flags, get_programs_data, \
                           read_source, get_fortran, remove_build_folder, reset_graph_files, print_compare_matrix
@@ -39,6 +40,7 @@ kernels = {
     'vert_loop_wip': vert_loop_wip,
     'vert_loop_wip_scalar_offset': vert_loop_wip_scalar_offset,
     'small_wip': small_wip,
+    'small_wip_2': small_wip_2,
 }
 
 

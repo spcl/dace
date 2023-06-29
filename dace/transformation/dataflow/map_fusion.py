@@ -105,11 +105,11 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                num_occurrences = len([
-                    n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
-                ])
-                if num_occurrences > 1:
-                    return False
+                # num_occurrences = len([
+                #     n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                # ])
+                # if num_occurrences > 1:
+                #     return False
             else:
                 return False
         # Check map ranges
@@ -308,6 +308,7 @@ class MapFusion(transformation.SingleStateTransformation):
         for index, param in enumerate(first_entry.map.params):
             params_dict[param] = second_entry.map.params[perm[index]]
 
+        sdfg.save('map_fusion/before_replace_scope.sdfg')
         # Replaces (in memlets and tasklet) the second scope map
         # indices with the permuted first map indices.
         # This works in two passes to avoid problems when e.g., exchanging two
@@ -321,6 +322,7 @@ class MapFusion(transformation.SingleStateTransformation):
             if firstp != secondp:
                 replace(second_scope, '__' + secondp + '_fused', firstp)
 
+        sdfg.save('map_fusion/after_replace_scope.sdfg')
         # Isolate First exit node
         ############################
         edges_to_remove = set()
@@ -348,7 +350,9 @@ class MapFusion(transformation.SingleStateTransformation):
                     continue
 
                 # Add a transient scalar/array
+                sdfg.save('map_fusion/case_erase_access_node_before_fuse_nodes.sdfg')
                 self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst, new_dsts[0].dst_conn, new_dsts[1:])
+                sdfg.save('map_fusion/case_erase_access_node_after_fuse_nodes.sdfg')
 
                 edges_to_remove.add(edge)
 
@@ -366,9 +370,11 @@ class MapFusion(transformation.SingleStateTransformation):
                     dcpy(out_e.data),
                 )
                 second_exit.add_out_connector('OUT_' + conn)
+                sdfg.save('map_fusion/after_first_add_edge.sdfg')
 
                 graph.add_edge(edge.src, edge.src_conn, second_exit, 'IN_' + conn, dcpy(edge.data))
                 second_exit.add_in_connector('IN_' + conn)
+                sdfg.save('map_fusion/after_second_add_edge.sdfg')
 
                 edges_to_remove.add(out_e)
                 edges_to_remove.add(edge)
@@ -382,6 +388,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     if source_node == access_node:
                         self.fuse_nodes(sdfg, graph, edge, out_e.dst, out_e.dst_conn)
 
+        sdfg.save('map_fusion/after_isolate_first_exit_node.sdfg')
         ###
         # First scope exit is isolated and can now be safely removed
         for e in edges_to_remove:
@@ -389,6 +396,7 @@ class MapFusion(transformation.SingleStateTransformation):
         graph.remove_nodes_from(nodes_to_remove)
         graph.remove_node(first_exit)
 
+        sdfg.save('map_fusion/before_isolate_second_entry_node.sdfg')
         # Isolate second_entry node
         ###########################
         for edge in graph.in_edges(second_entry):
@@ -432,6 +440,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 graph.remove_edge(edge)
                 graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
+        sdfg.save('map_fusion/after_isolate_second_entry_node.sdfg')
         ###
         # Second node is isolated and can now be safely removed
         graph.remove_node(second_entry)
@@ -499,6 +508,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
             else:
                 # Add edge that leads to the second node
+                edge.data.data = new_dst.data
                 graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
         else:
