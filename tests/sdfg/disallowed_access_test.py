@@ -50,7 +50,6 @@ def test_gpu_access_on_host_tasklet():
 
 
 if __name__ == '__main__':
-    # test_gpu_access_on_host_interstate_ok()
+    test_gpu_access_on_host_interstate_ok()
     test_gpu_access_on_host_interstate_invalid()
-    # test_gpu_access_on_host_tasklet()
-    
+    test_gpu_access_on_host_tasklet()
