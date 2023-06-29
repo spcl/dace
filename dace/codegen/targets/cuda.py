@@ -1857,6 +1857,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             #       kernel, raise an invalid SDFG exception and recommend
             #       overapproximation.
 
+            # Warn when multiple detected block sizes have different sizes
+            if len(detected_block_sizes) > 1:
+                warnings.warn('Multiple thread-block maps with different sizes detected for '
+                              f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
+                              f'Over-approximating to block size {block_size}.\n'
+                              'If this was not the intent, try tiling one of the thread-block maps to match.')
+
             # both thread-block map and dynamic thread-block map exist at the same
             # time
             if has_dtbmap:
