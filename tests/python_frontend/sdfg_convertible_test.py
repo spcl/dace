@@ -27,7 +27,7 @@ def test_constants_in_signature():
     class AConvertible(SDFGConvertible):
         def __sdfg__(self, grid, arr):
             @dace.program
-            def func(arr: dace.float64[10]):
+            def func(_: dace.compiletime, arr: dace.float64[10]):
                 arr[grid.start:grid.end] = 7.0
 
             return func.to_sdfg(grid, arr)

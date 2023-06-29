@@ -5,14 +5,14 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
 
 import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
-from dace.codegen import exceptions as cgx
+from dace.codegen import exceptions as cgx, common
 from dace.config import Config
 from dace.frontend import operations
 
@@ -22,6 +22,7 @@ class ReloadableDLL(object):
     A reloadable shared object (or dynamically linked library), which
     bypasses Python's dynamic library reloading issues.
     """
+
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
@@ -181,6 +182,7 @@ class CompiledSDFG(object):
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
+        self._exit.restype = ctypes.c_int
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
         # Cache SDFG return values
@@ -196,6 +198,17 @@ class CompiledSDFG(object):
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
+
+        self.has_gpu_code = False
+        for _, _, aval in self._sdfg.arrays_recursive():
+            if aval.storage in dtypes.GPU_STORAGES:
+                self.has_gpu_code = True
+                break
+        if not self.has_gpu_code:
+            for node, _ in self._sdfg.all_nodes_recursive():
+                if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
+                    self.has_gpu_code = True
+                    break
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
@@ -297,8 +310,20 @@ class CompiledSDFG(object):
 
     def finalize(self):
         if self._exit is not None:
-            self._exit(self._libhandle)
+            res: int = self._exit(self._libhandle)
             self._initialized = False
+            if res != 0:
+                raise RuntimeError(
+                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
+
+    def _get_error_text(self, result: Union[str, int]) -> str:
+        if self.has_gpu_code:
+            if isinstance(result, int):
+                result = common.get_gpu_runtime_error_string(result)
+            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
+                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+        else:
+            return result
 
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
@@ -312,10 +337,22 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self._initialize(initargtuple)
-            
+
             with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
                 if self.do_not_execute is False:
                     self._cfunc(self._libhandle, *argtuple)
+
+            if self.has_gpu_code:
+                # Optionally get errors from call
+                try:
+                    lasterror = common.get_gpu_runtime_last_error()
+                except RuntimeError as ex:
+                    warnings.warn(f'Could not get last error from GPU runtime: {ex}')
+                    lasterror = None
+
+                if lasterror is not None:
+                    raise RuntimeError(
+                        f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
 
             return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
@@ -544,7 +581,6 @@ class CompiledSDFG(object):
                 # Create an array with the properties of the SDFG array
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
-
 
     def _convert_return_values(self):
         # Return the values as they would be from a Python function

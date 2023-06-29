@@ -262,7 +262,7 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', no
     """
     from dace.sdfg.utils import is_fpga_kernel
     return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
-            or (state and is_fpga_kernel(sdfg, state)))
+            or (state is not None and is_fpga_kernel(sdfg, state)))
 
 
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',

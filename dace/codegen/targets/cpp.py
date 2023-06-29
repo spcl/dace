@@ -1318,7 +1318,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
         if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
             cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
-                "%sStreamSynchronize(%s);" % (common.get_gpu_backend(), cudastream),
+                "DACE_GPU_CHECK(%sStreamSynchronize(%s));" % (common.get_gpu_backend(), cudastream),
                 sdfg,
                 state_id,
                 [e.src, e.dst],
@@ -1356,9 +1356,9 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-                callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg,
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg,
                                       state_id, scope_exit)
-                callsite_stream.write(f'DACE_CUDA_CHECK({backend}DeviceSynchronize());')
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             else:
                 callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
             to_remove.add((sd, name))
@@ -1380,8 +1380,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
-                    """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-{backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(
+                    """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
+DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));""".format(
                         ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream,
