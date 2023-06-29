@@ -359,6 +359,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         the `Memlet` class documentation.
     """
 
+    name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict,
@@ -425,7 +426,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
-        self._name = name
+        self.name = name
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
@@ -1112,27 +1113,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                          for syntax highlighting and completion.
         """
         self.sourcecode = {'code': code, 'language': lang}
-
-    @property
-    def name(self):
-        """ The name of this SDFG. """
-        if self._name != self._orig_name:
-            return self._name
-        newname = self._orig_name
-        numbers = []
-        for sdfg in self._sdfg_list:
-            if sdfg is not self and sdfg._orig_name == self._orig_name:
-                numbers.append(sdfg._num)
-        while self._num in numbers:
-            self._num += 1
-        if self._num > 0:
-            newname = '{}_{}'.format(self._orig_name, self._num)
-            self._name = newname
-        return newname
-
-    @name.setter
-    def name(self, newname: str):
-        self._name = newname
 
     @property
     def label(self):
@@ -2245,7 +2225,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
             while sdfg.is_loaded():
-                sdfg._name = f'{self._name}_{index}'
+                sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
                 warnings.warn('SDFG "%s" is already loaded by another object, '
