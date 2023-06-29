@@ -92,7 +92,7 @@ class FixNestedSDFGReferences(ppl.Pass):
     Fixes nested SDFG references to parent state/SDFG/node
     """
 
-    CATEGORY: str = 'Simplification'
+    CATEGORY: str = 'Cleanup'
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.NestedSDFGs)

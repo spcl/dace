@@ -141,29 +141,6 @@ class GPUStream {
     m_data[get_addr(allocation)] = item;
   }
 
-  /*
-  __device__ __forceinline__ void push(T *items, int count)
-  {
-      // Perform a warp-wide scan to get thread offsets
-      typedef cub::WarpScan<int> WarpScan;
-      __shared__ typename WarpScan::TempStorage temp_storage[4];
-      int offset;
-      int warp_id = threadIdx.x / 32;
-      WarpScan(temp_storage[warp_id]).ExclusiveSum(count, offset);
-
-      // Atomic-add the total count once per warp
-      uint32_t addr;
-      if (threadIdx.x & 31 == 31) // Last thread
-          addr = atomicAdd(m_pending, offset + count);
-      // Broadcast starting address
-      addr = cub::ShuffleIndex(addr, 31, 0xffffffff);
-
-      // Copy data from each thread
-      for(int i = 0; i < count; ++i)
-          m_data[get_addr(addr + offset + i)] = items[i];
-  }
-  */
-
   __device__ __forceinline__ void prepend(const T &item) {
     uint32_t allocation = atomicAggDec(m_start) - 1;
     m_data[get_addr(allocation)] = item;
