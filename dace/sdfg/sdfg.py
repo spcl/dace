@@ -491,7 +491,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
         result._sdfg_list = []
         if self._parent_sdfg is None:
+            # Avoid import loops
+            from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
+
             result._sdfg_list = result.reset_sdfg_list()
+            fixed = FixNestedSDFGReferences().apply_pass(result, {})
+            if fixed:
+                warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
+
         return result
 
     @property
@@ -2615,7 +2622,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients, simplify=simplify),
+                                                register_trans=register_transients,
+                                                simplify=simplify),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
