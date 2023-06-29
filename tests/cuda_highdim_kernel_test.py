@@ -134,9 +134,41 @@ def test_highdim_default_block_size():
             assert 'dim3(32, 16, 1)' in gpu_code.code
 
 
+def test_block_size_mismatch_warning():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:512:2, 0:512:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj in dace.map[0:2, 0:2] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+            for bi, bj in dace.map[0:2, 0:1] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+
+    sdfg = tester.to_sdfg()
+    with pytest.warns(UserWarning, match='Multiple thread-block maps'):
+        sdfg.generate_code()
+
+
+def test_block_size_mismatch_error():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:512:2, 0:512:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj in dace.map[0:2, 0:2] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+
+    sdfg = tester.to_sdfg()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.GPU_Device:
+            n.gpu_block_size = [4, 2, 1]
+
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_cpu()
     test_gpu()
     test_highdim_implicit_block()
     test_highdim_implicit_block_threadsplit()
     test_highdim_default_block_size()
+    test_block_size_mismatch_warning()
+    test_block_size_mismatch_error()
