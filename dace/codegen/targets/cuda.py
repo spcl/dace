@@ -1803,11 +1803,12 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                         ]
                 else:
                     def_bsize = Config.get('compiler', 'cuda', 'default_block_size')
-                    warnings.warn(f'No ``gpu_block_size`` property specified on map "{kernelmap_entry.map.label}". '
-                                  f'Falling back to the configuration entry ``compiler.cuda.default_block_size``: {def_bsize}. '
-                                  'You can either specify the block size to use with the gpu_block_size property, '
-                                  'or by adding nested ``GPU_Threadblock`` maps, which map work to individual threads. '
-                                  'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+                    warnings.warn(
+                        f'No `gpu_block_size` property specified on map "{kernelmap_entry.map.label}". '
+                        f'Falling back to the configuration entry `compiler.cuda.default_block_size`: {def_bsize}. '
+                        'You can either specify the block size to use with the gpu_block_size property, '
+                        'or by adding nested `GPU_ThreadBlock` maps, which map work to individual threads. '
+                        'For more information, see https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
 
                     if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
                         raise NotImplementedError('max dynamic block size unimplemented')
@@ -1831,8 +1832,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         else:
             # Find all thread-block maps to determine overall block size
-            block_size = block_size if block_size is not None else [1, 1, 1]
-            detected_block_sizes = [block_size]
+            detected_block_sizes = [block_size] if block_size is not None else []
             for tbmap, sym_map in tb_maps_sym_map:
                 tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
 
@@ -1847,18 +1847,33 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     del tbsize[3:]
 
                 # Extend to 3 dimensions if necessary
-                tbsize = tbsize + [1] * (len(block_size) - len(tbsize))
+                tbsize = tbsize + [1] * (3 - len(tbsize))
 
-                block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
-                if block_size != tbsize:
+                if len(detected_block_sizes) == 0:
+                    block_size = tbsize
+                else:
+                    block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
+
+                if block_size != tbsize or len(detected_block_sizes) == 0:
                     detected_block_sizes.append(tbsize)
 
             # TODO: If grid/block sizes contain elements only defined within the
             #       kernel, raise an invalid SDFG exception and recommend
             #       overapproximation.
 
-            # Warn when multiple detected block sizes have different sizes
             if len(detected_block_sizes) > 1:
+
+                # Error when both gpu_block_size and thread-block maps were defined and conflict
+                if kernelmap_entry.map.gpu_block_size is not None:
+                    raise ValueError('Both the `gpu_block_size` property and internal thread-block '
+                                     'maps were defined with conflicting sizes for kernel '
+                                     f'"{kernelmap_entry.map.label}" (sizes detected: {detected_block_sizes}). '
+                                     'Use `gpu_block_size` only if you do not need access to individual '
+                                     'thread-block threads, or explicit block-level synchronization (e.g., '
+                                     '`__syncthreads`). Otherwise, use internal maps with the `GPU_Threadblock` or '
+                                     '`GPU_ThreadBlock_Dynamic` schedules. For more information, see '
+                                     'https://spcldace.readthedocs.io/en/latest/optimization/gpu.html')
+
                 warnings.warn('Multiple thread-block maps with different sizes detected for '
                               f'kernel "{kernelmap_entry.map.label}": {detected_block_sizes}. '
                               f'Over-approximating to block size {block_size}.\n'
@@ -1872,6 +1887,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         if is_persistent:
             grid_size = ['gridDim.x', '1', '1']
+
+        # Check block size against configured maximum values
+        # TODO "to increase this limit, modify the ``bla`` configuration entry"
 
         return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
