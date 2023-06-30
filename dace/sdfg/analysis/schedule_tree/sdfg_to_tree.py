@@ -482,7 +482,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 subnodes.extend(totree(n, node))
             if not node.sequential:
                 # Nest in general block
-                result = [tn.GBlock(children=subnodes)]
+                result = [tn.GBlock(sdfg, top_level=False, children=subnodes)]
             else:
                 # Use the sub-nodes directly
                 result = subnodes
