@@ -497,7 +497,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join('--offload-arch={arch}'.format(arch=arch if "gfx" in arch else "gfx" + arch) for arch in hip_arch)
+            flags += ' ' + ' '.join('--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch) for arch in hip_arch)
             options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
