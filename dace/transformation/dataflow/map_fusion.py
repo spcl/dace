@@ -279,6 +279,7 @@ class MapFusion(transformation.SingleStateTransformation):
         first_entry = graph.entry_node(first_exit)
         second_entry = self.second_map_entry
         second_exit = graph.exit_node(second_entry)
+        print(f"[MapFusion::apply] fuse loop {first_entry} with {second_entry}")
 
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):
@@ -508,7 +509,8 @@ class MapFusion(transformation.SingleStateTransformation):
                     graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
             else:
                 # Add edge that leads to the second node
-                edge.data.data = new_dst.data
+                if isinstance(new_dst, nodes.AccessNode):
+                    edge.data.data = new_dst.data
                 graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
         else:
