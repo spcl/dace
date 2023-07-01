@@ -427,59 +427,6 @@ class ArrayFission(ppl.Pass):
                             for oedge in out_edges:
                                 oedge.data.replace_dict(rename_dict)
                         
-
-                    
-
-                
-
-                # # iterate over all the states that read from the variable and rename the occurences
-                # if read:
-                #     for other_state in candidate_states:
-                #         reads, writes = access_nodes[original_var][other_state]
-                #         ans = reads.union(writes)
-                #         for an in ans:
-                #             if not an.data in parameters:
-                #                 continue
-                #             rename_node(other_state, an, newname)
-
-                # # rename all the occurences in other phi nodes
-                # for other_state in phi_nodes.keys():
-                #     if other_state is state or not other_state in candidate_states:
-                #         continue
-                #     other_phi_dict = phi_nodes[other_state]
-                #     if not original_var in other_phi_dict.keys():
-                #         continue
-                #     other_phi_node = other_phi_dict[original_var]
-
-                #     new_variables = set()
-
-                #     # if the variable defined by the other phi-node is in the parameters rename the variable
-                #     if other_phi_node["name"] in parameters and read:
-                #         other_phi_node["name"] = newname
-
-                #     if other_state not in reached_by_def:
-                #         continue
-                #     if not read:
-                #         new_variables.update(parameters)
-                #     else:
-                #         new_variables.add(newname)
-                #     new_variables.update(other_phi_node["variables"])
-                #     other_phi_node["variables"] = new_variables
-                #     phi_nodes[other_state][original_var] = other_phi_node
-
-                # # rename occurences in the interstate edges
-                # if read:
-                #     rename_dict = {}
-                #     for parameter in parameters:
-                #         rename_dict[parameter] = newname
-                #     for other_state in candidate_states:
-                #         other_accesses = access_sets[other_state]
-                #         if not original_var in other_accesses[0]:
-                #             continue
-                #         out_edges = sdfg.out_edges(other_state)
-                #         for oedge in out_edges:
-                #             oedge.data.replace_dict(rename_dict)
-
                 # update var_read
                 # if a state read from the parameter it now reads from the variable defined by the current phi node
                 if is_read:
