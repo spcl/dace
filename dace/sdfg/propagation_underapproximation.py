@@ -605,7 +605,7 @@ class UnderapproximateWrites(ppl.Pass):
         return super().depends_on()
     
     def modifies(self) -> Modifies:
-        return ppl.Modifies.Nothing
+        return ppl.Modifies.Everything
     
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If anything was modified, reapply
