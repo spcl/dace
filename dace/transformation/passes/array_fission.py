@@ -66,7 +66,7 @@ class ArrayFission(ppl.Pass):
                                  Tuple[Set[str], Set[str]]] = pipeline_results[ap.SymbolAccessSets.__name__][sdfg.sdfg_id]
         # list of original array names in the sdfg
         anames = sdfg.arrays.copy().keys()
-        #anames = [aname for aname, a in sdfg.arrays.items() if a.transient and a.total_size == 1 and aname == "_ZQE_0"]
+        #anames = [aname for aname, a in sdfg.arrays.items() if a.transient and a.total_size == 1]
         anames = [aname for aname, a in sdfg.arrays.items() if a.transient ]
 
 
@@ -86,6 +86,10 @@ class ArrayFission(ppl.Pass):
         # phi nodes are represented by dictionaries that contain the definitions reaching the phi node
         # can be extended for later use with path constraints for example
         phi_nodes: Dict[SDFGState, Dict[str, Dict]] = defaultdict(None)
+
+        def_states: Dict[str, set[SDFGState]] = {}
+
+        def_states_phi: Dict[str, set[SDFGState]] =  {}
 
         # initialize phi_nodes and var_reads
         for state in sdfg.states():
@@ -170,63 +174,7 @@ class ArrayFission(ppl.Pass):
                 last_defs[original_name] = {}
             last_defs[original_name][state] = new_def
 
-        # first condition then assignment
-        # recursively traverse the state machine and collect the path constraints until the definition of the variable is reached
-        def collect_path_constraints(state: SDFGState, variable: str, orig_var: str, visited_states=[]) -> sympy.And:
-
-            if phi_nodes[state].get(orig_var) or sdfg.in_degree(state) == 0:
-                return sympy.And(True)
-
-            no_path = True
-            condition = sympy.Or(False)
-            for edge in sdfg.in_edges(state):
-                if not (variable is last_defs[orig_var][edge.src] and edge.src not in visited_states):
-                    continue
-
-                curr_condition = sympy.And(edge.data.condition_sympy(), collect_path_constraints(
-                    edge.src, variable, orig_var, visited_states + [state]))
-
-                # there is an assignment to a symbol that is part of the incoming constraints so we omit the constraint
-                if (any(s in curr_condition.free_symbols for s in symbol_access_sets[edge][1]) or
-                    any(s in curr_condition.free_symbols for s in symbol_access_sets[state][1]) or
-                        any(s in curr_condition.free_symbols for s in access_sets[state][1])):
-                    continue
-
-                condition = sympy.Or(condition, curr_condition)
-                no_path = False
-            if no_path:
-                condition = sympy.And(True)
-
-            return condition
         
-        def custom_comparator(graph,immediate_dominators, a, b, start):
-            a_to_b = nx.has_path(graph, a, b)
-            b_to_a = nx.has_path(graph, b, a)
-            if a_to_b is b_to_a:
-                i = 0
-                current_node = a
-                while(True):
-                    if current_node is start:
-                        break
-                    current_node = immediate_dominators[current_node]
-                    i +=1
-                j = 0
-                current_node = b
-                while(True):
-                    if current_node is start:
-                        break
-                    current_node = immediate_dominators[current_node]
-                    j +=1
-                return i - j
-            elif a_to_b:
-                return - 1
-            else:
-                return 1
-            
-        keyfunction = functools.cmp_to_key(lambda x,y: custom_comparator(sdfg.nx, immediate_dominators, x,y, sdfg.start_state))
-
-        ordered_states = sdfg.states()
-        ordered_states.sort(key=keyfunction)
 
         # insert phi nodes
         for var in anames:
@@ -251,6 +199,8 @@ class ArrayFission(ppl.Pass):
                         defining_states.add(state)
                         break
 
+            def_states[var] = defining_states.copy()
+
             while (defining_states):
                 current_state = next(iter(defining_states))
                 dominance_frontier = dominance_frontiers[current_state]
@@ -271,6 +221,13 @@ class ArrayFission(ppl.Pass):
 
                 defining_states.remove(current_state)
 
+            for state, phi_dict in phi_nodes.items():
+                if var not in phi_dict.keys():
+                    continue
+                if var not in def_states_phi.keys():
+                    def_states_phi[var] = set()
+                def_states_phi[var].add(state)
+
         for loopheader, write_dict in loop_write_approximation.items():
             if loopheader not in sdfg.states():
                 continue
@@ -287,6 +244,9 @@ class ArrayFission(ppl.Pass):
                         "descriptor": None,
                         "path_conditions": {}
                     }
+                    if var not in def_states_phi.keys():
+                        def_states_phi[var] = set()
+                    def_states_phi[var].add(loopheader)
 
         # traverse the dominator tree depth first and rename all variables
         # FIXME: rename all edges in the memlet path, right now only incoming edges are renamed
@@ -383,96 +343,164 @@ class ArrayFission(ppl.Pass):
                 continue
             phi_dict = phi_nodes[state]
             for original_var, phi_node in phi_dict.items():
-                #sdfg.view("cloudsc_debug")
                 newname = phi_node["name"]
                 parameters = phi_node["variables"]
 
-                candidate_states = sdfg.states()
-                if not any(s in state_reach[state] or s is state for s in var_reads[newname]):
-                    candidate_states = []
-                    dfs_generator = sdutil.dfs_conditional(sdfg,
+                # TODO: maybe use the generator directly the reached_by_def list is good for debugging purposes
+                reached_by_def = []
+                dfs_generator = sdutil.dfs_conditional(sdfg,
                                        sources=[state],
-                                       condition=lambda parent, child: child not in dominators[state])
-                    for other_state in dfs_generator:
-                        candidate_states.append(other_state)
+                                       condition=lambda parent, child: parent is state or (parent not in def_states_phi[original_var] and parent not in def_states[original_var]))
+                for other_state in dfs_generator:
+                    reached_by_def.append(other_state)
+
+                
+                candidate_states = sdfg.states()
+                is_read = True
+                overwriting_loop = False
+                # if the variable defined by the phi node is read by any other state we rename the whole sdfg
+                # if not we only "rename" all the states that are reachable by the defined variable
+
+
+                
                 # check if the phi node belongs to a loopheader that completely overwrites the array and the loop does not read from the array defined by the phi node
                 # if so, only rename nodes in the loop body and nodes reached by the loopheader
-                elif (state in loops.keys() and
+                if (state in loops.keys() and
                     (state in loop_write_approximation.keys() and
                      original_var in loop_write_approximation[state].keys() and
                      loop_write_approximation[state][original_var].subset.covers_precise(subsets.Range.from_array(sdfg.arrays[original_var])))):
 
-                    # TODO: only fission dfs_reachable states here too
                     _, _, loop_states, _, _ = loops[state]
                     # check if loop reads from outside the loop
                     # TODO: also check for interstate reads here
                     if not any(newname in [a.label for a in access_nodes[original_var][s][0]] for s in loop_states):
                         candidate_states = state_reach[state]
+                        overwriting_loop = True
+                elif not any(s in state_reach[state] or s is state for s in var_reads[newname]):
+                    candidate_states = reached_by_def
+                    is_read = False
+
+                rename_dict = {}
+                for parameter in parameters:
+                    rename_dict[parameter] = newname
+
+
+                for other_state in candidate_states:
+
+                    # rename all phi nodes and propagate
+                    if (not other_state is state and 
+                        other_state in phi_nodes.keys() and
+                        original_var in phi_nodes[other_state].keys()):
+
+                        other_phi_node = phi_nodes[other_state][original_var]
+                        new_variables = set()
+
+                        # if the variable defined by the other phi-node is in the parameters rename the variable
+                        if other_phi_node["name"] in parameters and is_read and not overwriting_loop:
+                            other_phi_node["name"] = newname
+
+                        # propagate parameter or variable defined by phi node to other phi nodes that can be reached by the definition
+                        if other_state in reached_by_def:
+                            if not is_read:
+                                new_variables.update(parameters)
+                            else:
+                                new_variables.add(newname)
+                        new_variables.update(other_phi_node["variables"])
+                        other_phi_node["variables"] = new_variables
+                        phi_nodes[other_state][original_var] = other_phi_node
+
+                    if is_read:
+                        if overwriting_loop and other_state not in loop_states:
+                            continue
+                        # rename all accesses to the parameters by accessnodes
+                        reads, writes = access_nodes[original_var][other_state]
+                        ans = reads.union(writes)
+                        for an in ans:
+                            if not an.data in parameters:
+                                continue
+                            rename_node(other_state, an, newname)
+
+                        # rename all accesses to the parameters by interstateedges
+                        other_accesses = access_sets[other_state]
+                        if original_var in other_accesses[0]:
+                            out_edges = sdfg.out_edges(other_state)
+                            for oedge in out_edges:
+                                oedge.data.replace_dict(rename_dict)
+                        
+
                     
 
                 
 
-                # iterate over all the states that read from the variable and rename the occurences
-                for other_state in candidate_states:
-                    reads, writes = access_nodes[original_var][other_state]
-                    ans = reads.union(writes)
-                    for an in ans:
-                        if not an.data in parameters:
-                            continue
-                        rename_node(other_state, an, newname)
+                # # iterate over all the states that read from the variable and rename the occurences
+                # if read:
+                #     for other_state in candidate_states:
+                #         reads, writes = access_nodes[original_var][other_state]
+                #         ans = reads.union(writes)
+                #         for an in ans:
+                #             if not an.data in parameters:
+                #                 continue
+                #             rename_node(other_state, an, newname)
 
-                # rename all the occurences in other phi nodes
-                for other_state in phi_nodes.keys():
-                    if other_state is state or not other_state in candidate_states:
-                        continue
-                    other_phi_dict = phi_nodes[other_state]
-                    if not original_var in other_phi_dict.keys():
-                        continue
-                    other_phi_node = other_phi_dict[original_var]
+                # # rename all the occurences in other phi nodes
+                # for other_state in phi_nodes.keys():
+                #     if other_state is state or not other_state in candidate_states:
+                #         continue
+                #     other_phi_dict = phi_nodes[other_state]
+                #     if not original_var in other_phi_dict.keys():
+                #         continue
+                #     other_phi_node = other_phi_dict[original_var]
 
-                    new_variables = set()
-                    if other_phi_node["name"] in parameters:
-                        other_phi_node["name"] = newname
+                #     new_variables = set()
 
+                #     # if the variable defined by the other phi-node is in the parameters rename the variable
+                #     if other_phi_node["name"] in parameters and read:
+                #         other_phi_node["name"] = newname
 
-                    for other_param in other_phi_node["variables"]:
-                        if other_param in parameters:
-                            new_variables.add(newname)
-                        else:
-                            new_variables.add(other_param)
-                    if newname in other_phi_node["variables"]:
-                        new_variables.update(parameters)
-                    other_phi_node["variables"] = new_variables
-                    phi_nodes[other_state][original_var] = other_phi_node
+                #     if other_state not in reached_by_def:
+                #         continue
+                #     if not read:
+                #         new_variables.update(parameters)
+                #     else:
+                #         new_variables.add(newname)
+                #     new_variables.update(other_phi_node["variables"])
+                #     other_phi_node["variables"] = new_variables
+                #     phi_nodes[other_state][original_var] = other_phi_node
 
-                # rename occurences in the interstate edges
-                rename_dict = {}
-                for parameter in parameters:
-                    rename_dict[parameter] = newname
-                for other_state in candidate_states:
-                    other_accesses = access_sets[other_state]
-                    if not original_var in other_accesses[0]:
-                        continue
-                    out_edges = sdfg.out_edges(other_state)
-                    for oedge in out_edges:
-                        oedge.data.replace_dict(rename_dict)
+                # # rename occurences in the interstate edges
+                # if read:
+                #     rename_dict = {}
+                #     for parameter in parameters:
+                #         rename_dict[parameter] = newname
+                #     for other_state in candidate_states:
+                #         other_accesses = access_sets[other_state]
+                #         if not original_var in other_accesses[0]:
+                #             continue
+                #         out_edges = sdfg.out_edges(other_state)
+                #         for oedge in out_edges:
+                #             oedge.data.replace_dict(rename_dict)
 
                 # update var_read
-                for parameter in parameters:
-                    read_remove = set()
-                    for other_state in var_reads[parameter]:
-                        if other_state in candidate_states:
-                            var_reads[newname].update({other_state})
-                            read_remove.add(other_state)
-                    var_reads[parameter].difference_update(read_remove)
-
+                # if a state read from the parameter it now reads from the variable defined by the current phi node
+                if is_read:
+                    for parameter in parameters:
+                        if parameter is newname:
+                            continue
+                        read_remove = set()
+                        for other_state in var_reads[parameter]:
+                            if other_state in candidate_states:
+                                var_reads[newname].update({other_state})
+                                read_remove.add(other_state)
+                        var_reads[parameter].difference_update(read_remove)
                 
                 current_remove = set(parameters)
                 current_remove.discard(newname)
                 to_remove = to_remove.union(current_remove)
-                # TODO: In the case where the renamed states are not all states this is wrong
-                definitions[original_var] = definitions[original_var] - set(parameters)
 
+                # remove the phi-node if it is not an overwriting loop. If the latter is the case we keep it such that
+                # no definition is propagated past this phi node
+                if not overwriting_loop:
+                    def_states_phi[original_var].remove(state)
             del phi_nodes[state]
         for parameter in to_remove:
             try:
@@ -480,9 +508,6 @@ class ArrayFission(ppl.Pass):
             except:
                 continue
 
-        # import pprint
-        # print("phi_nodes")
-        # pprint.pprint(phi_nodes)
 
         definitions.clear()
         for var,an_dict in access_nodes.items():
