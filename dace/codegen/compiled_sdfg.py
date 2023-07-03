@@ -319,7 +319,7 @@ class CompiledSDFG(object):
     def _get_error_text(self, result: Union[str, int]) -> str:
         if self.has_gpu_code:
             if isinstance(result, int):
-                result = common.get_gpu_runtime_error_string(result)
+                result = common.get_gpu_runtime().get_error_string(result)
             return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
                     'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
         else:
@@ -345,7 +345,7 @@ class CompiledSDFG(object):
             if self.has_gpu_code:
                 # Optionally get errors from call
                 try:
-                    lasterror = common.get_gpu_runtime_last_error()
+                    lasterror = common.get_gpu_runtime().get_last_error_string()
                 except RuntimeError as ex:
                     warnings.warn(f'Could not get last error from GPU runtime: {ex}')
                     lasterror = None
