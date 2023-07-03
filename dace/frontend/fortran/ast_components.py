@@ -248,6 +248,12 @@ class InternalFortranAst:
             "Structure_Constructor": self.structure_constructor,
             "Component_Spec_List": self.component_spec_list,
             "Write_Stmt": self.write_stmt,
+            "Assumed_Shape_Spec_List": self.assumed_shape_spec_list,
+            "Allocate_Stmt": self.allocate_stmt,
+            "Allocation_List": self.allocation_list,
+            "Allocation": self.allocation,
+            "Allocate_Shape_Spec": self.allocate_shape_spec,
+            "Allocate_Shape_Spec_List": self.allocate_shape_spec_list,
         }
 
     def list_tables(self):
@@ -358,6 +364,30 @@ class InternalFortranAst:
         children = self.create_children(node)
         value_list = get_child(children, ast_internal_classes.Ac_Value_List_Node)
         return ast_internal_classes.Array_Constructor_Node(value_list=value_list.value_list)
+
+    def allocate_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Allocate_Stmt_Node(allocation_list=children[1])
+
+    def allocation_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return children
+
+    def allocation(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Name_Node)
+        shape = get_child(children, ast_internal_classes.Allocate_Shape_Spec_List)
+        return ast_internal_classes.Allocation_Node(name=name, shape=shape)
+
+    def allocate_shape_spec_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Allocate_Shape_Spec_List(shape_list=children)
+
+    def allocate_shape_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        if len(children) != 2:
+            raise NotImplementedError("Only simple allocate shape specs are supported")
+        return children[1]
 
     def structure_constructor(self, node: FASTNode):
         children = self.create_children(node)
@@ -488,6 +518,10 @@ class InternalFortranAst:
 
     def declaration_type_spec(self, node: FASTNode):
         raise NotImplementedError("Declaration type spec is not supported yet")
+        return node
+
+    def assumed_shape_spec_list(self, node: FASTNode):
+
         return node
 
     def type_declaration_stmt(self, node: FASTNode):
