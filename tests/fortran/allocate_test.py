@@ -1,4 +1,4 @@
-# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
 from fparser.common.readfortran import FortranFileReader
