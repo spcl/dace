@@ -11,6 +11,8 @@ import json
 from glob import glob
 from subprocess import run, PIPE, Popen, check_output
 import cupy as cp
+from sympy.parsing.sympy_parser import parse_expr
+import re
 
 import dace
 from dace.config import Config
@@ -79,6 +81,60 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> 
         utils.normalize_offsets(sdfg)
 
     return sdfg
+
+
+def generate_arguments_fortran(program: str, rng: np.random.Generator, params: ParametersProvider) -> Dict[str, Union[Number, np.ndarray]]:
+    source = read_source(program)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+            cwd = os.getcwd()
+            os.chdir(tmp_dir)
+            program_name = f"{program}_routine"
+            f2py.compile(source, modulename=program_name, verbose=False, extension='.f90')
+            sys.path.append(tmp_dir)
+            module = import_module(program_name)
+            doc_str = module.vert_loop_10_routine.__doc__.split('\n')
+
+            while doc_str[0][0:4] != '----':
+                doc_str.pop(0)
+            doc_str.pop(0)
+
+            arguments = {}
+            while doc_str[0] != '':
+                line = doc_str.pop(0)
+                if line.split(': input ')[1] in ['float', 'int']:
+                    arguments[line.split(':')[0]] = (line.split(': input ')[1], 1)
+                else:
+                    matches = re.search(r'array\(\'(d|i)\'\) with bounds \(([a-z,0-9 +-]*)\)', line)
+                    if matches is not None:
+                        size_str = matches.group(2)
+                        type_str = 'int' if matches.group(1) == 'i' else 'float'
+                        arguments[line.split(':')[0]] = (type_str, size_str.split(','))
+                    else:
+                        print(f"WARNING: not matches for bounds found for line '{line}'")
+
+            fortran_arguments = {}
+            for arg_name, (arg_type, arg_dim) in arguments.items():
+                if arg_dim == 1:
+                    if arg_name in params.get_dict().keys():
+                        fortran_arguments[arg_name] = params[arg_name]
+                    else:
+                        if arg_type == 'float':
+                            fortran_arguments[arg_name] = rng.random()
+                        else:
+                            fortran_arguments[arg_name] = rng.integers(0, 2, (1), dtype=np.int32)
+                else:
+                    # evaluate the dimension using the given parameters
+                    for index, dim in enumerate(arg_dim):
+                        sympy_expr = parse_expr(dim.upper())
+                        print(dim, sympy_expr)
+                        arg_dim[index] = int(sympy_expr.evalf(subs=params.get_dict()))
+                    if arg_type == 'float':
+                        fortran_arguments[arg_name] = rng.random(arg_dim)
+                    else:
+                        fortran_arguments[arg_name] = rng.integers(0, 2, arg_dim, dtype=np.int32)
+
+            print(fortran_arguments)
+            os.chdir(cwd)
 
 
 # Copied from tests/fortran/cloudsc.py
