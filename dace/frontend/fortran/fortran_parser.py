@@ -213,7 +213,6 @@ class AST_translator:
                                    strides=strides,
                                    transient=transient)
 
-        #raise NotImplementedError("Fortran allocate statements are not implemented yet")
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG):
         #TODO implement
