@@ -16,7 +16,7 @@ import astunparse
 import warnings
 from dace.sdfg.graph import Edge
 
-from dace.sdfg.work_depth_analysis import get_uuid, get_domtree, backedges as get_backedges
+from dace.sdfg.work_depth_analysis.helpers import get_uuid, get_domtree, backedges as get_backedges
 
 
 def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
