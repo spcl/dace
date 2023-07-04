@@ -521,7 +521,6 @@ class InternalFortranAst:
         return node
 
     def assumed_shape_spec_list(self, node: FASTNode):
-
         return node
 
     def type_declaration_stmt(self, node: FASTNode):
