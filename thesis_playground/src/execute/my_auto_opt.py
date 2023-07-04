@@ -12,7 +12,8 @@ from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_f
 
 # Transformations
 from dace.sdfg.nodes import MapEntry
-from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop
+from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop, \
+                                         MapExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf, SwapLoopOrder
 from dace.transformation import helpers as xfh
 
@@ -90,6 +91,7 @@ def auto_optimize(sdfg: SDFG,
             xfh.split_interstate_edges(s)
         if program is not None:
             save_graph(sdfg, program, "after_splitting_interstate_edges")
+        # l2ms = apply_transformation_stepwise(sdfg, [LoopToMap, RefineNestedAccess], program, "loop_to_map")
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
@@ -311,26 +313,32 @@ def make_klev_loops_again(sdfg: SDFG):
             xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
 
 
-def apply_transformation_stepwise(sdfg: SDFG, transformation: dace.transformation.transformation.TransformationBase,
-                                  program: str, description: str):
+def apply_transformation_stepwise(sdfg: SDFG,
+                                  transformations: List[dace.transformation.transformation.TransformationBase],
+                                  program: str, description: str) -> int:
     """
     Applies the given transformation repeteadetly and saves the graph after each applying.
 
     :param sdfg: The SDFG to apply the transformations on
     :type sdfg: SDFG
     :param transformation: The transformation to apply
-    :type transformation: dace.transformation.transformation.TransformationBase
+    :type transformation: List[dace.transformation.transformation.TransformationBase]
     :param program: The name of the program, used to determine the folder when saving the graph.
     :type program: str
     :param description: Description used when saving the graph. It will be called after_<description>
     :type description: str
+    :return: Number of transformations applied
+    :rtype: int
     """
-    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[transformation], permissive=True)]
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations, permissive=True)]
+    count = 0
     while len(xforms) > 1:
+        count += 1
         print(f"[my_auto_opt::apply_transformation_stepwise] apply {xforms[0]}")
         xforms[0].apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                         sdfg.sdfg_list[xforms[0].sdfg_id])
         save_graph(sdfg, program, f"after_{description}")
+    return count
 
 
 def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, program: Optional[str] = None):
@@ -354,7 +362,7 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, progr
         save_graph(sdfg, program, "after_map_collapse")
 
     # Apply TrivialMapElimination before Fusion to avoid problems with maps overt KLON=1
-    sdfg.apply_transformations_repeated([TrivialMapElimination], validate_all=True)
+    sdfg.apply_transformations_repeated([TrivialMapElimination])
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
 
@@ -364,7 +372,14 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, progr
 
     # TODO: Does not yet fuse all KLEV maps
     # Try to fuse maps -> want all KLEV maps fused into one
-    sdfg.apply_transformations_repeated([MapFusion], validate_all=True)
+    sdfg.apply_transformations_repeated([MapFusion])
     if program is not None:
         save_graph(sdfg, program, "after_map_fusion")
 
+    sdfg.apply_transformations_repeated([MapExpansion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_expansion")
+
+    sdfg.apply_transformations_repeated([MapFusion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_fusion")
