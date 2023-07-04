@@ -3,6 +3,8 @@ import dace
 KLEV = dace.symbol('KLEV')
 NBLOCKS = dace.symbol('NBLOCKS')
 NCLV = dace.symbol('NCLV')
+NCLDQL = dace.symbol('NCLDQL')
+NCLDQI = dace.symbol('NCLDQI')
 
 
 @dace.program
@@ -15,8 +17,6 @@ def mwe_memlet_range(
     for jn in dace.map[0:NBLOCKS]:
         for jk in range(KLEV):
             if inp2[jn, jk] > 0.5:
-                out1[jn, jk] = inp1[jn, jk] + inp3[jn, jk, 3]
+                out1[jn, jk] = inp1[jn, jk] + inp3[jn, jk, NCLDQL]
             else:
-                out1[jn, jk] = inp1[jn, jk] + inp3[jn, jk, 4]
-
-
+                out1[jn, jk] = inp1[jn, jk] + inp3[jn, jk, NCLDQI]
