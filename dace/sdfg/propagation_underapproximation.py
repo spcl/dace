@@ -78,9 +78,9 @@ class SeparableMemlet(MemletPattern):
                     if isinstance(expr[dim], symbolic.SymExpr):
                         free_symbols += expr[dim].expr.free_symbols
                     elif isinstance(expr[dim], tuple):
-                        free_symbols += expr[dim][0].expr.free_symbols if isinstance(expr[dim][0], symbolic.SymExpr) else [expr[dim][0]]
-                        free_symbols += expr[dim][1].expr.free_symbols if isinstance(expr[dim][1], symbolic.SymExpr) else [expr[dim][1]]
-                        free_symbols += expr[dim][2].expr.free_symbols if isinstance(expr[dim][2], symbolic.SymExpr) else [expr[dim][2]]
+                        free_symbols += expr[dim][0].expr.free_symbols if isinstance(expr[dim][0], symbolic.SymExpr) else list(pystr_to_symbolic(expr[dim][0]).expand().free_symbols)
+                        free_symbols += expr[dim][1].expr.free_symbols if isinstance(expr[dim][1], symbolic.SymExpr) else list(pystr_to_symbolic(expr[dim][1]).expand().free_symbols)
+                        free_symbols += expr[dim][2].expr.free_symbols if isinstance(expr[dim][2], symbolic.SymExpr) else list(pystr_to_symbolic(expr[dim][2]).expand().free_symbols)
                     else:
                         free_symbols += [expr[dim]]
                     
@@ -182,9 +182,14 @@ class AffineSMemlet(SeparableMemletPattern):
             elif isinstance(dexpr, tuple) and len(dexpr) == 3:  # Affine range
                 subexprs = [dexpr[0], dexpr[1]]
                 step = dexpr[2]
+                # if the range does not represent a single index return False
+                # TODO: remove this for more precise analyisis
+                if not subexprs[0] == subexprs[1] or step != 1:
+                    return False
 
             if subexprs is None:  # Something else
                 return False
+            
 
             for i, subexpr in enumerate(subexprs):
                 if not issymbolic(subexpr):
@@ -287,46 +292,51 @@ class AffineSMemlet(SeparableMemletPattern):
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:
             result_begin, result_end = result_end, result_begin
+        
+        result_skip = self.multiplier * node_rs
+        result_tile = 1
 
-        # TODO: What is this??? Makes no sense for underapproximation!! Also why is 1 added to re-rb
+        # TODO: Okay this is basically for cases like tiling, we can ignore this for now
         # Special case: i:i+stride for a begin:end:stride range
-        if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
-            return (node_rb, node_re, 1, 1)
+        # if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
+        #     return (node_rb, node_re, 1, 1)
 
         # Experimental
         # This should be using sympy.floor
-        memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
-        memlet_rlen = memlet_start_pts.expand() * rt
-        interval_len = (result_end - result_begin + 1)
-        num_elements = node_rlen * memlet_rlen
+        # memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
+        # memlet_rlen = memlet_start_pts.expand() * rt
+        # interval_len = (result_end - result_begin + 1)
+        # num_elements = node_rlen * memlet_rlen
 
-        if (interval_len == num_elements or interval_len.expand() == num_elements):
-            # Continuous access
-            result_skip = 1
-            result_tile = 1
-        else:
-            if rt == 1:
-                result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
-                try:
-                    if result_skip < 1:
-                        result_skip = 1
-                except:
-                    pass
-                result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
-            else:
-                candidate_skip = rs
-                candidate_tile = rt * node_rlen
-                candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-                if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)) == candidate_skip:
-                    result_skip = rs
-                    result_tile = rt * node_rlen
-                else:
-                    result_skip = rs / node_rlen
-                    result_tile = rt
+        # if (interval_len == num_elements or interval_len.expand() == num_elements):
+        #     # Continuous access
+        #     result_skip = 1
+        #     result_tile = 1
+        # else:
+        #     if rt == 1:
+        #         result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
+        #         try:
+        #             if result_skip < 1:
+        #                 result_skip = 1
+        #         except:
+        #             pass
+        #         result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
+        #     else:
+        #         candidate_skip = rs
+        #         candidate_tile = rt * node_rlen
+        #         candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
+        #         if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)) == candidate_skip:
+        #             result_skip = rs
+        #             result_tile = rt * node_rlen
+        #         else:
+        #             result_skip = rs / node_rlen
+        #             result_tile = rt
 
-            if result_skip == result_tile or result_skip == 1:
-                result_skip = 1
-                result_tile = 1
+        #     if result_skip == result_tile or result_skip == 1:
+        #         result_skip = 1
+        #         result_tile = 1
+
+
 
         result_begin = simplify(result_begin)
         result_end = simplify(result_end)
@@ -401,30 +411,35 @@ class ConstantSMemlet(SeparableMemletPattern):
         if len(dim_exprs) > 1: return False
         dexpr = dim_exprs[0]
 
-        # Create a wildcard that excludes current map's parameters
-        cst = sympy.Wild('cst', exclude=variable_context[-1])
+        free_symbols = [expr.free_symbols for expr in dexpr]
+        for var in variable_context[-1]:
+            if var in free_symbols:
+                return False
 
-        # Range case
-        if isinstance(dexpr, tuple) and len(dexpr) == 3:
-            # Try to match a constant expression for the range
-            for rngelem in dexpr:
-                if dtypes.isconstant(rngelem):
-                    continue
+        # # Create a wildcard that excludes current map's parameters
+        # cst = sympy.Wild('cst', exclude=variable_context[-1] + list(variable_context[-2]))
 
-                matches = rngelem.match(cst)
-                if matches is None or len(matches) != 1:
-                    return False
-                if not matches[cst].is_constant():
-                    return False
+        # # Range case
+        # if isinstance(dexpr, tuple) and len(dexpr) == 3:
+        #     # Try to match a constant expression for the range
+        #     for rngelem in dexpr:
+        #         if dtypes.isconstant(rngelem):
+        #             continue
 
-        else:  # Single element case
-            # Try to match a constant expression
-            if not dtypes.isconstant(dexpr):
-                matches = dexpr.match(cst)
-                if matches is None or len(matches) != 1:
-                    return False
-                if not matches[cst].is_constant():
-                    return False
+        #         matches = rngelem.match(cst)
+        #         if matches is None or len(matches) != 1:
+        #             return False
+        #         if not matches[cst].is_constant():
+        #             return False
+
+        # else:  # Single element case
+        #     # Try to match a constant expression
+        #     if not dtypes.isconstant(dexpr):
+        #         matches = dexpr.match(cst)
+        #         if matches is None or len(matches) != 1:
+        #             return False
+        #         if not matches[cst].is_constant():
+        #             return False
 
         return True
 
@@ -1066,6 +1081,9 @@ class UnderapproximateWrites(ppl.Pass):
         sdfg.remove_node(dummy_sink)
         
 
+        # TODO: the code here still propagates out of states with their ranges, 
+        # which should not be necessary since these memlets are already handled 
+        # with the loop propagation. Just merge the subsets of the bordermemlets instead
 
         # For each state, go through all access nodes corresponding to any in- or
         # out-connectors to and from this SDFG. Given those access nodes, collect
@@ -1107,9 +1125,6 @@ class UnderapproximateWrites(ppl.Pass):
                     if len(memlets) > 0:
                         params = []
                         ranges = []
-                        for symbol in state.ranges:
-                            params.append(symbol)
-                            ranges.append(state.ranges[symbol][0])
 
                         if len(params) == 0 or len(ranges) == 0:
                             params = ['__dace_dummy']
@@ -1151,10 +1166,6 @@ class UnderapproximateWrites(ppl.Pass):
 
                     params = []
                     ranges = []
-                    for symbol in state.ranges:
-                        params.append(symbol)
-                        ranges.append(state.ranges[symbol][0])
-
                     if len(params) == 0 or len(ranges) == 0:
                         params = ['__dace_dummy']
                         ranges = [(0, 0, 1)]
@@ -1177,8 +1188,6 @@ class UnderapproximateWrites(ppl.Pass):
                     else:
                         memlet.subset = subset
                     
-
-
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.
@@ -1242,60 +1251,10 @@ class UnderapproximateWrites(ppl.Pass):
                     in_memlet.src_subset = None
                     approximation_dict[edge] = in_memlet
                     continue
-
-                # handle subsets that aren't subsetlists yet
-                if isinstance(internal_memlet.subset, subsets.Subsetlist):
-                    _subsets = internal_memlet.subset.subset_list
-                else:
-                    _subsets = [internal_memlet.subset]
-
-                if isinstance(in_memlet.subset, subsets.Subsetlist):
-                    in_memlet.subset = in_memlet.subset.subset_list[0]
-                if isinstance(in_memlet.dst_subset, subsets.Subsetlist):
-                    in_memlet.dst_subset = in_memlet.dst_subset.subset_list[0]
-                if isinstance(in_memlet.src_subset, subsets.Subsetlist):
-                    in_memlet.src_subset = in_memlet.src_subset.subset_list[0]
                 
-                tmp_memlet = Memlet(
-                    data = internal_memlet.data,
-                    subset = internal_memlet.subset,
-                    other_subset= internal_memlet.other_subset,
-                    volume = internal_memlet.volume,
-                    dynamic=internal_memlet.dynamic,
-                    wcr=internal_memlet.wcr,
-                    wcr_nonatomic=internal_memlet.wcr_nonatomic,
-                    allow_oob=internal_memlet.allow_oob
-                )
+                self.unsqueeze_memlet_subsetList(internal_memlet, in_memlet, parent_sdfg)
 
-                for j, subset in enumerate(_subsets):
-                    if subset is None:
-                        continue
-                    tmp_memlet.subset = subset
-                    try:
-                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, in_memlet, False)
-                        # If no appropriate memlet found, use array dimension
-                        for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
-                            if rng[1] + 1 == s:
-                                unsqueezed_memlet.subset[i] = (unsqueezed_memlet.subset[i][0], s - 1, 1)
-                            if symbolic.issymbolic(unsqueezed_memlet.volume):
-                                if any(str(s) not in outer_symbols for s in unsqueezed_memlet.volume.free_symbols):
-                                    unsqueezed_memlet.subset = None
-                                    break
-                        subset = unsqueezed_memlet.subset
-                    except (ValueError, NotImplementedError):
-                        # In any case of memlets that cannot be unsqueezed fall back to empty subset
-                        subset = None
-                    _subsets[j] = subset
-
-                # if the unsqueezing failed for all the subsets of the border memlet return empty subset
-                if all(s is None for s in _subsets):
-                    in_memlet.subset = None
-                    in_memlet.src_subset = None
-                    approximation_dict[edge] = in_memlet
-                else:
-                    in_memlet = unsqueezed_memlet
-                    in_memlet.subset = subsets.Subsetlist(_subsets)
-                    approximation_dict[edge] = in_memlet
+                approximation_dict[edge] = in_memlet
                 
         for edge in parent_state.out_edges(nsdfg_node):
             out_memlet = approximation_dict[edge]
@@ -1307,56 +1266,61 @@ class UnderapproximateWrites(ppl.Pass):
                     out_memlet.dst_subset = None
                     approximation_dict[edge] = out_memlet
                     continue
-                if isinstance(internal_memlet.subset, subsets.Subsetlist):
-                    _subsets = internal_memlet.subset.subset_list
-                else:
-                    _subsets = [internal_memlet.subset]
 
-                if isinstance(out_memlet.subset, subsets.Subsetlist):
-                    out_memlet.subset = out_memlet.subset.subset_list[0]
-                if isinstance(out_memlet.dst_subset, subsets.Subsetlist):
-                    out_memlet.dst_subset = out_memlet.dst_subset.subset_list[0]
-                if isinstance(out_memlet.src_subset, subsets.Subsetlist):
-                    out_memlet.src_subset = out_memlet.src_subset.subset_list[0]
-                    
-                tmp_memlet = Memlet(
-                    data = internal_memlet.data,
-                    subset = internal_memlet.subset,
-                    other_subset= internal_memlet.other_subset,
-                    volume = internal_memlet.volume,
-                    dynamic=internal_memlet.dynamic,
-                    wcr=internal_memlet.wcr,
-                    wcr_nonatomic=internal_memlet.wcr_nonatomic,
-                    allow_oob=internal_memlet.allow_oob
-                )
+                self.unsqueeze_memlet_subsetList(internal_memlet, out_memlet, parent_sdfg)
 
-                for j, subset in enumerate(_subsets):
-                    if subset is None:
-                        continue
-                    tmp_memlet.subset = subset
-                    try:
-                        unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, out_memlet, False)
-                        # If no appropriate memlet found, use array dimension
-                        for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
-                            if rng[1] + 1 == s:
-                                unsqueezed_memlet.subset[i] = (unsqueezed_memlet.subset[i][0], s - 1, 1)
-                            if symbolic.issymbolic(unsqueezed_memlet.volume):
-                                if any(str(s) not in outer_symbols for s in unsqueezed_memlet.volume.free_symbols):
-                                    unsqueezed_memlet.subset = None
-                        subset = unsqueezed_memlet.subset
-                    except (ValueError, NotImplementedError):
-                        # In any case of memlets that cannot be unsqueezed (i.e.,
-                        # reshapes), use dynamic unbounded memlets.
-                        subset = None
-                    _subsets[j] = subset
+                approximation_dict[edge] = out_memlet
 
-                if all(s is None for s in _subsets):
-                    out_memlet.subset = None
-                    out_memlet.dst_subset = None
-                else:
-                    out_memlet = unsqueezed_memlet
-                    out_memlet.subset = subsets.Subsetlist(_subsets)
-                    approximation_dict[edge] = out_memlet
+    def unsqueeze_memlet_subsetList(self, internal_memlet: Memlet, external_memlet: Memlet, parent_sdfg: dace.SDFG):
+        """helper method that tries to unsqueeze a memlet in a nested SDFG. If it fails it falls back to an empty memlet."""
+
+        from dace.transformation.helpers import unsqueeze_memlet
+
+        if isinstance(external_memlet.subset, subsets.Subsetlist):
+            external_memlet.subset = external_memlet.subset.subset_list[0]
+        if isinstance(external_memlet.dst_subset, subsets.Subsetlist):
+            external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
+        if isinstance(external_memlet.src_subset, subsets.Subsetlist):
+            external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
+
+        if isinstance(internal_memlet.subset, subsets.Subsetlist):
+            _subsets = internal_memlet.subset.subset_list
+        else:
+            _subsets = [internal_memlet.subset]
+            
+        tmp_memlet = Memlet(
+            data = internal_memlet.data,
+            subset = internal_memlet.subset,
+            other_subset= internal_memlet.other_subset
+        )
+
+        for j, subset in enumerate(_subsets):
+            if subset is None:
+                continue
+            tmp_memlet.subset = subset
+            try:
+                unsqueezed_memlet = unsqueeze_memlet(tmp_memlet, external_memlet, False)
+                # If no appropriate memlet found fall back to empty subset
+                for i, (rng, s) in enumerate(zip(tmp_memlet.subset, parent_sdfg.arrays[unsqueezed_memlet.data].shape)):
+                    if rng[1] + 1 == s:
+                        unsqueezed_memlet.subset = None
+                        break
+
+                subset = unsqueezed_memlet.subset
+            except (ValueError, NotImplementedError):
+                # In any case of memlets that cannot be unsqueezed (i.e.,
+                # reshapes), use dynamic unbounded memlets.
+                subset = None
+            _subsets[j] = subset
+
+        if all(s is None for s in _subsets):
+            external_memlet.subset = None
+            external_memlet.dst_subset = None
+        else:
+            external_memlet = unsqueezed_memlet
+            external_memlet.subset = subsets.Subsetlist(_subsets)
+
+
 
 
     def reset_state_annotations(self, sdfg):
@@ -1404,7 +1368,7 @@ class UnderapproximateWrites(ppl.Pass):
             # if the state is again a loop head nested in the current loop
                 # call propagate_memlet_loop on the nested loop
 
-        # difference to propagate_memlets_nested_sdfg is that there are no border memlets
+        # TODO: change filter_subsets such that subsets are always propagated if the loop range is constant and not empty
 
         def filter_subsets(itvar: str, s_itvars: List[str], range: subsets.Range, memlet: Memlet):
             # if loop range is symbolic -> only propagate subsets that contain the iterator as a symbol
@@ -1463,6 +1427,7 @@ class UnderapproximateWrites(ppl.Pass):
         
         dominators = cfg.all_dominators(sdfg)
 
+        # make sure there is no break
         if any(begin not in dominators[s] and not begin is s for s in loop_states):
             return
         
@@ -1539,7 +1504,7 @@ class UnderapproximateWrites(ppl.Pass):
         loop_write_dict[loopheader] = border_memlets
 
 
-    def propagate_loop_subset(self, sdfg: dace.SDFG, memlets: List[Memlet], dst_memlet: Memlet, arr:dace.data.Array, itvar:str, rng:subsets.Subset ):
+    def propagate_loop_subset(self, sdfg: dace.SDFG, memlets: List[Memlet], dst_memlet: Memlet, arr:dace.data.Array, itvar:str, rng:subsets.Subset):
         if len(memlets) > 0:
             params = [itvar]
             ranges = [rng]
@@ -1552,6 +1517,8 @@ class UnderapproximateWrites(ppl.Pass):
             use_dst = True
             subset = self.propagate_subset(memlets, arr, params, rng, use_dst=use_dst).subset
 
+            if subset is None or not len(subset.subset_list):
+                return
             # If the border memlet already has a set range, compute the
             # union of the ranges to merge the subsets.
             if dst_memlet.subset is not None:
