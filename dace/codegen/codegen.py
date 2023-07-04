@@ -178,11 +178,6 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
                 shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
                 raise RuntimeError('SDFG serialization failed - files do not match')
 
-        # Run with the deserialized version
-        # NOTE: This means that all subsequent modifications to `sdfg`
-        # are not reflected outside of this function (e.g., library
-        # node expansion).
-        sdfg = sdfg2
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
