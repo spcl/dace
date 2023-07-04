@@ -1131,6 +1131,8 @@ class Subsetlist(Subset):
         return string
     
     def dims(self):
+        if not self.subset_list:
+            return 0
         return next(iter(self.subset_list)).dims()
 
     def offset(self, other, negative, indices=None):
