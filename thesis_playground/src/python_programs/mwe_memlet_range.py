@@ -4,6 +4,7 @@ KLEV = dace.symbol('KLEV')
 NBLOCKS = dace.symbol('NBLOCKS')
 NCLV = dace.symbol('NCLV')
 
+
 @dace.program
 def mwe_memlet_range(
         inp1: dace.float64[KLEV, NBLOCKS],

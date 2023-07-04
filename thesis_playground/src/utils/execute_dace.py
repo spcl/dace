@@ -11,8 +11,8 @@ import dace
 from execute.parameters import ParametersProvider
 from execute.data import set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
-                          compare_output, compare_output_all, copy_to_device, optimize_sdfg, copy_to_host, \
-                          print_non_zero_percentage
+                          compare_output, compare_output_all, optimize_sdfg
+from utils.gpu_general import copy_to_device, print_non_zero_percentage
 from measurements.flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurements.data import ProgramMeasurement
 from utils.print import print_with_time
