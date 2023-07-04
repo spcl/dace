@@ -497,7 +497,9 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join('--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch) for arch in hip_arch)
+            flags += ' ' + ' '.join(
+                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
+                for arch in hip_arch)
             options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
@@ -568,7 +570,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                         allocation_stream)
 
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
@@ -717,7 +719,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(dataname):
-            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
@@ -1449,7 +1452,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
                     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                       dtypes.AllocationLifetime.Persistent)
+                                                       dtypes.AllocationLifetime.Persistent,
+                                                       dtypes.AllocationLifetime.External)
                     # Non-free symbol dependent Arrays due to their shape
                     dependent_shape = (isinstance(data_desc, dt.Array) and not isinstance(data_desc, dt.View) and any(
                         str(s) not in self._frame.symbols_and_constants(sdfg)
@@ -1482,7 +1486,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     data_desc = sdfg.arrays[aname]
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                       dtypes.AllocationLifetime.Persistent)
+                                                       dtypes.AllocationLifetime.Persistent,
+                                                       dtypes.AllocationLifetime.External)
                     defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
