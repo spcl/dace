@@ -249,7 +249,6 @@ class ArrayFission(ppl.Pass):
                     def_states_phi[var].add(loopheader)
 
         # traverse the dominator tree depth first and rename all variables
-        # FIXME: rename all edges in the memlet path, right now only incoming edges are renamed
         dom_tree_dfs = dict_dfs(immediate_dominated)
         for current_state in dom_tree_dfs:
             # rename the phi nodes
@@ -322,13 +321,10 @@ class ArrayFission(ppl.Pass):
                 oedge.data.replace_dict(rename_dict)
 
         
-
-
         for state in sdfg.nodes():
             for anode in state.data_nodes():
                 if state.out_degree(anode)>0:
                     var_reads[anode.data].add(state)
-
         # Edges that read from arrays add to the source access sets
         array_names = sdfg.arrays.keys()
         for e in sdfg.edges():
@@ -356,13 +352,9 @@ class ArrayFission(ppl.Pass):
 
                 
                 candidate_states = sdfg.states()
+                loop_states = []
                 is_read = True
                 overwriting_loop = False
-                # if the variable defined by the phi node is read by any other state we rename the whole sdfg
-                # if not we only "rename" all the states that are reachable by the defined variable
-
-
-                
                 # check if the phi node belongs to a loopheader that completely overwrites the array and the loop does not read from the array defined by the phi node
                 # if so, only rename nodes in the loop body and nodes reached by the loopheader
                 if (state in loops.keys() and
@@ -373,18 +365,19 @@ class ArrayFission(ppl.Pass):
                     _, _, loop_states, _, _ = loops[state]
                     # check if loop reads from outside the loop
                     # TODO: also check for interstate reads here
-                    if not any(newname in [a.label for a in access_nodes[original_var][s][0]] for s in loop_states):
+                    if not any(newname in [a.label for a in access_nodes[original_var][s][0]] or s in var_reads[newname] for s in loop_states):
                         candidate_states = state_reach[state]
                         overwriting_loop = True
+                # if the variable defined by the phi node is read by any other state we rename the whole sdfg
+                # if not we only "rename" all the states that are reachable by the defined variable
                 elif not any(s in state_reach[state] or s is state for s in var_reads[newname]):
                     candidate_states = reached_by_def
                     is_read = False
 
+                # make a dictionary that maps every parameter to newname for the interstateEdges renaming
                 rename_dict = {}
                 for parameter in parameters:
                     rename_dict[parameter] = newname
-
-
                 for other_state in candidate_states:
 
                     # rename all phi nodes and propagate
