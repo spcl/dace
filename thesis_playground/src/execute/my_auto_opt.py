@@ -282,6 +282,7 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
             xform = outside_loop_transformations[0]
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
+            sdfg.apply_transformations_repeated([RefineNestedAccess], validate=validate, validate_all=validate_all)
 
         if program is not None:
             save_graph(sdfg, program, "after_outer_loop_to_map")
