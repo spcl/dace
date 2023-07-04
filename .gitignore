@@ -192,6 +192,12 @@ _build/
 /doc/source/config_schema.rst
 
 # Results
-results_v2
+thesis_playground/results_v2
 # Plots
-plots_v2
+thesis_playground/plots_v2
+**.sdfg
+thesis_playground/complete_results
+thesis_playground/data_analysis
+thesis_playground/playground_results
+thesis_playground/vert_loop_results
+thesis_playground/sdfg_gen_code
