@@ -1,6 +1,6 @@
 import dace as dc
 import numpy as np
-from dace.sdfg.work_depth_analysis.work_depth_analysis import analyze_sdfg, get_tasklet_work_depth
+from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth
 from dace.sdfg.work_depth_analysis.helpers import get_uuid
 import sympy as sp
 
