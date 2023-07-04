@@ -334,6 +334,14 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         callsite_stream.write('return __err;\n}\n', sdfg)
 
     def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
+        """
+        If external data descriptors are found in the SDFG (or any nested SDFGs),
+        this function will generate exported functions to (1) get the required memory size
+        per storage location (``__dace_get_external_memory_size_<STORAGE>``, where ``<STORAGE>``
+        can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
+        pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
+        """
+        
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
