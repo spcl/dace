@@ -9,8 +9,9 @@ from utils.print import print_with_time
 from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_performance, get_achieved_work, \
                       get_achieved_bytes, get_achieved_performance, get_runtime, get_cycles, get_all_actions
 from utils.ncu_report import IAction
-from utils.general import copy_to_device, get_programs_data, remove_build_folder, insert_heap_size_limit, get_inputs, \
+from utils.general import get_programs_data, remove_build_folder, insert_heap_size_limit, get_inputs, \
                           get_outputs, use_cache, enable_debug_flags
+from utils.gpu_general import copy_to_device
 from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, RNG_SEED
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider

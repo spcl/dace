@@ -13,8 +13,9 @@ from python_programs import vert_loop_7, vert_loop_7_1, vert_loop_7_1_no_klon, v
                             vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset, small_wip, \
                             small_wip_2, small_wip_3, small_wip_4, mwe_memlet_range, vert_loop_10
 from execute.parameters import ParametersProvider
-from utils.general import optimize_sdfg, copy_to_device, use_cache, enable_debug_flags, get_programs_data, \
+from utils.general import optimize_sdfg, use_cache, enable_debug_flags, get_programs_data, \
                           read_source, get_fortran, remove_build_folder, reset_graph_files, print_compare_matrix
+from utils.gpu_general import copy_to_device
 from utils.ncu import get_all_actions_filtered, get_achieved_performance, get_peak_performance, get_achieved_bytes, \
                       get_runtime
 from utils.paths import get_thesis_playground_root_dir, get_playground_results_dir

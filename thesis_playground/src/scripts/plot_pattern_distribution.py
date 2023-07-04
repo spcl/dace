@@ -10,8 +10,9 @@ from execute.parameters import ParametersProvider
 from execute.data import set_input_pattern
 from utils.print import print_with_time
 from utils.paths import get_thesis_playground_root_dir
-from utils.general import get_inputs, get_outputs, copy_to_device, get_programs_data, read_source, get_sdfg, \
+from utils.general import get_inputs, get_outputs, get_programs_data, read_source, get_sdfg, \
                           optimize_sdfg
+from utils.gpu_general import copy_to_device
 from utils.execute_dace import RNG_SEED
 from utils.plot import save_plot, rotate_xlabels, get_new_figure
 from scripts import Script
