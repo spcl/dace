@@ -249,7 +249,7 @@ required:
 
                     openmp_sections:
                         type: bool
-                        default: true
+                        default: false
                         title: Use OpenMP sections
                         description: >
                             If set to true, multiple connected components will
@@ -394,6 +394,25 @@ required:
                             any byte value.
                             For more information, see ``cudaMemPoolAttrReleaseThreshold`` in the CUDA toolkit
                             documentation.
+
+                    block_size_limit:
+                        type: int
+                        title: Maximum thread-block size in code generation
+                        default: 1024
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified overall larger block size. Default value is derived from hardware
+                            limits on common GPUs.
+
+                    block_size_lastdim_limit:
+                        type: int
+                        title: Maximum last dimension thread-block size in code generation
+                        default: 64
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified larger block size in the third dimension. Default value is
+                            derived from hardware limits on common GPUs.
+
 
             #############################################
             # General FPGA flags

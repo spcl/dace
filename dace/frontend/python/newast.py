@@ -11,7 +11,7 @@ import time
 from os import path
 import warnings
 from numbers import Number
-from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
+from typing import Any, Dict, Iterable, List, Set, Tuple, Union, Callable, Optional
 import operator
 
 import dace
@@ -254,7 +254,7 @@ def parse_dace_program(name: str,
     except Exception:
         # Print the offending line causing the exception
         li = visitor.current_lineinfo
-        print('Exception raised while parsing DaCe program:\n' f'  in File "{li.filename}", line {li.start_line}')
+        print(f'Exception raised while parsing DaCe program:\n  in File "{li.filename}", line {li.start_line}')
         lines = preprocessed_ast.src.split('\n')
         lineid = li.start_line - preprocessed_ast.src_line - 1
         if lineid >= 0 and lineid < len(lines):
@@ -601,6 +601,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
+
     def __init__(self,
                  visitor,
                  defined,
@@ -2166,8 +2167,15 @@ class ProgramVisitor(ExtNodeVisitor):
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
         for s in expr.free_symbols:
-            if s.name in self.defined and not isinstance(self.defined[s.name], data.Data):
-                repldict[s] = self.defined[s.name]
+            if s.name in self.defined:
+                repl = self.defined[s.name]
+                # Convert strings to SymPy symbols (for SymPy 1.12)
+                if isinstance(repl, str):
+                    repl = sympy.Symbol(repl)
+                # Filter out callables and iterables (for SymPy 1.12)
+                elif repl is None or isinstance(repl, (Callable, Iterable)):
+                    continue
+                repldict[s] = repl
         return expr.subs(repldict)
 
     def visit_For(self, node: ast.For):
@@ -3065,11 +3073,11 @@ class ProgramVisitor(ExtNodeVisitor):
                           arr_type: data.Data = None):
 
         if name in self.sdfg.arrays:
-            return (name, None)
+            return (name, rng)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif name in self.variables:
-            return (self.variables[name], None)
+            return (self.variables[name], rng)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
         else:
@@ -4618,7 +4626,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to find sub-SDFG attribute
         func = oprepo.Replacements.get_attribute(type(arr), node.attr)
         if func is not None:
-            return func(self, self.sdfg, self.last_state, result)
+            # A new state is likely needed here, e.g., for transposition (ndarray.T)
+            self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+            self.last_state.set_default_lineinfo(self.current_lineinfo)
+            result = func(self, self.sdfg, self.last_state, result)
+            self.last_state.set_default_lineinfo(None)
+            return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
@@ -4862,6 +4875,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
+
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None

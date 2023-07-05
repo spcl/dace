@@ -15,7 +15,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
-from dace.sdfg import nodes as nd, graph as gr
+from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
@@ -461,7 +461,7 @@ def merge_maps(
     inner_map_exit: nd.MapExit,
     param_merge: Callable[[ParamsType, ParamsType], ParamsType] = lambda p1, p2: p1 + p2,
     range_merge: Callable[[RangesType, RangesType], RangesType] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges)
-) -> (nd.MapEntry, nd.MapExit):
+) -> Tuple[nd.MapEntry, nd.MapExit]:
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """
 
@@ -1501,13 +1501,19 @@ def is_fpga_kernel(sdfg, state):
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
+    at_least_one_fpga_array = False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-    return True
+
+    return at_least_one_fpga_array
 
 
 def postdominators(
@@ -1645,3 +1651,149 @@ def check_sdfg(sdfg: SDFG):
                 assert node.sdfg.parent_sdfg is sdfg
                 assert node.sdfg.parent.parent is sdfg
                 check_sdfg(node.sdfg)
+
+
+def normalize_offsets(sdfg: SDFG):
+    """
+    Normalizes descriptor offsets to 0 and adjusts the Memlet subsets accordingly. This operation is done in-place.
+
+    :param sdfg: The SDFG to be normalized.
+    """
+
+    import ast
+    from dace.frontend.python import astutils
+
+    for sd in sdfg.all_sdfgs_recursive():
+        offsets = dict()
+        for arrname, arrdesc in sd.arrays.items():
+            if not isinstance(arrdesc, dt.Array):  # NOTE: Does this work with Views properly?
+                continue
+            if any(o != 0 for o in arrdesc.offset):
+                offsets[arrname] = arrdesc.offset
+                arrdesc.offset = [0] * len(arrdesc.shape)
+        if offsets:
+            for e in sd.edges():
+                memlets = e.data.get_read_memlets(sd.arrays)
+                for m in memlets:
+                    if m.data in offsets:
+                        m.subset.offset(offsets[m.data], False)
+                for node in ast.walk(e.data.condition.code[0]):
+                    if isinstance(node, ast.Subscript):
+                        m = memlets.pop(0)
+                        subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                        assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                        node.slice = ast.copy_location(subscript.slice, node.slice)
+                e.data._cond_sympy = None
+                for k, v in e.data.assignments.items():
+                    vast = ast.parse(v)
+                    for node in ast.walk(vast):
+                        if isinstance(node, ast.Subscript):
+                            m = memlets.pop(0)
+                            subscript: ast.Subscript = ast.parse(str(m)).body[0].value
+                            assert isinstance(node.value, ast.Name) and node.value.id == m.data
+                            node.slice = ast.copy_location(subscript.slice, node.slice)
+                    newv = astutils.unparse(vast)
+                    e.data.assignments[k] = newv
+                assert not memlets
+            for state in sd.states():
+                # NOTE: Ideally, here we just want to iterate over the edges. However, we need to handle both the
+                # subset and the other subset. Therefore, it is safer to traverse the Memlet paths.
+                for node in state.nodes():
+                    if isinstance(node, nd.AccessNode) and node.data in offsets:
+                        off = offsets[node.data]
+                        visited = set()
+                        for e0 in state.all_edges(node):
+                            for e1 in state.memlet_tree(e0):
+                                if e1 in visited:
+                                    continue
+                                visited.add(e1)
+                                if e1.data.data == node.data:
+                                    e1.data.subset.offset(off, False)
+                                else:
+                                    e1.data.other_subset.offset(off, False)
+
+
+def prune_symbols(sdfg: SDFG):
+    """
+    Prunes unused symbols from the SDFG and the NestedSDFG symbol mappings. This operation is done in place. See also
+    `dace.transformation.interstate.PruneSymbols`.
+
+    :param sdfg: The SDFG to have its symbols pruned.
+    """
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                prune_symbols(node.sdfg)
+                declared_symbols = set(node.sdfg.symbols.keys())
+                free_symbols = node.sdfg.free_symbols
+                defined_symbols = declared_symbols - free_symbols
+                for s in defined_symbols:
+                    del node.sdfg.symbols[s]
+                    if s in node.symbol_mapping:
+                        del node.symbol_mapping[s]
+
+
+def make_dynamic_map_inputs_unique(sdfg: SDFG):
+    for sd in sdfg.all_sdfgs_recursive():
+        dynamic_map_inputs = set(sd.arrays.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                repl_dict = {}
+                if isinstance(node, nd.MapEntry):
+                    # Find all dynamic map inputs
+                    for e in state.in_edges(node):
+                        if not e.dst_conn.startswith('IN_'):
+                            if e.dst_conn in dynamic_map_inputs:
+                                new_name = dt.find_new_name(e.dst_conn, dynamic_map_inputs)
+                                dynamic_map_inputs.add(new_name)
+                                repl_dict[e.dst_conn] = new_name
+                                e._dst_conn = new_name
+                            else:
+                                dynamic_map_inputs.add(e.dst_conn)
+                    if repl_dict:
+                        in_connectors = {
+                            repl_dict[n] if n in repl_dict else n: t
+                            for n, t in node.in_connectors.items()
+                        }
+                        node.in_connectors = in_connectors
+                        node.map.range.replace(repl_dict)
+                        state.scope_subgraph(node).replace_dict(repl_dict)
+                        propagation.propagate_memlets_scope(sd, state, state.scope_tree()[node])
+
+
+def get_thread_local_data(sdfg: SDFG) -> List[str]:
+    """ Returns a list of all data that are thread-local in the SDFG.
+
+    This method DOES NOT apply recursively to nested SDFGs. It is also does not take into account outer Maps.
+    
+    :param sdfg: The SDFG to check.
+    :return: A list of the names of all data that are thread-local in the SDFG.
+    """
+    # NOTE: We could exclude non-transient data here, but it is interesting to see if we find any non-transient data
+    # only inside a Map.
+    data_to_check = {name: None for name in sdfg.arrays.keys()}
+    for state in sdfg.nodes():
+        scope_dict = state.scope_dict()
+        for node in state.nodes():
+            if isinstance(node, nd.AccessNode):
+                # If the data was already removed from the candidated, continue
+                if node.data not in data_to_check:
+                    continue
+                # If the data is not in a scope, i.e., cannot be thread-local, remove it from the candidates
+                if scope_dict[node] is None:
+                    del data_to_check[node.data]
+                    continue
+                # If the data is in a Map ...
+                if isinstance(scope_dict[node], nd.MapEntry):
+                    # ... if we haven't seen the data yet, note down the scope
+                    if data_to_check[node.data] is None:
+                        data_to_check[node.data] = scope_dict[node]
+                    # ... if we have seen the data before, but in a different scope, remove it from the candidates
+                    elif data_to_check[node.data] != scope_dict[node]:
+                        del data_to_check[node.data]
+
+    result = list(data_to_check.keys())
+    for name in result:
+        if not sdfg.arrays[name].transient:
+            warnings.warn(f'Found thread-local data "{name}" that is not transient.')
+    return result
