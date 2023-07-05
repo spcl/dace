@@ -590,7 +590,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
-        
+
         sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
     def _modify_access_to_access(self,
@@ -764,8 +764,8 @@ class InlineTransients(transformation.SingleStateTransformation):
             if not desc.transient:
                 continue
             # Needs to be allocated in "Scope" or "Persistent" lifetime
-            if (desc.lifetime != dtypes.AllocationLifetime.Scope
-                    and desc.lifetime != dtypes.AllocationLifetime.Persistent):
+            if (desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.Persistent,
+                                      dtypes.AllocationLifetime.External)):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now
