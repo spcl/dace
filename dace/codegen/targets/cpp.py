@@ -257,33 +257,36 @@ def emit_memlet_reference(dispatcher,
         we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
-    tokens = memlet.data.split('.', 1)
-    desc = sdfg.arrays[tokens[0]]
-    if len(tokens) > 1:
-        current_edge = edge
-        while isinstance(desc, data.View):
-            src = state.memlet_path(current_edge)[0].src
-            assert isinstance(src, nodes.AccessNode)
-            desc = sdfg.arrays[src.data]
-            current_edge = next((edge for edge in state.in_edges_by_connector(src, 'views')), None)
-        if isinstance(desc, data.StructArray):
-            desc = desc.stype
-        desc = getattr(desc, tokens[1])
-    
     prefix = ''
-    if is_write:
-        if isinstance(edge.dst, nodes.AccessNode) and edge.dst_conn == edge.data.data:
-            struct_desc = sdfg.arrays[edge.dst.data]
-            prefix = f"{edge.dst.data}"
+    if edge is None:
+        desc = sdfg.arrays[memlet.data]
     else:
-        if isinstance(edge.src, nodes.AccessNode) and edge.src_conn == edge.data.data:
-            struct_desc = sdfg.arrays[edge.src.data]
-            prefix = f"{edge.src.data}"
-    if prefix:
-        if isinstance(struct_desc, data.View):
-            prefix += '->'
+        tokens = memlet.data.split('.', 1)
+        desc = sdfg.arrays[tokens[0]]
+        if len(tokens) > 1:
+            current_edge = edge
+            while isinstance(desc, data.View):
+                src = state.memlet_path(current_edge)[0].src
+                assert isinstance(src, nodes.AccessNode)
+                desc = sdfg.arrays[src.data]
+                current_edge = next((edge for edge in state.in_edges_by_connector(src, 'views')), None)
+            if isinstance(desc, data.StructArray):
+                desc = desc.stype
+            desc = getattr(desc, tokens[1])
+        
+        if is_write:
+            if isinstance(edge.dst, nodes.AccessNode) and edge.dst_conn == edge.data.data:
+                struct_desc = sdfg.arrays[edge.dst.data]
+                prefix = f"{edge.dst.data}"
         else:
-            prefix += '.'
+            if isinstance(edge.src, nodes.AccessNode) and edge.src_conn == edge.data.data:
+                struct_desc = sdfg.arrays[edge.src.data]
+                prefix = f"{edge.src.data}"
+        if prefix:
+            if isinstance(struct_desc, data.View):
+                prefix += '->'
+            else:
+                prefix += '.'
 
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
