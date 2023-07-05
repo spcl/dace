@@ -357,10 +357,7 @@ class IndexExtractor(NodeTransformer):
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
-        return ast_internal_classes.Array_Subscript_Node(
-            name=node.name,
-            indices=new_indices,
-        )
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -543,8 +540,8 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         i.lval, ast_internal_classes.Structure_Constructor_Node):
                     function_statement_name = i.lval.name
                     is_actually_function_statement = False
-                    # In Fortran, function statement are defined as scalar values, 
-                    # but called as arrays, so by identifiying that it is called as 
+                    # In Fortran, function statement are defined as scalar values,
+                    # but called as arrays, so by identifiying that it is called as
                     # a call_expr or structure_constructor, we also need to match
                     # the specification part and see that it is scalar rather than an array.
                     found = False
@@ -562,7 +559,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                     if is_actually_function_statement:
                         to_change.append([i.lval, i.rval])
                         new_exec.remove(i)
-                        
+
                     else:
                         #There are no function statements after the first one that isn't a function statement
                         break
