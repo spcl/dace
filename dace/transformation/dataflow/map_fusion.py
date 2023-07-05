@@ -111,10 +111,14 @@ class MapFusion(transformation.SingleStateTransformation):
                 # if num_occurrences > 1:
                 #     return False
             else:
+                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no AccesNode "
+                      f"after first map exit")
                 return False
         # Check map ranges
         perm = self.find_permutation(first_map_entry.map, second_map_entry.map)
         if perm is None:
+            print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no permutation found")
+            print(f"[MapFusion::can_be_applied] {first_map_entry.map.range} vs. {second_map_entry.map.range}")
             return False
 
         # Check if any intermediate transient is also going to another location
@@ -123,6 +127,8 @@ class MapFusion(transformation.SingleStateTransformation):
         # if any(e.dst != second_map_entry for n in transients_to_remove
         #        for e in graph.out_edges(n)):
         if any(graph.out_degree(n) > 1 for n in transients_to_remove):
+            print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected intermediate "
+                  f"transient going to another location")
             return False
 
         # Create a dict that maps parameters of the first map to those of the
@@ -148,6 +154,8 @@ class MapFusion(transformation.SingleStateTransformation):
                     destination_node = graph.memlet_path(second_edge)[0].src
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(graph._nx, source_node):
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected "
+                              f"input set of 2nd map not provided by first set or unreleated maps")
                         return False
                 continue
 
@@ -171,6 +179,8 @@ class MapFusion(transformation.SingleStateTransformation):
             # If none of the output memlets of the first map provide the info,
             # fail.
             if provided is False:
+                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected None of the "
+                      f"output memlet of the first map provide info about subset of second")
                 return False
 
         # Checking for stencil pattern and common input/output data
@@ -226,6 +236,8 @@ class MapFusion(transformation.SingleStateTransformation):
                             c = a.offset_new(b, negative=True)
                         for r in c:
                             if r != (0, 0, 1):
+                                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected"
+                                      f"stencil pattern 1")
                                 return False
 
             output_data = [viewed_outputnodes[d].data if d in viewed_outputnodes.keys() else d for d in common_data]
@@ -249,6 +261,8 @@ class MapFusion(transformation.SingleStateTransformation):
                     c = a.offset_new(b, negative=True)
                 for r in c:
                     if r != (0, 0, 1):
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected"
+                              f"stencil pattern 2")
                         return False
 
         # Success
