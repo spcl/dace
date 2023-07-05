@@ -4612,7 +4612,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to find sub-SDFG attribute
         func = oprepo.Replacements.get_attribute(type(arr), node.attr)
         if func is not None:
-            return func(self, self.sdfg, self.last_state, result)
+            # A new state is likely needed here, e.g., for transposition (ndarray.T)
+            self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+            self.last_state.set_default_lineinfo(self.current_lineinfo)
+            result = func(self, self.sdfg, self.last_state, result)
+            self.last_state.set_default_lineinfo(None)
+            return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:

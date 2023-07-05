@@ -158,6 +158,26 @@ class Type_Decl_Node(Statement_Node):
     _fields = ()
 
 
+class Allocate_Shape_Spec_Node(FNode):
+    _attributes = ()
+    _fields = ('sizes', )
+
+
+class Allocate_Shape_Spec_List(FNode):
+    _attributes = ()
+    _fields = ('shape_list', )
+
+
+class Allocation_Node(FNode):
+    _attributes = ('name', )
+    _fields = ('shape', )
+
+
+class Allocate_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('allocation_list', )
+
+
 class Symbol_Decl_Node(Statement_Node):
     _attributes = (
         'name',

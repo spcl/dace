@@ -222,7 +222,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
         # `nodedesc` is a View and `dfg` is None.
         if dfg and not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
-            raise NotImplementedError("The declare_array method should only be used for variables "
+                raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
         name = node.data
@@ -278,7 +278,7 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(alloc_name)
 
         define_var = self._dispatcher.defined_vars.add
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             define_var = self._dispatcher.defined_vars.add_global
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
@@ -449,7 +449,8 @@ class CPUCodeGen(TargetCodeGenerator):
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(alloc_name):
-            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
@@ -932,7 +933,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
                         ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                         is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                      dtypes.AllocationLifetime.Persistent)
+                                                      dtypes.AllocationLifetime.Persistent,
+                                                      dtypes.AllocationLifetime.External)
                         try:
                             defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                         except KeyError:
@@ -1430,7 +1432,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
             ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
-            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                          dtypes.AllocationLifetime.External)
             defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
             base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
@@ -1448,18 +1451,22 @@ class CPUCodeGen(TargetCodeGenerator):
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
         restrict_args = []
         for atype, aname, _ in memlet_references:
+
             def make_restrict(expr: str) -> str:
                 # Check whether "restrict" has already been added before and can be added
                 if expr.strip().endswith('*'):
                     return '__restrict__'
                 else:
                     return ''
+
             if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
                 restrict_args.append(make_restrict(atype))
             else:
                 restrict_args.append('')
 
-        arguments += [f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)]
+        arguments += [
+            f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
+        ]
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
