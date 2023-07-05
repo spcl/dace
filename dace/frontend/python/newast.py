@@ -4608,9 +4608,9 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)
         rname = self.scope_vars[name]
         if rname in self.scope_arrays:
-            # rng = subsets.Range.from_array(self.scope_arrays[rname])
-            # rname, _ = self._add_read_access(rname, rng, node)
-            self._add_new_access(rname, self.scope_arrays[rname], 'r')
+            rng = subsets.Range.from_array(self.scope_arrays[rname])
+            rname, _ = self._add_read_access(rname, rng, node)
+            # self._add_new_access(rname, self.scope_arrays[rname], 'r')
         return rname
 
     #### Visitors that return arrays
@@ -4958,23 +4958,24 @@ class ProgramVisitor(ExtNodeVisitor):
             # reference to the subset
             if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
 
-                self._add_new_access(name, defined_arrays[name], 'r')
+                # self._add_new_access(name, defined_arrays[name], 'r')
 
-                # true_node = copy.deepcopy(node)
-                # true_node.value.id = true_name
+                true_node = copy.deepcopy(node)
+                true_node.value.id = true_name
 
-                # # Visit slice contents
-                # nslice = self._parse_subscript_slice(node.slice)
+                # Visit slice contents
+                nslice = self._parse_subscript_slice(node.slice)
 
-                # # Try to construct memlet from subscript
-                # expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
-                # rng = expr.subset
-                # if isinstance(rng, subsets.Indices):
-                #     rng = subsets.Range.from_indices(rng)
-                # if inference:
-                #     rng.offset(rng, True)
-                #     return self.sdfg.arrays[true_name].dtype, rng.size()
-                # new_name, new_rng = self._add_read_access(name, rng, node)
+                # Try to construct memlet from subscript
+                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
+                rng = expr.subset
+                if isinstance(rng, subsets.Indices):
+                    rng = subsets.Range.from_indices(rng)
+                if inference:
+                    rng.offset(rng, True)
+                    return self.sdfg.arrays[true_name].dtype, rng.size()
+                new_name, new_rng = self._add_read_access(name, rng, node)
+                return new_name
                 # new_arr = self.sdfg.arrays[new_name]
                 # full_rng = subsets.Range.from_array(new_arr)
                 # if new_rng.ranges == full_rng.ranges:
