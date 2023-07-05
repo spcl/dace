@@ -1958,69 +1958,74 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
-                if _subset_has_indirection(memlet.subset, self):
-                    read_node = entry_node
-                    if entry_node is None:
-                        read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
-                    add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
-                    continue
+                # for s, r in symbols.items():
+                #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
+                # if _subset_has_indirection(memlet.subset, self):
+                #     read_node = entry_node
+                #     if entry_node is None:
+                #         read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
+                #     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
+                #     continue
                 if memlet.data not in self.sdfg.arrays:
-                    if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
-                    else:
-                        scope_memlet = copy.deepcopy(memlet)
-                    irng = memlet.subset
-                    orng = copy.deepcopy(scope_memlet.subset)
-                    outer_indices = []
-                    for n, (i, o) in enumerate(zip(irng, orng)):
-                        if i == o and n not in inner_indices:
-                            outer_indices.append(n)
-                        elif n not in inner_indices:
-                            inner_indices.add(n)
-                    # Avoid the case where all indices are outer,
-                    # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
-                        irng.pop(outer_indices)
-                        orng.pop(outer_indices)
-                        irng.offset(orng, True)
-                    if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        memlet = Memlet.simple(vname, str(irng))
-                    elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
-                        memlet = Memlet.simple(vname, str(irng))
-                    elif memlet.data in self.closure.closure_arrays:
-                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
-                        vname = memlet.data
-                        self.inputs[vname] = (state, memlet, [])
-                    else:
-                        name = memlet.data
-                        vname = "{c}_in_from_{s}{n}".format(c=conn,
-                                                            s=self.sdfg.nodes().index(state),
-                                                            n=('_%s' % state.node_id(entry_node) if entry_node else ''))
-                        self.accesses[(name, scope_memlet.subset, 'r')] = (vname, orng)
-                        orig_shape = orng.size()
-                        shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
-                        strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
-                        strides = [
-                            s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
-                        ]
-                        if not shape:
-                            shape = [1]
-                            strides = [1]
-                        # TODO: Formulate this better
-                        if not strides:
-                            strides = [arr.strides[-1]]
-                        dtype = arr.dtype
-                        if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
-                        else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.inputs[vname] = (state, scope_memlet, inner_indices)
-                        memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # if entry_node:
+                    #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                    # else:
+                    #     scope_memlet = copy.deepcopy(memlet)
+                    # irng = memlet.subset
+                    # orng = copy.deepcopy(scope_memlet.subset)
+                    # outer_indices = []
+                    # for n, (i, o) in enumerate(zip(irng, orng)):
+                    #     if i == o and n not in inner_indices:
+                    #         outer_indices.append(n)
+                    #     elif n not in inner_indices:
+                    #         inner_indices.add(n)
+                    # # Avoid the case where all indices are outer,
+                    # # i.e., the whole array is carried through the nested SDFG levels.
+                    # if len(outer_indices) < len(irng) or irng.num_elements() == 1:
+                    #     irng.pop(outer_indices)
+                    #     orng.pop(outer_indices)
+                    #     irng.offset(orng, True)
+                    # if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
+                    #     memlet = Memlet.simple(vname, str(irng))
+                    # elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
+                    #     memlet = Memlet.simple(vname, str(irng))
+                    # elif memlet.data in self.closure.closure_arrays:
+                    #     self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                    #     vname = memlet.data
+                    #     self.inputs[vname] = (state, memlet, [])
+                    # else:
+                    #     name = memlet.data
+                    #     vname = "{c}_in_from_{s}{n}".format(c=conn,
+                    #                                         s=self.sdfg.nodes().index(state),
+                    #                                         n=('_%s' % state.node_id(entry_node) if entry_node else ''))
+                    #     self.accesses[(name, scope_memlet.subset, 'r')] = (vname, orng)
+                    #     orig_shape = orng.size()
+                    #     shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
+                    #     strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                    #     strides = [
+                    #         s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
+                    #     ]
+                    #     if not shape:
+                    #         shape = [1]
+                    #         strides = [1]
+                    #     # TODO: Formulate this better
+                    #     if not strides:
+                    #         strides = [arr.strides[-1]]
+                    #     dtype = arr.dtype
+                    #     if isinstance(arr, data.Stream):
+                    #         self.sdfg.add_stream(vname, dtype)
+                    #     else:
+                    #         self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    #     self.inputs[vname] = (state, scope_memlet, inner_indices)
+                    #     memlet.data = vname
+                    #     # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    vname = memlet.data
+                    desc = arr.clone()
+                    desc.transient = False
+                    self.sdfg.add_datadesc(vname, desc)
+                    self.inputs[vname] = (state, memlet, inner_indices)
                 else:
                     vname = memlet.data
 
@@ -2030,11 +2035,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_memlet_path(read_node,
                                           entry_node,
                                           internal_node,
-                                          memlet=memlet,
+                                          memlet=copy.deepcopy(memlet),
                                           src_conn=None,
                                           dst_conn=conn)
                 else:
-                    state.add_edge(read_node, None, internal_node, conn, memlet)
+                    state.add_edge(read_node, None, internal_node, conn, copy.deepcopy(memlet))
         else:
             if entry_node is not None:
                 state.add_nedge(entry_node, internal_node, dace.Memlet())
@@ -2048,70 +2053,75 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
-                if _subset_has_indirection(memlet.subset, self):
-                    write_node = exit_node
-                    if exit_node is None:
-                        write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
-                    add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
-                    continue
-                inner_memlet = memlet
+                # for s, r in symbols.items():
+                #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
+                # if _subset_has_indirection(memlet.subset, self):
+                #     write_node = exit_node
+                #     if exit_node is None:
+                #         write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
+                #     add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
+                #     continue
+                # inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
-                    if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
-                    else:
-                        scope_memlet = copy.deepcopy(memlet)
-                    irng = memlet.subset
-                    orng = copy.deepcopy(scope_memlet.subset)
-                    outer_indices = []
-                    for n, (i, o) in enumerate(zip(irng, orng)):
-                        if i == o and n not in inner_indices:
-                            outer_indices.append(n)
-                        elif n not in inner_indices:
-                            inner_indices.add(n)
-                    # Avoid the case where all indices are outer,
-                    # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
-                        irng.pop(outer_indices)
-                        orng.pop(outer_indices)
-                        irng.offset(orng, True)
-                    if self._find_access(memlet.data, scope_memlet.subset, 'w'):
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        inner_memlet = Memlet.simple(vname, str(irng))
-                        inner_memlet.num_accesses = memlet.num_accesses
-                        inner_memlet.dynamic = memlet.dynamic
-                    elif memlet.data in self.closure.closure_arrays:
-                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
-                        vname = memlet.data
-                        self.outputs[vname] = (state, memlet, [])
-                    else:
-                        name = memlet.data
-                        vname = "{c}_out_of_{s}{n}".format(c=conn,
-                                                           s=self.sdfg.nodes().index(state),
-                                                           n=('_%s' % state.node_id(exit_node) if exit_node else ''))
-                        self.accesses[(name, scope_memlet.subset, 'w')] = (vname, orng)
-                        orig_shape = orng.size()
-                        shape = [d for d in orig_shape if d != 1]
-                        shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
-                        strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
-                        strides = [
-                            s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
-                        ]
-                        if not shape:
-                            shape = [1]
-                            strides = [1]
-                        # TODO: Formulate this better
-                        if not strides:
-                            strides = [arr.strides[-1]]
-                        dtype = arr.dtype
-                        if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
-                        else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.outputs[vname] = (state, scope_memlet, inner_indices)
-                        inner_memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # if entry_node:
+                    #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                    # else:
+                    #     scope_memlet = copy.deepcopy(memlet)
+                    # irng = memlet.subset
+                    # orng = copy.deepcopy(scope_memlet.subset)
+                    # outer_indices = []
+                    # for n, (i, o) in enumerate(zip(irng, orng)):
+                    #     if i == o and n not in inner_indices:
+                    #         outer_indices.append(n)
+                    #     elif n not in inner_indices:
+                    #         inner_indices.add(n)
+                    # # Avoid the case where all indices are outer,
+                    # # i.e., the whole array is carried through the nested SDFG levels.
+                    # if len(outer_indices) < len(irng) or irng.num_elements() == 1:
+                    #     irng.pop(outer_indices)
+                    #     orng.pop(outer_indices)
+                    #     irng.offset(orng, True)
+                    # if self._find_access(memlet.data, scope_memlet.subset, 'w'):
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
+                    #     inner_memlet = Memlet.simple(vname, str(irng))
+                    #     inner_memlet.num_accesses = memlet.num_accesses
+                    #     inner_memlet.dynamic = memlet.dynamic
+                    # elif memlet.data in self.closure.closure_arrays:
+                    #     self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                    #     vname = memlet.data
+                    #     self.outputs[vname] = (state, memlet, [])
+                    # else:
+                    #     name = memlet.data
+                    #     vname = "{c}_out_of_{s}{n}".format(c=conn,
+                    #                                        s=self.sdfg.nodes().index(state),
+                    #                                        n=('_%s' % state.node_id(exit_node) if exit_node else ''))
+                    #     self.accesses[(name, scope_memlet.subset, 'w')] = (vname, orng)
+                    #     orig_shape = orng.size()
+                    #     shape = [d for d in orig_shape if d != 1]
+                    #     shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
+                    #     strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                    #     strides = [
+                    #         s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
+                    #     ]
+                    #     if not shape:
+                    #         shape = [1]
+                    #         strides = [1]
+                    #     # TODO: Formulate this better
+                    #     if not strides:
+                    #         strides = [arr.strides[-1]]
+                    #     dtype = arr.dtype
+                    #     if isinstance(arr, data.Stream):
+                    #         self.sdfg.add_stream(vname, dtype)
+                    #     else:
+                    #         self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    #     self.outputs[vname] = (state, scope_memlet, inner_indices)
+                    #     inner_memlet.data = vname
+                    #     # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    vname = memlet.data
+                    desc = arr.clone()
+                    desc.transient = False
+                    self.sdfg.add_datadesc(vname, desc)
+                    self.outputs[vname] = (state, memlet, inner_indices)
                 else:
                     vname = memlet.data
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
@@ -2119,11 +2129,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_memlet_path(internal_node,
                                           exit_node,
                                           write_node,
-                                          memlet=inner_memlet,
+                                          memlet=copy.deepcopy(memlet),
                                           src_conn=conn,
                                           dst_conn=None)
                 else:
-                    state.add_edge(internal_node, conn, write_node, None, inner_memlet)
+                    state.add_edge(internal_node, conn, write_node, None, copy.deepcopy(memlet))
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
