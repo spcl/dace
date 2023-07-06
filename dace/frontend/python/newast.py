@@ -848,16 +848,18 @@ class TaskletTransformer(ExtNodeTransformer):
                          new_name: str = None,
                          arr_type: data.Data = None):
 
+        if name in self.variables:
+            return (self.variables[name], None)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')]
-        elif name in self.variables:
-            return (self.variables[name], None)
         elif name in self.scope_vars:
             # TODO: Does the TaskletTransformer need the double slice fix?
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
             return (new_name, new_rng)
+        elif name in self.sdfg.arrays:
+            return (name, None)
         else:
             raise NotImplementedError
 
@@ -868,12 +870,14 @@ class TaskletTransformer(ExtNodeTransformer):
                           new_name: str = None,
                           arr_type: data.Data = None):
 
-        if (name, rng, 'w') in self.accesses:
+        if name in self.variables:
+            return (self.variables[name], rng)
+        elif (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
-        elif name in self.variables:
-            return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, rng)
         else:
             raise NotImplementedError
 
@@ -2028,7 +2032,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     desc = self.sdfg.arrays[memlet.data]
 
-                if vname not in self.inputs:
+                # NOTE: If the descriptor is transient, then the data is declared at the current scope.
+                # NOTE: Therefore, we don't propagate the dependency to the parent scope.
+                if not desc.transient and vname not in self.inputs:
                     self.inputs[vname] = (state, memlet, inner_indices)
 
                 read_node = state.add_read(vname, debuginfo=self.current_lineinfo)
@@ -2126,7 +2132,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     desc = self.sdfg.arrays[memlet.data]
 
-                if vname not in self.outputs:
+                if not desc.transient and vname not in self.outputs:
                     self.outputs[vname] = (state, memlet, inner_indices)
 
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
@@ -3099,17 +3105,21 @@ class ProgramVisitor(ExtNodeVisitor):
                          target: Union[ast.Name, ast.Subscript],
                          new_name: str = None,
                          arr_type: data.Data = None):
-        if name in self.sdfg.arrays:
-            return (name, None)
-        elif name in self.variables:
-            return (self.variables[name], None)
+        # if name in self.sdfg.arrays:
+        #     return (name, None)
+        # elif name in self.variables:
+        #     return (self.variables[name], None)
 
-        if (name, rng, 'w') in self.accesses:
+        if name in self.variables:
+            return (self.variables[name], None)
+        elif (name, rng, 'w') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, None)
         else:
             raise NotImplementedError
 
@@ -3127,14 +3137,14 @@ class ProgramVisitor(ExtNodeVisitor):
                           new_name: str = None,
                           arr_type: data.Data = None):
 
-        if name in self.sdfg.arrays:
-            return (name, rng)
-        if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
-        elif name in self.variables:
+        if name in self.variables:
             return (self.variables[name], rng)
+        elif (name, rng, 'w') in self.accesses:
+            return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, rng)
         else:
             raise NotImplementedError
 
@@ -3927,25 +3937,26 @@ class ProgramVisitor(ExtNodeVisitor):
                     break
             if access_key:
                 # Delete read access and create write access and output
-                vname = aname[:-1] + 'w'
+                # TODO: Can be simplified with unrefined nested accesses.
+                vname = aname
                 name, rng, atype = access_key
                 if atype == 'r':
                     if not isinput:
                         del self.accesses[access_key]
                     access_value = self._add_write_access(name, rng, node, new_name=vname)
                     memlet.data = vname
-                # Delete the old read descriptor
-                if not isinput:
-                    conn_used = False
-                    for s in self.sdfg.nodes():
-                        for n in s.data_nodes():
-                            if n.data == aname:
-                                conn_used = True
-                                break
-                        if conn_used:
-                            break
-                    if not conn_used:
-                        del self.sdfg.arrays[aname]
+                # # Delete the old read descriptor
+                # if not isinput:
+                #     conn_used = False
+                #     for s in self.sdfg.nodes():
+                #         for n in s.data_nodes():
+                #             if n.data == aname:
+                #                 conn_used = True
+                #                 break
+                #         if conn_used:
+                #             break
+                #     if not conn_used:
+                #         del self.sdfg.arrays[aname]
             if not isinput and aname in self.inputs:
                 # Delete input
                 del self.inputs[aname]
