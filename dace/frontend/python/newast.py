@@ -1960,12 +1960,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 # for s, r in symbols.items():
                 #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
-                # if _subset_has_indirection(memlet.subset, self):
-                #     read_node = entry_node
-                #     if entry_node is None:
-                #         read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
-                #     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
-                #     continue
+                if _subset_has_indirection(memlet.subset, self):
+                    read_node = entry_node
+                    if entry_node is None:
+                        read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
+                    add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
+                    continue
                 if memlet.data not in self.sdfg.arrays:
                     # if entry_node:
                     #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
@@ -2055,12 +2055,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 # for s, r in symbols.items():
                 #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
-                # if _subset_has_indirection(memlet.subset, self):
-                #     write_node = exit_node
-                #     if exit_node is None:
-                #         write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
-                #     add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
-                #     continue
+                if _subset_has_indirection(memlet.subset, self):
+                    write_node = exit_node
+                    if exit_node is None:
+                        write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
+                    add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
+                    continue
                 # inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
                     # if entry_node:
