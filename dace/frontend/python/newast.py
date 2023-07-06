@@ -1966,6 +1966,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
                     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
                     continue
+                vname = memlet.data
                 if memlet.data not in self.sdfg.arrays:
                     # if entry_node:
                     #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
@@ -2021,13 +2022,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     #     self.inputs[vname] = (state, scope_memlet, inner_indices)
                     #     memlet.data = vname
                     #     # memlet.subset.offset(memlet.subset, True, outer_indices)
-                    vname = memlet.data
                     desc = arr.clone()
                     desc.transient = False
                     self.sdfg.add_datadesc(vname, desc)
-                    self.inputs[vname] = (state, memlet, inner_indices)
                 else:
-                    vname = memlet.data
+                    desc = self.sdfg.arrays[memlet.data]
+
+                if vname not in self.inputs:
+                    self.inputs[vname] = (state, memlet, inner_indices)
 
                 read_node = state.add_read(vname, debuginfo=self.current_lineinfo)
 
@@ -2062,6 +2064,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
                     continue
                 # inner_memlet = memlet
+                vname = memlet.data
                 if memlet.data not in self.sdfg.arrays:
                     # if entry_node:
                     #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
@@ -2117,13 +2120,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     #     self.outputs[vname] = (state, scope_memlet, inner_indices)
                     #     inner_memlet.data = vname
                     #     # memlet.subset.offset(memlet.subset, True, outer_indices)
-                    vname = memlet.data
                     desc = arr.clone()
                     desc.transient = False
                     self.sdfg.add_datadesc(vname, desc)
-                    self.outputs[vname] = (state, memlet, inner_indices)
                 else:
-                    vname = memlet.data
+                    desc = self.sdfg.arrays[memlet.data]
+
+                if vname not in self.outputs:
+                    self.outputs[vname] = (state, memlet, inner_indices)
+
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
                 if exit_node is not None:
                     state.add_memlet_path(internal_node,
