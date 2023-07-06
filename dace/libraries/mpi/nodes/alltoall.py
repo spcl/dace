@@ -25,12 +25,12 @@ class ExpandAlltoallMPI(ExpandTransformation):
         if node.grid:
             comm = f"__state->{node.grid}_comm"
 
-        # code = f"""
-        #     MPI_Alltoall({buffer}, {count_str}, {mpi_dtype_str}, _outbuffer, {count_str}, {mpi_dtype_str}, {comm});
-        #     """
         code = f"""
-            MPI_Alltoall(_inbuffer, {in_count_str}, {in_mpi_dtype_str}, \
-                        _outbuffer, {out_count_str}, {out_mpi_dtype_str}, \
+            int size;
+            MPI_Comm_size({comm}, &size);
+            int sendrecv_amt = {in_count_str} / size;
+            MPI_Alltoall(_inbuffer, sendrecv_amt, {in_mpi_dtype_str}, \
+                        _outbuffer, sendrecv_amt, {out_mpi_dtype_str}, \
                         {comm});
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,

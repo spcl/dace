@@ -59,7 +59,7 @@ def test_mpi(implementation, dtype):
     size_per_proc = int(size/commsize)
     A = np.arange(0, size, dtype=np_dtype)
     B = np.full(size, 0, dtype=np_dtype)
-    mpi_sdfg(inbuf=A, outbuf=B, n=size_per_proc)
+    mpi_sdfg(inbuf=A, outbuf=B, n=size)
 
     # now B should be an array of size,
     # containing (size / size_per_proc) repeated chunked_data
