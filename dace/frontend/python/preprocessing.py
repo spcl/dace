@@ -20,6 +20,179 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+
+class ParentSetter(ast.NodeTransformer):
+    """ 
+    Sets the ``parent`` attribute of each AST node to its parent. 
+    """
+
+    def __init__(self, root: ast.AST = None):
+        self.parent = root
+
+    def visit(self, node):
+        node.parent = self.parent
+        self.parent = node
+        self.generic_visit(node)
+        self.parent = node.parent
+        return node
+
+
+def find_parent_body(node: ast.AST) -> Tuple[ast.AST, int]:
+    """
+    Finds the parent AST node that has a ``body`` attribute, and the index of the given node within that body.
+    :param node: The node to find the parent of.
+    :return: A tuple of the parent AST node and the index of the given node within its body.
+    """
+    last_parent = node.parent
+    while not hasattr(last_parent, 'body'):
+        new_parent = last_parent.parent
+        last_parent, new_parent = new_parent, last_parent
+    idx = last_parent.body.index(new_parent)
+    return last_parent, idx
+
+
+class NameGetter(ast.NodeVisitor):
+    """ 
+    Collects all names in an AST. 
+    """
+
+    def __init__(self):
+        self.names = set()
+
+    def visit_Name(self, node: ast.Name):
+        self.names.add(node.id)
+        self.generic_visit(node)
+
+
+def find_new_name(names: Set[str]) -> str:
+    """
+    Finds a new name that does not exist in the given set of names.
+    :param names: A set of names to avoid.
+    :return: A new name that does not exist in the given set of names.
+    """
+    base = '__var_'
+    i = 0
+    name = f"{base}{i}"
+    while name in names:
+        i += 1
+        name = f"{base}{i}"
+    return name
+
+
+class NestedSubsAttrsReplacer(ast.NodeTransformer):
+    """
+    Replaces nested subscript and attribute accesses with temporary variables.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        for stmt in node.body:
+            self.visit(stmt)
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute):
+
+        self.generic_visit(node)
+
+        if isinstance(node.value, ast.Name):
+            return node
+
+        new_id = find_new_name(self.names)
+        self.names.add(new_id)
+
+        new_node = ast.Attribute(value=ast.Name(id=new_id, ctx=ast.Load()), attr=node.attr, ctx=node.ctx)
+        ast.copy_location(new_node, node)
+        new_node = ParentSetter(root=node.parent).visit(new_node)
+
+        parent, body_idx = find_parent_body(node)
+        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.value)
+        self.ast_nodes_to_add.append((parent, body_idx, assign))
+
+        return new_node
+    
+    def visit_Subscript(self, node: ast.Subscript):
+
+        self.generic_visit(node)
+
+        if hasattr(node.slice, 'elts'):
+
+            new_elts = []
+            for item in node.slice.elts:
+
+                if not isinstance(item, (ast.Slice, ast.Name, ast.Constant)):
+
+                    self.generic_visit(item)
+
+                    new_id = find_new_name(self.names)
+                    self.names.add(new_id)
+
+                    new_item = ast.Name(id=new_id, ctx=ast.Load())
+                    ast.copy_location(new_item, item)
+                    new_elts.append(new_item)
+
+                    parent, body_idx = find_parent_body(item)
+                    assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=item)
+                    self.ast_nodes_to_add.append((parent, body_idx, assign))
+
+                elif isinstance(item, ast.Slice):
+
+                    self.generic_visit(item)
+
+                    for attr in ['lower', 'upper', 'step']:
+                        if hasattr(item, attr):
+
+                            old_attr = getattr(item, attr)
+                            if old_attr is None or isinstance(old_attr, (ast.Name, ast.Constant)):
+                                continue
+
+                            new_id = find_new_name(self.names)
+                            self.names.add(new_id)
+
+                            new_attr = ast.Name(id=new_id, ctx=ast.Load())
+                            ast.copy_location(new_attr, item)
+                            setattr(item, attr, new_attr)
+
+                            parent, body_idx = find_parent_body(item)
+                            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=old_attr)
+                            self.ast_nodes_to_add.append((parent, body_idx, assign))
+                    
+                    new_elts.append(item)
+
+                else:
+                    new_elts.append(item)
+
+            new_node = ast.Subscript(value=node.value, slice=ast.Tuple(elts=new_elts, ctx=ast.Load()), ctx=node.ctx)
+
+        else:
+
+            new_node = node.slice
+
+            if not isinstance(node.slice, (ast.Slice, ast.Name, ast.Constant)):
+
+                self.generic_visit(node.slice)
+
+                new_id = find_new_name(self.names)
+                self.names.add(new_id)
+
+                new_node = ast.Name(id=new_id, ctx=ast.Load())
+                ast.copy_location(new_node, node.slice)
+
+                parent, body_idx = find_parent_body(node.slice)
+                assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.slice)
+                self.ast_nodes_to_add.append((parent, body_idx, assign))
+            
+            new_node = ast.Subscript(value=node.value, slice=new_node, ctx=node.ctx)
+            
+        ast.copy_location(new_node, node)
+        new_node = ParentSetter(root=node.parent).visit(new_node)
+
+        return new_node
+
+
+
 class DaceRecursionError(Exception):
     """
     Exception that indicates a recursion in a data-centric parsed context.
@@ -1568,6 +1741,16 @@ def preprocess_dace_program(f: Callable[..., Any],
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
+    
+
+    name_getter = NameGetter()
+    name_getter.visit(src_ast)
+    program_names = name_getter.names
+    src_ast = ParentSetter().visit(src_ast)
+    subatrr_replacer = NestedSubsAttrsReplacer(names=program_names)
+    src_ast = subatrr_replacer.visit(src_ast)
+    for parent, idx, node in reversed(subatrr_replacer.ast_nodes_to_add):
+        parent.body.insert(idx, node)
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
