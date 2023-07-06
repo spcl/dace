@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.sdfg import utils
 from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
 import numpy as np
@@ -104,55 +105,45 @@ def _test_mpi(info, sdfg, dtype):
         raise (ValueError("The received values are not what I expected."))
 
 
-# TODO: The test deadlocks in the CI (Ubuntu 18.04, MPICH 3.3a2)
-# but works fine in up-to-date systems, including when using pytest.
-@pytest.mark.skip
+@pytest.mark.mpi
 def test_mpi():
-    _test_mpi("MPI Send/Recv", make_sdfg(np.float64), np.float64)
-
+    _test_mpi("MPI Isend/Irecv", make_sdfg(np.float64), np.float64)
 
 ###############################################################################
 
-myrank = dace.symbol('myrank', dtype=dace.int32)
-mysize = dace.symbol('mysize', dtype=dace.int32)
+@pytest.mark.mpi
+def test_isend_irecv():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
 
+    @dace.program
+    def mpi4py_isend_irecv(rank: dace.int32, size: dace.int32):
+        src = (rank - 1) % size
+        dst = (rank + 1) % size
+        req = np.empty((2, ), dtype=MPI.Request)
+        sbuf = np.full((1,), rank, dtype=np.int32)
+        req[0] = commworld.Isend(sbuf, dst, tag=0)
+        rbuf = np.empty((1, ), dtype=np.int32)
+        req[1] = commworld.Irecv(rbuf, src, tag=0)
+        MPI.Request.Waitall(req)
+        return rbuf
 
-@dace.program
-def dace_send_recv():
-    tmp1 = np.full([1], myrank, dtype=np.int32)
-    tmp2 = np.zeros([1], dtype=np.int32)
-    if myrank == 0:
-        dace.comm.Send(tmp1, 1, tag=42)
-        dace.comm.Recv(tmp2, mysize - 1, tag=42)
-    else:
-        dace.comm.Recv(tmp2, (myrank - 1) % mysize, tag=42)
-        dace.comm.Send(tmp1, (myrank + 1) % mysize, tag=42)
-    return tmp2
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_isend_irecv.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
 
+    val = func(rank=rank, size=size)
+    ref = mpi4py_isend_irecv.f(rank, size)
 
-# TODO: The test is redundant. It must be updated to use Isend/Irecv.
-@pytest.mark.skip
-def test_dace_send_recv():
-    from mpi4py import MPI as MPI4PY
-    comm = MPI4PY.COMM_WORLD
-    rank = comm.Get_rank()
-    commsize = comm.Get_size()
-    mpi_sdfg = None
-    if commsize < 2:
-        raise ValueError("This test is supposed to be run with at least two processes!")
-    for r in range(0, commsize):
-        if r == rank:
-            mpi_sdfg = dace_send_recv.compile()
-        comm.Barrier()
-
-    prv_rank = mpi_sdfg(myrank=rank, mysize=commsize)
-
-    assert (prv_rank[0] == (rank - 1) % commsize)
+    assert (val[0] == ref[0])
 
 
 ###############################################################################
 
 if __name__ == "__main__":
     test_mpi()
-    test_dace_send_recv()
+    test_isend_irecv()
 ###############################################################################
