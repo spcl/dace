@@ -82,8 +82,12 @@ def dace_send_recv(rank: dace.int32, size: dace.int32):
     dst = np.full([1], (rank + 1) % size, dtype=np.int32)
     sbuf = np.full([1], rank, dtype=np.int32)
     rbuf = np.zeros([1], dtype=np.int32)
-    dace.comm.Recv(rbuf, src, tag=42)
-    dace.comm.Send(sbuf, dst, tag=42)
+    if rank % 2 == 0:
+        dace.comm.Recv(rbuf, src, tag=42)
+        dace.comm.Send(sbuf, dst, tag=42)
+    else:
+        dace.comm.Send(sbuf, dst, tag=42)
+        dace.comm.Recv(rbuf, src, tag=42)
     return rbuf
 
 
@@ -99,10 +103,11 @@ def test_dace_send_recv():
     sdfg = None
     if rank == 0:
         sdfg = dace_send_recv.to_sdfg(simplify=True)
+        # disable openMP section for blocking
+        sdfg.openmp_sections = False
     mpi_sdfg = utils.distributed_compile(sdfg, comm)
 
     val = mpi_sdfg(rank=rank, size=commsize)
-
     assert (val[0] == (rank - 1) % commsize)
 
 
