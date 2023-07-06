@@ -231,9 +231,36 @@ def test_send_recv():
     assert (val[0] == ref[0])
 
 
+@pytest.mark.mpi
+def test_alltoall():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_alltoall(rank: dace.int32, size: dace.int32):
+        sbuf = np.full((128,), rank, dtype=np.int32)
+        rbuf = np.zeros((128, ), dtype=np.int32)
+        commworld.Alltoall(sbuf, rbuf)
+        return rbuf
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_alltoall.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    val = func(rank=rank, size=size)
+    ref = mpi4py_alltoall.f(rank, size)
+
+    if (not np.allclose(val, ref)):
+        raise (ValueError("The received values are not what I expected."))
+
+
 if __name__ == "__main__":
     # test_process_grid_bcast()
     # test_sub_grid_bcast()
     # test_3mm()
     test_isend_irecv()
     test_send_recv()
+    test_alltoall()

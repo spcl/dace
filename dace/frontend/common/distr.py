@@ -254,9 +254,37 @@ def _Reduce(pv: 'ProgramVisitor',
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
+@oprepo.replaces('dace.comm.Alltoall')
+def _allreduce(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               inbuffer: str,
+               outbuffer: str,
+               grid: str = None):
+
+    from dace.libraries.mpi.nodes.alltoall import Alltoall
+
+
+    libnode = Alltoall('_Alltoall_', grid)
+    in_desc = sdfg.arrays[inbuffer]
+    in_buffer = state.add_read(inbuffer)
+    out_desc = sdfg.arrays[inbuffer]
+    out_buffer = state.add_write(outbuffer)
+    state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(out_buffer, out_desc))
+
+    return None
+
+
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               buffer: str,
+               op: str,
+               grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
