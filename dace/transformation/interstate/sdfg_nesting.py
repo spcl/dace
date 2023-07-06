@@ -970,6 +970,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     in_candidates[e.data.data] = (e.data, [nstate], set(range(len(e.data.subset))))
 
         # TODO: Check in_candidates in interstate edges as well
+        # Samuel: Is a first effort, but not working correctly yet
+        # for edge in nsdfg.sdfg.edges():
+        #     for memlet in edge.data.get_read_memlets(nsdfg.sdfg.arrays):
+        #         if memlet.data not in in_candidates:
+        #             # TODO(Samuel): What state do I need to add here to the list, is one required, what impact does it
+        #             # have?
+        #             in_candidates[memlet.data] = (e.data, [edge.src], set(range(len(memlet.subset))))
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
@@ -998,8 +1005,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     ignore.add(cname)
                     continue
 
-                # TODO: Not sure if having the for loop here is correct, could potentially also just take the first,
-                # would better emulate the behaviour before
+                # TODO(Samuel): Not sure if having the for loop here is correct, could potentially also just take the
+                # first, would better emulate the behaviour before
                 for ns in nstate_list:
                     # Check w.r.t. loops
                     if len(ns.ranges) > 0:
@@ -1022,18 +1029,21 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     else:
                         memlet = cand
 
+                # TODO: This approach is not working as one would need the values assigned to each symbol to check that
+                # the value is also constant over all symbols and then add it to the SDFG
                 # Get the defined symbols in each state in the SDFG
-                symbols_per_state = {state: symbols for state, node, symbols in
-                                     utils.traverse_sdfg_with_defined_symbols(nsdfg.sdfg)}
-                # Create intersection of them on all states in which the array is accessed
-                known_symbols_at_state_intersect = set(symbols_per_state[nstate_list[0]])
-                for ns in nstate_list[1:]:
-                    known_symbols_at_state_intersect = known_symbols_at_state_intersect.intersection(
-                        set(symbols_per_state[ns]))
+                # symbols_per_state = {state: symbols for state, node, symbols in
+                #                      utils.traverse_sdfg_with_defined_symbols(nsdfg.sdfg)}
+                # # Create intersection of them on all states in which the array is accessed
+                # known_symbols_at_state_intersect = set(symbols_per_state[nstate_list[0]])
+                # for ns in nstate_list[1:]:
+                #     known_symbols_at_state_intersect = known_symbols_at_state_intersect.intersection(
+                #         set(symbols_per_state[ns]))
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.free_symbols - known_symbols_at_state_intersect)
+                # missing_symbols = (memlet.free_symbols - known_symbols_at_state_intersect)
+                missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1056,6 +1066,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
+        print(f"[RefineNestedAccess::apply] {nsdfg_node.label}, in: {torefine_in}, out: {torefine_out}")
 
         refined = set()
 
