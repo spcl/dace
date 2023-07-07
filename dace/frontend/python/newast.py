@@ -482,6 +482,7 @@ def add_indirection_subgraph(sdfg: SDFG,
         code = "lookup = {arr}[{index}]"
 
     newsubset = [r[0] if isinstance(r, tuple) else r for r in newsubset]
+    newsubset = [s for s, shp in zip(newsubset, array.shape) if shp != 1]
     if ind_entry:  # Amend newsubset when a range is indirected
         for i, idx in enumerate(nonsqz_dims):
             newsubset[idx] = '__i%d' % i
