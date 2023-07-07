@@ -1082,11 +1082,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 ]
 
         if isinstance(visited_slice, ast.Tuple):
-            if len(strides) != len(visited_slice.elts):
+            # If slice is multi-dimensional and writes to array with more than 1 elements, then:
+            # - Assume this is indirection (?)
+            # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
+            desc = self.sdfg.arrays[dname]
+            if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
+                elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+            if len(strides) != len(elts):
                 raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
-                                  'got %d)' % (len(strides), len(visited_slice.elts)))
+                                  'got %d)' % (len(strides), len(elts)))
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
