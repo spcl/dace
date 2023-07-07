@@ -16,7 +16,6 @@ ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, sym
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
-
 ##### MPI Cartesian Communicators
 
 
@@ -64,7 +63,6 @@ def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm:
     return _cart_create(pv, sdfg, state, dims)
 
 
-
 @oprepo.replaces('dace.comm.Cart_sub')
 def _cart_sub(pv: 'ProgramVisitor',
               sdfg: SDFG,
@@ -107,11 +105,8 @@ def _cart_sub(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Sub')
-def _pgrid_sub(pv: 'ProgramVisitor',
-               sdfg: SDFG,
-               state: SDFGState,
-               parent_grid: str,
-               color: Sequence[Union[Integral, bool]]):
+def _pgrid_sub(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, parent_grid: str, color: Sequence[Union[Integral,
+                                                                                                           bool]]):
     """ Equivalent to `dace.comm.Cart_sub(parent_grid, color).
         :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
         :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
@@ -197,7 +192,6 @@ def _intracomm_bcast(pv: 'ProgramVisitor',
                      icomm: 'Intracomm',
                      buffer: str,
                      root: Union[str, sp.Expr, Number] = 0):
-
     """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
 
     from mpi4py import MPI
@@ -213,7 +207,6 @@ def _pgrid_bcast(pv: 'ProgramVisitor',
                  pgrid: str,
                  buffer: str,
                  root: Union[str, sp.Expr, Number] = 0):
-
     """ Equivalent to `dace.comm.Bcast(buffer, root, grid=pgrid)`. """
 
     return _bcast(pv, sdfg, state, buffer, root, grid=pgrid)
@@ -257,12 +250,7 @@ def _Reduce(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
 @oprepo.replaces('dace.comm.Alltoall')
-def _alltoall(pv: 'ProgramVisitor',
-               sdfg: SDFG,
-               state: SDFGState,
-               inbuffer: str,
-               outbuffer: str,
-               grid: str = None):
+def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.alltoall import Alltoall
 
@@ -278,13 +266,8 @@ def _alltoall(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('Intracomm', 'Alltoall')
-def _intracomm_alltoall(pv: 'ProgramVisitor',
-                         sdfg: SDFG,
-                         state: SDFGState,
-                         icomm: 'Intracomm',
-                         inp_buffer: str,
-                         out_buffer: str):
-
+def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', inp_buffer: str,
+                        out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
 
     from mpi4py import MPI
@@ -294,13 +277,7 @@ def _intracomm_alltoall(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Alltoall')
-def _pgrid_alltoall(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     pgrid: str,
-                     inp_buffer: str,
-                     out_buffer: str):
-
+def _pgrid_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """
 
     from mpi4py import MPI
@@ -309,7 +286,7 @@ def _pgrid_alltoall(pv: 'ProgramVisitor',
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _Allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
@@ -324,14 +301,8 @@ def _Allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op
 
 
 @oprepo.replaces_method('Intracomm', 'Allreduce')
-def _intracomm_allreduce(pv: 'ProgramVisitor',
-                         sdfg: SDFG,
-                         state: SDFGState,
-                         icomm: 'Intracomm',
-                         inp_buffer: 'InPlace',
-                         out_buffer: str,
-                         op: str):
-
+def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', inp_buffer: 'InPlace',
+                         out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
     from mpi4py import MPI
@@ -345,14 +316,8 @@ def _intracomm_allreduce(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Allreduce')
-def _pgrid_allreduce(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     pgrid: str,
-                     inp_buffer: 'InPlace',
-                     out_buffer: str,
-                     op: str):
-
+def _pgrid_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: 'InPlace',
+                     out_buffer: str, op: str):
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
 
     from mpi4py import MPI
@@ -424,6 +389,7 @@ def _gather(pv: ProgramVisitor,
 
 
 ##### Point-To-Point Communication
+
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
@@ -500,15 +466,24 @@ def _send(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Isend')
 @oprepo.replaces('dace.comm.Isend')
-def _isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, dst: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number], request: str):
+def _isend(pv: ProgramVisitor,
+           sdfg: SDFG,
+           state: SDFGState,
+           buffer: str,
+           dst: Union[str, sp.Expr, Number],
+           tag: Union[str, sp.Expr, Number],
+           request: str = None,
+           grid: str = None):
 
     from dace.libraries.mpi.nodes.isend import Isend
 
     ret_req = False
     if not request:
         ret_req = True
-        request, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+        request, _ = sdfg.add_array("isend_req", [1],
+                                    dace.dtypes.opaque("MPI_Request"),
+                                    transient=True,
+                                    find_new_name=True)
 
     libnode = Isend('_Isend_', grid=grid)
 
@@ -591,14 +566,8 @@ def _isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, dst: U
 
 
 @oprepo.replaces_method('Intracomm', 'Isend')
-def _intracomm_isend(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     icomm: 'Intracomm',
-                     buffer: str,
-                     dst: Union[str, sp.Expr, Number],
-                     tag: Union[str, sp.Expr, Number]):
-
+def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
 
     from mpi4py import MPI
@@ -610,14 +579,8 @@ def _intracomm_isend(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Isend')
-def _pgrid_isend(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 pgrid: str,
-                 buffer: str,
-                 dst: Union[str, sp.Expr, Number],
-                 tag: Union[str, sp.Expr, Number]):
-
+def _pgrid_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 
     from mpi4py import MPI
@@ -701,15 +664,24 @@ def _recv(pv: ProgramVisitor,
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Irecv')
 @oprepo.replaces('dace.comm.Irecv')
-def _irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, src: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number], request: str):
+def _irecv(pv: ProgramVisitor,
+           sdfg: SDFG,
+           state: SDFGState,
+           buffer: str,
+           src: Union[str, sp.Expr, Number],
+           tag: Union[str, sp.Expr, Number],
+           request: str = None,
+           grid: str = None):
 
     from dace.libraries.mpi.nodes.irecv import Irecv
 
     ret_req = False
     if not request:
         ret_req = True
-        request, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+        request, _ = sdfg.add_array("irecv_req", [1],
+                                    dace.dtypes.opaque("MPI_Request"),
+                                    transient=True,
+                                    find_new_name=True)
 
     libnode = Irecv('_Irecv_', grid=grid)
 
@@ -790,14 +762,8 @@ def _irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, src: U
 
 
 @oprepo.replaces_method('Intracomm', 'Irecv')
-def _intracomm_irecv(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     icomm: 'Intracomm',
-                     buffer: str,
-                     src: Union[str, sp.Expr, Number],
-                     tag: Union[str, sp.Expr, Number]):
-
+def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
 
     from mpi4py import MPI
@@ -809,14 +775,8 @@ def _intracomm_irecv(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessGrid', 'Irecv')
-def _pgrid_irecv(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 pgrid: str,
-                 buffer: str,
-                 src: Union[str, sp.Expr, Number],
-                 tag: Union[str, sp.Expr, Number]):
-
+def _pgrid_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+                 src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
 
     from mpi4py import MPI
