@@ -269,7 +269,7 @@ def _allreduce(pv: 'ProgramVisitor',
     libnode = Alltoall('_Alltoall_', grid)
     in_desc = sdfg.arrays[inbuffer]
     in_buffer = state.add_read(inbuffer)
-    out_desc = sdfg.arrays[inbuffer]
+    out_desc = sdfg.arrays[outbuffer]
     out_buffer = state.add_write(outbuffer)
     state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
     state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(out_buffer, out_desc))
