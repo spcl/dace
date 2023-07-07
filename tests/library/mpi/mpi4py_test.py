@@ -239,18 +239,18 @@ def test_alltoall():
     size = commworld.Get_size()
 
     @dace.program
-    def mpi4py_alltoall(rank: dace.int32, size: dace.int32):
-        sbuf = np.full((128,), rank, dtype=np.int32)
-        rbuf = np.zeros((128, ), dtype=np.int32)
+    def mpi4py_alltoall(rank: dace.int32, size: dace.compiletime):
+        sbuf = np.full((size,), rank, dtype=np.int32)
+        rbuf = np.zeros((size, ), dtype=np.int32)
         commworld.Alltoall(sbuf, rbuf)
         return rbuf
 
     sdfg = None
     if rank == 0:
-        sdfg = mpi4py_alltoall.to_sdfg(simplify=True)
+        sdfg = mpi4py_alltoall.to_sdfg(simplify=True, size=size)
     func = utils.distributed_compile(sdfg, commworld)
 
-    val = func(rank=rank, size=size)
+    val = func(rank=rank)
     ref = mpi4py_alltoall.f(rank, size)
 
     if (not np.allclose(val, ref)):
@@ -261,6 +261,6 @@ if __name__ == "__main__":
     # test_process_grid_bcast()
     # test_sub_grid_bcast()
     # test_3mm()
-    test_isend_irecv()
-    test_send_recv()
+    # test_isend_irecv()
+    # test_send_recv()
     test_alltoall()
