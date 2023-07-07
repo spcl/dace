@@ -3,7 +3,7 @@ import dace
 
 from python_programs import vert_loop_7, vert_loop_7_1, vert_loop_7_1_no_klon, vert_loop_7_1_no_temp, \
                             vert_loop_wip, vert_loop_7_2, vert_loop_7_3, vert_loop_wip_scalar_offset, small_wip, \
-                            small_wip_2, small_wip_3, small_wip_4, mwe_memlet_range, vert_loop_10
+                            small_wip_2, small_wip_3, small_wip_4, mwe_memlet_range, vert_loop_10, mwe_map_similar_size
 
 
 kernels = {
@@ -21,6 +21,7 @@ kernels = {
     'small_wip_4': small_wip_4,
     'mwe_memlet_range': mwe_memlet_range,
     'vert_loop_10': vert_loop_10,
+    'mwe_map_similar_size': mwe_map_similar_size,
 }
 
 

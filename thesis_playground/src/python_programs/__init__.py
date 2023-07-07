@@ -12,3 +12,4 @@ from .small_wip_3 import small_wip_3
 from .small_wip_4 import small_wip_4
 from .mwe_memlet_range import mwe_memlet_range
 from .vert_loop_10 import vert_loop_10
+from .mwe_map_similar_size import mwe_map_similar_size

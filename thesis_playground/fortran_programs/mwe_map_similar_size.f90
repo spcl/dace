@@ -37,11 +37,11 @@ SUBROUTINE mwe_map_similar_size_routine(&
         
     DO JN=1,NBLOCKS
         DO JK=1,KLEV
-            IF (INP2(JN, JK) < 0.5) THEN
-                OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQL)
-            ELSE
-                OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQI)
-            ENDIF
+            OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQI)
+        ENDDO
+
+        DO JK=2,KLEV
+            OUT1(JN, JK) = OUT1(JN, JK) + INP2(JN, JK) - INP3(JN, JK, NCLDQL)
         ENDDO
     ENDDO
 
