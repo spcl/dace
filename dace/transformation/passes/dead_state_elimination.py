@@ -4,17 +4,20 @@ import collections
 import sympy as sp
 from typing import Optional, Set, Tuple, Union
 
-from dace import SDFG, InterstateEdge, SDFGState, symbolic
+from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError
 from dace.transformation import pass_pipeline as ppl
 
 
+@properties.make_properties
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
     """
+
+    CATEGORY: str = 'Simplification'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
@@ -26,6 +29,7 @@ class DeadStateElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Union[SDFGState, Edge[InterstateEdge]]]]:
         """
         Removes unreachable states throughout an SDFG.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -51,8 +55,9 @@ class DeadStateElimination(ppl.Pass):
             self,
             sdfg: SDFG,
             set_unconditional_edges: bool = True) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]], bool]:
-        '''
+        """
         Finds "dead" (unreachable) states in an SDFG. A state is deemed unreachable if it is:
+        
             * Unreachable from the starting state
             * Conditions leading to it will always evaluate to False
             * There is another unconditional (always True) inter-state edge that leads to another state
@@ -60,7 +65,7 @@ class DeadStateElimination(ppl.Pass):
         :param sdfg: The SDFG to traverse.
         :param set_unconditional_edges: If True, conditions of edges evaluated as unconditional are removed.
         :return: A 3-tuple of (unreachable states, unreachable edges, were edges annotated).
-        '''
+        """
         visited: Set[SDFGState] = set()
         dead_edges: Set[Edge[InterstateEdge]] = set()
         edges_annotated = False

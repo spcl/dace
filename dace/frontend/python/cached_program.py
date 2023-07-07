@@ -2,10 +2,13 @@
 """ Precompiled DaCe program/method cache. """
 
 from collections import OrderedDict
-from dace import config, data as dt
-from dace.sdfg.sdfg import SDFG
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Set, Tuple
+
+import dace
+from dace import config
+from dace import data as dt, hooks
+from dace.sdfg.sdfg import SDFG
 
 # Type hints
 ArgTypes = Dict[str, dt.Data]
@@ -39,6 +42,14 @@ def _make_hashable(obj):
         return repr(obj)
 
 
+def _make_sortable(obj):
+    try:
+        obj < obj
+        return obj
+    except TypeError:
+        return repr(obj)
+
+
 @dataclass
 class ProgramCacheKey:
     """ A key object representing a single instance of a DaCe program. """
@@ -58,7 +69,8 @@ class ProgramCacheKey:
             tuple((k, str(v.to_json())) for k, v in sorted(arg_types.items())),
             tuple((k, str(v.to_json())) for k, v in sorted(closure_types.items())),
             tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
-            tuple(sorted(specified_args)),
+            tuple(sorted(_make_sortable(a) for a in specified_args)),
+            tuple(id(hook) for hook in hooks._SDFG_CALL_HOOKS),
         )
 
     def __hash__(self) -> int:
@@ -82,6 +94,7 @@ class DaceProgramCache:
     def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
         """ 
         Initializes a DaCe program cache.
+        
         :param evaluate: A callback that can evaluate constants at call time.
         :param size: The cache size (if not given, uses the default value from
                      the configuration).

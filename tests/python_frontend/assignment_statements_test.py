@@ -114,12 +114,60 @@ def test_ann_assign_supported_type():
 
 
 def test_assignment_to_nonexistent_variable():
+
     @dace.program
     def badprog(B: dace.float64):
         A[...] = B
 
     with pytest.raises(DaceSyntaxError):
         badprog.to_sdfg()
+
+
+def test_assign_return_symbols():
+
+    @dace.program
+    def assign_symbols():
+        a = 6
+        for i in range(10):
+            a = 5
+        a -= 1
+        return i, a
+
+    result = assign_symbols()
+    a = result[1][0]
+    assert a == 4
+
+
+def test_assign_to_compiletime_scalar():
+
+    class MyScalar:
+
+        def __init__(self) -> None:
+            self.scalar = 5
+
+        @dace.method
+        def method(self):
+            self.scalar = 1
+
+    obj = MyScalar()
+    with pytest.raises(DaceSyntaxError):
+        obj.method()
+
+
+def test_augassign_to_compiletime_scalar():
+
+    class MyScalar:
+
+        def __init__(self) -> None:
+            self.scalar = 5
+
+        @dace.method
+        def method(self):
+            self.scalar += 1
+
+    obj = MyScalar()
+    with pytest.raises(DaceSyntaxError):
+        obj.method()
 
 
 if __name__ == "__main__":
@@ -133,3 +181,8 @@ if __name__ == "__main__":
 
     test_ann_assign_supported_type()
     test_assignment_to_nonexistent_variable()
+
+    test_assign_return_symbols()
+
+    test_assign_to_compiletime_scalar()
+    test_augassign_to_compiletime_scalar()

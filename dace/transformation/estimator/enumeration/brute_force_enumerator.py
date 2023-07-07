@@ -17,12 +17,13 @@ import itertools
 
 @make_properties
 class BruteForceEnumerator(MapScoringEnumerator):
-    ''' 
+    """ 
     Enumerates all fusible map combinations in a 
     brute-force way. Returns subgraphs or map sets 
     and their respective scores, if a scoring function 
     is defined.
-    '''
+    """
+
     def __init__(self,
                  sdfg: SDFG,
                  graph: SDFGState,
@@ -37,10 +38,10 @@ class BruteForceEnumerator(MapScoringEnumerator):
                          scoring_function=scoring_function)
 
     def brute_force(self):
-        '''
+        """
         Iterate over self.map_entries and yield all fusible 
         combinations along with their score.
-        '''
+        """
         for i in range(2, len(self._map_entries) + 1):
             for sg in itertools.combinations(self._map_entries, i):
 

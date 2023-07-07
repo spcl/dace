@@ -1,22 +1,22 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, Iterator, Optional, Set, Tuple
+from typing import Optional, Set
 
 import networkx as nx
 
-from dace import SDFG, SDFGState, data
-from dace import sdfg as sd
-from dace.properties import make_properties
+from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation
 
 
+@properties.make_properties
 class TransientReuse(ppl.Pass):
     """
     Reduces memory consumption by reusing allocated transient array memory. Only modifies arrays that can safely be
     reused.
     """
+
+    CATEGORY: str = 'Memory Footprint Reduction'
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
 
@@ -150,17 +150,6 @@ class TransientReuse(ppl.Pass):
                             for edge in state.memlet_tree(e):
                                 if edge.data.data == old:
                                     edge.data.data = new
-
-        # clean up the arrays
-        for a in list(sdfg.arrays):
-            used = False
-            for s in sdfg.states():
-                for n in s.nodes():
-                    if isinstance(n, nodes.AccessNode) and n.data == a:
-                        used = True
-                        break
-            if not used:
-                sdfg.remove_data(a, validate=False)
 
         # Analyze memory savings and output them
         memory_after = 0

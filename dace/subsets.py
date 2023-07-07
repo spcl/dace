@@ -40,15 +40,21 @@ class Subset(object):
             try:
                 for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
                                             other.min_element_approx(), other.max_element_approx()):
+                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
+                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
 
                     # lower bound: first check whether symbolic positive condition applies
                     if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
                 return False
@@ -150,9 +156,8 @@ class Range(Subset):
             if isinstance(obj, symbolic.SymExpr):
                 return {'main': str(obj.expr), 'approx': str(obj.approx)}
             else:
-                return str(obj)
+                return _simplified_str(obj)
 
-        # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 
@@ -357,6 +362,7 @@ class Range(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
+
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
@@ -455,8 +461,8 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                ranges.append(
-                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]), symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
+                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
+                ranges.append((value, value, 1))
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
@@ -812,6 +818,7 @@ class Indices(Subset):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
+
             :param i: A tuple of the same dimensionality as subset.dims().
             :return: Absolute coordinates for index i.
         """
@@ -827,6 +834,7 @@ class Indices(Subset):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
+
             :param i: A tuple of the same dimensionality as subset.dims().
             :param strides: The strides of the array we are subsetting.
             :return: Absolute 1D index at coordinate i.
@@ -874,6 +882,7 @@ class Indices(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
+
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
@@ -991,9 +1000,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    raise
+                    minrb = sympy.Min(arb, brb)
             else:
-                raise
+                minrb = sympy.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1004,9 +1013,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    raise
+                    maxre = sympy.Max(are, bre)
             else:
-                raise
+                maxre = sympy.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 
@@ -1017,6 +1026,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
+        
         :param subset_a: The first subset.
         :param subset_b: The second subset.
         :return: A Subset object whose size is at least the union of the two

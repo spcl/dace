@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include <set>
-#include <sstream>
 #include <string>
 
 int main(int argc, char **argv) {
@@ -17,9 +16,14 @@ int main(int argc, char **argv) {
     if (hipGetDeviceProperties(&prop, i) != hipSuccess ||
         (prop.major == 99 && prop.minor == 99))
       continue;
-    std::stringstream ss;
-    ss << prop.major * 10 << prop.minor;
-    architectures.insert(ss.str());
+
+    // Find architecture, ignoring anything that succeeds a colon
+    void *colon = memchr(prop.gcnArchName, ':', 256);
+    if (colon)
+      *(char *)colon = '\0';
+
+    std::string str = prop.gcnArchName;
+    architectures.insert(str);
   }
 
   // Print out architectures

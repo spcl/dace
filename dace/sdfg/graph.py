@@ -392,8 +392,9 @@ class Graph(Generic[NodeT, EdgeT]):
                          dest_node: NodeT,
                          as_edges: bool = False) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
         """ 
-        Finds all simple paths (with no repeating nodes) from source_node
-        to dest_node.
+        Finds all simple paths (with no repeating nodes) from ``source_node``
+        to ``dest_node``.
+
         :param source_node: Node to start from.
         :param dest_node: Node to end at.
         :param as_edges: If True, returns list of edges instead of nodes.
@@ -668,7 +669,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         self._edges[t] = edge
         self._nodes[src][1][t] = edge
         self._nodes[dst][0][t] = edge
-        return self._nx.add_edge(src, dst, data=data)
+        self._nx.add_edge(src, dst, data=data)
+        return edge
 
     def remove_node(self, node: NodeT):
         try:

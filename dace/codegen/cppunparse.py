@@ -120,6 +120,7 @@ def interleave(inter, f, seq, **kwargs):
 
 
 class LocalScheme(object):
+
     def is_defined(self, local_name, current_depth):
         raise NotImplementedError('Abstract class')
 
@@ -131,6 +132,7 @@ class LocalScheme(object):
 
 
 class CPPLocals(LocalScheme):
+
     def __init__(self):
         # Maps local name to a 3-tuple of line number, scope (measured in indentation) and type
         self.locals = {}
@@ -163,6 +165,7 @@ class CPPUnparser:
     """Methods in this class recursively traverse an AST and
     output C++ source code for the abstract syntax; original formatting
     is disregarded. """
+
     def __init__(self,
                  tree,
                  depth,
@@ -532,7 +535,11 @@ class CPPUnparser:
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
         else:
-            self.write(result.replace('\'', '\"'))
+            # Special case for strings of containing byte literals (but are still strings).
+            if result.find("b'") >= 0:
+                self.write(result)
+            else:
+                self.write(result.replace('\'', '\"'))
 
     def _Constant(self, t):
         value = t.value
@@ -1128,7 +1135,9 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif isinstance(code, sympy.Basic):
         from dace import symbolic
-        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
+        return cppunparse(ast.parse(symbolic.symstr(code, cpp_mode=True)),
+                          expr_semicolon,
+                          defined_symbols=defined_symbols)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1146,6 +1155,7 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
+
 
 @lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):

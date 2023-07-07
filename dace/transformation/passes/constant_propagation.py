@@ -7,7 +7,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
-from dace import SDFG, SDFGState, dtypes, symbolic
+from dace import SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
 
 
@@ -17,14 +17,17 @@ class _UnknownValue:
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
     the number of overall symbols.
     """
 
-    recursive: bool = True
-    progress: Optional[bool] = None
+    CATEGORY: str = 'Simplification'
+
+    recursive = properties.Property(dtype=bool, default=True, desc='Propagagte recursively through nested SDFGs')
+    progress = properties.Property(dtype=bool, default=None, allow_none=True, desc='Show progress')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
@@ -50,6 +53,7 @@ class ConstantPropagation(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _, initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
         """
         Propagates constants throughout the SDFG.
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -150,6 +154,7 @@ class ConstantPropagation(ppl.Pass):
                           initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[SDFGState, Dict[str, Any]]:
         """
         Finds all constants and constant-assigned symbols in the SDFG for each state.
+
         :param sdfg: The SDFG to traverse.
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A dictionary mapping an SDFG state to a mapping of constants and their corresponding values.
@@ -171,15 +176,22 @@ class ConstantPropagation(ppl.Pass):
         # Traverse SDFG topologically
         for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
                                           sdfg.number_of_nodes(), self.progress):
-            if state in result:
+            # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
+            # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-
+            # state has incoming edges that may involve the initial symbols. See also:
+            # `tests.passes.constant_propagation_test.test_for_with_external_init_nested_start_with_guard``
+            if state in result and state is not start_state:
                 continue
-            result[state] = {}
 
             # Get predecessors
             in_edges = sdfg.in_edges(state)
             if len(in_edges) == 1:  # Special case, propagate as-is
+                if state not in result:  # Condition evaluates to False when state is the start-state
+                    result[state] = {}
+                
                 # First the prior state
-                self._propagate(result[state], result[in_edges[0].src])
+                if in_edges[0].src in result:  # Condition evaluates to False when state is the start-state
+                    self._propagate(result[state], result[in_edges[0].src])
 
                 # Then assignments on the incoming edge
                 self._propagate(result[state], self._data_independent_assignments(in_edges[0].data, arrays))
@@ -205,6 +217,8 @@ class ConstantPropagation(ppl.Pass):
                     else:
                         assignments[aname] = aval
 
+            if state not in result:  # Condition may evaluate to False when state is the start-state
+                result[state] = {}
             self._propagate(result[state], assignments)
 
         return result
@@ -212,6 +226,7 @@ class ConstantPropagation(ppl.Pass):
     def _find_desc_symbols(self, sdfg: SDFG, constants: Dict[SDFGState, Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
         """
         Finds constant symbols that data descriptors (e.g., arrays) depend on.
+
         :param sdfg: The SDFG to scan.
         :param constants: Constant symbols found in ``collect_constants``.
         :return: A tuple of two sets: (all descriptor-related symbols, symbols that take multiple values).
@@ -240,6 +255,7 @@ class ConstantPropagation(ppl.Pass):
     def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any], backward: bool = False):
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
+        
         :param symbols: The symbols dictionary to update.
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).
@@ -254,7 +270,6 @@ class ConstantPropagation(ppl.Pass):
             return
 
         repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
-        unknowns = {k for k, v in symbols.items() if v is _UnknownValue}
 
         # Replace interstate edge assignment (which is Python code)
         def _replace_assignment(v, assignment):
@@ -276,7 +291,7 @@ class ConstantPropagation(ppl.Pass):
 
         # Update results with values of other propagated symbols
         propagated_symbols = {
-            k: _replace_assignment(v, {k} & unknowns) if v is not _UnknownValue else _UnknownValue
+            k: _replace_assignment(v, {k}) if v is not _UnknownValue else _UnknownValue
             for k, v in new_symbols.items()
         }
         symbols.update(propagated_symbols)

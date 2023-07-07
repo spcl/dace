@@ -9,6 +9,7 @@ import collections
 import os
 import six
 import shutil
+import shlex
 import subprocess
 import re
 from typing import Any, Callable, Dict, List, Set, Tuple, TypeVar, Union
@@ -78,11 +79,11 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
     with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
-    # Copy snapshot of configuration script
+    # Copy a full snapshot of configuration script
     if config is not None:
-        config.save(os.path.join(out_path, "dace.conf"))
+        config.save(os.path.join(out_path, "dace.conf"), all=True)
     else:
-        Config.save(os.path.join(out_path, "dace.conf"))
+        Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     if sdfg is not None:
         # Save the SDFG itself and its hash
@@ -124,7 +125,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # We do this instead of iterating over source files in the directory to
     # avoid globbing files from previous compilations, such that we don't need
     # to wipe the directory for every compilation.
-    file_list = [line.strip().split(",") for line in open(os.path.join(program_folder, "dace_files.csv"), "r")]
+    with open(os.path.join(program_folder, "dace_files.csv"), "r") as f:
+        file_list = [line.strip().split(",") for line in f]
 
     # Get absolute paths and targets for all source files
     files = []
@@ -158,12 +160,15 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     ]
 
     # Get required environments are retrieve the CMake information
-    environments = set(l.strip() for l in open(os.path.join(program_folder, "dace_environments.csv"), "r"))
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
 
     environments = dace.library.get_environments_and_dependencies(environments)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
     cmake_command += sorted(environment_flags)
+
+    cmake_command += shlex.split(Config.get('compiler', 'extra_cmake_args'))
 
     # Replace backslashes with forward slashes
     cmake_command = [cmd.replace('\\', '/') for cmd in cmake_command]
@@ -181,6 +186,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
 
+    cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+
     # Set linker and linker arguments, iff they have been specified
     cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
     cmake_linker = cmake_linker.strip()
@@ -192,6 +199,9 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
+
+    if Config.get('debugprint') == 'verbose':
+        print(f'Running CMake: {cmake_command}')
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
@@ -250,6 +260,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
+    
     :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)

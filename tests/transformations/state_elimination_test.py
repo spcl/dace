@@ -1,6 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.interstate import StateAssignElimination, StateFusion
+from dace.transformation.interstate import EndStateElimination, StateAssignElimination, StateFusion
 
 
 def test_eliminate_end_state():
@@ -10,8 +10,30 @@ def test_eliminate_end_state():
     state3 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.apply_transformations(EndStateElimination)
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
+
+
+def test_eliminate_end_state_noassign():
+    outer_sdfg = dace.SDFG('state_elimination_test_outer')
+    outer_state = outer_sdfg.add_state()
+
+    sdfg = dace.SDFG('state_elimination_test')
+    state1 = sdfg.add_state()
+    state2 = sdfg.add_state()
+    state3 = sdfg.add_state()
+    sdfg.add_edge(state1, state2, dace.InterstateEdge())
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
+
+    nsdfg = outer_state.add_nested_sdfg(sdfg, outer_sdfg, {}, {}, symbol_mapping={'k': 3})
+
+    nsdfg.sdfg.simplify()
+    nsdfg.sdfg.simplify()
+    assert nsdfg.sdfg.number_of_nodes() == 2
+    nsdfg.sdfg.apply_transformations(EndStateElimination)
+    nsdfg.sdfg.simplify()
+    assert nsdfg.sdfg.number_of_nodes() == 1
 
 
 def test_state_assign_elimination():
@@ -64,5 +86,6 @@ def test_sae_scalar():
 
 if __name__ == '__main__':
     test_eliminate_end_state()
+    test_eliminate_end_state_noassign()
     test_state_assign_elimination()
     test_sae_scalar()

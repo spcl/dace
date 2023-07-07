@@ -17,7 +17,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
                              CodeBlock)
 from dace.frontend.operations import detect_reduction_type
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -133,6 +133,7 @@ class Node(object):
 
     def remove_in_connector(self, connector_name: str):
         """ Removes an input connector from the node.
+
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
@@ -145,6 +146,7 @@ class Node(object):
 
     def remove_out_connector(self, connector_name: str):
         """ Removes an output connector from the node.
+
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
@@ -178,6 +180,7 @@ class Node(object):
         """
         Returns the next unused connector ID (as a string). Used for
         filling connectors when adding edges to scopes.
+
         :param try_name: First try the connector with this name. If already
                          exists, use the next integer connector.
         """
@@ -223,6 +226,8 @@ class AccessNode(Node):
     instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
                               desc="Instrument data contents at this access",
                               default=dtypes.DataInstrumentationType.No_Instrumentation)
+    instrument_condition = CodeProperty(desc="Condition under which to trigger the instrumentation",
+                                        default=CodeBlock("1", language=dtypes.Language.CPP))
 
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
@@ -244,6 +249,7 @@ class AccessNode(Node):
         node._data = self._data
         node._setzero = self._setzero
         node._instrument = self._instrument
+        node._instrument_condition = dcpy(self._instrument_condition, memo=memo)
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
@@ -544,6 +550,16 @@ class NestedSDFG(CodeNode):
         self.schedule = schedule
         self.debuginfo = debuginfo
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, dcpy(v, memo))
+        if result._sdfg is not None:
+            result._sdfg.parent_nsdfg_node = result
+        return result
+
     @staticmethod
     def from_json(json_obj, context=None):
         from dace import SDFG  # Avoid import loop
@@ -573,7 +589,11 @@ class NestedSDFG(CodeNode):
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
-        from dace.sdfg.infer_types import infer_connector_types
+        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+
+        # Propagate aliasing information into SDFG
+        infer_aliasing(self, sdfg, state)
+
         # Infer internal connector types
         infer_connector_types(self.sdfg)
 
@@ -583,7 +603,7 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -592,6 +612,13 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.sdfg.parent_nsdfg_node is not self:
+            raise ValueError('Parent nested SDFG node not properly set')
+        if self.sdfg.parent is not state:
+            raise ValueError('Parent state not properly set for nested SDFG node')
+        if self.sdfg.parent_sdfg is not sdfg:
+            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
             if conn not in self.sdfg.arrays:
@@ -619,7 +646,7 @@ class NestedSDFG(CodeNode):
             warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
-        self.sdfg.validate(references)
+        self.sdfg.validate(references, **context)
 
 
 # ------------------------------------------------------------------------------
@@ -628,7 +655,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -639,7 +665,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -650,9 +675,9 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        @see: Map
+        
+        :see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -726,9 +751,9 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        @see: Map
+        
+        :see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -827,6 +852,14 @@ class Map(object):
                                   optional=True,
                                   optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    gpu_launch_bounds = Property(dtype=str,
+                                 default="0",
+                                 desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
+                                 "enables the statement if block size is not symbolic, and any other value "
+                                 "(including tuples) sets it explicitly.",
+                                 optional=True,
+                                 optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     def __init__(self,
                  label,
                  params,
@@ -853,6 +886,9 @@ class Map(object):
             ["{}={}".format(i, r)
              for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]) + "]"
 
+    def __repr__(self):
+        return type(self).__name__ + ' (' + self.__str__() + ')'
+
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid map name "%s"' % self.label)
@@ -871,10 +907,10 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        @see: Consume
+        
+        :see: Consume
     """
-
-    def __init__(self, consume, dynamic_inputs=None):
+    def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
@@ -949,10 +985,10 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        @see: Consume
+        
+        :see: Consume
     """
-
-    def __init__(self, consume):
+    def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
@@ -1063,10 +1099,9 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
-
     @staticmethod
     def map_type():
-        return Pipeline
+        return PipelineScope
 
     @property
     def pipeline(self):
@@ -1096,10 +1131,9 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
-
     @staticmethod
     def map_type():
-        return Pipeline
+        return PipelineScope
 
     @property
     def pipeline(self):
@@ -1111,7 +1145,7 @@ class PipelineExit(MapExit):
 
 
 @make_properties
-class Pipeline(Map):
+class PipelineScope(Map):
     """ This a convenience-subclass of Map that allows easier implementation of
         loop nests (using regular Map indices) that need a constant-sized
         initialization and drain phase (e.g., N*M + c iterations), which would
@@ -1135,7 +1169,7 @@ class Pipeline(Map):
                  drain_overlap=False,
                  additional_iterators={},
                  **kwargs):
-        super(Pipeline, self).__init__(*args, **kwargs)
+        super(PipelineScope, self).__init__(*args, **kwargs)
         self.init_size = init_size
         self.init_overlap = init_overlap
         self.drain_size = drain_size
@@ -1146,7 +1180,7 @@ class Pipeline(Map):
         return "__" + "".join(self.params)
 
     def loop_bound_str(self):
-        from dace.codegen.targets.common import sym2cpp
+        from dace.codegen.common import sym2cpp
         bound = 1
         for begin, end, step in self.range:
             bound *= (step + end - begin) // step
@@ -1170,7 +1204,7 @@ class Pipeline(Map):
         return self.iterator_str() + "_drain"
 
 
-PipelineEntry = indirect_properties(Pipeline, lambda obj: obj.map)(PipelineEntry)
+PipelineEntry = indirect_properties(PipelineScope, lambda obj: obj.map)(PipelineEntry)
 
 # ------------------------------------------------------------------------------
 
@@ -1245,6 +1279,7 @@ class LibraryNode(CodeNode):
     def expand(self, sdfg, state, *args, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
+
             :return: the name of the expanded implementation
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
@@ -1304,6 +1339,14 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        fsyms = super(LibraryNode, self).free_symbols
+        for p, v in self.properties():
+            if isinstance(p, SymbolicProperty) and issymbolic(v):
+                fsyms.update((str(s) for s in v.free_symbols))
+        return fsyms
 
 
 class UnregisteredLibraryNode(LibraryNode):

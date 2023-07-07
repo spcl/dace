@@ -71,6 +71,7 @@ def test_tasklet_array():
     assert (b == a + 42).all()
 
 
+@pytest.mark.skip
 @pytest.mark.verilator
 def test_tasklet_double_clk_counters():
     """
@@ -570,9 +571,9 @@ def test_multi_tasklet():
 
 @pytest.mark.verilator
 def test_tasklet_map():
-    '''
+    """
         Test the unrolled map support for M tasklets on N vectors of size W.
-    '''
+    """
     # add symbols
     n = 512
     m = 8

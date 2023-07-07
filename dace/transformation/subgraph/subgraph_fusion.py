@@ -10,7 +10,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.memlet import Memlet
 from dace.transformation import transformation
 from dace.properties import EnumProperty, ListProperty, make_properties, Property
-from dace.symbolic import symstr, overapproximate
+from dace.symbolic import overapproximate
 from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlet, propagate_memlets_scope, _propagate_node
 from dace.transformation.subgraph import helpers
 from dace.transformation.dataflow import RedundantArray
@@ -29,17 +29,17 @@ from itertools import chain
 
 @make_properties
 class SubgraphFusion(transformation.SubgraphTransformation):
-    """ Implements the SubgraphFusion transformation.
-        Fuses together the maps contained in the subgraph and pushes inner nodes
-        into a global outer map, creating transients and new connections
-        where necessary.
+    """
+    Implements the SubgraphFusion transformation.
+    Fuses together the maps contained in the subgraph and pushes inner nodes
+    into a global outer map, creating transients and new connections
+    where necessary.
 
-        SubgraphFusion requires all lowest scope level maps in the subgraph
-        to have the same indices and parameter range in every dimension.
-        This can be achieved using the MultiExpansion transformation first.
-        Reductions can also be expanded using ReduceExpansion as a
-        preprocessing step.
-
+    SubgraphFusion requires all lowest scope level maps in the subgraph
+    to have the same indices and parameter range in every dimension.
+    This can be achieved using the MultiExpansion transformation first.
+    Reductions can also be expanded using ReduceExpansion as a
+    preprocessing step.
     """
 
     debug = Property(desc="Show debug info", dtype=bool, default=False)
@@ -75,18 +75,19 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     )
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
-        '''
+        """
         Fusible if
-        1. Maps have the same access sets and ranges in order
-        2. Any nodes in between two maps are AccessNodes only, without WCR
-           There is at most one AccessNode only on a path between two maps,
-           no other nodes are allowed
-        3. The exiting memlets' subsets to an intermediate edge must cover
-           the respective incoming memlets' subset into the next map.
-           Also, as a limitation, the union of all exiting memlets'
-           subsets must be contiguous.
-        4. Check for any disjoint accesses of arrays.
-        '''
+        
+            1. Maps have the same access sets and ranges in order
+            2. Any nodes in between two maps are AccessNodes only, without WCR
+               There is at most one AccessNode only on a path between two maps,
+               no other nodes are allowed
+            3. The exiting memlets' subsets to an intermediate edge must cover
+               the respective incoming memlets' subset into the next map.
+               Also, as a limitation, the union of all exiting memlets'
+               subsets must be contiguous.
+            4. Check for any disjoint accesses of arrays.
+        """
         # get graph
         graph = subgraph.graph
         for node in subgraph.nodes():
@@ -265,6 +266,28 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if isinstance(node, nodes.AccessNode):
                     container_dict[node.data].append(node)
 
+            # Check for read/write dependencies between input and output nodes
+            outputs = set(n.data for n in out_nodes)
+            from dace.transformation.interstate import StateFusion
+            for node in in_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data in outputs:
+                    matching_outputs = [n for n in out_nodes if n.data == node.data]
+                    # Overall ranges overlap: potential data race
+                    if StateFusion.memlets_intersect(graph, [node], True, graph, matching_outputs, False):
+                        # Check memlet leaves in more detail
+                        in_leaves = [l for e in graph.out_edges(node) for l in graph.memlet_tree(e).leaves()]
+                        out_leaves = [
+                            l for n in matching_outputs for e in graph.in_edges(n)
+                            for l in graph.memlet_tree(e).leaves()
+                        ]
+                        # All-pairs check. If memlets are equal then there are no races.
+                        # If they are not, and we cannot know whether they intersect or they do, we do not match.
+                        for ea in in_leaves:
+                            for eb in out_leaves:
+                                if ea.data.src_subset == eb.data.dst_subset:  # Equal - no data race
+                                    continue
+                                return False  # Otherwise - potential data race
+
             for (node_data, compressible) in is_compressible.items():
                 # we only care about disjoint subsets...
                 # 1. if the array is not compressible
@@ -327,8 +350,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     @staticmethod
     def get_adjacent_nodes(
             sdfg, graph, map_entries) -> Tuple[List[nodes.AccessNode], List[nodes.AccessNode], List[nodes.AccessNode]]:
-        ''' 
+        """ 
         For given map entries, finds a set of in, out and intermediate nodes as defined below
+
         :param sdfg: SDFG
         :param graph: State of interest
         :param map_entries: List of all outermost scoped maps that induce the subgraph 
@@ -342,7 +366,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         -> in_nodes are trivially disjoint from the other two types of access nodes
         -> Intermediate_nodes and out_nodes are not necessarily disjoint
 
-        '''
+        """
 
         # Nodes that flow into one or several maps but no data is flowed to them from any map
         in_nodes = set()
@@ -388,15 +412,16 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
     @staticmethod
     def check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
-        ''' 
+        """ 
         Checks whether given outermost scoped map entries have topological structure apt for fusion
+
         :param sdfg: SDFG 
         :param graph: State 
         :param map_entries: List of outermost scoped map entries induced by subgraph 
         :param intermediate_nodes: List of intermediate access nodes 
         :param out_nodes: List of outgoing access nodes 
         :return: Boolean value indicating fusibility 
-        '''
+        """
         # For each intermediate and out node: must never reach any map
         # entry if it is not connected to map entry immediately
 
@@ -436,14 +461,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     def get_invariant_dimensions(self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
                                  map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit],
                                  node: nodes.AccessNode):
-        '''
+        """
         For a given intermediate access node, return a set of indices that correspond to array / subset dimensions in which no change is observed 
         upon propagation through the corresponding map nodes in map_entries / map_exits.
+
         :param map_entries: List of outermost scoped map entries 
         :param map_exits: List of corresponding exit nodes to map_entries, in order 
         :param node: Intermediate access node of interest 
         :return: Set of invariant integer dimensions 
-        '''
+        """
         variant_dimensions = set()
         subset_length = -1
 
@@ -493,7 +519,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                   new_dst_conn=None,
                   new_data=None,
                   remove_old=False):
-        '''
+        """
         Copies an edge going from source to dst.
         If no destination is specified, the edge is copied with the same
         destination and port as the original edge, else the edge is copied
@@ -504,7 +530,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         If remove_old is specified, the old edge is removed immediately
         If new_data is specified, inserts new_data as a memlet, else
         else makes a deepcopy of the current edges memlet
-        '''
+        """
         data = new_data if new_data else dcpy(edge.data)
         src = edge.src if new_src is None else new_src
         src_conn = edge.src_conn if new_src is None else new_src_conn
@@ -518,17 +544,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return ret
 
     def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
-        '''
+        """
         DFS to replace strides and volumes of data that exhibits nested SDFGs 
         adjacent to its corresponding access nodes, applied during post-processing 
         of a fused graph. Operates in-place.
+
         :param sdfg: SDFG 
         :param nsdfg: The Nested SDFG of interest 
         :param name: Name of the array in the SDFG 
         :param nname: Name of the array in the nested SDFG 
         :param memlet: Memlet adjacent to the nested SDFG that leads to the 
                        access node with the corresponding data name
-        '''
+        """
         # check whether array needs to change
         if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
             subset_copy = dcpy(memlet.subset)
@@ -575,11 +602,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                      map_entries: List[nodes.MapEntry],
                                      map_exits: List[nodes.MapExit],
                                      do_not_override: List[str] = []):
-        ''' 
+        """ 
         Checks for all intermediate nodes whether they appear 
         only within the induced fusible subgraph my map_entries and map_exits.
         This is returned as a dict that contains a boolean value for each 
         intermediate node as a key.
+
         :param sdfg: SDFG 
         :param state: State of interest 
         :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
@@ -587,7 +615,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :param map_exits: List of map exits corresponding to map_entries in order 
         :param do_not_override: List of data array names not to be compressed 
         :param return: A dictionary indicating for each data string whether its array can be compressed 
-        '''
+        """
 
         # search whether intermediate_nodes appear outside of subgraph
         # and store it in dict
@@ -622,9 +650,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     def clone_intermediate_nodes(self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
                                  intermediate_nodes: List[nodes.AccessNode], out_nodes: List[nodes.AccessNode],
                                  map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit]):
-        ''' 
+        """ 
         Creates cloned access nodes and data arrays for nodes that are both in intermediate nodes 
         and out nodes, redirecting output from the original node to the cloned node. Operates in-place.
+
         :param sdfg: SDFG 
         :param state: State of interest 
         :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
@@ -633,7 +662,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :param map_exits: List of map exits corresponding to map_entries in order 
         :return: A dict that maps each intermediate node that also functions as an out node 
                        to the respective cloned transient node 
-        '''
+        """
 
         transients_created = {}
         for node in intermediate_nodes & out_nodes:
@@ -667,17 +696,19 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     def determine_invariant_dimensions(self, sdfg: dace.sdfg.SDFG, graph: dace.sdfg.SDFGState,
                                        intermediate_nodes: List[nodes.AccessNode], map_entries: List[nodes.MapEntry],
                                        map_exits: List[nodes.MapExit]):
-        ''' Determines the invariant dimensions for each node -- dimensions in 
-            which the access set of the memlets propagated through map entries and 
-            exits does not change.
-            :param sdfg: SDFG 
-            :param state: State of interest 
-            :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
-            :param map_entries: List of outermost scoped map entries in the subgraph 
-            :param map_exits: List of map exits corresponding to map_entries in order 
-            :return: A dict mapping each intermediate node (nodes.AccessNode) to a list of integer dimensions
-        '''
-        # finally, create dict for every array that for which
+        """
+        Determines the invariant dimensions for each node -- dimensions in 
+        which the access set of the memlets propagated through map entries and 
+        exits does not change.
+        
+        :param sdfg: SDFG 
+        :param state: State of interest 
+        :param intermediate_nodes: List of intermediate nodes appearing in a fusible subgraph 
+        :param map_entries: List of outermost scoped map entries in the subgraph 
+        :param map_exits: List of map exits corresponding to map_entries in order 
+        :return: A dict mapping each intermediate node (nodes.AccessNode) to a list of integer dimensions
+        """
+        # create dict for every array that for which
         # subgraph_contains_data is true that lists invariant axes.
         invariant_dimensions = {}
         for node in intermediate_nodes:
@@ -707,14 +738,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                    map_entries: List[nodes.MapEntry],
                                    map_exits: List[nodes.MapExit],
                                    do_not_override: List[str] = []):
-        ''' 
+        """ 
         Helper function that computes the following information:
         1. Determine whether intermediate nodes only appear within the induced fusible subgraph. This is equivalent to checking for compresssibility. 
         2. Determine whether any intermediate transients are also out nodes, if so they have to be cloned 
         3. Determine invariant dimensions for any intermediate transients (that are compressible).
+
         :return: A tuple (subgraph_contains_data, transients_created, invariant_dimensions)
                  of dictionaries containing the necessary information
-        '''
+        """
 
         # 1. Compressibility
         subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,

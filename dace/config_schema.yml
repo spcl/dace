@@ -57,28 +57,11 @@ required:
                     preference only applies to symbolic ranges or ranges over
                     the autotile_size parameter.
 
-            transform_on_call:
-                type: bool
-                default: false
-                title: Transform SDFGs on Invocation
-                description: >
-                    Automatically calls sdfg.optimize() every time a DaCe
-                    program or SDFG is invoked.
-
-            interface:
-                type: str
-                default: dace.transformation.optimizer.SDFGOptimizer
-                title: SDFG Optimizer
-                description: >
-                    SDFG optimization class to import and call on
-                    sdfg.optimize(). Defaults to the transformation CLI,
-                    empty string or an invalid class name skips optimization.
-
             visualize_sdfv:
                 type: bool
                 default: false
                 title: Visualize SDFG
-                description: Open a SDFV in browser every transformation.
+                description: Open an SDFG in browser every transformation.
 
             save_intermediate:
                 type: bool
@@ -230,6 +213,14 @@ required:
                     All stack allocated arrays (i.e. StorageType.Register) with
                     size larger than this will be allocated on the heap.
 
+            extra_cmake_args:
+                type: str
+                default: ''
+                title: Additional CMake configuration arguments
+                description: >
+                    If set, specifies additional arguments to the initial invocation
+                    of ``cmake``.
+
             #############################################
             # CPU compiler
             cpu:
@@ -258,7 +249,7 @@ required:
 
                     openmp_sections:
                         type: bool
-                        default: true
+                        default: false
                         title: Use OpenMP sections
                         description: >
                             If set to true, multiple connected components will
@@ -274,10 +265,10 @@ required:
                 required:
                     backend:
                         type: str
-                        default: 'cuda'
+                        default: 'auto'
                         title: Compilation backend
                         description: >
-                            Backend to compile for ('cuda' for NVIDIA or 'hip' for AMD).
+                            Backend to compile for ('auto' for automatic detection, 'cuda' for NVIDIA, or 'hip' for AMD).
 
                     path:
                         type: str
@@ -305,7 +296,7 @@ required:
                             Additional CUDA architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '35'
+                        default: '60'
 
                     hip_arch:
                         type: str
@@ -314,7 +305,7 @@ required:
                             Additional HIP architectures (separated by commas)
                             to compile GPU code for, excluding the current
                             architecture on the compiling machine.
-                        default: '906'
+                        default: 'gfx906'
 
                     default_block_size:
                         type: str
@@ -391,6 +382,37 @@ required:
                         title: Additional libraries
                         description: Additional linked libraries required by target
                         default: ''
+
+                    mempool_release_threshold:
+                        type: int
+                        title: Memory pool memory release threshold
+                        default: -1
+                        description: >
+                            A value that determines how large a memory allocation has to be before it is
+                            automatically released from the memory pool to the system. The default is -1,
+                            which indicates "never release". Other values may be 0 (always release), or
+                            any byte value.
+                            For more information, see ``cudaMemPoolAttrReleaseThreshold`` in the CUDA toolkit
+                            documentation.
+
+                    block_size_limit:
+                        type: int
+                        title: Maximum thread-block size in code generation
+                        default: 1024
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified overall larger block size. Default value is derived from hardware
+                            limits on common GPUs.
+
+                    block_size_lastdim_limit:
+                        type: int
+                        title: Maximum last dimension thread-block size in code generation
+                        default: 64
+                        description: >
+                            Threshold for the GPU code generator to fail in generating a kernel with
+                            a specified larger block size in the third dimension. Default value is
+                            derived from hardware limits on common GPUs.
+
 
             #############################################
             # General FPGA flags
@@ -547,6 +569,7 @@ required:
                         type: str
                         default: a10gx
                         title: Target FPGA board
+                        description: FPGA board to compile for, obtain list by running ``aoc --list-boards``.
 
                     enable_debugging:
                         type: bool
@@ -630,101 +653,6 @@ required:
                         default: '-Wl,--disable-new-dtags'
                         default_Darwin: ''
                         default_Windows: ''
-
-
-    execution:
-        type: dict
-        title: Execution
-        description: Binary execution preferences
-        required:
-            general:
-                type: dict
-                title: General
-                description: General execution preferences
-                required:
-                    host:
-                        type: str
-                        default: localhost
-                        title: Host
-                        description: Hostname to use for execution
-
-                    workdir:
-                        type: str
-                        default: '/tmp/'
-                        title: Working directory
-                        description: Working directory on the remote host
-
-                    check_args:
-                        type: bool
-                        default: true
-                        title: Check arguments
-                        description: >
-                            Do strict verification that arguments passed when
-                            calling a DaCe program match the expected dtypes.
-
-                    execcmd:
-                        type: str
-                        title: Command
-                        description: >
-                            Command to use to execute ${command} on ${host}
-                        default: 'ssh ${host} ${command}'
-                        template_vars:
-                            - host
-                            - command
-
-                    copycmd_r2l:
-                        type: str
-                        default: 'scp ${host}:${srcfile} ${dstfile}'
-                        title: "Remote->Local copy command"
-                        description: >
-                            Command to use to copy ${srcfile} on ${host} to
-                            the local ${dstfile}.
-                        template_vars:
-                            - host
-                            - srcfile
-                            - dstfile
-
-                    copycmd_l2r:
-                        type: str
-                        default: "scp ${srcfile} ${host}:${dstfile}"
-                        title: "Local->Remote copy command"
-                        description: >
-                            Command to use to copy the local ${srcfile} to the
-                            remote ${dstfile}.
-                        template_vars:
-                            - host
-                            - srcfile
-                            - dstfile
-
-                    repetitions:
-                        type: int
-                        default: 5
-                        title: "Repetitions per Run"
-                        description: >
-                            Number of repetitions to run for each click of the
-                            Run button (median value will be reported in the
-                            performance chart).
-            mpi:
-                type: dict
-                title: MPI
-                description: MPI execution preferences
-                required:
-                    mpiexec:
-                        type: str
-                        default: 'mpirun -n ${num_procs} ${command}'
-                        title: mpirun command
-                        description: >
-                            Command to use to execute MPI job ${command} with
-                            ${num_procs} processes.
-                        template_vars:
-                            - num_procs
-                            - command
-
-                    num_procs:
-                        type: int
-                        default: 4
-                        title: Number of processes
-                        description: Number of MPI processes to use
 
     instrumentation:
         type: dict
@@ -829,6 +757,14 @@ required:
                     Stricter mode of operation where callbacks into Python don't participate
                     in state fusion transformations.
 
+            typed_callbacks_only:
+                type: bool
+                title: Only allow typed callbacks
+                default: false
+                description: >
+                    Stricter mode of operation where callbacks into Python must have explicit return value
+                    types in order to compile.
+
             unroll_threshold:
                 type: int
                 title: Automatic unroll loop size threshold
@@ -839,9 +775,26 @@ required:
                     0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
                     constant-sized loop will not be automatically unrolled.
 
+            check_args:
+                type: bool
+                default: false
+                title: Check arguments on SDFG call
+                description: >
+                    Perform an early type check on arguments passed to an SDFG when called directly (from 
+                    ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
+            avoid_wcr:
+                type: bool
+                default: false
+                title: Avoid using WCR for augmented assignments when possible
+                description: >
+                    Perform a map-symbol-dependency check on the write-subsets of augmented
+                    assignments that appear inside Maps to avoid using WCR when possible.
+                    This feature works correctly only when there is a single augmented assignment
+                    for each data dimension inside a Map.
 
     #############################################
+
     # General settings
 
     debugprint:
@@ -859,17 +812,22 @@ required:
     cache:
         type: str
         default: name
-        title: Naming of cache entry
+        title: Compiled cache entry naming policy
         description: >
-            Determine the name of the generated dacecache folder.
-            "name" uses the name of the SDFG directly, causing it to be
+            Determine the name of the generated ``.dacecache`` folder:
+            
+            
+            * ``name`` uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
-            "hash" uses a mangled name based on the hash of the SDFG, such that
+            
+            * ``hash`` uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            "unique" uses a name based on the currently running Python process
+            
+            * ``unique`` uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
-            "single" uses a single cache folder for all SDFGs, saving space and
+            
+            * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
 
@@ -907,6 +865,24 @@ required:
         default: 100
         title: Profiling Repetitions
         description: Number of times to run program for profiling.
+
+    call_hooks:
+        type: str
+        default: ""
+        title: Hooks before/after every DaCe program call
+        description: >
+            A comma-separated list of functions (or Context Manager classes) that will
+            be called before every DaCe program (SDFG) is compiled and run. Used for
+            functionality such as automatic tuning or instrumentation.
+
+    compiled_sdfg_call_hooks:
+        type: str
+        default: ""
+        title: Hooks before/after every compiled SDFG call
+        description: >
+            A comma-separated list of functions (or Context Manager classes) that will
+            be called before every compiled SDFG's generated code is invoked. Used
+            for functionality such as low-level profiling.
 
     #############################################
     # Experimental features
@@ -963,13 +939,17 @@ required:
                     default_implementation:
                         type: str
                         default: pure
-                        description: Default implementation BLAS library nodes.
+                        title: Default implementation
+                        description: Default implementation for BLAS library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+
                     fpga:
                         type: dict
                         title: FPGA
@@ -991,10 +971,13 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation of LAPACK library nodes.
+                        title: Default implementation
+                        description: Default implementation for LAPACK library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
@@ -1006,10 +989,30 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation of linalg library nodes.
+                        title: Default implementation
+                        description: Default implementation for linalg library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
+            pblas:
+                type: dict
+                title: PBLAS
+                description: Built-in PBLAS DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: MKLMPICH
+                        title: Default implementation
+                        description: Default implementation PBLAS library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.

@@ -8,7 +8,6 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
@@ -40,6 +39,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
         """ Applies the transformation and returns a tuple with the new nested
             SDFG node and the main state in the for-loop. """
 
+        # Avoid import loop
+        from dace.transformation.helpers import nest_state_subgraph
+
         # Retrieve map entry and exit nodes.
         map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
@@ -68,7 +70,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
         from dace.codegen.targets.cpp import cpp_array_expr
 
         def replace_param(param):
-            param = symbolic.symstr(param)
+            param = symbolic.symstr(param, cpp_mode=False)
             for p, pval in param_to_edge.items():
                 # TODO: Correct w.r.t. connector type
                 param = param.replace(p, cpp_array_expr(nsdfg, pval.data))

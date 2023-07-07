@@ -16,6 +16,7 @@ from typing import Dict, Set, Tuple, Union
 @registry.extensible_enum
 class DefinedType(aenum.AutoNumberEnum):
     """ Data types for `DefinedMemlets`.
+    
         :see: DefinedMemlets
     """
     Pointer = ()
@@ -31,6 +32,7 @@ class DefinedMemlets:
         referenced correctly in nested scopes and SDFGs.
         The ones defined in the first (top) scope, refer to global variables.
     """
+
     def __init__(self):
         self._scopes = [(None, {}, True), (None, {}, True)]
 
@@ -99,7 +101,9 @@ class DefinedMemlets:
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
     def add_global(self, name: str, dtype: DefinedType, ctype: str):
-        ''' Adds a global variable (top scope) '''
+        """
+        Adds a global variable (top scope)
+        """
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
 
@@ -139,6 +143,7 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
+
     def __init__(self, framecode):
         # Avoid import loop
         from dace.codegen.targets import framecode as fc
@@ -201,17 +206,19 @@ class TargetDispatcher(object):
 
     def register_state_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single state, calling
-            `generate_state`.
+            ``generate_state``.
+
             :param dispatcher: The code generator to use.
             :param predicate: A lambda function that accepts the SDFG and
                               state, and triggers the code generator when True
                               is returned. If None, registers `dispatcher`
                               as the default state dispatcher.
-            @see: TargetCodeGenerator
+            :see: TargetCodeGenerator
         """
 
         if not hasattr(dispatcher, "generate_state"):
-            raise TypeError("State dispatcher \"{}\" does not " "implement \"generate_state\"".format(dispatcher))
+            raise TypeError("State dispatcher \"{}\" does not "
+                            "implement \"generate_state\"".format(dispatcher))
         if predicate is None:
             self._generic_state_dispatcher = dispatcher
         else:
@@ -227,16 +234,18 @@ class TargetDispatcher(object):
 
     def register_node_dispatcher(self, dispatcher, predicate=None):
         """ Registers a code generator that processes a single node, calling
-            `generate_node`.
+            ``generate_node``.
+
             :param dispatcher: The code generator to use.
             :param predicate: A lambda function that accepts the SDFG, state,
                               and node, and triggers the code generator when
                               True is returned. If None, registers `dispatcher`
                               as the default node dispatcher.
-            @see: TargetCodeGenerator
+            :see: TargetCodeGenerator
         """
         if not hasattr(dispatcher, "generate_node"):
-            raise TypeError("Node dispatcher must " "implement \"generate_node\"")
+            raise TypeError("Node dispatcher must "
+                            "implement \"generate_node\"")
         if predicate is None:
             self._generic_node_dispatcher = dispatcher
         else:
@@ -252,11 +261,12 @@ class TargetDispatcher(object):
 
     def register_map_dispatcher(self, schedule_type, func):
         """ Registers a function that processes a scope, used when calling
-            `dispatch_subgraph` and `dispatch_scope`.
+            ``dispatch_subgraph`` and ``dispatch_scope``.
+
             :param schedule_type: The scope schedule that triggers `func`.
             :param func: A TargetCodeGenerator object that contains an
                          implementation of `generate_scope`.
-            @see: TargetCodeGenerator
+            :see: TargetCodeGenerator
         """
         if isinstance(schedule_type, list):
             for stype in schedule_type:
@@ -272,11 +282,12 @@ class TargetDispatcher(object):
     def register_array_dispatcher(self, storage_type, func):
         """ Registers a function that processes data allocation,
             initialization, and deinitialization. Used when calling
-            `dispatch_allocate/deallocate/initialize`.
+            ``dispatch_allocate/deallocate/initialize``.
+
             :param storage_type: The data storage type that triggers `func`.
             :param func: A TargetCodeGenerator object that contains an
                          implementation of data memory management functions.
-            @see: TargetCodeGenerator
+            :see: TargetCodeGenerator
         """
         if isinstance(storage_type, list):
             for stype in storage_type:
@@ -292,19 +303,20 @@ class TargetDispatcher(object):
             tasklet, if src/dst storage is StorageType.Register) copy
             functions. Can also be target-schedule specific, or
             dst_schedule=None if the function will be invoked on any schedule.
+
             :param src_storage: The source data storage type that triggers
-                                `func`.
+                                ``func``.
             :param dst_storage: The destination data storage type that
-                                triggers `func`.
+                                triggers ``func``.
             :param dst_schedule: An optional destination scope schedule type
-                                 that triggers `func`.
+                                 that triggers ``func``.
             :param func: A TargetCodeGenerator object that contains an
-                         implementation of `copy_memory`.
+                         implementation of ``copy_memory``.
             :param predicate: A lambda function that accepts the SDFG, state,
                               and source and destination nodes, and triggers
                               the code generator when True is returned. If
                               None, always dispatches with this dispatcher.
-            @see: TargetCodeGenerator
+            :see: TargetCodeGenerator
         """
 
         if not isinstance(src_storage, dtypes.StorageType): raise TypeError
@@ -440,9 +452,12 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
             callsite_stream = self.frame._initcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            declaration_stream = CodeIOStream()
+            callsite_stream = CodeIOStream()
         else:
             declaration_stream = callsite_stream
 
@@ -460,8 +475,10 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for a data deallocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            return
 
         self._array_dispatchers[datadesc.storage].deallocate_array(sdfg, dfg, state_id, node, datadesc, function_stream,
                                                                    callsite_stream)

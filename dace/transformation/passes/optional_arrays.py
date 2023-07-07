@@ -2,12 +2,13 @@
 
 from typing import Dict, Iterator, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, data
+from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 
 
+@properties.make_properties
 class OptionalArrayInference(ppl.Pass):
     """
     Infers the ``optional`` property of arrays, i.e., if they can be given None, throughout the SDFG and all nested
@@ -18,6 +19,8 @@ class OptionalArrayInference(ppl.Pass):
     * it is in a nested SDFG and its parent array was transient; or
     * it is definitely (unconditionally) read or written in the SDFG.
     """
+
+    CATEGORY: str = 'Simplification'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
@@ -32,6 +35,7 @@ class OptionalArrayInference(ppl.Pass):
                    parent_arrays: Optional[Dict[str, bool]] = None) -> Optional[Set[Tuple[int, str]]]:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -106,7 +110,10 @@ class OptionalArrayInference(ppl.Pass):
                 # Conditional code follows, use immediate post-dominator for next unconditional state
                 curstate = ipostdom[curstate]
             # Compute new out degree
-            out_degree = sdfg.out_degree(curstate)
+            if curstate in sdfg.nodes():
+                out_degree = sdfg.out_degree(curstate)
+            else:
+                out_degree = 0
         # Yield final state
         yield curstate
 

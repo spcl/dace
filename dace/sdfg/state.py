@@ -4,22 +4,30 @@
 import ast
 import collections
 import copy
-from dace.subsets import Range, Subset
-from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs, symbolic)
-from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge, SubgraphView)
-from dace.sdfg.propagation import propagate_memlet
-from dace.sdfg.validation import validate_state
-from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty, SymbolicProperty, CodeBlock,
-                             make_properties)
 import inspect
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
+from typing import Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
+
+import dace
+from dace import data as dt
+from dace import dtypes
+from dace import memlet as mm
+from dace import serialize
+from dace import subsets as sbs
+from dace import symbolic
+from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+                             CodeProperty, make_properties)
+from dace.sdfg import nodes as nd
+from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView
+from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.validation import validate_state
+from dace.subsets import Range, Subset
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
+
         :param old_dinfo: Another DebugInfo object that will override the
                           return value of this function
         :return: DebugInfo containing line number and calling file.
@@ -237,6 +245,7 @@ class StateGraphView(object):
     def in_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering the given connector of the
             given node.
+
             :param node: Destination node of edges.
             :param connector: Destination connector of edges.
         """
@@ -245,6 +254,7 @@ class StateGraphView(object):
     def out_edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges exiting the given connector of the
             given node.
+
             :param node: Source node of edges.
             :param connector: Source connector of edges.
         """
@@ -253,6 +263,7 @@ class StateGraphView(object):
     def edges_by_connector(self, node: nd.Node, connector: AnyStr) -> Iterable[MultiConnectorEdge[mm.Memlet]]:
         """ Returns a generator over edges entering or exiting the given
             connector of the given node.
+
             :param node: Source/destination node of edges.
             :param connector: Source/destination connector of edges.
         """
@@ -403,6 +414,7 @@ class StateGraphView(object):
         """
         Returns a set of symbol names that are used, but not defined, in
         this graph view (SDFG state or subgraph thereof).
+
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
         """
@@ -513,6 +525,7 @@ class StateGraphView(object):
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data is read and written in this subgraph.
+        
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -648,6 +661,7 @@ class StateGraphView(object):
     def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this state or
             subgraph, formatted as a list of C definitions.
+
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
@@ -677,6 +691,7 @@ class StateGraphView(object):
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array in this
             state.
+
             :param name: Name to find.
             :param new_name: Name to replace.
         """
@@ -687,6 +702,7 @@ class StateGraphView(object):
                      repl: Dict[str, str],
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
         """ Finds and replaces all occurrences of a set of symbols or arrays in this state.
+
             :param repl: Mapping from names to replacements.
             :param symrepl: Optional symbolic version of ``repl``.
         """
@@ -706,6 +722,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+
+    symbol_instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                                     desc="Instrument symbol values when this state is executed",
+                                     default=dtypes.DataInstrumentationType.No_Instrumentation)
+    symbol_instrument_condition = CodeProperty(desc="Condition under which to trigger the symbol instrumentation",
+                                               default=CodeBlock("1", language=dtypes.Language.CPP))
 
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
@@ -727,6 +749,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
         """ Constructs an SDFG state.
+
             :param label: Name for the state (optional).
             :param sdfg: A reference to the parent SDFG.
             :param debuginfo: Source code locator for debugging.
@@ -742,6 +765,22 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
+    
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, copy.deepcopy(v, memo))
+        for node in result.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                try:
+                    node.sdfg.parent = result
+                except AttributeError:
+                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
+                    # TODO: Investigate why this happens.
+                    pass
+        return result
 
     @property
     def parent(self):
@@ -796,6 +835,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_node(self, node):
         if not isinstance(node, nd.Node):
             raise TypeError("Expected Node, got " + type(node).__name__ + " (" + str(node) + ")")
+        # Correct nested SDFG's parent attributes
+        if isinstance(node, nd.NestedSDFG):
+            node.sdfg.parent = self
+            node.sdfg.parent_sdfg = self.parent
+            node.sdfg.parent_nsdfg_node = node
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
 
@@ -865,6 +909,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     @classmethod
     def from_json(cls, json_obj, context={'sdfg': None}):
         """ Loads the node properties, label and type into a dict.
+
             :param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!
             :return: An SDFGState instance constructed from the passed data
@@ -928,6 +973,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         The symbols a node can access are a combination of the global SDFG
         symbols, symbols defined in inter-state paths to its state,
         and symbols defined in scope entries in the path to this node.
+
         :param node: The given node.
         :return: A dictionary mapping symbol names to their types.
         """
@@ -973,6 +1019,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_read(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
         """
         Adds an access node to this SDFG state (alias of ``add_access``).
+
         :param array_or_stream_name: The name of the array/stream.
         :param debuginfo: Source line information for this access node.
         :return: An array access node.
@@ -984,6 +1031,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_write(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
         """
         Adds an access node to this SDFG state (alias of ``add_access``).
+
         :param array_or_stream_name: The name of the array/stream.
         :param debuginfo: Source line information for this access node.
         :return: An array access node.
@@ -994,6 +1042,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     def add_access(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
         """ Adds an access node to this SDFG state.
+
             :param array_or_stream_name: The name of the array/stream.
             :param debuginfo: Source line information for this access node.
             :return: An array access node.
@@ -1107,6 +1156,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
         # Validate missing symbols
         missing_symbols = [s for s in symbols if s not in symbol_mapping]
+        if missing_symbols and parent:
+            # If symbols are missing, try to get them from the parent SDFG
+            parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+            symbol_mapping.update(parent_mapping)
+            s.symbol_mapping = symbol_mapping
+            missing_symbols = [s for s in symbols if s not in symbol_mapping]
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 
@@ -1129,6 +1184,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         debuginfo=None,
     ) -> Tuple[nd.MapEntry, nd.MapExit]:
         """ Adds a map entry and map exit.
+
             :param name:      Map label
             :param ndrange:   Mapping between range variable names and their
                               subsets (parsed from strings)
@@ -1153,6 +1209,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                     debuginfo=None,
                     language=dtypes.Language.Python) -> Tuple[nd.ConsumeEntry, nd.ConsumeExit]:
         """ Adds consume entry and consume exit nodes.
+
             :param name:      Label
             :param elements:  A 2-tuple signifying the processing element
                               index and number of total processing elements
@@ -1198,6 +1255,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                            propagate=True) -> Tuple[nd.Tasklet, nd.MapEntry, nd.MapExit]:
         """ Convenience function that adds a map entry, tasklet, map exit,
             and the respective edges to external arrays.
+
             :param name:       Tasklet (and wrapping map) name
             :param map_ranges: Mapping between variable names and their
                                subsets
@@ -1345,6 +1403,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         debuginfo=None,
     ) -> 'dace.libraries.standard.Reduce':
         """ Adds a reduction node.
+
             :param wcr: A lambda function representing the reduction operation
             :param axes: A tuple of axes to reduce the input memlet from, or
                          None for all axes
@@ -1395,16 +1454,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        pipeline = nd.Pipeline(name,
-                               *_make_iterators(ndrange),
-                               init_size=init_size,
-                               init_overlap=init_overlap,
-                               drain_size=drain_size,
-                               drain_overlap=drain_overlap,
-                               additional_iterators=additional_iterators,
-                               schedule=schedule,
-                               debuginfo=debuginfo,
-                               **kwargs)
+        pipeline = nd.PipelineScope(name,
+                                    *_make_iterators(ndrange),
+                                    init_size=init_size,
+                                    init_overlap=init_overlap,
+                                    drain_size=drain_size,
+                                    drain_overlap=drain_overlap,
+                                    additional_iterators=additional_iterators,
+                                    schedule=schedule,
+                                    debuginfo=debuginfo,
+                                    **kwargs)
         pipeline_entry = nd.PipelineEntry(pipeline)
         pipeline_exit = nd.PipelineExit(pipeline)
         self.add_nodes_from([pipeline_entry, pipeline_exit])
@@ -1519,17 +1578,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         return (iedge, eedge)
 
     def add_memlet_path(self, *path_nodes, memlet=None, src_conn=None, dst_conn=None, propagate=True):
-        """ Adds a path of memlet edges between the given nodes, propagating
-            from the given innermost memlet.
+        """
+        Adds a path of memlet edges between the given nodes, propagating
+        from the given innermost memlet.
 
-            :param *path_nodes: Nodes participating in the path (in the given
-                                order).
-            :keyword memlet: (mandatory) The memlet at the innermost scope
-                             (e.g., the incoming memlet to a tasklet (last
-                             node), or an outgoing memlet from an array
-                             (first node), followed by scope exits).
-            :keyword src_conn: Connector at the beginning of the path.
-            :keyword dst_conn: Connector at the end of the path.
+        :param path_nodes: Nodes participating in the path (in the given order).
+        :param memlet: (mandatory) The memlet at the innermost scope
+                       (e.g., the incoming memlet to a tasklet (last
+                       node), or an outgoing memlet from an array
+                       (first node), followed by scope exits).
+        :param src_conn: Connector at the beginning of the path.
+        :param dst_conn: Connector at the end of the path.
         """
         if memlet is None:
             raise TypeError("Innermost memlet cannot be None")
@@ -1709,7 +1768,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                   total_size=None,
                   find_new_name=False,
                   alignment=0):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
             'use "SDFG.add_array" and "SDFGState.add_access"', DeprecationWarning)
@@ -1742,7 +1801,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         lifetime=dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_stream" API is deprecated, please '
             'use "SDFG.add_stream" and "SDFGState.add_access"', DeprecationWarning)
@@ -1771,7 +1830,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         lifetime=dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_scalar" API is deprecated, please '
             'use "SDFG.add_scalar" and "SDFGState.add_access"', DeprecationWarning)
@@ -1792,7 +1851,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                       debuginfo=None,
                       total_size=None,
                       alignment=0):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         return self.add_array(name,
                               shape,
                               dtype,
@@ -1820,9 +1879,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
                 # Append input connectors and get mapping of connectors to data
                 for edge in self.in_edges(node):
-                    if edge.dst_conn is not None and edge.dst_conn.startswith("IN_"):
-                        conn_to_data[edge.data.data] = edge.dst_conn[3:]
-
+                    if edge.data.data in conn_to_data:
+                        raise NotImplementedError(
+                            f"Cannot fill scope connectors in SDFGState {self.label} because EntryNode {node.label} "
+                            f"has multiple input edges from data {edge.data.data}.")
                     # We're only interested in edges without connectors
                     if edge.dst_conn is not None or edge.data.data is None:
                         continue

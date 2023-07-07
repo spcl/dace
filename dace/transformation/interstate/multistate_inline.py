@@ -14,7 +14,7 @@ from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
@@ -47,6 +47,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
+        
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
         :param nested_sdfg: Nested SDFG node with symbol mapping.
@@ -142,8 +143,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
 
-        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         #######################################################
         # Collect and update top-level SDFG metadata
@@ -355,7 +356,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sdfg.add_edge(e.src, source, e.data)
         for e in sdfg.out_edges(outer_state):
             for sink in sinks:
-                sdfg.add_edge(sink, e.dst, e.data)
+                sdfg.add_edge(sink, e.dst, dc(e.data))
+                # Redirect sink incoming edges with a `False` condition to e.dst (return statements)
+                for e2 in sdfg.in_edges(sink):
+                    if e2.data.condition_sympy() == False:
+                        sdfg.add_edge(e2.src, e.dst, InterstateEdge())
 
         # Modify start state as necessary
         if outer_start_state is outer_state:
@@ -414,6 +419,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Remove nested SDFG and state
         sdfg.remove_node(outer_state)
+
+        sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
         return nsdfg.nodes()
 

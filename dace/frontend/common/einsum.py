@@ -11,6 +11,7 @@ from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import StringLiteral
 
 
 def _is_sequential(index_list):
@@ -161,7 +162,7 @@ def prod(iterable):
 def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                        sdfg: SDFG,
                        state: SDFGState,
-                       einsum_string: str,
+                       einsum_string: StringLiteral,
                        *arrays: str,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
@@ -170,7 +171,7 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                        beta: Optional[symbolic.SymbolicType] = 0.0):
     return _create_einsum_internal(sdfg,
                                    state,
-                                   einsum_string,
+                                   str(einsum_string),
                                    *arrays,
                                    dtype=dtype,
                                    optimize=optimize,

@@ -2,6 +2,7 @@
 from __future__ import print_function
 from functools import partial
 
+from contextlib import contextmanager
 from timeit import default_timer as timer
 import time
 import ast
@@ -12,68 +13,99 @@ import sys
 
 from dace import dtypes
 from dace.config import Config
+from typing import Any, List, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.sdfg import SDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFG
 
 
-def timethis(sdfg, title, flop_count, f, *args, **kwargs):
-    """ Runs a function multiple (`DACE_treps`) times, logs the running times 
-        to a file, and prints the median time (with FLOPs if given).
-        :param sdfg: The SDFG belonging to the measurement.
-        :param title: A title of the measurement.
-        :param flop_count: Number of floating point operations in `program`.
-                           If greater than zero, produces a median FLOPS 
-                           report.
-        :param f: The function to measure.
-        :param args: Arguments to invoke the function with.
-        :param kwargs: Keyword arguments to invoke the function with.
-        :return: Latest return value of the function.
+class CompiledSDFGProfiler:
+    """
+    A context manager that prints the time it takes to execute the generated SDFG code
+    (excluding init and shutdown).
     """
 
-    start = timer()
-    REPS = int(Config.get('treps'))
+    times: List[Tuple['SDFG', List[float]]]  #: The list of SDFGs and times for each SDFG called within the context.
 
-    times = [start] * (REPS + 1)
-    ret = None
-    print('\nProfiling...')
-    iterator = range(REPS)
-    if Config.get_bool('profiling_status'):
-        try:
-            from tqdm import tqdm
-            iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
-        except ImportError:
-            print('WARNING: Cannot show profiling progress, missing optional '
-                  'dependency tqdm...\n\tTo see a live progress bar please install '
-                  'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                  'this warning) set `profiling_status` to false in the dace '
-                  'config (~/.dace.conf).')
-    for i in iterator:
-        # Call function
-        ret = f(*args, **kwargs)
-        times[i + 1] = timer()
+    def __init__(self, repetitions: int = 0, warmup: int = 0) -> None:
+        # Avoid import loop
+        from dace.codegen.instrumentation import report
 
-    diffs = np.array([(times[i] - times[i - 1]) for i in range(1, REPS + 1)])
+        self.repetitions = repetitions or int(Config.get('treps'))
+        self.warmup = warmup
+        if self.repetitions < 1:
+            raise ValueError('Number of repetitions must be at least 1')
+        if self.warmup < 0:
+            raise ValueError('Warmup repetitions cannot be negative')
 
-    problem_size = sys.argv[1] if len(sys.argv) >= 2 else 0
+        self.times = []
+        # Create an empty instrumentation report
+        self.report = report.InstrumentationReport(None)
 
-    profiling_dir = os.path.join(sdfg.build_folder, 'profiling')
-    os.makedirs(profiling_dir, exist_ok=True)
-    timestamp_string = str(int(time.time() * 1000))
-    outfile_path = os.path.join(profiling_dir, 'results-' + timestamp_string + '.csv')
+    @contextmanager
+    def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+        from dace.codegen.instrumentation import report  # Avoid import loop
 
-    with open(outfile_path, 'w') as f:
-        f.write('Program,Optimization,Problem_Size,Runtime_sec\n')
-        for d in diffs:
-            f.write('%s,%s,%s,%.8f\n' % (sdfg.name, title, problem_size, d))
+        start = timer()
 
-    if flop_count > 0:
-        gflops_arr = (flop_count / diffs) * 1e-9
-        time_secs = np.median(diffs)
-        GFLOPs = (flop_count / time_secs) * 1e-9
-        print(title, GFLOPs, 'GFLOP/s       (', time_secs * 1000, 'ms)')
-    else:
-        time_secs = np.median(diffs)
-        print(title, time_secs * 1000, 'ms')
+        times = [start] * (self.repetitions + 1)
+        ret = None
+        print('\nProfiling...')
 
-    return ret
+        iterator = range(self.warmup + self.repetitions)
+        if Config.get_bool('profiling_status'):
+            try:
+                from tqdm import tqdm
+                iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
+            except ImportError:
+                print('WARNING: Cannot show profiling progress, missing optional '
+                      'dependency tqdm...\n\tTo see a live progress bar please install '
+                      'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                      'this warning) set `profiling_status` to false in the dace '
+                      'config (~/.dace.conf).')
+
+        offset = 1 - self.warmup
+        start_time = int(time.time())
+        times[0] = timer()
+        for i in iterator:
+            # Call function
+            compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+            if i >= self.warmup:
+                times[i + offset] = timer()
+
+        diffs = np.array([(times[i] - times[i - 1])*1e3 for i in range(1, self.repetitions + 1)])
+
+        # Add entries to the instrumentation report
+        self.report.name = self.report.name or start_time
+        if not self.report.sdfg_hash:
+            self.report.sdfg_hash = compiled_sdfg.sdfg.hash_sdfg()
+        pid = os.getpid()
+        self.report.events.extend([
+            report.DurationEvent(f'Python call to {compiled_sdfg.sdfg.name}', 'Timer', (0, -1, -1), times[i],
+                                 (times[i + 1] - times[i]) * 1e6, pid) for i in range(self.repetitions)
+        ])
+        self.report.durations[(0, -1, -1)][f'Python call to {compiled_sdfg.sdfg.name}'][-1].extend(diffs)
+
+        # Print profiling results
+        time_msecs = np.median(diffs)
+        print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
+
+        # Save every call separately
+        self.times.append((compiled_sdfg.sdfg, diffs))
+
+        #####################################
+        # Ensure internal SDFG will not be called
+        old_dne = compiled_sdfg.do_not_execute
+        compiled_sdfg.do_not_execute = True
+
+        yield
+
+        #####################################
+        # Restore state after skipping contents
+        compiled_sdfg.do_not_execute = old_dne
+
+        return ret
 
 
 def detect_reduction_type(wcr_str, openmp=False):
@@ -137,6 +169,7 @@ def detect_reduction_type(wcr_str, openmp=False):
 def is_op_commutative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically commutative (disregarding data type).
+
         :param wcr_str: A string in Python representing a lambda function.
         :return: True if commutative, False if not, None if cannot be
                  determined.
@@ -162,6 +195,7 @@ def is_op_commutative(wcr_str):
 def is_op_associative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically associative (disregarding data type).
+
         :param wcr_str: A string in Python representing a lambda function.
         :return: True if associative, False if not, None if cannot be
                  determined.
@@ -204,6 +238,7 @@ def reduce(op, in_array, out_array=None, axis=None, identity=None):
 
 def elementwise(func, in_array, out_array=None):
     """ Applies a function to each element of the array
+    
         :param in_array: array to apply to.
         :param out_array: output array to write the result to. If `None`, a new array will be returned
         :param func: lambda function to apply to each element.

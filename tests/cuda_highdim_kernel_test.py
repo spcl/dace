@@ -79,5 +79,127 @@ def test_gpu():
     _test(sdfg)
 
 
+@pytest.mark.gpu
+def test_highdim_implicit_block():
+    @dace.program
+    def tester(x: dace.float64[32, 90, 80, 70]):
+        for i, j, k, l in dace.map[0:32, 0:90, 0:80, 0:70]:
+            x[i, j, k, l] = 2.0
+
+    # Create GPU SDFG
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+
+    # Change map implicit block size
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.gpu_block_size = [8, 2, 4]
+
+    a = np.random.rand(32, 90, 80, 70)
+    sdfg(a)
+    assert np.allclose(a, 2)
+
+
+@pytest.mark.gpu
+def test_highdim_implicit_block_threadsplit():
+    @dace.program
+    def tester(x: dace.float64[2, 2, 80, 70]):
+        for i, j, k, l in dace.map[0:2, 0:2, 0:80, 0:70]:
+            x[i, j, k, l] = 2.0
+
+    # Create GPU SDFG
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+
+    # Change map implicit block size
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry):
+            node.map.gpu_block_size = [8, 2, 3]
+
+    a = np.random.rand(2, 2, 80, 70)
+    sdfg(a)
+    assert np.allclose(a, 2)
+
+
+def test_highdim_default_block_size():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:1024, 0:1024] @ dace.ScheduleType.GPU_Device:
+            a[i, j] = 1
+
+    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='32, 8, 2'):
+        with pytest.warns(UserWarning, match='has more dimensions'):
+            sdfg = tester.to_sdfg()
+            gpu_code = sdfg.generate_code()[1]
+            assert 'dim3(32, 16, 1)' in gpu_code.code
+
+
+def test_block_size_mismatch_warning():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:512:2, 0:512:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj in dace.map[0:2, 0:2] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+            for bi, bj in dace.map[0:2, 0:1] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+
+    sdfg = tester.to_sdfg()
+    with pytest.warns(UserWarning, match='Multiple thread-block maps'):
+        sdfg.generate_code()
+
+
+def test_block_size_mismatch_error():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:512:2, 0:512:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj in dace.map[0:2, 0:2] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj] = 1
+
+    sdfg = tester.to_sdfg()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.GPU_Device:
+            n.gpu_block_size = [4, 2, 1]
+
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
+def test_block_size_too_large():
+    @dace.program
+    def tester(a: dace.float64[1024, 1024] @ dace.StorageType.GPU_Global):
+        for i, j in dace.map[0:1024, 0:1024] @ dace.ScheduleType.GPU_Device:
+            a[i, j] = 1
+
+    sdfg = tester.to_sdfg()
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.GPU_Device:
+            n.gpu_block_size = [64, 32, 1]
+
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
+def test_highdim_block_size_too_large():
+    BX, BY, BZ, BW = 64, 2, 2, 2
+
+    @dace.program
+    def tester(a: dace.float64[1024, 2, 2, 20] @ dace.StorageType.GPU_Global):
+        for i, j, k, l in dace.map[0:16, 0:1, 0:1, 0:10:2] @ dace.ScheduleType.GPU_Device:
+            for bi, bj, bk, bl in dace.map[0:BX, 0:BY, 0:BZ, 0:BW] @ dace.ScheduleType.GPU_ThreadBlock:
+                a[i + bi, j + bj, k + bk, l + bl] = 1
+
+    sdfg = tester.to_sdfg()
+    with pytest.raises(ValueError):
+        sdfg.generate_code()
+
+
 if __name__ == "__main__":
     test_cpu()
+    test_gpu()
+    test_highdim_implicit_block()
+    test_highdim_implicit_block_threadsplit()
+    test_highdim_default_block_size()
+    test_block_size_mismatch_warning()
+    test_block_size_mismatch_error()
+    test_block_size_too_large()
+    test_highdim_block_size_too_large()

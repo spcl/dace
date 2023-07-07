@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -338,6 +338,7 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
+
     :param expr: The expression to evaluate.
     :param symbols: A mapping of symbols to their values.
     :return: A constant value based on ``expr`` and ``symbols``.
@@ -357,6 +358,14 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
             sval.get() if isinstance(sval, symbol) else sval
             for sname, sval in symbols.items()}
+
+    # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
+    syms = {
+        k: v
+        for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
+    }
+    # Convert strings to SymPy symbols (for SymPy 1.12)
+    syms = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in syms.items()}
 
     return expr.subs(syms)
 
@@ -430,6 +439,7 @@ def resolve_symbol_to_constant(symb, start_sdfg):
     """
     Tries to resolve a symbol to constant, by looking up into SDFG's constants,
     following nested SDFGs hierarchy if necessary.
+
     :param symb: symbol to resolve to constant
     :param start_sdfg: starting SDFG
     :return: the constant value if the symbol is resolved, None otherwise
@@ -581,6 +591,13 @@ class int_floor(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates integer floor division (``floor(x / y)``).
+
+        :param x: Numerator.
+        :param y: Denominator.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number and y.is_Number:
             return x // y
 
@@ -592,6 +609,13 @@ class int_ceil(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates integer ceiling division (``ceil(x / y)``).
+
+        :param x: Numerator.
+        :param y: Denominator.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
 
@@ -603,6 +627,13 @@ class OR(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates logical or.
+
+        :param x: First operand.
+        :param y: Second operand.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Boolean and y.is_Boolean:
             return x or y
 
@@ -614,6 +645,13 @@ class AND(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates logical and.
+
+        :param x: First operand.
+        :param y: Second operand.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Boolean and y.is_Boolean:
             return x and y
 
@@ -649,6 +687,12 @@ class ROUND(sympy.Function):
 
     @classmethod
     def eval(cls, x):
+        """
+        Evaluates rounding to integer.
+
+        :param x: Value to round.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number:
             return round(x)
 
@@ -782,6 +826,7 @@ def sympy_divide_fix(expr):
 def simplify_ext(expr):
     """
     An extended version of simplification with expression fixes for sympy.
+
     :param expr: A sympy expression.
     :return: Simplified version of the expression.
     """
@@ -934,7 +979,8 @@ class BitwiseOpConverter(ast.NodeTransformer):
         ast.BitXor: 'BitwiseXor',
         ast.Invert: 'BitwiseNot',
         ast.LShift: 'LeftShift',
-        ast.RShift: 'RightShift'
+        ast.RShift: 'RightShift',
+        ast.FloorDiv: 'int_floor',
     }
 
     def visit_UnaryOp(self, node):
@@ -943,7 +989,7 @@ class BitwiseOpConverter(ast.NodeTransformer):
                 ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
             new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
             return ast.copy_location(new_node, node)
-        return node
+        return self.generic_visit(node)
 
     def visit_BinOp(self, node):
         if type(node.op) in BitwiseOpConverter._ast_to_sympy_functions:
@@ -953,7 +999,7 @@ class BitwiseOpConverter(ast.NodeTransformer):
                                 args=[self.visit(value) for value in (node.left, node.right)],
                                 keywords=[])
             return ast.copy_location(new_node, node)
-        return node
+        return self.generic_visit(node)
 
 
 @lru_cache(maxsize=16384)
@@ -1001,21 +1047,25 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'BitwiseXor': BitwiseXor,
         'BitwiseNot': BitwiseNot,
         'LeftShift': LeftShift,
-        'RightShift': RightShift
+        'RightShift': RightShift,
+        'int_floor': int_floor,
+        'int_ceil': int_ceil,
+        'Mod': sympy.Mod,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
     locals.update(_sympy_clash)
 
-    # Sympy processes "not/and/or" as direct evaluation. Replace with
-    # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
-        expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
+    if isinstance(expr, str):
+        # Sympy processes "not/and/or" as direct evaluation. Replace with
+        # And/Or(x, y), Not(x)
+        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
+            expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
-    # NOTE: If the expression contains bitwise operations, replace them with user-functions.
-    # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
-    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]', expr):
-        expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
+        # NOTE: If the expression contains bitwise operations, replace them with user-functions.
+        # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
+        if re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]', expr):
+            expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
@@ -1036,9 +1086,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
 
-    def __init__(self, arrays, *args, **kwargs):
+    def __init__(self, arrays, cpp_mode=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
+        self.cpp_mode = cpp_mode
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
@@ -1049,7 +1100,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Function(self, expr):
         if str(expr.func) in self.arrays:
             return f'{expr.func}[{expr.args[0]}]'
-        if str(expr.func) == 'int_floor':
+        if self.cpp_mode and str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
@@ -1070,14 +1121,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         return '(not (%s))' % self._print(expr.args[0])
 
     def _print_Infinity(self, expr):
-        return 'INFINITY'
+        if self.cpp_mode:
+            return 'INFINITY'
+        return super()._print_Infinity(expr)
 
     def _print_NegativeInfinity(self, expr):
-        return '-INFINITY'
+        if self.cpp_mode:
+            return '-INFINITY'
+        return super()._print_NegativeInfinity(expr)
 
     def _print_Symbol(self, expr):
         if expr.name == 'NoneSymbol':
-            return 'nullptr'
+            return 'nullptr' if self.cpp_mode else 'None'
         return super()._print_Symbol(expr)
 
     def _print_Pow(self, expr):
@@ -1085,11 +1140,12 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         exponent = self._print(expr.args[1])
 
         # Special case for square root
-        try:
-            if float(exponent) == 0.5:
-                return f'dace::math::sqrt({base})'
-        except ValueError:
-            pass
+        if self.cpp_mode:
+            try:
+                if float(exponent) == 0.5:
+                    return f'dace::math::sqrt({base})'
+            except ValueError:
+                pass
 
         # Special case for integer powers
         try:
@@ -1107,28 +1163,34 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
                 res = f'reciprocal({res})'
             return res
         except ValueError:
-            return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+            if self.cpp_mode:
+                return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+            else:
+                return f'({self._print(expr.args[0])}) ** ({self._print(expr.args[1])})'
 
 
 @lru_cache(maxsize=16384)
-def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
+def symstr(sym, arrayexprs: Optional[Set[str]] = None, cpp_mode=False) -> str:
     """ 
-    Convert a symbolic expression to a C++ compilable expression. 
+    Convert a symbolic expression to a compilable expression. 
+
     :param sym: Symbolic expression to convert.
     :param arrayexprs: Set of names of arrays, used to convert SymPy 
                        user-functions back to array expressions.
-    :return: C++-compilable expression.
+    :param cpp_mode: If True, returns a C++-compilable expression. Otherwise,
+                     returns a Python expression.
+    :return: Expression in string format depending on the value of ``cpp_mode``.
     """
 
     if isinstance(sym, SymExpr):
-        return symstr(sym.expr, arrayexprs)
+        return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
 
     try:
         sym = sympy_numeric_fix(sym)
         sym = sympy_intdiv_fix(sym)
         sym = sympy_divide_fix(sym)
 
-        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, sympy.Number) or dtypes.isconstant(sym):
@@ -1136,7 +1198,7 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
         else:
             return '(' + sstr + ')'
     except (AttributeError, TypeError, ValueError):
-        sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
+        sstr = DaceSympyPrinter(arrayexprs, cpp_mode).doprint(sym)
         return '(' + sstr + ')'
 
 
@@ -1148,6 +1210,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
     translated to replacing ``{N, M} -> __dacesym_{N, M}`` followed by
     ``__dacesym{N, M} -> {M, N}``.
+
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
                              dictionary and performs the replacement (can be 

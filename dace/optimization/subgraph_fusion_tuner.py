@@ -9,7 +9,7 @@ from collections import Counter
 
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
-from dace.sdfg.analysis import cutout as cutter
+from dace.sdfg.analysis.cutout import SDFGCutout
 
 from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
@@ -38,7 +38,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                 state_id = nsdfg.node_id(state)
 
                 try:
-                    cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                    cutout = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                     yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
                 except AttributeError:
                     continue
@@ -60,7 +60,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         state_id = int(state_id)
         state = sdfg.node(state_id)
         nodes = state.nodes()
-        cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+        cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
         maps_ = list(map(cutout.start_state.node, map_ids))
@@ -136,7 +136,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             state_id = int(state_id)
             state = sdfg.node(state_id)
             nodes = state.nodes()
-            cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+            cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
             pattern_desc = Counter()
             fusion_id, map_ids = self.config_from_key(config, cutout)
@@ -181,7 +181,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
                 # Check that cutout can be constructed.
                 try:
-                    cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                    cutout = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                     cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
                 except AttributeError as e:
                     continue
@@ -221,7 +221,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
                         # State is applicable to fusion, compute baseline once.
                         if base_runtime is None:
-                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                            baseline = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
 
                             dreport_ = {}
@@ -248,7 +248,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                             subgraph_maps.extend(maps_desc[desc][:num])
 
                         # Apply
-                        experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                        experiment_sdfg_ = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
                         experiment_state_ = experiment_sdfg_.start_state
                         experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
 

@@ -22,6 +22,7 @@ class TransformationTester(Optimizer):
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
+            
             :param sdfg: The SDFG to transform.
             :param depth: The number of levels to run transformations. For
                           instance, depth=1 means to only run immediate
@@ -116,6 +117,18 @@ class TransformationTester(Optimizer):
                                (self.passed_tests, self.passed_tests + self.failed_tests))
 
         return self.sdfg
+
+
+def test_transformations_hook(sdfg: 'SDFG'):
+    """
+    Calls a command-line interface for interactive SDFG transformations
+    on every DaCe program call.
+
+    :param sdfg: The current SDFG to optimize.
+    """
+
+    opt = TransformationTester(sdfg)
+    return opt.optimize()
 
 
 if __name__ == '__main__':

@@ -175,8 +175,10 @@ class StreamingMemory(xf.SingleStateTransformation):
             # The innermost end of the path must have a clearly defined memory
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
+            dtype = sdfg.arrays[innermost_edge.data.data].dtype
             if (innermost_edge.data.subset.num_elements() != 1 or innermost_edge.data.dynamic
-                    or innermost_edge.data.volume != 1):
+                    or (innermost_edge.data.volume != 1
+                        and not (isinstance(dtype, dtypes.vector) and innermost_edge.data.volume == dtype.veclen))):
                 return False
 
             # Check if any of the maps has a dynamic range
@@ -605,11 +607,12 @@ class StreamingComposition(xf.SingleStateTransformation):
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         access = self.access
+        # import pdb
+        # pdb.set_trace()
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
         if graph.in_degree(access) > 1 or graph.out_degree(access) > 1:
             return False
-
         # If already a stream, skip
         desc = sdfg.arrays[access.data]
         if isinstance(desc, data.Stream):

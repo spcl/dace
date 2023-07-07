@@ -3,8 +3,8 @@
 """
 
 import copy
-import typing
 import warnings
+from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -22,9 +22,9 @@ from dace.transformation import transformation as pm
 
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
-                      arrays: typing.Dict[str, data.Data],
+                      arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> typing.Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -177,7 +177,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
 
@@ -401,10 +401,31 @@ class RedundantArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if isinstance(source_edge.src, nodes.AccessNode):
+                        if isinstance(source_edge.src.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.src, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.src_conn
+                        inner_desc = source_edge.src.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
+
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
-                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
+                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: List[int]):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
         # NOTE: We do not want to create another view, if the immediate
@@ -492,13 +513,15 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce):
+            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+                                             and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
-        # 1. A reduce node is involved;
-        # 2. The memlet does not cover the removed array; or
-        # 3. Dimensions are mismatching (all dimensions are popped);
+        # 1. A reduce node is involved; or
+        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 3. The memlet does not cover the removed array; or
+        # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
@@ -574,6 +597,20 @@ class RedundantArray(pm.SingleStateTransformation):
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
+
+            # 2-d. Fix strides in nested SDFGs
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if not isinstance(source_edge.src, nodes.NestedSDFG):
+                        continue
+                    conn = source_edge.src_conn
+                    inner_desc = source_edge.src.sdfg.arrays[conn]
+                    inner_desc.strides = out_desc.strides
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
@@ -811,6 +848,27 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if not path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if isinstance(source_edge.dst, nodes.AccessNode):
+                        if isinstance(source_edge.dst.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.dst, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.dst_conn
+                        inner_desc = source_edge.dst.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
+
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
@@ -915,6 +973,20 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+
+            # 2-d. Fix strides in nested SDFGs
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if not path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if not isinstance(source_edge.dst, nodes.NestedSDFG):
+                        continue
+                    conn = source_edge.dst_conn
+                    inner_desc = source_edge.dst.sdfg.arrays[conn]
+                    inner_desc.strides = out_desc.strides
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
@@ -1115,7 +1187,7 @@ def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     return True
 
 
-def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
+def _sliced_dims(adesc: data.Array, vdesc: data.View) -> List[int]:
     """ Returns the Array dimensions viewed by a slice-View.
         NOTE: This method assumes that `_is_slice(adesc, vdesc) == True`.
     """
@@ -1385,3 +1457,204 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
             except ValueError:  # Already in use (e.g., with Views)
                 pass
+
+
+class RemoveSliceView(pm.SingleStateTransformation):
+    """ Removes views which can be represented by slicing (e.g., A[i, :, j, None]). """
+
+    view = pm.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.view)]
+
+    def can_be_applied(self, state: SDFGState, _: int, sdfg: SDFG, permissive=False):
+        desc = self.view.desc(sdfg)
+
+        # Ensure view
+        if not isinstance(desc, data.View):
+            return False
+
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+        if view_edge is None:
+            return False
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        is_src: bool
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            non_view_edges = state.out_edges(self.view)
+            subset = view_edge.data.get_src_subset(view_edge, state)
+            is_src = True
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            non_view_edges = state.in_edges(self.view)
+            subset = view_edge.data.get_dst_subset(view_edge, state)
+            is_src = False
+
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
+
+        ########################################################
+        # Syntactic feasibility: ensure memlets reach managable node types (access nodes, tasklets, nested SDFGs if
+        # strides match) rather than library nodes, which may behave in a custom manner based on the memlet shape.
+        if not permissive:
+            for e in non_view_edges:
+                for sink in state.memlet_tree(e).leaves():
+                    sink_node = sink.dst if is_src else sink.src
+                    sink_conn = sink.dst_conn if is_src else sink.src_conn
+                    if isinstance(sink_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(sink_node, nodes.NestedSDFG):
+                        if sink_conn in sink_node.sdfg.arrays:
+                            ndesc = sink_node.sdfg.arrays[sink_conn]
+                            if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+
+        ########################################################
+        # Semantic feasibility: ensure memlets can be safely collapsed/modified to match the original access node.
+
+        # If descriptor type changed, bail
+        vdesc = viewed.desc(sdfg)
+        if vdesc.dtype != desc.dtype:
+            return False
+
+        if sdutil.map_view_to_array(desc, vdesc, subset) is None:
+            return False
+
+        return True
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        desc = self.view.desc(sdfg)
+
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        subset: subsets.Range
+        is_src: bool
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            non_view_edges = state.out_edges(self.view)
+            subset = view_edge.data.get_src_subset(view_edge, state)
+            is_src = True
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            non_view_edges = state.in_edges(self.view)
+            subset = view_edge.data.get_dst_subset(view_edge, state)
+            is_src = False
+
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
+
+        mapping, unsqueezed, squeezed = sdutil.map_view_to_array(desc, viewed.desc(sdfg), subset)
+
+        # Update edges
+        for edge in non_view_edges:
+            # Update all memlets in tree
+            for e in state.memlet_tree(edge):
+                if e.data.data == self.view.data:
+                    e.data.data = viewed.data
+
+                    # Update subsets with instructions as follows:
+                    #   * Dimensions in mapping are offset by view subset, size is taken from view subset
+                    #   * Unsqueezed dimensions are ignored (should always be 0)
+                    #   * Squeezed dimensions remain as they were in original subset
+                    if e.data.subset is not None:
+                        e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                    elif subset is not None:
+                        # Fill in the subset from the original memlet
+                        e.data.subset = copy.deepcopy(subset)
+                        
+                else:  # The memlet points to the other side, use ``other_subset``
+                    if e.data.other_subset is not None:
+                        e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+                    elif subset is not None:
+                        # Fill in the subset from the original memlet
+                        e.data.other_subset = copy.deepcopy(subset)
+
+                # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
+                #       the view space.
+
+
+            # Remove edge directly adjacent to view and reconnect
+            state.remove_edge(edge)
+            if is_src:
+                state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            else:
+                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+
+        # Remove view node
+        state.remove_node(self.view)
+
+    def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
+        # Get offset and size from the space of the view to compose
+        old_subset = edge_subset.min_element()
+        old_size = edge_subset.size()
+
+        # Create a new subset in the space of the data container from the offsets and sizes
+        new_subset: List[Tuple[int, int, int]] = subset.ndrange()
+        for vdim, adim in mapping.items():
+            rb, re, rs = new_subset[adim]
+            rb += old_subset[vdim]
+            re = rb + old_size[vdim] - 1
+            new_subset[adim] = (rb, re, rs)
+
+        return subsets.Range(new_subset)
+
+
+class RemoveIntermediateWrite(pm.SingleStateTransformation):
+    """ Moves intermediate writes insde a Map's subgraph outside the Map.
+    
+    Currently, the transformation supports only the case `WriteAccess -> MapExit`, where the edge has an empty Memlet.
+    """
+
+    write = pm.PatternNode(nodes.AccessNode)
+    map_exit = pm.PatternNode(nodes.MapExit)
+
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.write, cls.map_exit)]
+
+    def can_be_applied(self, state: SDFGState, _: int, sdfg: SDFG, permissive=False):
+
+        # The output edges must have empty Memlets
+        edges = state.edges_between(self.write, self.map_exit)
+        if any(not e.data.is_empty() for e in edges):
+            return False
+        
+        # The input edges must either depend on all the Map parameters or have WCR.
+        for edge in state.in_edges(self.write):
+            if edge.data.wcr:
+                continue
+            fsymbols = [str(s) for s in edge.data.free_symbols]
+            if any(p not in fsymbols for p in self.map_exit.map.params):
+                return False
+
+        return True
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+
+        entry_node = state.entry_node(self.map_exit)
+        scope_dict = state.scope_dict()
+        
+        outer_write = state.add_access(self.write.data)
+        for edge in state.in_edges(self.write):
+            state.add_memlet_path(edge.src, self.map_exit, outer_write, memlet=edge.data, src_conn=edge.src_conn)
+        state.remove_node(self.write)
+
+        if scope_dict[entry_node] is not None:
+            exit_node = state.exit_node(scope_dict[entry_node])
+            state.add_nedge(outer_write, exit_node, mm.Memlet())
+            # Clean-up edges with empty Memlets since they are not needed anymore.
+            for edge in state.edges_between(self.map_exit, exit_node):
+                if edge.data.is_empty():
+                    state.remove_edge(edge)

@@ -13,7 +13,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.targets.cpp import sym2cpp
@@ -366,7 +366,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
         # top-level SDFG symbols.
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         # Compute array size
@@ -411,7 +411,8 @@ class SnitchCodeGen(TargetCodeGenerator):
             elif not symbolic.issymbolic(arrsize, sdfg.constants):
                 # static allocation
                 declaration_stream.write(f'// static allocate storage "{nodedesc.storage}"')
-                if node.desc(sdfg).lifetime == dace.AllocationLifetime.Persistent:
+                if node.desc(sdfg).lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                dtypes.AllocationLifetime.External):
                     # Don't put a static if it is declared in the state struct for C compliance
                     declaration_stream.write(f'{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}];\n', sdfg,
                                              state_id, node)
@@ -584,7 +585,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self.dispatcher, sdfg, memlet, src_node, dst_node,
+                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
                     self.packed_types)
             dbg(f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
                 )
@@ -1080,7 +1081,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         hdrs += 'typedef void * %sHandle_t;\n' % sdfg.name
         hdrs += '#ifdef __cplusplus\nextern "C" {\n#endif\n'
         hdrs += '%sHandle_t __dace_init_%s(%s);\n' % init_params
-        hdrs += 'void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+        hdrs += 'int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
         hdrs += 'void __program_%s(%sHandle_t handle%s);\n' % params
         hdrs += '#ifdef __cplusplus\n}\n#endif\n'
 
@@ -1090,8 +1091,6 @@ class SnitchCodeGen(TargetCodeGenerator):
         code._code = code._code.replace('dace::float64', '(double)')
         code._code = code._code.replace('dace::int64', '(int64_t)')
         code._code = code._code.replace('dace::math::pow', 'pow')
-        # __unused is reserved in C
-        code._code = code._code.replace('__unused', '_unused_var')
 
         # change new/delete to malloc/free
         code._code = re.sub(r"new (.+) \[(\d*)\];", r"(\1*)malloc(\2*sizeof(\1));", code._code)

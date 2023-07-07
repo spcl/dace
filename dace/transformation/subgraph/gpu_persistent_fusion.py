@@ -246,6 +246,7 @@ class GPUPersistentKernel(SubgraphTransformation):
             kernel_args_read,
             kernel_args_write,
         )
+        nested_sdfg.schedule = ScheduleType.GPU_Persistent
 
         # Create and connect read only data access nodes
         for arg in kernel_args_read:

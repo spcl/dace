@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import collections
 from typing import Any, Dict, List, Tuple
 
+import dace
 from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
@@ -153,6 +153,7 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType, scope_b: NodeTy
     """
     Finds a common parent scope for both input scopes, or None if the scopes
     are in different connected components.
+
     :param sdict: Scope parent dictionary.
     :param scope_a: First scope.
     :param scope_b: Second scope.
@@ -184,6 +185,7 @@ def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: Node
                 schedules: List[dtypes.ScheduleType]) -> bool:
     """ Tests whether a node in an SDFG is contained within a certain set of 
         scope schedules.
+        
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -214,8 +216,8 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
                        state: 'dace.sdfg.SDFGState',
                        node: NodeType,
                        with_gpu_default: bool = False) -> bool:
-    """ Tests whether a node in an SDFG is contained within GPU device-level
-        code.
+    """ Tests whether a node in an SDFG is contained within GPU device-level code.
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -252,6 +254,7 @@ def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGStat
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
     """ Tests whether a node in an SDFG is contained within FPGA device-level
         code.
+
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
@@ -259,21 +262,22 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', no
     """
     from dace.sdfg.utils import is_fpga_kernel
     return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
-            or (state and is_fpga_kernel(sdfg, state)))
+            or (state is not None and is_fpga_kernel(sdfg, state)))
 
 
 def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                            node: NodeType) -> Tuple[symbolic.SymExpr]:
     """ Returns the current thread-block size if the given node is enclosed in
         a GPU kernel, or None otherwise.
+        
         :param sdfg: The SDFG in which the node resides.
         :param state: The SDFG state in which the node resides.
         :param node: The node in question
         :return: A tuple of sizes or None if the node is not in device-level 
                  code.
     """
-    from dace.sdfg.sdfg import SDFGState
     from dace.sdfg import nodes as nd
+    from dace.sdfg.sdfg import SDFGState
 
     while sdfg is not None:
         sdict = state.scope_dict()

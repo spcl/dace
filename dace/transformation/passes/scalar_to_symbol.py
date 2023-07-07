@@ -5,7 +5,7 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, Set, Tuple
 
 import dace
 from dace import data as dt
@@ -62,6 +62,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
+    
         * Size of data must be 1, it must not be a stream and must be transient.
         * Only inputs to candidate scalars must be either arrays or tasklets.
         * All tasklets that lead to it must have one statement, one output, 
@@ -88,7 +89,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
             continue
         if desc.total_size != 1:
             continue
-        if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             continue
         candidates.add(aname)
 
@@ -246,6 +247,7 @@ class TaskletPromoter(ast.NodeTransformer):
     def __init__(self, connector: str, symbol: str) -> None:
         """
         Initializes AST transformer.
+
         :param connector: Connector name (replacement source).
         :param symbol: Symbol name (replacement target).
         """
@@ -276,6 +278,7 @@ class TaskletPromoterDict(ast.NodeTransformer):
     def __init__(self, conn_to_sym: Dict[str, str]) -> None:
         """
         Initializes AST transformer.
+
         :param conn_to_sym: Connector name (replacement source) to symbol name (replacement target)
                             replacement dictionary.
         """
@@ -499,6 +502,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     This removes each read-only access node as well as all of its descendant
     edges (in memlet trees) and connectors. Descends recursively to nested
     SDFGs and modifies tasklets (Python and C++).
+    
     :param sdfg: The SDFG to operate on.
     :param array_names: Mapping between scalar names to replace and their
                         replacement symbol name.
@@ -580,10 +584,14 @@ def translate_cpp_tasklet_to_python(code: str):
 
 
 @dataclass(unsafe_hash=True)
+@props.make_properties
 class ScalarToSymbolPromotion(passes.Pass):
-    ignore: Optional[Set[str]] = None
-    transients_only: bool = True
-    integers_only: bool = True
+
+    CATEGORY: str = 'Simplification'
+
+    ignore = props.SetProperty(element_type=str, default=set(), desc='Fields that should not be promoted.')
+    transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
+    integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
 
     def modifies(self) -> passes.Modifies:
         return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)
@@ -595,6 +603,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         to be used within states as part of memlets, and allows further
         transformations (such as loop detection) to use the information for
         optimization.
+        
         :param sdfg: The SDFG to run the pass on.
         :param ignore: An optional set of strings of scalars to ignore.
         :param transients_only: If False, also considers global data descriptors (e.g., arguments).
@@ -718,26 +727,3 @@ class ScalarToSymbolPromotion(passes.Pass):
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Promoted {len(pass_retval)} scalars to symbols.'
-
-
-def promote_scalars_to_symbols(sdfg: sd.SDFG,
-                               ignore: Optional[Set[str]] = None,
-                               transients_only: bool = True,
-                               integers_only: bool = True) -> Set[str]:
-    """
-    DEPRECATED. Use pass directly instead.
-    Promotes all matching transient scalars to SDFG symbols, changing all
-    tasklets to inter-state assignments. This enables the transformed symbols
-    to be used within states as part of memlets, and allows further
-    transformations (such as loop detection) to use the information for
-    optimization.
-
-    :param sdfg: The SDFG to run the pass on.
-    :param ignore: An optional set of strings of scalars to ignore.
-    :param transients_only: If False, also considers global data descriptors (e.g., arguments).
-    :param integers_only: If False, also considers non-integral descriptors for promotion.
-    :return: Set of promoted scalars.
-    :note: Operates in-place.
-    """
-    s2s = ScalarToSymbolPromotion(ignore=ignore, transients_only=transients_only, integers_only=integers_only)
-    return s2s.apply_pass(sdfg, {})

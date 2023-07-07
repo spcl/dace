@@ -107,7 +107,7 @@ def test_index_intarr_1d_literal():
 
     A = np.random.rand(20)
     indices = [1, 10, 15]
-    res = indexing_test(A, indices)
+    res = indexing_test(A)
     assert np.allclose(A[indices], res)
 
 
@@ -119,7 +119,7 @@ def test_index_intarr_1d_constant():
         return A[indices]
 
     A = np.random.rand(20)
-    res = indexing_test(A, indices)
+    res = indexing_test(A)
     assert np.allclose(A[indices], res)
 
 

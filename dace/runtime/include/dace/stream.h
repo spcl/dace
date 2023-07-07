@@ -39,16 +39,16 @@ namespace dace {
     template<typename T, bool IS_POW2>
     void FreeGPUArrayStreamView(GPUStream<T, IS_POW2>& stream)
     {
-        DACE_CUDA_CHECK(gpuFree(stream.m_start));
-        DACE_CUDA_CHECK(gpuFree(stream.m_end));
-        DACE_CUDA_CHECK(gpuFree(stream.m_pending));
+        gpuFree(stream.m_start);
+        gpuFree(stream.m_end);
+        gpuFree(stream.m_pending);
     }
 
     template<typename T, bool IS_POW2>
     void FreeGPUStream(GPUStream<T, IS_POW2>& stream)
     {
         FreeGPUArrayStreamView(stream);
-        DACE_CUDA_CHECK(gpuFree(stream.m_data));
+        gpuFree(stream.m_data);
     }
 }  // namespace dace
 #endif

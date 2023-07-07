@@ -24,7 +24,8 @@ from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, Enum
 
 def create_datadescriptor(obj, no_custom_desc=False):
     """ Creates a data descriptor from various types of objects.
-        @see: dace.data.Data
+        
+        :see: dace.data.Data
     """
     from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
@@ -33,9 +34,36 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return obj.__descriptor__()
     elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
-    elif isinstance(obj, (list, tuple, numpy.ndarray)):
-        if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
-            obj = numpy.array(obj)
+    elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
+        if dtypes.is_gpu_array(obj):
+            interface = obj.__cuda_array_interface__
+            storage = dtypes.StorageType.GPU_Global
+        else:
+            interface = obj.__array_interface__
+            storage = dtypes.StorageType.Default
+
+        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
+        else:
+            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
+                if 'descr' in interface:
+                    dtype = dtypes.struct('unnamed',
+                                          **{k: dtypes.typeclass(numpy.dtype(v).type)
+                                             for k, v in interface['descr']})
+                else:
+                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+            else:
+                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=storage)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
+                     storage=storage)
+    elif isinstance(obj, (list, tuple)):
+        # Lists and tuples are cast to numpy
+        obj = numpy.array(obj)
 
         if obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
@@ -66,19 +94,14 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
             TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
 
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
+            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
+
+            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
+                         strides=obj.stride(),
+                         shape=tuple(obj.shape),
+                         storage=storage)
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
-    elif dtypes.is_gpu_array(obj):
-        interface = obj.__cuda_array_interface__
-        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
-        itemsize = numpy.dtype(interface['typestr']).itemsize
-        if len(interface['shape']) == 0:
-            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
-        return Array(dtype=dtype,
-                     shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
-                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
@@ -87,16 +110,16 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, numpy.number):
         return Scalar(dtypes.typeclass(obj))
-    elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
+    elif isinstance(obj, (Number, numpy.number, numpy.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
     elif obj is type(None):
         # NoneType is void *
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
+    elif isinstance(obj, str) or obj is str:
+        return Scalar(dtypes.string)
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    elif isinstance(obj, str):
-        return Scalar(dtypes.string())
 
     raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
                     'If this is a custom object, consider creating a `__descriptor__` '
@@ -109,6 +132,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
+
     :param name: The given name to find.
     :param existing_names: The set of existing names.
     :return: A new name that is not in existing_names.
@@ -133,6 +157,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
+
     :param name: The given name to find.
     :param existing_names: The set of existing names.
     :return: A new name that is not in existing_names.
@@ -247,6 +272,7 @@ class Data:
         """
         Returns the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
+
         :param dimensions: A sequence of integers representing a permutation
                            of the descriptor's dimensions.
         :param alignment: Padding (in elements) at the end, ensuring stride
@@ -284,6 +310,7 @@ class Data:
         """
         Sets the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
+
         :param dimensions: A sequence of integers representing a permutation
                            of the descriptor's dimensions.
         :param alignment: Padding (in elements) at the end, ensuring stride
@@ -298,6 +325,21 @@ class Data:
                                                       only_first_aligned=only_first_aligned)
         self.strides = strides
         self.total_size = totalsize
+
+    def __matmul__(self, storage: dtypes.StorageType):
+        """
+        Syntactic sugar for specifying the storage of a data descriptor.
+        This enables controlling the storage location as follows:
+
+        .. code-block:: python
+
+            @dace
+            def add(X: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
+                return X + 1
+        """
+        new_desc = cp.deepcopy(self)
+        new_desc.storage = storage
+        return new_desc
 
 
 @make_properties
@@ -356,6 +398,14 @@ class Scalar(Data):
     def optional(self) -> bool:
         return False
 
+    @property
+    def pool(self) -> bool:
+        return False
+
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -400,6 +450,7 @@ class Array(Data):
     The array definition is flexible in terms of data allocation, it allows arbitrary multidimensional, potentially
     symbolic shapes (e.g., an array with size ``N+1 x M`` will have ``shape=(N+1, M)``), of arbitrary data 
     typeclasses (``dtype``). The physical data layout of the array is controlled by several properties:
+
        * The ``strides`` property determines the ordering and layout of the dimensions --- it specifies how many
          elements in memory are skipped whenever one element in that dimension is advanced. For example, the contiguous
          dimension always has a stride of ``1``; a C-style MxN array will have strides ``(N, 1)``, whereas a 
@@ -475,6 +526,7 @@ class Array(Data):
                         desc='Specifies whether this array may have a value of None. '
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
+    pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
     def __init__(self,
                  dtype,
@@ -491,21 +543,21 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None,
                  start_offset=None,
-                 optional=None):
+                 optional=None,
+                 pool=False):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
-
-        if shape is None:
-            raise IndexError('Shape must not be None')
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+
         if start_offset is not None:
             self.start_offset = start_offset
         self.optional = optional
         if optional is None and self.transient:
             self.optional = False
+        self.pool = pool
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -522,7 +574,6 @@ class Array(Data):
             self.offset = cp.copy(offset)
         else:
             self.offset = [0] * len(shape)
-
         self.validate()
 
     def __repr__(self):
@@ -531,7 +582,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional)
+                          self.total_size, self.start_offset, self.optional, self.pool)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -565,8 +616,7 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer '
-                            'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -653,6 +703,45 @@ class Array(Data):
 
         return result
 
+    def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
+        """
+        Used to set properties which depend on the shape of the array
+        either to their default value, which depends on the shape, or
+        if explicitely provided to the given value. For internal use only.
+        """
+        if shape is None:
+            raise IndexError('Shape must not be None')
+
+        if strides is not None:
+            self.strides = cp.copy(strides)
+        else:
+            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+
+        if strides is not None and shape is not None and total_size is None:
+            # Compute the minimal total_size that could be used with strides and shape
+            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
+        else:
+            self.total_size = total_size or _prod(shape)
+
+        if offset is not None:
+            self.offset = cp.copy(offset)
+        else:
+            self.offset = [0] * len(shape)
+
+    def set_shape(
+        self,
+        new_shape,
+        strides=None,
+        total_size=None,
+        offset=None,
+    ):
+        """
+        Updates the shape of an array.
+        """
+        self.shape = new_shape
+        self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
+        self.validate()
+
 
 @make_properties
 class Stream(Data):
@@ -721,6 +810,10 @@ class Stream(Data):
     def optional(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
@@ -756,7 +849,7 @@ class Stream(Data):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
     def size_string(self):
-        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in self.shape]))
+        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s, cpp_mode=True)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1
@@ -818,6 +911,7 @@ class View(Array):
     To use a View, it needs to be referenced in an access node that is directly
     connected to another access node. The rules for deciding which access node
     is viewed are:
+
       * If there is one edge (in/out) that leads (via memlet path) to an access
         node, and the other side (out/in) has a different number of edges.
       * If there is one incoming and one outgoing edge, and one leads to a code
@@ -854,6 +948,7 @@ class Reference(Array):
     Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
     except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
     access node to it and use the "set" connector.
+    
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
 
@@ -871,7 +966,8 @@ class Reference(Array):
         return copy
 
 
-def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None,
+def make_array_from_descriptor(descriptor: Array,
+                               original_array: Optional[ArrayLike] = None,
                                symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
@@ -947,6 +1043,8 @@ def make_reference_from_descriptor(descriptor: Array,
     """
     import numpy as np
     symbols = symbols or {}
+
+    original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
 
     free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
     if free_syms:

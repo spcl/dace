@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import warnings
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
@@ -44,7 +44,7 @@ class ExpandDotPure(ExpandTransformation):
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
         # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__unused": "0:1"}, {},
+        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
                                       "_out = 0", {"_out": dace.Memlet("_result[0]")},
                                       external_edges=True)
 
@@ -71,7 +71,12 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
+
         func = func.lower() + 'dot'
 
         n = n or node.n or sz
@@ -107,7 +112,11 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
         func = func + 'dot'
 
         n = n or node.n or sz
@@ -534,9 +543,9 @@ class Dot(dace.sdfg.nodes.LibraryNode):
                 desc_res = sdfg.arrays[e.data.data]
 
         if desc_x.dtype != desc_y.dtype:
-            raise TypeError("Data types of input operands must be equal: " f"{desc_x.dtype}, {desc_y.dtype}")
+            raise TypeError(f"Data types of input operands must be equal: {desc_x.dtype}, {desc_y.dtype}")
         if desc_x.dtype.base_type != desc_res.dtype.base_type:
-            raise TypeError("Data types of input and output must be equal: " f"{desc_x.dtype}, {desc_res.dtype}")
+            raise TypeError(f"Data types of input and output must be equal: {desc_x.dtype}, {desc_res.dtype}")
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)

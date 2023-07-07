@@ -9,7 +9,7 @@ from six import StringIO
 import numpy as np
 
 import dace
-from dace import registry, subsets, dtypes
+from dace import registry, subsets, dtypes, symbolic
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen import exceptions as cgx
@@ -18,13 +18,13 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
-from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
-from dace.frontend.python.astutils import rname, unparse
+from dace.frontend.python.astutils import rname, unparse, evalnode
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
-from dace.codegen.targets.common import sym2cpp
+from dace.codegen.common import sym2cpp
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate
@@ -64,8 +64,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga", "vendor")
-        if fpga_vendor.lower() != "intel_fpga":
+        self.fpga_vendor = Config.get("compiler", "fpga", "vendor")
+
+        # Check that the given vendor is supported
+        fpga.is_vendor_supported(self.fpga_vendor)
+
+        if self.fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
         # Keep track of generated converters to avoid multiple definition
@@ -145,8 +149,9 @@ DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{e
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
+DACE_EXPORTED int __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     delete __state->fpga_context;
+    return 0;
 }}
 
 {host_code}""".format(signature=params_comma,
@@ -168,7 +173,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         kernel_code_objs = [
             CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
-            for (kernel_name, code) in self._kernel_codes
+            for (kernel_name, code, _) in self._kernel_codes
         ]
         # add the util header if present
         other_code_objs = [
@@ -179,19 +184,20 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
     def _internal_preprocess(self, sdfg: dace.SDFG):
-        '''
+        """
         Vendor-specific SDFG Preprocessing
-        '''
+        """
         pass
 
     def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
-        '''
+        """
         Memorize and returns the mangled name of a global channel
-        The dictionary is organized as (var_name) : {kernel_id: mangled_name)
-        :param: external_stream: indicates whether this channel is an external stream
-                (inter-FPGA Kernel) or not. If this is the case, it will not actually mangle
-                the name by appending a suffix.
-        '''
+        The dictionary is organized as ``(var_name) : {kernel_id: mangled_name}``
+
+        :param external_stream: indicates whether this channel is an external stream
+               (inter-FPGA Kernel) or not. If this is the case, it will not actually mangle
+               the name by appending a suffix.
+        """
 
         if kernel_id not in self.channel_mangle[var_name]:
             if not external_stream:
@@ -204,20 +210,20 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
         return self.channel_mangle[var_name][kernel_id]
 
     def get_mangled_channel_name(self, var_name, kernel_id):
-        '''
+        """
         Returns the mangled name of a channel if it is a global channel,
         or var_name if it is an alias (generated through #define)
-        '''
+        """
         if var_name in self.channel_mangle:
             return self.channel_mangle[var_name][kernel_id]
         else:
             return var_name
 
     def create_mangled_module_name(self, module_name, kernel_id):
-        '''
+        """
         Memorize and returns the mangled name of a module (OpenCL kernel)
         The dictionary is organized as {module_name: {kernel_id: mangled_name}}
-        '''
+        """
 
         if kernel_id not in self.module_mange[module_name]:
             existing_count = len(self.module_mange[module_name])
@@ -229,6 +235,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
         Defines a stream
+
         :return: a tuple containing the  type of the created variable, and boolean indicating
             whether this is a global variable or not
         """
@@ -410,7 +417,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """
@@ -425,10 +433,10 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
     @staticmethod
     def generate_no_dependence_pre(kernel_stream, sdfg, state_id, node, var_name=None):
-        '''
+        """
             Adds pre-loop pragma for ignoring loop carried dependencies on a given variable
             (if var_name is provided) or all variables
-        '''
+        """
         if var_name is None:
             kernel_stream.write("#pragma ivdep", sdfg, state_id, node)
         else:
@@ -442,8 +450,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                                  subgraphs: list, kernel_stream: CodeIOStream, state_host_header_stream: CodeIOStream,
                                  state_host_body_stream: CodeIOStream, instrumentation_stream: CodeIOStream,
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream, state_parameters: list):
-        '''
+        """
         Generates Kernel code, both device and host side.
+
         :param sdfg:
         :param state:
         :param kernel_name:
@@ -458,9 +467,9 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         :param function_stream: CPU code stream.
         :param callsite_stream: CPU code stream.
         :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
-        '''
+        """
 
-        # In xilnx one of them is not used because part of the code goes in another place (entry_stream)
+        # In xilinx one of them is not used because part of the code goes in another place (entry_stream)
         state_id = sdfg.node_id(state)
 
         kernel_header_stream = CodeIOStream()
@@ -513,14 +522,15 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
     def generate_host_function_body(self, sdfg: dace.SDFG, state: dace.SDFGState, host_stream: CodeIOStream,
                                     kernel_name: str, predecessors: list):
-        '''
+        """
         Generate the host-specific code for spawning and synchronizing the given kernel.
+
         :param sdfg:
         :param state:
         :param host_stream: Device-specific code stream
         :param kernel_name:
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
-        '''
+        """
         state_id = sdfg.node_id(state)
 
         # Check if this kernel depends from other kernels
@@ -557,7 +567,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if isinstance(p, dace.data.View):
                 continue
             arg = self.make_kernel_argument(p, pname, is_output, True)
+
             if arg is not None:
+                #change c type long long to opencl type long
+                arg = arg.replace("long long", "long")
+
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
@@ -750,6 +764,9 @@ __kernel void \\
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
+            #change c type long long to opencl type long
+            defined_ctype = defined_ctype.replace("long long", "long")
+
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
                 # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
@@ -759,8 +776,8 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
 
-                expr = self.make_ptr_vector_cast(ptrname + offset_expr, desc.dtype, node.in_connectors[vconn],
-                                                 False, defined_type)
+                expr = self.make_ptr_vector_cast(ptrname + offset_expr, desc.dtype, node.in_connectors[vconn], False,
+                                                 defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
                     typedef = "__global volatile  {}* restrict".format(vec_type)
                 else:
@@ -774,15 +791,17 @@ __kernel void \\
                 # streams are defined as global variables
                 continue
             elif isinstance(desc, dace.data.Scalar):
-                # if this is a scalar and the argument passed is also a scalar
-                # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                if defined_type is not DefinedType.Pointer:
-                    typedef = typedef + "*"
-
-                memlet_references.append(
-                    (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
-                self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                if defined_type is DefinedType.Scalar:
+                    # if this is a scalar and the argument passed is also a scalar
+                    # then we have to pass it by value
+                    ref = (typedef, vconn, ptrname)
+                    self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                else:
+                    # otherwise, pass it as a pointer (references do not exist in C99)
+                    ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
+                self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                memlet_references.append(ref)
             else:
                 # all the other cases
                 memlet_references.append(
@@ -797,6 +816,10 @@ __kernel void \\
                 desc = sdfg.arrays[out_memlet.data]
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
+
+                #change c type long long to opencl type long
+                if defined_ctype.__contains__("long long"):
+                    defined_ctype = defined_ctype.replace("long long", "long")
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -1268,8 +1291,8 @@ __kernel void \\
 
     def make_ptr_vector_cast(self, dst_expr, dst_dtype, src_dtype, is_scalar, defined_type):
         """
-        Cast a destination pointer so the source expression can be written to
-        it.
+        Cast a destination pointer so the source expression can be written to it.
+
         :param dst_expr: Expression of the target pointer.
         :param dst_dtype: Type of the target pointer.
         :param src_dtype: Type of the variable that needs to be written.
@@ -1446,13 +1469,33 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_BinOp(self, node):
         if node.op.__class__.__name__ == 'Pow':
+
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
             if not (isinstance(node.right,
                                (ast.Num, ast.Constant)) and int(node.right.n) == node.right.n and node.right.n >= 0):
+
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
-                right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
-                updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
+                try:
+                    unparsed = symbolic.pystr_to_symbolic(evalnode(node.right, {
+                        **self.constants,
+                        'dace': dace,
+                    }))
+                    evaluated = symbolic.symstr(evaluate(unparsed, self.constants), cpp_mode=True)
+                    infered_type = infer_expr_type(evaluated, self.dtypes)
+                    right_value = evaluated
+
+                    if infered_type == dtypes.int64 or infered_type == dtypes.int32:
+                        updated = ast.Name(id="pown({},{})".format(left_value, right_value))
+                    else:
+                        updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
+                except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
+                    right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
+                    updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
                 return ast.copy_location(updated, node)
+
         return self.generic_visit(node)
 
     def visit_Name(self, node):

@@ -26,23 +26,27 @@ from dace import data
 
 @make_properties
 class InlineSDFG(transformation.SingleStateTransformation):
-    """ Inlines a single-state nested SDFG into a top-level SDFG.
+    """
+    Inlines a single-state nested SDFG into a top-level SDFG.
 
-        In particular, the steps taken are:
+    In particular, the steps taken are:
 
         1. All transient arrays become transients of the parent
         2. If a source/sink node is one of the inputs/outputs:
-          a. Remove it
-          b. Reconnect through external edges (map/accessnode)
-          c. Replace and reoffset memlets with external data descriptor
+
+            a. Remove it
+            b. Reconnect through external edges (map/accessnode)
+            c. Replace and reoffset memlets with external data descriptor
+
         3. If other nodes carry the names of inputs/outputs:
-          a. Replace data with external data descriptor
-          b. Replace and reoffset memlets with external data descriptor
+
+            a. Replace data with external data descriptor
+            b. Replace and reoffset memlets with external data descriptor
+
         4. If source/sink node is not connected to a source/destination, and
            the nested SDFG is in a scope, connect to scope with empty memlets
         5. Remove all unused external inputs/output memlet paths
         6. Remove isolated nodes resulting from previous step
-
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
@@ -62,6 +66,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
+
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
         :param nested_sdfg: Nested SDFG node with symbol mapping.
@@ -188,6 +193,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Remove all edges along a path, until memlet tree contains siblings
             that should not be removed. Removes resulting isolated nodes as
             well. Operates in place.
+            
             :param state: The state in which to remove edges.
             :param edge_map: Mapping from identifier to edge, used as a
                              predicate for removal.
@@ -242,8 +248,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
-        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
@@ -281,7 +287,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 d = e.src.data
                 if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
                     ve = sdutil.get_view_edge(state, e.src)
-                    arr = ve.src.data
+                    arr = state.memlet_tree(ve).root().edge.src.data
                     srcset = ve.data.src_subset
                     dstset = ve.data.dst_subset
                     mem = dc(ve.data)
@@ -296,7 +302,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 d = e.dst.data
                 if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
                     ve = sdutil.get_view_edge(state, e.dst)
-                    arr = ve.dst.data
+                    arr = state.memlet_tree(ve).root().edge.dst.data
                     srcset = ve.data.src_subset
                     dstset = ve.data.dst_subset
                     mem = dc(ve.data)
@@ -585,6 +591,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
 
+        sdfg._sdfg_list = sdfg.reset_sdfg_list()
+
     def _modify_access_to_access(self,
                                  input_edges: Dict[nodes.Node, MultiConnectorEdge],
                                  nsdfg: SDFG,
@@ -756,8 +764,8 @@ class InlineTransients(transformation.SingleStateTransformation):
             if not desc.transient:
                 continue
             # Needs to be allocated in "Scope" or "Persistent" lifetime
-            if (desc.lifetime != dtypes.AllocationLifetime.Scope
-                    and desc.lifetime != dtypes.AllocationLifetime.Persistent):
+            if (desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.Persistent,
+                                      dtypes.AllocationLifetime.External)):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now
@@ -981,7 +989,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
-                    nstate.ranges = {}
+                    for ns in nsdfg.sdfg.states():
+                        ns.ranges = {}
                     from dace.sdfg.propagation import _annotate_loop_ranges
                     _annotate_loop_ranges(nsdfg.sdfg, [])
 
