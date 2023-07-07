@@ -258,9 +258,9 @@ def test_alltoall():
 
 
 if __name__ == "__main__":
-    # test_process_grid_bcast()
-    # test_sub_grid_bcast()
-    # test_3mm()
-    # test_isend_irecv()
-    # test_send_recv()
+    test_process_grid_bcast()
+    test_sub_grid_bcast()
+    test_3mm()
+    test_isend_irecv()
+    test_send_recv()
     test_alltoall()
