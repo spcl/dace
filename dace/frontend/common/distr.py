@@ -254,9 +254,66 @@ def _Reduce(pv: 'ProgramVisitor',
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
+@oprepo.replaces('dace.comm.Alltoall')
+def _alltoall(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               inbuffer: str,
+               outbuffer: str,
+               grid: str = None):
+
+    from dace.libraries.mpi.nodes.alltoall import Alltoall
+
+    libnode = Alltoall('_Alltoall_', grid)
+    in_desc = sdfg.arrays[inbuffer]
+    in_buffer = state.add_read(inbuffer)
+    out_desc = sdfg.arrays[outbuffer]
+    out_buffer = state.add_write(outbuffer)
+    state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(out_buffer, out_desc))
+
+    return None
+
+
+@oprepo.replaces_method('Intracomm', 'Alltoall')
+def _intracomm_alltoall(pv: 'ProgramVisitor',
+                         sdfg: SDFG,
+                         state: SDFGState,
+                         icomm: 'Intracomm',
+                         inp_buffer: str,
+                         out_buffer: str):
+
+    """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    return _alltoall(pv, sdfg, state, inp_buffer, out_buffer)
+
+
+@oprepo.replaces_method('ProcessGrid', 'Alltoall')
+def _pgrid_alltoall(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     pgrid: str,
+                     inp_buffer: str,
+                     out_buffer: str):
+
+    """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """
+
+    from mpi4py import MPI
+    return _alltoall(pv, sdfg, state, inp_buffer, out_buffer, grid=pgrid)
+
+
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               buffer: str,
+               op: str,
+               grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
@@ -372,6 +429,7 @@ def _gather(pv: 'ProgramVisitor',
 
 ##### Point-To-Point Communication
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: 'ProgramVisitor',
           sdfg: SDFG,
@@ -572,6 +630,7 @@ def _pgrid_isend(pv: 'ProgramVisitor',
     return req
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Recv')
 @oprepo.replaces('dace.comm.Recv')
 def _recv(pv: 'ProgramVisitor',
           sdfg: SDFG,
