@@ -12,6 +12,7 @@ from dace.sdfg import replace
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import CodeBlock
+from dace.transformation.helpers import nest_state_subgraph
 from typing import List, Union, Tuple
 import networkx as nx
 
@@ -283,14 +284,20 @@ class MapFusion(transformation.SingleStateTransformation):
     def add_condition_to_map(self, graph: SDFGState, sdfg: SDFG, map_entry: nodes.MapEntry, condition_edge: InterstateEdge):
         start_nodes = set(e.dst for e in graph.out_edges(map_entry))
         assert len(start_nodes) == 1
-        nsdfg = start_nodes.pop()
+        first_node = start_nodes.pop()
 
-        if not isinstance(nsdfg, nodes.NestedSDFG):
-            # TODO(Samuel): Finish this case
-            nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=sdfg)
-            graph.add_nested_sdfg(nsdfg, sdfg)
+        if not isinstance(first_node, nodes.NestedSDFG):
+            contained_graph_view = graph.scope_subgraph(map_entry, include_entry=False, include_exit=False)
+            nsdfg = nest_state_subgraph(sdfg, graph, contained_graph_view, full_data=False)
+            # Add symbols from outer nsdfg if existing
+            if graph.parent and graph.parent.parent_nsdfg_node:
+                nsdfg.symbol_mapping = dcpy(graph.parent.parent_nsdfg_node.symbol_mapping)
+            for itervar in map_entry.map.params:
+                nsdfg.sdfg.add_symbol(itervar, int)
+                nsdfg.symbol_mapping[itervar] = itervar
+        else:
+            nsdfg = first_node
 
-        assert isinstance(nsdfg, nodes.NestedSDFG)
         old_start_state = nsdfg.sdfg.start_state
         guard_state = nsdfg.sdfg.add_state(f"guard_{map_entry.map.label}", is_start_state=True)
         nsdfg.sdfg.add_edge(guard_state, old_start_state, condition_edge)
