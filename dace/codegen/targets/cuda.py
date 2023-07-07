@@ -377,7 +377,8 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking));
+        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
@@ -398,7 +399,7 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->streams[i]));
+        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
