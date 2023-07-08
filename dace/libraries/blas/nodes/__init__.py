@@ -6,6 +6,6 @@ from .gemm import Gemm
 from .ger import Ger
 from .batched_matmul import BatchedMatMul
 from .transpose import Transpose
-
+from .permute import Permute
 from .axpy import Axpy
 from .einsum import Einsum
