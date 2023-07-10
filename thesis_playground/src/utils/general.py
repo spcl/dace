@@ -416,10 +416,10 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         save_graph(sdfg, verbose_name, "after_auto_opt")
 
     # Apply TrivialMapElimination after autoopt
-    # from dace.transformation.dataflow import TrivialMapElimination
-    # sdfg.apply_transformations_repeated(TrivialMapElimination)
-    # if verbose_name is not None:
-    #     save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
+    from dace.transformation.dataflow import TrivialMapElimination
+    sdfg.apply_transformations_repeated(TrivialMapElimination)
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
     return sdfg
 
 
@@ -519,7 +519,6 @@ def insert_heap_size_limit(dacecache_folder_name: str, limit: str, debug_prints:
     with open(src_file, 'r') as f:
         contents = f.readlines()
         contents.insert(line_number, set_heap_limit_str)
-        # print(contents)
 
     with open(src_file, 'w') as f:
         contents = "".join(contents)

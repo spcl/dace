@@ -8,10 +8,11 @@ from measurements.data2 import get_data_wideformat, average_data
 from scripts2.plot.vert_loop import plot_speedup_array_order, plot_speedup_temp_allocation, plot_runtime, \
                                     plot_memory_transfers
 from utils.paths import get_plots_2_folder
+from utils.plot import get_node_gpu_map
 
 
-def plot_vert_loop(experiment_ids: List[int]):
-    folder = os.path.join(get_plots_2_folder(), 'vert-loop')
+def plot_vert_loop(experiment_ids: List[int], folder_name: str = 'vert-loop'):
+    folder = os.path.join(get_plots_2_folder(), folder_name)
     os.makedirs(folder, exist_ok=True)
 
     measurement_data = get_data_wideformat(experiment_ids)
@@ -25,19 +26,32 @@ def plot_vert_loop(experiment_ids: List[int]):
         .reset_index().set_index(index_cols).drop('experiment id', axis='columns')
 
     # Create speedup plots
-    plot_speedup_array_order(avg_data.copy(), folder)
-    plot_speedup_temp_allocation(avg_data.copy(), folder)
-    plot_runtime(data.copy(), folder, limit_temp_allocation_to='stack')
-    plot_runtime(data.copy(), folder, limit_temp_allocation_to='heap')
-    plot_runtime(data.copy(), folder)
-    plot_memory_transfers(data.copy(), folder, limit_temp_allocation_to='stack')
-    plot_memory_transfers(data.copy(), folder, limit_temp_allocation_to='heap')
-    plot_memory_transfers(data.copy(), folder)
+    nodes = data['node'].unique()
+    gpus = set([get_node_gpu_map()[node] for node in nodes])
+    node = ' and '.join(nodes)
+    gpu = ' and '.join(gpus)
+    run_counts = data.reset_index().groupby(['program', 'NBLOCKS', 'temp allocation']).count()['run number']
+    if run_counts.min() == run_counts.max():
+        run_count_str = run_counts.min()
+    else:
+        run_count_str = f"between {run_counts.min()} and {run_counts.max()}"
+    title = f"Vertical Loop Programs un on {node} using NVIDIA {gpu} averaging {run_count_str} runs"
+    plot_speedup_array_order(avg_data.copy(), folder, title)
+    plot_speedup_temp_allocation(avg_data.copy(), folder, title)
+    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='stack')
+    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='heap')
+    plot_runtime(data.copy(), folder, title)
+    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='stack')
+    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='heap')
+    plot_memory_transfers(data.copy(), folder, title)
 
 
 def action_script(args):
     scripts = {
-            'vert-loop': (plot_vert_loop, {'experiment_ids': [0, 1, 2, 3, 4, 5]})
+            'vert-loop': (plot_vert_loop, {'experiment_ids': [11, 12],
+                                           'folder_name': 'vert-loop'}),
+            'vert-loop-trivial-elimination': (plot_vert_loop, {'experiment_ids': [13, 14],
+                                                               'folder_name': 'vert-loop-trivial-elimination'}),
     }
     function, func_args = scripts[args.script_name]
     additional_args = json.loads(args.args)

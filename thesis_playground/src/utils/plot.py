@@ -6,6 +6,7 @@ from matplotlib.ticker import EngFormatter
 import seaborn as sns
 import math
 import os
+import json
 import pandas as pd
 
 from utils.general import convert_to_seconds
@@ -413,3 +414,16 @@ def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[D
     for text in legend.get_texts():
         if text.get_text() in names_map:
             text.set(text=names_map[text.get_text()])
+
+
+def get_node_gpu_map() -> Dict[str, str]:
+    """
+    Returns mapping node -> GPU
+
+    :return: Node -> GPU map
+    :rtype: Dict[str, str]
+    """
+    hardware_filename = 'nodes.json'
+    with open(hardware_filename) as node_file:
+        node_data = json.load(node_file)
+        return {node: node_data['ault_nodes'][node]['GPU'] for node in node_data['ault_nodes']}

@@ -18,7 +18,7 @@ from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
 
 
-def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 5e5,
+def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 7e5,
                       nblock_step: Number = 1e5, debug_mode: bool = False):
     programs = [
             'cloudsc_vert_loop_4_ZSOLQA',
@@ -34,8 +34,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
             params = ParametersProvider(program,
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
-        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=1,
-                                             tot_time_repetitions=5))
+        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
+                                             tot_time_repetitions=2))
 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:

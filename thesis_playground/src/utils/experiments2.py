@@ -26,5 +26,5 @@ def get_program_infos() -> pd.DataFrame():
     base_program_infos = pd.read_csv(os.path.join(get_results_2_folder(), 'base_program_infos.csv'),
                                      index_col=['base id'])
     df = program_infos.join(base_program_infos, on='base id')
-    df['full description'] = df['base description'] + df['variant description']
+    df['full description'] = df['base description'] + ' ' + df['variant description']
     return df

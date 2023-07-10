@@ -12,7 +12,7 @@ hue_order = ['cloudsc_vert_loop_4_ZSOLQA', 'cloudsc_vert_loop_6_ZSOLQA', 'clouds
              'cloudsc_vert_loop_7_3']
 
 
-def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line: bool = False):
+def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, title: str, legend_on_line: bool = False):
     """
     Plots speedup of kernel runtime copmaring the different array layouts on heap allocation
 
@@ -20,6 +20,8 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line
     :type avg_data: pd.DataFrame
     :param folder: The folder to store the plot in
     :type folder: str
+    :param title: The title of the plot
+    :type title: str
     :param legend_on_line: If legend should be put on lines, defaults to False
     :type legend_on_line: bool, optional
     """
@@ -27,7 +29,6 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
     ax.axhline(y=1, color='gray', linestyle='--')
-    # figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
 
     speedups = compute_speedups(avg_data, ('cloudsc_vert_loop_4_ZSOLQA'), ('program')) \
         .drop(index='stack', level='temp allocation')\
@@ -43,10 +44,11 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, legend_on_line
                         rotations=[0, -12, -15], color_palette_offset=1)
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
+    figure.suptitle(title)
     save_plot(os.path.join(folder, 'speedup_array_order.pdf'))
 
 
-def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, legend_on_line: bool = False):
+def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, title: str, legend_on_line: bool = False):
     """
     Plots speedup of kernel runtime, comparing the different temporary array allocation
 
@@ -54,13 +56,15 @@ def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, legend_on_
     :type avg_data: pd.DataFrame
     :param folder: The folder to store the plot in
     :type folder: str
+    :param title: The title of the plot
+    :type title: str
     :param legend_on_line: If legend should be put on lines, defaults to False
     :type legend_on_line: bool, optional
     """
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
     ax.axhline(y=1, color='gray', linestyle='--')
-    # figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
+    figure.suptitle(title)
 
     speedups = compute_speedups(avg_data, ('heap'), ('temp allocation')) \
         .drop(index='heap', level='temp allocation') \
@@ -77,7 +81,7 @@ def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, legend_on_
     save_plot(os.path.join(folder, 'speedup_temp_allocation.pdf'))
 
 
-def plot_runtime(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
+def plot_runtime(data: pd.DataFrame, folder: str, title: str, legend_on_line: bool = False,
                  limit_temp_allocation_to: Optional[str] = None):
     """
     Plot the kernel runtime
@@ -86,6 +90,8 @@ def plot_runtime(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
     :type data: pd.DataFrame
     :param folder: The folder to store the plot in
     :type folder: str
+    :param title: The title of the plot
+    :type title: str
     :param legend_on_line: If legend should be put on lines, defaults to False
     :type legend_on_line: bool, optional
     :param limit_temp_allocation_to: The temporary array allocation the data should be limited to (either 'heap',
@@ -94,17 +100,17 @@ def plot_runtime(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
     """
     temp_allocations = ['stack', 'heap']
     if limit_temp_allocation_to is not None and limit_temp_allocation_to in temp_allocations:
-        title = f"Kernel Runtimes of {limit_temp_allocation_to} allocated versions"
+        sub_title = f"Kernel Runtimes of {limit_temp_allocation_to} allocated versions"
         data = data.xs(limit_temp_allocation_to, level='temp allocation')
         filename = f"runtime_{limit_temp_allocation_to}.pdf"
     else:
-        title = "Kernel Runtimes"
+        sub_title = "Kernel Runtimes"
         filename = "runtime.pdf"
 
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
-    # figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
-    size_vs_y_plot(ax, 'Runtime [s]', title, data, size_var_name='NBLOCKS')
+    figure.suptitle(title)
+    size_vs_y_plot(ax, 'Runtime [s]', sub_title, data, size_var_name='NBLOCKS')
     additional_args = {}
     if limit_temp_allocation_to == 'stack':
         dashes = {program: '' for program in data.reset_index()['program'].unique()}
@@ -126,7 +132,7 @@ def plot_runtime(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
     save_plot(os.path.join(folder, filename))
 
 
-def plot_memory_transfers(data: pd.DataFrame, folder: str, legend_on_line: bool = False,
+def plot_memory_transfers(data: pd.DataFrame, folder: str, title: str, legend_on_line: bool = False,
                           limit_temp_allocation_to: Optional[str] = None):
     """
     Plot the memory transfers
@@ -135,6 +141,8 @@ def plot_memory_transfers(data: pd.DataFrame, folder: str, legend_on_line: bool 
     :type data: pd.DataFrame
     :param folder: The folder to store the plot in
     :type folder: str
+    :param title: The title of the plot
+    :type title: str
     :param legend_on_line: If legend should be put on lines, defaults to False
     :type legend_on_line: bool, optional
     :param limit_temp_allocation_to: The temporary array allocation the data should be limited to (either 'heap',
@@ -143,17 +151,17 @@ def plot_memory_transfers(data: pd.DataFrame, folder: str, legend_on_line: bool 
     """
     temp_allocations = ['stack', 'heap']
     if limit_temp_allocation_to is not None and limit_temp_allocation_to in temp_allocations:
-        title = f"Measured Transferred Bytes of {limit_temp_allocation_to} allocated versions"
+        sub_title = f"Measured Transferred Bytes of {limit_temp_allocation_to} allocated versions"
         data = data.xs(limit_temp_allocation_to, level='temp allocation')
         filename = f"memory_{limit_temp_allocation_to}.pdf"
     else:
-        title = "Measured Transferred Bytes"
+        sub_title = "Measured Transferred Bytes"
         filename = "memory.pdf"
 
     figure = get_new_figure(4)
     ax = figure.add_subplot(1, 1, 1)
-    # figure.suptitle(f"Vertical Loop Programs run on {node} using NVIDIA {gpu} averaging {run_count_str} runs")
-    size_vs_y_plot(ax, 'Transferred to/from global memory [byte]', title, data, size_var_name='NBLOCKS')
+    figure.suptitle(title)
+    size_vs_y_plot(ax, 'Transferred to/from global memory [byte]', sub_title, data, size_var_name='NBLOCKS')
     additional_args = {}
     if limit_temp_allocation_to is None:
         additional_args['style'] = 'temp allocation'
