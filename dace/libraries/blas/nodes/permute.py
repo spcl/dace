@@ -86,40 +86,86 @@ class ExpandPermutePure(ExpandTransformation):
         return ExpandPermutePure.make_sdfg(node, state, sdfg)
 
 
-# @dace.library.expansion
-# class ExpandPermuteCuTENSOR(ExpandTransformation):
-#
-#     environments = [environments.cublas.cuBLAS]
-#
-#     @staticmethod
-#     def expansion(node, state, sdfg, **kwargs):
-#         node.validate(sdfg, state)
-#         dtype = node.dtype
-#
-#         try:
-#             func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
-#         except TypeError as ex:
-#             warnings.warn(f'{ex}. Falling back to pure expansion')
-#             return ExpandPermutePure.expansion(node, state, sdfg, **kwargs)
-#
-#         func = func + 'geam'
-#
-#         alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"
-#         beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
-#         _, _, (m, n) = _get_permute_input(node, state, sdfg)
-#
-#         code = (environments.cublas.cuBLAS.handle_setup_code(node) + f"""cublas{func}(
-#                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
-#                     {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m});
-#                 """)
-#
-#         tasklet = dace.sdfg.nodes.Tasklet(node.name,
-#                                           node.in_connectors,
-#                                           node.out_connectors,
-#                                           code,
-#                                           language=dace.dtypes.Language.CPP)
-#
-#         return tasklet
+@dace.library.expansion
+class ExpandPermuteCuTENSOR(ExpandTransformation):
+
+    environments = [environments.cutensor.cuTENSOR]
+
+    @staticmethod
+    def expansion(node, state, sdfg, **kwargs):
+        node.validate(sdfg, state)
+        dtype = node.dtype
+        axes = node.axes
+
+        # try:
+        #     func, cdtype, factort = blas_helpers.cutensor_type_metadata(dtype)
+        # except TypeError as ex:
+        #     warnings.warn(f'{ex}. Falling back to pure expansion')
+        #     return ExpandPermutePure.expansion(node, state, sdfg, **kwargs)
+        cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
+
+        in_edge, in_outer_array, in_shape = _get_permute_input(node, state, sdfg)
+        out_edge, out_outer_array, out_shape = _get_permute_output(node, state, sdfg)
+
+        num_dims = len(axes)
+        modeA = ', '.join([str(x) for x in axes])
+        modeC = ', '.join([str(x) for x in range(len(axes))])
+
+        stridesA = ', '.join([str(x) for x in in_outer_array.strides])
+        stridesC = ', '.join([str(x) for x in out_outer_array.strides])
+
+        code_prefix = environments.cuTENSOR.handle_setup_code(node)
+        code_call = f"""
+        int modeC[] = {{ {modeC} }};
+        int modeA[] = {{ {modeA} }};
+
+        int64_t extentA[] = {{ {', '.join([str(x) for x in in_shape])} }};
+        int64_t extentC[] = {{ {', '.join([str(x) for x in out_shape])} }};
+        int64_t stridesA[] = {{ {stridesA} }};
+        int64_t stridesC[] = {{ {stridesC} }};
+                
+        cudaDataType_t typeA = {cuda_dtype};
+        cudaDataType_t typeC = {cuda_dtype};
+        cudaDataType_t typeCompute = {cuda_dtype};
+        
+        cutensorTensorDescriptor_t descA;
+        dace::blas::CheckCutensorError(cutensorInitTensorDescriptor(__dace_cutensor_handle,
+                 &descA,
+                 {num_dims},
+                 extentA,
+                 stridesA,
+                 {cuda_dtype}, CUTENSOR_OP_IDENTITY));
+
+        cutensorTensorDescriptor_t descC;
+        dace::blas::CheckCutensorError(cutensorInitTensorDescriptor(__dace_cutensor_handle,
+                     &descC,
+                     {num_dims},
+                     extentC,
+                     stridesC,
+                     {cuda_dtype}, CUTENSOR_OP_IDENTITY));
+                     
+        const float one = 1.0f;
+        cutensorPermutation(
+                __dace_cutensor_handle,
+                &one,
+                /*A=*/_inp,
+                &descA,
+                /*axes A=*/modeA,
+                /*C=*/_out,
+                &descC,
+                /*axes C=*/modeC,
+                /*computeType=*/{cuda_dtype},
+                /*stream=*/__dace_current_stream
+                );
+                """
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code_prefix + code_call,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
 
 
 @dace.library.node
@@ -127,7 +173,7 @@ class Permute(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "pure": ExpandPermutePure,
-        # "cuTENSOR": ExpandPermuteCuTensor
+        "cuTENSOR": ExpandPermuteCuTENSOR,
     }
     default_implementation = None
 

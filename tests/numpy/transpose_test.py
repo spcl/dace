@@ -1,7 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
+
 import dace
 from common import compare_numpy_output
+from dace.library import change_default
+import dace.libraries.blas as blas
 
 M, N = 24, 24
 
@@ -37,8 +41,39 @@ def test_transpose():
     assert rel_error <= 1e-5
 
 
+@pytest.mark.parametrize('implementation', ['pure', 'cuTENSOR'])
+def test_transpose_libnode(implementation):
+    axes = [1, 0, 2]
+    axis_sizes = [4, 2, 3]
+
+    @dace.program
+    def fn(A, B):
+        B[:] = np.transpose(A, axes=axes)
+
+    with change_default(blas, implementation):
+        permuted_sizes = [axis_sizes[i] for i in axes]
+        x = np.arange(np.prod(axis_sizes)).reshape(axis_sizes).astype(np.float32)
+        y = np.zeros(permuted_sizes).astype(np.float32)
+
+        sdfg = fn.to_sdfg(x, y)
+        if implementation == 'cuTENSOR':
+            sdfg.apply_gpu_transformations()
+        sdfg.simplify()
+        sdfg.expand_library_nodes()
+
+        sdfg = sdfg.compile()
+        sdfg(A=x, B=y)
+
+        ref = np.transpose(x, axes=axes)
+        print(ref)
+        print(y)
+        assert np.allclose(ref, y), "Result doesn't match reference!"
+
+
 if __name__ == '__main__':
     test_transpose_axes0()
     test_transpose_axes1()
     test_transpose_axes2()
     test_transpose()
+    test_transpose_libnode('pure')
+    test_transpose_libnode('cuTENSOR')
