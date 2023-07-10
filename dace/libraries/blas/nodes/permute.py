@@ -118,10 +118,6 @@ class ExpandPermuteCuTENSOR(ExpandTransformation):
         int64_t extentC[] = {{ {', '.join([str(x) for x in out_shape])} }};
         int64_t stridesA[] = {{ {stridesA} }};
         int64_t stridesC[] = {{ {stridesC} }};
-                
-        cudaDataType_t typeA = {cuda_dtype};
-        cudaDataType_t typeC = {cuda_dtype};
-        cudaDataType_t typeCompute = {cuda_dtype};
         
         cutensorTensorDescriptor_t descA;
         dace::blas::CheckCutensorError(cutensorInitTensorDescriptor(__dace_cutensor_handle,
