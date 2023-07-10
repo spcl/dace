@@ -343,6 +343,22 @@ def apply_transformation_stepwise(sdfg: SDFG,
     return count
 
 
+def map_fusion_merge_different_ranges(transformation_class, max_start_difference: int, max_end_difference: int):
+    """
+    Changes the given MapFusion transformation class to allow fusion maps with slightly different start/ends
+
+    :param transformation_class: The transformation class
+    :type transformation_class: class
+    :param max_start_difference: Max difference between start of the two maps
+    :type max_start_difference: int
+    :param max_end_difference: Max difference between end of the two maps
+    :type max_end_difference: int
+    """
+    transformation_class.max_start_difference = 1
+    transformation_class.max_end_difference = 1
+    return transformation_class
+
+
 def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, program: Optional[str] = None):
     # if program is not None:
     #     save_graph(sdfg, program, "before_trivial_map_elimination")
@@ -374,7 +390,7 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, progr
 
     # TODO: Does not yet fuse all KLEV maps
     # Try to fuse maps -> want all KLEV maps fused into one
-    sdfg.apply_transformations_repeated([MapFusion])
+    sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
     if program is not None:
         save_graph(sdfg, program, "after_map_fusion")
 
@@ -382,6 +398,6 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, progr
     if program is not None:
         save_graph(sdfg, program, "after_map_expansion")
 
-    sdfg.apply_transformations_repeated([MapFusion])
+    sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
     if program is not None:
         save_graph(sdfg, program, "after_map_fusion")

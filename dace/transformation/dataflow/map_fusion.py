@@ -46,8 +46,8 @@ class MapFusion(transformation.SingleStateTransformation):
     array = transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.PatternNode(nodes.EntryNode)
     # max difference between start and end values of two maps to fuse
-    max_start_difference = 1
-    max_end_difference = 1
+    max_start_difference = 0
+    max_end_difference = 0
 
     @staticmethod
     def annotates_memlets():
@@ -58,11 +58,15 @@ class MapFusion(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
     def find_permutation(self, first_map: nodes.Map,
-                         second_map: nodes.Map) -> Tuple[Union[List[int], None], Union[List[int], None]]:
+                         second_map: nodes.Map,
+                         max_start_difference: int = 0,
+                         max_end_difference: int = 0) -> Tuple[Union[List[int], None], Union[List[int], None]]:
         """ Find permutation between two map ranges.
 
             :param first_map: First map.
             :param second_map: Second map.
+            :param max_start_difference: Maximum difference between the start of the two given maps, defaults to 0
+            :param max_end_difference: Maximum difference between the end of the two given maps, defaults to 0
             :return: None if no such permutation exists, otherwise a list of
                      indices L such that L[x]'th parameter of second map has the same range as x'th
                      parameter of the first map.
@@ -95,7 +99,8 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return (result, different_size_indices)
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False, max_start_diference: int = 0,
+                       max_end_difference: int = 0):
         first_map_exit = self.first_map_exit
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = self.second_map_entry
