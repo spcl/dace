@@ -97,11 +97,6 @@ class ExpandPermuteCuTENSOR(ExpandTransformation):
         dtype = node.dtype
         axes = node.axes
 
-        # try:
-        #     func, cdtype, factort = blas_helpers.cutensor_type_metadata(dtype)
-        # except TypeError as ex:
-        #     warnings.warn(f'{ex}. Falling back to pure expansion')
-        #     return ExpandPermutePure.expansion(node, state, sdfg, **kwargs)
         cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
 
         in_edge, in_outer_array, in_shape = _get_permute_input(node, state, sdfg)
