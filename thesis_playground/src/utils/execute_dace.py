@@ -87,9 +87,6 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     outputs_f = get_outputs(program, rng, params)
     outputs_original = copy.deepcopy(outputs_f)
     np.set_printoptions(precision=3)
-    # print(f"LDCUM:\n{inputs['LDCUM_NF'].transpose()}")
-    # print(f"PLUDE:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
-    # print(f"PLU:\n{inputs['PLU'][:,:,0].transpose()}")
     if run_config.pattern is not None:
         set_input_pattern(inputs, outputs_f, params, program, run_config.pattern)
     outputs_d_device = copy_to_device(copy.deepcopy(outputs_f))
@@ -99,9 +96,6 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     inputs_device = copy_to_device(inputs)
     sdfg(**inputs_device, **outputs_d_device)
-
-    # print(f"PLUDE DaCe:\n{outputs_d_device['PLUDE'][:,:,0].transpose()}")
-    # print(f"PLUDE Fortran:\n{outputs_f['PLUDE'][:,:,0].transpose()}")
 
     print_with_time(f"{program} ({program_name}) on {run_config.device}")
     outputs_d = outputs_d_device

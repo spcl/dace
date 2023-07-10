@@ -25,7 +25,8 @@ def auto_optimize(sdfg: SDFG,
                   program: str = None,
                   validate: bool = True,
                   validate_all: bool = True,
-                  symbols: Dict[str, int] = None) -> SDFG:
+                  symbols: Dict[str, int] = None,
+                  k_caching: bool = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -99,23 +100,12 @@ def auto_optimize(sdfg: SDFG,
         if program is not None:
             save_graph(sdfg, program, "after_loop_to_map")
 
-    # For some reason this causes a valueError: Found cycles with vert_loop_10
-    # sdfg.apply_transformations_repeated(TrivialMapElimination)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_trivial_map_elimination")
+    if k_caching:
+        make_klev_outermost_map(sdfg)
+        if program is not None:
+            save_graph(sdfg, program, "after_make_klev_outermost")
 
-    make_klev_outermost_map(sdfg)
-    if program is not None:
-        save_graph(sdfg, program, "after_make_klev_outermost")
-
-    # make_klev_loops_again(sdfg)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_make_klev_loop_again")
-
-    # xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapFusion])]
-    # print(f"Number of possible MapFusion transformations: {len(xforms)}")
-
-    k_caching_prototype_v1(sdfg, validate, validate_all, program)
+        k_caching_prototype_v1(sdfg, validate, validate_all, program)
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()

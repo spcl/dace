@@ -106,10 +106,18 @@ def generate_arguments_fortran(
         cwd = os.getcwd()
         os.chdir(tmp_dir)
         program_name = f"{program}_routine"
-        f2py.compile(source, modulename=program_name, verbose=False, extension='.f90')
+        process = f2py.compile(source, modulename=program_name, verbose=False, extension='.f90', full_output=True)
+        if process.returncode != 0:
+            print("ERROR: Fortran compilation failed")
+            print("stdout")
+            print(process.stdout.decode('UTF-8'))
+            print("stderr")
+            print(process.stderr.decode('UTF-8'))
+            exit(1)
+
         sys.path.append(tmp_dir)
         module = import_module(program_name)
-        doc_str = module.vert_loop_10_routine.__doc__.split('\n')
+        doc_str = getattr(module, program_name).__doc__.split('\n')
 
         while doc_str[0][0:4] != '----':
             doc_str.pop(0)
@@ -118,22 +126,23 @@ def generate_arguments_fortran(
         arguments = {}
         while doc_str[0] != '':
             line = doc_str.pop(0)
+            arg_name = line.split(':')[0].rstrip()
             if line.split(': input ')[1] in ['float', 'int']:
-                arguments[line.split(':')[0]] = (line.split(': input ')[1], 1)
+                arguments[arg_name] = (line.split(': input ')[1], 1)
             else:
                 matches = re.search(r'array\(\'(d|i)\'\) with bounds \(([a-z,0-9 +-]*)\)', line)
                 if matches is not None:
                     size_str = matches.group(2)
                     type_str = 'int' if matches.group(1) == 'i' else 'float'
-                    arguments[line.split(':')[0]] = (type_str, size_str.split(','))
+                    arguments[arg_name] = (type_str, size_str.split(','))
                 else:
                     print(f"WARNING: not matches for bounds found for line '{line}'")
 
         fortran_arguments = {}
         for arg_name, (arg_type, arg_dim) in arguments.items():
             if arg_dim == 1:
-                if arg_name in params.get_dict().keys():
-                    fortran_arguments[arg_name] = params[arg_name]
+                if arg_name.upper() in params.get_dict().keys():
+                    fortran_arguments[arg_name] = params[arg_name.upper()]
                 else:
                     if arg_type == 'float':
                         fortran_arguments[arg_name] = rng.random()
@@ -143,15 +152,14 @@ def generate_arguments_fortran(
                 # evaluate the dimension using the given parameters
                 for index, dim in enumerate(arg_dim):
                     sympy_expr = parse_expr(dim.upper())
-                    print(dim, sympy_expr)
                     arg_dim[index] = int(sympy_expr.evalf(subs=params.get_dict()))
                 if arg_type == 'float':
-                    fortran_arguments[arg_name] = rng.random(arg_dim)
+                    fortran_arguments[arg_name] = np.asfortranarray(rng.random(arg_dim))
                 else:
-                    fortran_arguments[arg_name] = rng.integers(0, 2, arg_dim, dtype=np.int32)
+                    fortran_arguments[arg_name] = np.asfortranarray(rng.integers(0, 2, arg_dim, dtype=np.int32))
 
-        print(fortran_arguments)
         os.chdir(cwd)
+
         return fortran_arguments
 
 
@@ -376,6 +384,9 @@ def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = T
         same = same and local_same
         if not local_same and print_if_differ:
             print(f"Variable {key} differs")
+            print(output_a[key])
+            print()
+            print(output_b[key])
     return same
 
 
@@ -413,7 +424,8 @@ def enable_debug_flags():
 
 
 def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
-                  verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None):
+                  verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None,
+                  k_caching: bool = False):
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -428,27 +440,31 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     None
     :type verbose_name: Optional[str]
     :param symbols: Dictionary of key, value pairs defining symbols which can be set to const, defaults to None
+    :param k_caching: If k-caching should be performed on the SDFG, only works if use_my_auto_opt=True, defaults to
+    False
+    :type k_caching: boll
     :type symbols: Optional[Dict[str, Number]]
     """
 
-    for k, v in sdfg.arrays.items():
-        if not v.transient and type(v) == dace.data.Array:
-            v.storage = dace.dtypes.StorageType.GPU_Global
+    if device == dace.DeviceType.GPU:
+        for k, v in sdfg.arrays.items():
+            if not v.transient and type(v) == dace.data.Array:
+                v.storage = dace.dtypes.StorageType.GPU_Global
 
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_auto_opt")
     # avoid cyclic dependency
     from execute.my_auto_opt import auto_optimize as my_auto_optimize
-    if device == dace.DeviceType.GPU:
-        additional_args = {}
-        if symbols:
-            additional_args['symbols'] = symbols
-        if use_my_auto_opt:
-            if verbose_name is not None:
-                additional_args['program'] = verbose_name
-            my_auto_optimize(sdfg, device, **additional_args)
-        else:
-            dace_auto_optimize(sdfg, device, **additional_args)
+    additional_args = {}
+    if symbols:
+        additional_args['symbols'] = symbols
+    if use_my_auto_opt:
+        if verbose_name is not None:
+            additional_args['program'] = verbose_name
+        additional_args['k_caching'] = k_caching
+        my_auto_optimize(sdfg, device, **additional_args)
+    else:
+        dace_auto_optimize(sdfg, device, **additional_args)
 
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_auto_opt")

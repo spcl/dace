@@ -4,6 +4,7 @@ import dace
 
 from execute.parameters import ParametersProvider
 from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, optimize_sdfg
+from utils.cli_frontend import add_cloudsc_size_arguments
 
 
 def main():
@@ -15,11 +16,8 @@ def main():
         help='Does not compile the SDFGs into C++ code, only creates the SDFGs and runs the transformations')
     parser.add_argument('--debug', action='store_true', default=False, help="Configure for debug build")
     parser.add_argument('--not-specialise', action='store_true', help='Do not specialise symbols')
-    parser.add_argument('--KLON', type=int, default=None)
-    parser.add_argument('--KLEV', type=int, default=None)
-    parser.add_argument('--NBLOCKS', type=int, default=None)
-    parser.add_argument('--KIDIA', type=int, default=None)
-    parser.add_argument('--KFDIA', type=int, default=None)
+    parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
+    add_cloudsc_size_arguments(parser)
 
     device = dace.DeviceType.GPU
     args = parser.parse_args()
@@ -44,11 +42,11 @@ def main():
         print(f"Use {params} for specialisation")
         add_args['symbols'] = params.get_dict()
 
+    add_args['k_caching'] = args.k_caching
     optimize_sdfg(sdfg, device, verbose_name=args.program, **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     if not args.only_graph:
         sdfg.compile()
-    return sdfg
 
 
 if __name__ == '__main__':

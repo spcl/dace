@@ -38,6 +38,7 @@ SUBROUTINE mwe_map_similar_size_routine(&
     DO JN=1,NBLOCKS
         DO JK=1,KLEV
             OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQI)
+            OUT1(JN, JK) = NCLDQI
         ENDDO
 
         DO JK=2,KLEV
