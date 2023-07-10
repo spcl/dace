@@ -15,6 +15,13 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
             size = subset.size()
+
+            # Avoid over-squeezing
+            if len(size) < 2 and len(edge.data.subset) == 2:
+                subset = dc(edge.data.subset)
+                size = subset.size()
+                squeezed = list(range(len(size)))
+
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
             res = edge, outer_array, size, strides
@@ -26,6 +33,13 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
             size = subset.size()
+
+            # Avoid over-squeezing
+            if len(size) < 2 and len(edge.data.subset) == 2:
+                subset = dc(edge.data.subset)
+                size = subset.size()
+                squeezed = list(range(len(size)))
+
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
             res_out = edge, outer_array, size, strides

@@ -218,6 +218,11 @@ class Property(Generic[T]):
         if isinstance(val, float) and self.dtype == int and val == int(val):
             val = int(val)
 
+        # Edge case for strings and string literals
+        from dace.frontend.python.common import StringLiteral
+        if isinstance(val, StringLiteral) and self.dtype == str:
+            val = val.value
+
         # Check if type matches before setting
         if (self.dtype is not None and not isinstance(val, self.dtype) and not (val is None and self.allow_none)):
             if isinstance(val, str):

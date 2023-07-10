@@ -83,9 +83,11 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
+
     @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
+
         @dace.program
         def func(arg):
             return mathfunc(arg)
@@ -99,6 +101,7 @@ class TestMathFuncs:
 
     @pytest.mark.parametrize("mathfunc", [min, max])
     def test_func2_scalar(self, mathfunc):
+
         @dace.program
         def func(arg1, arg2):
             return mathfunc(arg1, arg2)
@@ -108,6 +111,7 @@ class TestMathFuncs:
 
     @pytest.mark.parametrize("mathfunc", [np.minimum, np.maximum])
     def test_func2_arr(self, mathfunc):
+
         @dace.program
         def func(arg1, arg2):
             return mathfunc(arg1, arg2)
@@ -119,6 +123,7 @@ class TestMathFuncs:
 
 
 def test_scalarret_cond_1():
+
     @dace.program
     def func(arg: dace.float64):
         n = math.floor(1.0 + arg)
@@ -132,6 +137,7 @@ def test_scalarret_cond_1():
 
 
 def test_scalarret_cond_2():
+
     @dace.program
     def func():
         n = math.floor(1.0 + 2.0)
@@ -145,6 +151,7 @@ def test_scalarret_cond_2():
 
 
 def test_scalarret_cond_3():
+
     @dace.program
     def func():
         cval = 2.5
@@ -156,6 +163,20 @@ def test_scalarret_cond_3():
 
     res = func()
     assert res == 0.0
+
+
+def test_mean_reshape():
+
+    @dace.program
+    def tester(A: dace.float64[1, 20, 8, 1], B: dace.float64[1, 20, 1]):
+        B[:] = np.mean(A, axis=2)
+
+    a = np.random.rand(1, 20, 8, 1)
+    expected = np.mean(a, axis=2).reshape(1, 20, 1)
+    b = np.random.rand(1, 20, 1)
+
+    tester(a, b)
+    assert np.allclose(b, expected)
 
 
 if __name__ == '__main__':
@@ -177,3 +198,4 @@ if __name__ == '__main__':
     test_scalarret_cond_1()
     test_scalarret_cond_2()
     test_scalarret_cond_3()
+    test_mean_reshape()
