@@ -31,7 +31,10 @@ def main():
 
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)
-    program_name = programs[args.program]
+    if args.program in programs:
+        program_name = programs[args.program]
+    else:
+        program_name = args.program
     sdfg = get_sdfg(fsource, program_name)
 
     add_args = {}

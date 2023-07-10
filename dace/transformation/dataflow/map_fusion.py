@@ -3,7 +3,7 @@
 """
 
 from copy import deepcopy as dcpy
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace import data, dtypes, symbolic, subsets
 from dace.sdfg import nodes
@@ -11,7 +11,9 @@ from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from typing import List, Union
+from dace.properties import CodeBlock
+from dace.transformation.helpers import nest_state_subgraph
+from typing import List, Union, Tuple
 import networkx as nx
 
 
@@ -43,6 +45,9 @@ class MapFusion(transformation.SingleStateTransformation):
     first_map_exit = transformation.PatternNode(nodes.ExitNode)
     array = transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.PatternNode(nodes.EntryNode)
+    # max difference between start and end values of two maps to fuse
+    max_start_difference = 1
+    max_end_difference = 1
 
     @staticmethod
     def annotates_memlets():
@@ -52,8 +57,8 @@ class MapFusion(transformation.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
-    @staticmethod
-    def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> Union[List[int], None]:
+    def find_permutation(self, first_map: nodes.Map,
+                         second_map: nodes.Map) -> Tuple[Union[List[int], None], Union[List[int], None]]:
         """ Find permutation between two map ranges.
 
             :param first_map: First map.
@@ -63,26 +68,32 @@ class MapFusion(transformation.SingleStateTransformation):
                      parameter of the first map.
         """
         result = []
+        # Indices of the ranges with different sizes
+        different_size_indices = []
 
         if len(first_map.range) != len(second_map.range):
-            return None
+            return (None, None)
 
         # Match map ranges with reduce ranges
         for i, tmap_rng in enumerate(first_map.range):
             found = False
             for j, rng in enumerate(second_map.range):
-                if tmap_rng == rng and j not in result:
+                # if tmap_rng == rng and j not in result:
+                if tmap_rng[2] == rng[2] and abs(tmap_rng[0] - rng[0]) <= self.max_start_difference and \
+                        abs(tmap_rng[1] - rng[1]) <= self.max_end_difference and j not in result:
                     result.append(j)
                     found = True
+                    if tmap_rng[0] != rng[0] or tmap_rng[1] != rng[1]:
+                        different_size_indices.append(i)
                     break
             if not found:
                 break
 
         # Ensure all map ranges matched
         if len(result) != len(first_map.range):
-            return None
+            return (None, None)
 
-        return result
+        return (result, different_size_indices)
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_map_exit = self.first_map_exit
@@ -95,6 +106,8 @@ class MapFusion(transformation.SingleStateTransformation):
                 for _out_e in graph.out_edges(second_map_entry):
                     if _out_e.data.data == _in_e.data.data:
                         # wcr is on a node that is used in the second map, quit
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected WCR is "
+                              f"on a node that is used in the second map")
                         return False
         # Check whether there is a pattern map -> access -> map.
         intermediate_nodes = set()
@@ -111,10 +124,14 @@ class MapFusion(transformation.SingleStateTransformation):
                 # if num_occurrences > 1:
                 #     return False
             else:
+                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no AccesNode "
+                      f"after first map exit")
                 return False
         # Check map ranges
-        perm = self.find_permutation(first_map_entry.map, second_map_entry.map)
+        perm, different_size = self.find_permutation(first_map_entry.map, second_map_entry.map)
         if perm is None:
+            print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no permutation found")
+            print(f"[MapFusion::can_be_applied] {first_map_entry.map.range} vs. {second_map_entry.map.range}")
             return False
 
         # Check if any intermediate transient is also going to another location
@@ -123,6 +140,8 @@ class MapFusion(transformation.SingleStateTransformation):
         # if any(e.dst != second_map_entry for n in transients_to_remove
         #        for e in graph.out_edges(n)):
         if any(graph.out_degree(n) > 1 for n in transients_to_remove):
+            print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected intermediate "
+                  f"transient going to another location")
             return False
 
         # Create a dict that maps parameters of the first map to those of the
@@ -148,6 +167,8 @@ class MapFusion(transformation.SingleStateTransformation):
                     destination_node = graph.memlet_path(second_edge)[0].src
                     # NOTE: Assumes graph has networkx version
                     if destination_node in nx.descendants(graph._nx, source_node):
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected "
+                              f"input set of 2nd map not provided by first set or unreleated maps")
                         return False
                 continue
 
@@ -171,6 +192,8 @@ class MapFusion(transformation.SingleStateTransformation):
             # If none of the output memlets of the first map provide the info,
             # fail.
             if provided is False:
+                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected None of the "
+                      f"output memlet of the first map provide info about subset of second")
                 return False
 
         # Checking for stencil pattern and common input/output data
@@ -226,6 +249,8 @@ class MapFusion(transformation.SingleStateTransformation):
                             c = a.offset_new(b, negative=True)
                         for r in c:
                             if r != (0, 0, 1):
+                                print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected"
+                                      f"stencil pattern 1")
                                 return False
 
             output_data = [viewed_outputnodes[d].data if d in viewed_outputnodes.keys() else d for d in common_data]
@@ -249,10 +274,33 @@ class MapFusion(transformation.SingleStateTransformation):
                     c = a.offset_new(b, negative=True)
                 for r in c:
                     if r != (0, 0, 1):
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected"
+                              f"stencil pattern 2")
                         return False
 
         # Success
         return True
+
+    def add_condition_to_map(self, graph: SDFGState, sdfg: SDFG, map_entry: nodes.MapEntry, condition_edge: InterstateEdge):
+        start_nodes = set(e.dst for e in graph.out_edges(map_entry))
+        assert len(start_nodes) == 1
+        first_node = start_nodes.pop()
+
+        if not isinstance(first_node, nodes.NestedSDFG):
+            contained_graph_view = graph.scope_subgraph(map_entry, include_entry=False, include_exit=False)
+            nsdfg = nest_state_subgraph(sdfg, graph, contained_graph_view, full_data=False)
+            # Add symbols from outer nsdfg if existing
+            if graph.parent and graph.parent.parent_nsdfg_node:
+                nsdfg.symbol_mapping = dcpy(graph.parent.parent_nsdfg_node.symbol_mapping)
+            for itervar in map_entry.map.params:
+                nsdfg.sdfg.add_symbol(itervar, int)
+                nsdfg.symbol_mapping[itervar] = itervar
+        else:
+            nsdfg = first_node
+
+        old_start_state = nsdfg.sdfg.start_state
+        guard_state = nsdfg.sdfg.add_state(f"guard_{map_entry.map.label}", is_start_state=True)
+        nsdfg.sdfg.add_edge(guard_state, old_start_state, condition_edge)
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         """
@@ -279,6 +327,7 @@ class MapFusion(transformation.SingleStateTransformation):
         first_entry = graph.entry_node(first_exit)
         second_entry = self.second_map_entry
         second_exit = graph.exit_node(second_entry)
+        print(f"[MapFusion::apply] fuse loop {first_entry} with {second_entry}")
 
         intermediate_nodes = set()
         for _, _, dst, _, _ in graph.out_edges(first_exit):
@@ -303,12 +352,44 @@ class MapFusion(transformation.SingleStateTransformation):
                             break
 
         # Find permutation between first and second scopes
-        perm = self.find_permutation(first_entry.map, second_entry.map)
+        perm, different_sizes = self.find_permutation(first_entry.map, second_entry.map)
         params_dict = {}
         for index, param in enumerate(first_entry.map.params):
             params_dict[param] = second_entry.map.params[perm[index]]
 
-        sdfg.save('map_fusion/before_replace_scope.sdfg')
+        for idx in different_sizes:
+            first_map_start = first_entry.map.range.ranges[idx][0]
+            first_map_end = first_entry.map.range.ranges[idx][1]
+            second_map_start = second_entry.map.range.ranges[perm[idx]][0]
+            second_map_end = second_entry.map.range.ranges[perm[idx]][1]
+
+            start = min(first_map_start, second_map_start)
+            end = max(first_map_end, second_map_end)
+            first_edge = InterstateEdge()
+            second_edge = InterstateEdge()
+            first_map_param = first_entry.map.params[idx]
+            if first_map_start != start:
+                first_edge.condition = CodeBlock(f"{first_map_param} >= {first_map_start}")
+            if first_map_end != end:
+                condition_str = f"{first_map_param} < {first_map_end}"
+                if first_edge.condition.as_string != '1':
+                    first_edge.condition = CodeBlock(f"({first_edge.condition}) and {condition_str}")
+                else:
+                    first_edge.condition = CodeBlock(condition_str)
+            if second_map_start != start:
+                second_edge.condition = CodeBlock(f"{params_dict[first_map_param]} >= {second_map_start}")
+            if second_map_end != end:
+                condition_str = f"{params_dict[first_map_param]} < {second_map_end}"
+                if second_edge.condition.as_string != '1':
+                    second_edge.condition = CodeBlock(f"({first_edge.condition}) and {condition_str}")
+                else:
+                    second_edge.condition = CodeBlock(condition_str)
+            if first_edge.condition.as_string != '1':
+                self.add_condition_to_map(graph, sdfg, first_entry, first_edge)
+            if second_edge.condition.as_string != '1':
+                self.add_condition_to_map(graph, sdfg, second_entry, second_edge)
+
+        sdfg.save('map_fusion/1_before_replace_scope.sdfg')
         # Replaces (in memlets and tasklet) the second scope map
         # indices with the permuted first map indices.
         # This works in two passes to avoid problems when e.g., exchanging two
@@ -322,7 +403,7 @@ class MapFusion(transformation.SingleStateTransformation):
             if firstp != secondp:
                 replace(second_scope, '__' + secondp + '_fused', firstp)
 
-        sdfg.save('map_fusion/after_replace_scope.sdfg')
+        sdfg.save('map_fusion/2_after_replace_scope.sdfg')
         # Isolate First exit node
         ############################
         edges_to_remove = set()
@@ -350,9 +431,9 @@ class MapFusion(transformation.SingleStateTransformation):
                     continue
 
                 # Add a transient scalar/array
-                sdfg.save('map_fusion/case_erase_access_node_before_fuse_nodes.sdfg')
+                # sdfg.save(f"map_fusion/3_1_{edge.label}_case_erase_access_node_before_fuse_nodes.sdfg")
                 self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst, new_dsts[0].dst_conn, new_dsts[1:])
-                sdfg.save('map_fusion/case_erase_access_node_after_fuse_nodes.sdfg')
+                # sdfg.save(f"map_fusion/3_2_{edge.label}_case_erase_access_node_after_fuse_nodes.sdfg")
 
                 edges_to_remove.add(edge)
 
@@ -370,11 +451,11 @@ class MapFusion(transformation.SingleStateTransformation):
                     dcpy(out_e.data),
                 )
                 second_exit.add_out_connector('OUT_' + conn)
-                sdfg.save('map_fusion/after_first_add_edge.sdfg')
+                sdfg.save(f"map_fusion/3_1_after_first_add_edge.sdfg")
 
                 graph.add_edge(edge.src, edge.src_conn, second_exit, 'IN_' + conn, dcpy(edge.data))
                 second_exit.add_in_connector('IN_' + conn)
-                sdfg.save('map_fusion/after_second_add_edge.sdfg')
+                sdfg.save(f"map_fusion/3_1_after_second_add_edge.sdfg")
 
                 edges_to_remove.add(out_e)
                 edges_to_remove.add(edge)
@@ -388,7 +469,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     if source_node == access_node:
                         self.fuse_nodes(sdfg, graph, edge, out_e.dst, out_e.dst_conn)
 
-        sdfg.save('map_fusion/after_isolate_first_exit_node.sdfg')
+        sdfg.save('map_fusion/4_after_isolate_first_exit_node.sdfg')
         ###
         # First scope exit is isolated and can now be safely removed
         for e in edges_to_remove:
@@ -396,7 +477,7 @@ class MapFusion(transformation.SingleStateTransformation):
         graph.remove_nodes_from(nodes_to_remove)
         graph.remove_node(first_exit)
 
-        sdfg.save('map_fusion/before_isolate_second_entry_node.sdfg')
+        sdfg.save('map_fusion/5_before_isolate_second_entry_node.sdfg')
         # Isolate second_entry node
         ###########################
         for edge in graph.in_edges(second_entry):
@@ -433,14 +514,14 @@ class MapFusion(transformation.SingleStateTransformation):
                     )
                     graph.remove_edge(out_e)
                 first_entry.add_out_connector('OUT_' + conn)
-        
+
         # NOTE: Check the second MapEntry for output edges with empty memlets
         for edge in graph.out_edges(second_entry):
             if edge.data.is_empty():
                 graph.remove_edge(edge)
                 graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
-        sdfg.save('map_fusion/after_isolate_second_entry_node.sdfg')
+        sdfg.save('map_fusion/6_after_isolate_second_entry_node.sdfg')
         ###
         # Second node is isolated and can now be safely removed
         graph.remove_node(second_entry)
@@ -508,7 +589,8 @@ class MapFusion(transformation.SingleStateTransformation):
                     graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
             else:
                 # Add edge that leads to the second node
-                edge.data.data = new_dst.data
+                if isinstance(new_dst, nodes.AccessNode):
+                    edge.data.data = new_dst.data
                 graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
         else:

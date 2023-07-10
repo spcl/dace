@@ -1,3 +1,6 @@
+"""
+General helper methods which do not require a CPU nor cupy
+"""
 import os
 import shutil
 import numpy as np
@@ -9,8 +12,9 @@ import sys
 import tempfile
 import json
 from glob import glob
-from subprocess import run, PIPE, Popen, check_output
-import cupy as cp
+from subprocess import run
+from sympy.parsing.sympy_parser import parse_expr
+import re
 
 import dace
 from dace.config import Config
@@ -81,6 +85,76 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> 
     return sdfg
 
 
+def generate_arguments_fortran(
+        program: str, rng: np.random.Generator,
+        params: ParametersProvider) -> Dict[str, Union[Number, np.ndarray]]:
+    """
+    Tries to read the fortran signature and generates random inputs for it.
+    WIP. IS STILL A PROTOTYPE
+
+    :param program: The name of the fortran program
+    :type program: str
+    :param rng: The random number generator to generate the data
+    :type rng: np.random.Generator
+    :param params: The Parameters used either as input or to calculate array sizes
+    :type params: ParametersProvider
+    :return: Dictionary with input, key is argument name, value the argument data
+    :rtype: Dict[str, Union[Number, np.ndarray]]
+    """
+    source = read_source(program)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        cwd = os.getcwd()
+        os.chdir(tmp_dir)
+        program_name = f"{program}_routine"
+        f2py.compile(source, modulename=program_name, verbose=False, extension='.f90')
+        sys.path.append(tmp_dir)
+        module = import_module(program_name)
+        doc_str = module.vert_loop_10_routine.__doc__.split('\n')
+
+        while doc_str[0][0:4] != '----':
+            doc_str.pop(0)
+        doc_str.pop(0)
+
+        arguments = {}
+        while doc_str[0] != '':
+            line = doc_str.pop(0)
+            if line.split(': input ')[1] in ['float', 'int']:
+                arguments[line.split(':')[0]] = (line.split(': input ')[1], 1)
+            else:
+                matches = re.search(r'array\(\'(d|i)\'\) with bounds \(([a-z,0-9 +-]*)\)', line)
+                if matches is not None:
+                    size_str = matches.group(2)
+                    type_str = 'int' if matches.group(1) == 'i' else 'float'
+                    arguments[line.split(':')[0]] = (type_str, size_str.split(','))
+                else:
+                    print(f"WARNING: not matches for bounds found for line '{line}'")
+
+        fortran_arguments = {}
+        for arg_name, (arg_type, arg_dim) in arguments.items():
+            if arg_dim == 1:
+                if arg_name in params.get_dict().keys():
+                    fortran_arguments[arg_name] = params[arg_name]
+                else:
+                    if arg_type == 'float':
+                        fortran_arguments[arg_name] = rng.random()
+                    else:
+                        fortran_arguments[arg_name] = rng.integers(0, 2, (1), dtype=np.int32)
+            else:
+                # evaluate the dimension using the given parameters
+                for index, dim in enumerate(arg_dim):
+                    sympy_expr = parse_expr(dim.upper())
+                    print(dim, sympy_expr)
+                    arg_dim[index] = int(sympy_expr.evalf(subs=params.get_dict()))
+                if arg_type == 'float':
+                    fortran_arguments[arg_name] = rng.random(arg_dim)
+                else:
+                    fortran_arguments[arg_name] = rng.integers(0, 2, arg_dim, dtype=np.int32)
+
+        print(fortran_arguments)
+        os.chdir(cwd)
+        return fortran_arguments
+
+
 # Copied from tests/fortran/cloudsc.py
 def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvider) \
         -> Dict[str, Union[Number, np.ndarray]]:
@@ -112,42 +186,6 @@ def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvide
             else:
                 inp_data[inp] = np.asfortranarray(rng.random(shape))
     return inp_data
-
-
-def copy_to_device(host_data: Dict[str, Union[Number, np.ndarray]]) -> Dict[str, cp.ndarray]:
-    """
-    Take a dictionary with data and converts all numpy arrays to cupy arrays
-
-    :param host_data: The numpy (host) data
-    :type host_data: Dict[str, Union[Number, np.ndarray]]
-    :return: The converted cupy (device) data
-    :rtype: Dict[str, cp.ndarray]
-    """
-    device_data = {}
-    for name, array in host_data.items():
-        if isinstance(array, np.ndarray):
-            device_data[name] = cp.asarray(array)
-        else:
-            device_data[name] = array
-    return device_data
-
-
-def copy_to_host(device_data: Dict[str, Union[Number, cp.ndarray]]) -> Dict[str, np.ndarray]:
-    """
-    Take a dictionary with data and converts all cupy arrays to numpy arrays
-
-    :param host_data: The cupy (device) data
-    :type host_data: Dict[str, Union[Number, cp.ndarray]]
-    :return: The converted cupy (host) data
-    :rtype: Dict[str, np.ndarray]
-    """
-    host_data = {}
-    for name, array in device_data.items():
-        if isinstance(array, cp.ndarray):
-            host_data[name] = cp.asnumpy(array)
-        else:
-            host_data[name] = array
-    return host_data
 
 
 # Copied from tests/fortran/cloudsc.py
@@ -421,24 +459,6 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
     return sdfg
-
-
-def print_non_zero_percentage(data: Dict[str, Union[Number, Union[np.ndarray, cp.ndarray]]], variable: str):
-    """
-    Prints the number of total and nonzero values and the percentage of a given variable. Data can have numpy or cupy
-    arrays
-
-    :param data: The data where the variable is inside
-    :type data: Dict[str, Union[Number, Union[np.ndarray, cp.ndarray]]]
-    :param variable: The variable name
-    :type variable: str
-    """
-    variable_data = data[variable]
-    if isinstance(variable_data, cp.ndarray):
-        variable_data = cp.asnumpy(variable_data)
-    num_nnz = np.count_nonzero(variable_data)
-    num_tot = np.prod(variable_data.shape)
-    print(f"{variable}: {num_nnz}/{num_tot} = {num_nnz/num_tot*100}%")
 
 
 def convert_to_seconds(value: Number, unit: str) -> float:

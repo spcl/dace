@@ -1,3 +1,6 @@
+"""
+General helper functions to deal with python programs
+"""
 import inspect
 import os
 import re
@@ -5,13 +8,18 @@ from typing import Dict, Tuple, Union, List
 from numbers import Number
 import dace
 import sympy
+import copy
 import numpy as np
 import pandas as pd
 
+from utils.general import reset_graph_files, optimize_sdfg
 from utils.paths import get_playground_results_dir
 
 df_index_cols = ['program', 'NBLOCKS', 'specialised', 'run_number', 'experiment_id']
 description_df_path = os.path.join(get_playground_results_dir(), 'python', 'descriptions.csv')
+
+# Symbols to decrement by one for python version due to 1 indexing for fortran
+decrement_symbols = ['NCLDQI', 'NCLDQL', 'NCLDQR', 'NCLDQS']
 
 
 def eval_argument_shape(parameter: inspect.Parameter, symbols: Dict[str, int]) -> Tuple[int]:
@@ -146,3 +154,40 @@ def convert_to_plain_python(dace_f: dace.frontend.python.parser.DaceProgram, sym
     for match in matches:
         py_code = py_code.replace(f"dace.{match[0]}[{match[1]}]", f"np.ndarray(({match[1]}))")
     return py_code
+
+
+def generate_sdfg(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str, int], save_graphs: bool = False,
+                  define_symbols: bool = False, use_dace_auto_opt: bool = False) -> dace.SDFG:
+    """
+    Generates the SDFG for the given dace program
+
+    :param f: The dace program for which to generate the SDFG
+    :type f: dace.frontend.python.parser.DaceProgram
+    :param symbols: The symbols used to specialise the SDFG
+    :type symbols: Dict[str, int]
+    :param save_graphs: If intermediate SDFGs should be stored, defaults to False
+    :type save_graphs: bool, optional
+    :param define_symbols: If symbols should be specialised, defaults to False
+    :type define_symbols: bool, optional
+    :param use_dace_auto_opt: Set to true if DaCe default auto opt should be used, defaults to False
+    :type use_dace_auto_opt: bool
+    :return: The generated SDFG
+    :rtype: dace.SDFG
+    """
+    print(symbols)
+    sdfg = f.to_sdfg(validate=True, simplify=True)
+    additional_args = {}
+    if save_graphs:
+        program_name = f"py_{f.name}"
+        reset_graph_files(program_name)
+        additional_args['verbose_name'] = program_name
+    if define_symbols:
+        print(f"[run_function_dace] symbols: {symbols}")
+        additional_args['symbols'] = copy.deepcopy(symbols)
+        for symbol in decrement_symbols:
+            additional_args['symbols'][symbol] -= 1
+    if use_dace_auto_opt:
+        additional_args['use_my_auto_opt'] = False
+
+    optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
+    return sdfg
