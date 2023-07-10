@@ -20,6 +20,16 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+_do_not_parse: Tuple[ast.AST]
+if sys.version_info >= (3, 8):
+    _do_not_parse = (ast.FunctionType, ast.ClassDef)
+else:
+    _do_not_parse = (ast.ClassDef,)
+
+
+_only_parse_body = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
 
 class ParentSetter(ast.NodeTransformer):
     """ 
@@ -37,6 +47,32 @@ class ParentSetter(ast.NodeTransformer):
         return node
 
 
+def parent_found(parent: ast.AST, child: ast.AST) -> Tuple[bool, str, int]:
+    result = None
+    attr = None
+    index = None
+
+    if not hasattr(parent, 'body'):
+        result = False
+    elif child in parent.body:
+        result = True
+        attr = 'body'
+        index = parent.body.index(child)
+    elif hasattr(parent, 'orelse') and child in parent.orelse:
+        result = True
+        attr = 'orelse'
+        index = parent.orelse.index(child)
+    elif hasattr(parent, 'finalbody') and child in parent.finalbody:
+        result = True
+        attr = 'finalbody'
+        index = parent.finalbody.index(child)
+    else:
+        result = False
+
+    return result, attr, index
+    
+
+
 def find_parent_body(node: ast.AST) -> Tuple[ast.AST, int]:
     """
     Finds the parent AST node that has a ``body`` attribute, and the index of the given node within that body.
@@ -44,11 +80,12 @@ def find_parent_body(node: ast.AST) -> Tuple[ast.AST, int]:
     :return: A tuple of the parent AST node and the index of the given node within its body.
     """
     last_parent = node.parent
-    while not hasattr(last_parent, 'body'):
+    found, attr, idx = False, None, None
+    while not found:
         new_parent = last_parent.parent
         last_parent, new_parent = new_parent, last_parent
-    idx = last_parent.body.index(new_parent)
-    return last_parent, idx
+        found, attr, idx = parent_found(last_parent, new_parent)
+    return last_parent, attr, idx
 
 
 class NameGetter(ast.NodeVisitor):
@@ -64,19 +101,101 @@ class NameGetter(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def find_new_name(names: Set[str]) -> str:
+def find_new_name(names: Set[str], base: str = '__var_') -> str:
     """
     Finds a new name that does not exist in the given set of names.
     :param names: A set of names to avoid.
     :return: A new name that does not exist in the given set of names.
     """
-    base = '__var_'
+
     i = 0
     name = f"{base}{i}"
     while name in names:
         i += 1
         name = f"{base}{i}"
     return name
+
+
+class AttributeTransformer(ast.NodeTransformer):
+    """
+    Transforms indirect attribute accesses to SSA.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def visit(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, _do_not_parse):
+            return node
+        if isinstance(node, _only_parse_body):
+            for stmt in node.body:
+                self.visit(stmt)
+            return node
+        return super().visit(node)
+    
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+
+        node = self.generic_visit(node)
+        
+        if not isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            new_node = ast.Name(id=new_id, ctx=ast.Load())
+            ast.copy_location(new_node, node)
+            new_node = ParentSetter(root=node.parent).visit(new_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+
+        else:
+            new_node = node
+
+        return new_node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+
+        node = self.generic_visit(node)
+
+        if isinstance(node.value, ast.Name) and isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            return node
+        
+        if not isinstance(node.value, ast.Name):
+
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            name_node = ast.Attribute(value=ast.Name(id=new_id, ctx=ast.Load()), attr=node.attr, ctx=node.ctx)
+            ast.copy_location(name_node, node)
+            name_node = ParentSetter(root=node.parent).visit(name_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.value)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+        
+        else:
+            name_node = node
+        
+        if not isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Call)):
+            
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            new_node = ast.Name(id=new_id, ctx=node.ctx)
+            ast.copy_location(new_node, node)
+            new_node = ParentSetter(root=node.parent).visit(new_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=name_node)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+        
+        else:
+            new_node = name_node
+
+        return new_node
 
 
 class NestedSubsAttrsReplacer(ast.NodeTransformer):

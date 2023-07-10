@@ -5,8 +5,102 @@ import ast
 import inspect
 import numpy as np
 
+from dace.frontend.python.astutils import _remove_outer_indentation
 from dace.frontend.python import preprocessing as pr
 from numpy import typing as npt
+
+
+def test_attribute_on_op():
+
+    def original_function(A: npt.NDArray[np.int32], B: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
+        return (A + B).T
+    
+    function_ast = ast.parse(_remove_outer_indentation(inspect.getsource(original_function)))
+
+    name_getter = pr.NameGetter()
+    name_getter.visit(function_ast)
+    program_names = name_getter.names
+
+    function_ast = pr.ParentSetter().visit(function_ast)
+    subatrr_replacer = pr.AttributeTransformer(names=program_names)
+    function_ast = subatrr_replacer.visit(function_ast)
+    for parent, attr, idx, node in reversed(subatrr_replacer.ast_nodes_to_add):
+        getattr(parent, attr).insert(idx, node)
+    
+    ast.fix_missing_locations(function_ast)
+
+    name_getter_2 = pr.NameGetter()
+    name_getter_2.visit(function_ast)
+    program_names_2 = name_getter_2.names
+
+    for i in range(2):
+        name = f'__var_{i}'
+        assert name in program_names_2
+    
+    code = compile(function_ast, filename='<ast>', mode='exec')
+    print(ast.unparse(function_ast))
+
+
+def test_attribute_call():
+
+    def original_function(A: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
+        return A.sum(axis=0)
+    
+    function_ast = ast.parse(_remove_outer_indentation(inspect.getsource(original_function)))
+
+    name_getter = pr.NameGetter()
+    name_getter.visit(function_ast)
+    program_names = name_getter.names
+
+    function_ast = pr.ParentSetter().visit(function_ast)
+    subatrr_replacer = pr.AttributeTransformer(names=program_names)
+    function_ast = subatrr_replacer.visit(function_ast)
+    for parent, attr, idx, node in reversed(subatrr_replacer.ast_nodes_to_add):
+        getattr(parent, attr).insert(idx, node)
+    
+    ast.fix_missing_locations(function_ast)
+
+    name_getter_2 = pr.NameGetter()
+    name_getter_2.visit(function_ast)
+    program_names_2 = name_getter_2.names
+
+    for i in range(1):
+        name = f'__var_{i}'
+        assert name in program_names_2
+    
+    code = compile(function_ast, filename='<ast>', mode='exec')
+    print(ast.unparse(function_ast))
+
+
+def test_attribute_call_on_op():
+
+    def original_function(A: npt.NDArray[np.int32], B: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
+        return (A + B).sum(axis=0)
+    
+    function_ast = ast.parse(_remove_outer_indentation(inspect.getsource(original_function)))
+
+    name_getter = pr.NameGetter()
+    name_getter.visit(function_ast)
+    program_names = name_getter.names
+
+    function_ast = pr.ParentSetter().visit(function_ast)
+    subatrr_replacer = pr.AttributeTransformer(names=program_names)
+    function_ast = subatrr_replacer.visit(function_ast)
+    for parent, attr, idx, node in reversed(subatrr_replacer.ast_nodes_to_add):
+        getattr(parent, attr).insert(idx, node)
+    
+    ast.fix_missing_locations(function_ast)
+
+    name_getter_2 = pr.NameGetter()
+    name_getter_2.visit(function_ast)
+    program_names_2 = name_getter_2.names
+
+    for i in range(1):
+        name = f'__var_{i}'
+        assert name in program_names_2
+    
+    code = compile(function_ast, filename='<ast>', mode='exec')
+    print(ast.unparse(function_ast))
 
 
 def original_function(A: npt.NDArray[np.int32],
@@ -73,4 +167,7 @@ def test_0():
 
 
 if __name__ == '__main__':
-    test_0()
+    # test_0()
+    test_attribute_on_op()
+    test_attribute_call()
+    test_attribute_call_on_op()
