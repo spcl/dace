@@ -198,7 +198,9 @@ PYFUNC_TO_ARITHMETICS = {
     'max': 0,
     'ceiling': 0,
     'floor': 0,
-}
+    # TODO: what about: "cos", "sin", "sqrt", "atan2" (source: npbench's arc_distance), "abs" (mandelbrot1), "exp" (mlp)
+    # tanh (go_fast)
+}   
 LIBNODES_TO_ARITHMETICS = {
     MatMul: count_matmul,
     Transpose: lambda *args: 0,
@@ -225,6 +227,7 @@ class ArithmeticCounter(ast.NodeVisitor):
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
         if fname not in PYFUNC_TO_ARITHMETICS:
+            # TODO: why do we get this warning? WARNING: Unrecognized python function "dace.float64" (source: npbench's azimint_hist)
             print('WARNING: Unrecognized python function "%s"' % fname)
             return self.generic_visit(node)
         self.count += PYFUNC_TO_ARITHMETICS[fname]
@@ -317,6 +320,7 @@ def tasklet_depth(tasklet_node, state):
     if tasklet_node.code.language == dtypes.Language.Python:
         return count_depth_code(tasklet_node.code.code)
     else:
+        # TODO: improve this
         # other languages not implemented, count whole tasklet as work of 1
         warnings.warn('Depth of tasklets only properly analyzed for Python code. For all other '
                       'languages depth = 1 will be counted for each tasklet.')
@@ -329,9 +333,9 @@ def get_tasklet_work_depth(node, state):
     return tasklet_work(node, state), tasklet_depth(node, state)
 
 def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], analyze_tasklet, syms_to_nonnegify) -> None:
-    print('Analyzing work and depth of SDFG', sdfg.name)
-    print('SDFG has', len(sdfg.nodes()), 'states')
-    print('Calculating work and depth for all states individually...')
+    # print('Analyzing work and depth of SDFG', sdfg.name)
+    # print('SDFG has', len(sdfg.nodes()), 'states')
+    # print('Calculating work and depth for all states individually...')
 
     # First determine the work and depth of each state individually.
     # Keep track of the work and depth for each state in a dictionary, where work and depth are multiplied by the number
@@ -341,7 +345,7 @@ def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], ana
     for state in sdfg.nodes():
         state_work, state_depth = state_work_depth(state, w_d_map, analyze_tasklet, syms_to_nonnegify)
         if state.executions == 0:# or state.executions == sp.zoo:
-            print('State executions must be statically known exactly or with an upper bound. Offender:', state)
+            # print('State executions must be statically known exactly or with an upper bound. Offender:', state)
             new_symbol = sp.Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(state)}')
             state.executions = new_symbol
             syms_to_nonnegify |= {new_symbol}
@@ -349,7 +353,7 @@ def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], ana
         state_depths[state] = state_depth * state.executions
         w_d_map[get_uuid(state)] = (sp.simplify(state_work * state.executions), sp.simplify(state_depth * state.executions))
 
-    print('Calculating work and depth of the SDFG...')
+    # print('Calculating work and depth of the SDFG...')
 
 
     nodes_oNodes_exits = find_loop_guards_tails_exits(sdfg._nx)
@@ -593,7 +597,7 @@ Note that this also significantly speeds up the analysis due to sympy not having
 def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> Dict[str, Tuple[sp.Expr, sp.Expr]]:
     # Run state propagation for all SDFGs recursively. This is necessary to determine the number of times each state
     # will be executed, or to determine upper bounds for that number (such as in the case of branching)
-    print('Propagating states...')
+    # print('Propagating states...')
     for sd in sdfg.all_sdfgs_recursive():
         propagation.propagate_states(sd)
 
@@ -602,14 +606,15 @@ def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> Di
 
     # Check if the SDFG has any dynamically unbounded executions, i.e., if there are any states that have neither a
     # statically known number of executions, nor an upper bound on the number of executions. Warn if this is the case.
-    print('Checking for dynamically unbounded executions...')
+    # print('Checking for dynamically unbounded executions...')
     for sd in sdfg.all_sdfgs_recursive():
         if any([s.executions == 0 and s.dynamic_executions for s in sd.nodes()]):
-            print('WARNING: SDFG has dynamic executions. The analysis may fail in unexpected ways or be inaccurate.')
+            pass
+            # print('WARNING: SDFG has dynamic executions. The analysis may fail in unexpected ways or be inaccurate.')
 
     syms_to_nonnegify = set()
     # Analyze the work and depth of the SDFG.
-    print('Analyzing SDFG...')
+    # print('Analyzing SDFG...')
     sdfg_work_depth(sdfg, w_d_map, analyze_tasklet, syms_to_nonnegify)
 
     # TODO: maybe do this posify more often for performance?
@@ -618,6 +623,7 @@ def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> Di
         v_w = posify_certain_symbols(v_w, array_symbols, syms_to_nonnegify)
         v_d = posify_certain_symbols(v_d, array_symbols, syms_to_nonnegify)
         w_d_map[k] = (v_w, v_d)
+    sdfg.view()
     
 
 

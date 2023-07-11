@@ -8,7 +8,7 @@ from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
 
-
+# TODO: add tests for function calls (e.g. reduce)
 
 
 N = dc.symbol('N')
