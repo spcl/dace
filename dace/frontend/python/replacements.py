@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
 import ast
@@ -783,10 +783,11 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
-    else:  # tensor transpose
+    else:  # Tensor transpose
         modes = len(arr1.shape)
         idx = axes.index(0)
-        if axes[idx:] == list(range(modes-idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
+        # Special case of tensor transposition: matrix transpose + reshape
+        if axes[idx:] == list(range(modes - idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
             rows = data._prod([arr1.shape[axes[i]] for i in range(idx, len(arr1.shape))])
             cols = data._prod([arr1.shape[axes[i]] for i in range(idx)])
             matrix = _ndarray_reshape(pv, sdfg, state, inpname, [rows, cols])
@@ -4555,7 +4556,7 @@ def _tensordot(pv: 'ProgramVisitor',
                op_b: str,
                axes: Union[int, Sequence[int]] = 2,
                out_axes: Sequence[int] = None):
-    
+
     # NOTE: `out_axes` is a non-standard extension to `numpy.tensordot`, allowing trasposition of the output
 
     for op in (op_a, op_b):
@@ -4581,7 +4582,7 @@ def _tensordot(pv: 'ProgramVisitor',
         raise ValueError("The input tensors must have the same number of contracting modes.")
     if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
         raise ValueError("The input tensors' contracting modes must have the same length.")
-    
+
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
     dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
 

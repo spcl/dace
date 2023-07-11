@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes
 import os
 from dace import config, library
@@ -27,7 +27,7 @@ class HPTT:
             return [os.path.join(os.environ['HPTT_ROOT'], 'include')]
         else:
             return []
-    
+
     @staticmethod
     def cmake_libraries():
         if 'HPTT_ROOT' in os.environ:
@@ -36,5 +36,5 @@ class HPTT:
             libfile = os.path.join(os.environ['HPTT_ROOT'], 'lib', prefix + 'hptt.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
-        
+
         return ['hptt']
