@@ -58,15 +58,13 @@ class MapFusion(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
     def find_permutation(self, first_map: nodes.Map,
-                         second_map: nodes.Map,
-                         max_start_difference: int = 0,
-                         max_end_difference: int = 0) -> Tuple[Union[List[int], None], Union[List[int], None]]:
-        """ Find permutation between two map ranges.
+                         second_map: nodes.Map) -> Tuple[Union[List[int], None], Union[List[int], None]]:
+        """ Find permutation between two map ranges. Checks the the map ranges are identical. If
+        self.max_start_difference or self.max_end_difference are not 0, will allow for the map ranges to differ by the
+        these values, but not the step.
 
             :param first_map: First map.
             :param second_map: Second map.
-            :param max_start_difference: Maximum difference between the start of the two given maps, defaults to 0
-            :param max_end_difference: Maximum difference between the end of the two given maps, defaults to 0
             :return: None if no such permutation exists, otherwise a list of
                      indices L such that L[x]'th parameter of second map has the same range as x'th
                      parameter of the first map.
@@ -123,10 +121,12 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                # num_occurrences = len([
-                #     n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
-                # ])
-                # if num_occurrences > 1:
+                # occurances = [
+                #     (n, s) for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                #     ]
+                # if len(occurances) > 1:
+                #     print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected AccesNode "
+                #           f"used somewhere else")
                 #     return False
             else:
                 print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no AccesNode "
@@ -370,6 +370,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
             start = min(first_map_start, second_map_start)
             end = max(first_map_end, second_map_end)
+
             first_edge = InterstateEdge()
             second_edge = InterstateEdge()
             first_map_param = first_entry.map.params[idx]
@@ -393,6 +394,12 @@ class MapFusion(transformation.SingleStateTransformation):
                 self.add_condition_to_map(graph, sdfg, first_entry, first_edge)
             if second_edge.condition.as_string != '1':
                 self.add_condition_to_map(graph, sdfg, second_entry, second_edge)
+
+            # Set maps to equal ranges
+            # find_permutation gurantees that the step is identical
+            step = first_entry.map.range.ranges[idx][2]
+            first_entry.map.range.ranges[idx] = (start, end, step)
+            second_entry.map.range.ranges[idx] = (start, end, step)
 
         sdfg.save('map_fusion/1_before_replace_scope.sdfg')
         # Replaces (in memlets and tasklet) the second scope map
@@ -456,11 +463,11 @@ class MapFusion(transformation.SingleStateTransformation):
                     dcpy(out_e.data),
                 )
                 second_exit.add_out_connector('OUT_' + conn)
-                sdfg.save(f"map_fusion/3_1_after_first_add_edge.sdfg")
+                sdfg.save("map_fusion/3_1_after_first_add_edge.sdfg")
 
                 graph.add_edge(edge.src, edge.src_conn, second_exit, 'IN_' + conn, dcpy(edge.data))
                 second_exit.add_in_connector('IN_' + conn)
-                sdfg.save(f"map_fusion/3_1_after_second_add_edge.sdfg")
+                sdfg.save("map_fusion/3_1_after_second_add_edge.sdfg")
 
                 edges_to_remove.add(out_e)
                 edges_to_remove.add(edge)

@@ -384,6 +384,7 @@ def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = T
         same = same and local_same
         if not local_same and print_if_differ:
             print(f"Variable {key} differs")
+            np.set_printoptions(precision=4)
             print(output_a[key])
             print()
             print(output_b[key])
