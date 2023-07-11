@@ -132,6 +132,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
     SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
     Global = ()  #: Allocated throughout the entire program (outer SDFG)
     Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
+    External = ()  #: Allocated and managed outside the generated code
 
 
 @undefined_safe_enum

@@ -333,6 +333,57 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         callsite_stream.write('delete __state;\n', sdfg)
         callsite_stream.write('return __err;\n}\n', sdfg)
 
+    def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
+        """
+        If external data descriptors are found in the SDFG (or any nested SDFGs),
+        this function will generate exported functions to (1) get the required memory size
+        per storage location (``__dace_get_external_memory_size_<STORAGE>``, where ``<STORAGE>``
+        can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
+        pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
+        """
+        
+        # Collect external arrays
+        ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
+        for subsdfg, aname, arr in sdfg.arrays_recursive():
+            if arr.lifetime == dtypes.AllocationLifetime.External:
+                ext_arrays[arr.storage].append((subsdfg, aname, arr))
+
+        # Only generate functions as necessary
+        if not ext_arrays:
+            return
+
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparams_comma = (', ' + initparams) if initparams else ''
+
+        for storage, arrays in ext_arrays.items():
+            size = 0
+            for subsdfg, aname, arr in arrays:
+                size += arr.total_size * arr.dtype.bytes
+
+            # Size query functions
+            callsite_stream.write(
+                f'''
+DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({sdfg.name}_t *__state{initparams_comma})
+{{
+    return {sym2cpp(size)};
+}}
+''', sdfg)
+
+            # Pointer set functions
+            callsite_stream.write(
+                f'''
+DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__state, char *ptr{initparams_comma})
+{{''', sdfg)
+            
+            offset = 0
+            for subsdfg, aname, arr in arrays:
+                allocname = f'__state->__{subsdfg.sdfg_id}_{aname}'
+                callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
+                offset += arr.total_size * arr.dtype.bytes
+            
+            # Footer
+            callsite_stream.write('}', sdfg)
+
     def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
 
         sid = sdfg.node_id(state)
@@ -525,7 +576,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
 
             # Cases
-            if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                 # Persistent memory is allocated in initialization code and
                 # exists in the library state structure
 
@@ -872,6 +923,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
+            self.generate_external_memory_management(sdfg, footer_stream)
 
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())
