@@ -1144,7 +1144,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # Try to remove intermediate nodes that are not contained in the subgraph
         # by reconnecting their adjacent edges to nodes outside the subgraph.
+        # NOTE: Currently limited to cases where there is a single source and sink
+        # if there are multiple intermediate accesses for the same data.
 
+        # Sort intermediate nodes by data name
         intermediate_data = dict()
         for acc in intermediate_nodes:
             if acc.data in intermediate_data:
@@ -1152,109 +1155,125 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             else:
                 intermediate_data[acc.data] = [acc]
         
-        filtered_intermediate_nodes = []
-        intermediate_nodes_deps = dict()
-        for _, accesses in intermediate_data.items():
-            if len(accesses) == 1:
-                filtered_intermediate_nodes.append(accesses[0])
-            else:
-                accesses_copy = list(accesses)
-                access_dict = {a: [] for a in accesses}
-                for acc in accesses:
-                    other_accesses = [a for a in accesses_copy if a != acc]
-                    for other_acc in other_accesses:
-                        if nx.has_path(graph.nx, other_acc, acc):
-                            accesses_copy.remove(other_acc)
-                            access_dict[acc].append(other_acc)
-                            access_dict[acc].extend(access_dict[other_acc])
-                            del access_dict[other_acc]
-                for acc in accesses_copy:
-                    filtered_intermediate_nodes.append(acc)
-                    intermediate_nodes_deps[acc] = [a for a in access_dict[acc]]
+        filtered_intermediate_data = dict()
+        intermediate_sources = dict()
+        intermediate_sinks = dict()
+        for dname, accesses in intermediate_data.items():
+
+            sources = set(accesses)
+            sinks = set(accesses)
+
+            # Find sinks
+            for acc0 in accesses:
+                for acc1 in set(sinks):
+                    if acc0 is acc1:
+                        continue
+                    if nx.has_path(graph.nx, acc0, acc1):
+                        sinks.remove(acc0)
+                        break
+            if len(sinks) > 1:
+                continue
+            # Find sources
+            for acc0 in accesses:
+                for acc1 in set(sources):
+                    if acc0 is acc1:
+                        continue
+                    if nx.has_path(graph.nx, acc1, acc0):
+                        sources.remove(acc0)
+                        break
+            if len(sources) > 1:
+                continue
+
+            filtered_intermediate_data[dname] = accesses
+            intermediate_sources[dname] = sources
+            intermediate_sinks[dname] = sinks
+
+        edges_to_remove = set()
              
-        for node in filtered_intermediate_nodes:
+        for dname, accesses in filtered_intermediate_data.items():
+
             # Checking if data are contained in the subgraph
-            if not subgraph_contains_data[node.data]:
+            if not subgraph_contains_data[dname]:
                 # Find existing outer access nodes
                 inode, onode = None, None
                 for e in graph.in_edges(global_map_entry):
-                    if isinstance(e.src, nodes.AccessNode) and node.data == e.src.data:
+                    if isinstance(e.src, nodes.AccessNode) and dname == e.src.data:
                         inode = e.src
                         break
                 for e in graph.out_edges(global_map_exit):
-                    if isinstance(e.dst, nodes.AccessNode) and node.data == e.dst.data:
+                    if isinstance(e.dst, nodes.AccessNode) and dname == e.dst.data:
                         onode = e.dst
                         break
-
-                to_remove = set()
 
                 # Compute the union of all incoming subsets.
                 # TODO: Do we expect this operation to ever fail?
                 in_subset: subsets.Subset = None
-                accesses = [node] + intermediate_nodes_deps[node]
+                first_subset: subsets.Subset = None
                 for acc in accesses:
                     for ie in graph.in_edges(acc):
                         if in_subset:
                             in_subset = subsets.union(in_subset, ie.data.dst_subset)
                         else:
                             in_subset = ie.data.dst_subset 
-                # for ie in graph.in_edges(node):
-                #     if in_subset:
-                #         in_subset = subsets.union(in_subset, ie.data.dst_subset)
-                #     else:
-                #         in_subset = ie.data.dst_subset
+                            first_subset = ie.data.dst_subset
 
                 # Create transient data corresponding to the union of the incoming subsets.
-                desc = sdfg.arrays[node.data]
-                name, _ = sdfg.add_temp_transient(in_subset.bounding_box_size(), desc.dtype, desc.storage)
+                desc = sdfg.arrays[dname]
+                new_name, _ = sdfg.add_temp_transient(in_subset.bounding_box_size(), desc.dtype, desc.storage)
 
-                # Reconnect incoming edges through the transient data.
                 for acc in accesses:
 
-                    new_node = graph.add_access(name)
+                    acc.data = new_name
 
+                     # Reconnect incoming edges through the transient data.
                     for ie in graph.in_edges(acc):
-                        mem = Memlet(data=name,
+                        mem = Memlet(data=new_name,
                                     subset=ie.data.dst_subset.offset_new(in_subset, True),
                                     other_subset=ie.data.src_subset)
-                        new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
-                        to_remove.add(ie)
+                        # new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
+                        ie.data = mem
                         # Update memlet paths.
-                        for e in graph.memlet_path(new_edge):
-                            if e.data.data == node.data:
-                                e.data.data = name
+                        for e in graph.memlet_path(ie):
+                            if e.data.data == dname:
+                                e.data.data = new_name
                                 e.data.dst_subset.offset(in_subset, True)
 
                     # Reconnect outgoing edges through the transient data.
                     for oe in graph.out_edges(acc):
                         if in_subset.covers(oe.data.src_subset):
-                            mem = Memlet(data=name,
+                            mem = Memlet(data=new_name,
                                         subset=oe.data.src_subset.offset_new(in_subset, True),
                                         other_subset=oe.data.dst_subset)
-                            new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
+                            # new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
+                            oe.data = mem
                             # Update memlet paths.
-                            for e in graph.memlet_path(new_edge):
-                                if e.data.data == node.data:
-                                    e.data.data = name
+                            for e in graph.memlet_path(oe):
+                                if e.data.data == dname:
+                                    e.data.data = new_name
                                     e.data.src_subset.offset(in_subset, True)
                         else:
+                            # NOTE: For debugging purposes
+                            intersect = subsets.intersects(in_subset, oe.data.src_subset)
+                            if intersect is None:
+                                warnings.warn(f'{dname}[{in_subset}] may intersect with {dname}[{oe.data.src_subset}]')
+                            elif intersect:
+                                raise ValueError(f'{dname}[{in_subset}] intersects with {dname}[{oe.data.src_subset}]')
                             # If the outgoing subset is not covered by the transient data, connect to the outer input node.
                             if not inode:
-                                inode = graph.add_access(node.data)
+                                inode = graph.add_access(dname)
                             graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
-                        to_remove.add(oe)
+                            edges_to_remove.add(oe)
+
 
                     # Connect transient data to the outer output node.
-                    if acc is node:
+                    if acc in intermediate_sinks[dname]:
                         if not onode:
-                            onode = graph.add_access(node.data)
-                        graph.add_memlet_path(new_node,
-                                              global_map_exit,
-                                              onode,
-                                              memlet=Memlet(data=node.data, subset=in_subset),
-                                              src_conn=None)
+                            onode = graph.add_access(dname)
+                        graph.add_memlet_path(acc,
+                                            global_map_exit,
+                                            onode,
+                                            memlet=Memlet(data=dname, subset=in_subset),
+                                            src_conn=None)
 
-                for e in to_remove:
-                    graph.remove_edge(e)
-                if to_remove:
-                    graph.remove_nodes_from(accesses)
+        for e in edges_to_remove:
+            graph.remove_edge(e)
