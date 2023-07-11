@@ -23,7 +23,7 @@ def test_refine_dataflow():
     A = state.add_access('A')
     B = state.add_access('B')
     me, mx = state.add_map('m', dict(i='0:5', j='0:5'))
-    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(), sdfg, {'A'}, {'B'}, {'i': 'i', 'j': 'j'})
+    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), sdfg, {'A'}, {'B'}, {'i': 'i', 'j': 'j'})
     state.add_memlet_path(A, me, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(nsdfg, mx, B, src_conn='B', memlet=dace.Memlet.from_array('B', sdfg.arrays['B']))
 
@@ -63,7 +63,10 @@ def test_refine_interstate():
     B = state.add_access('B')
     select = state.add_access('select')
     me, mx = state.add_map('m', dict(i='0:5', j='0:5'))
-    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(), sdfg, {'A', 'select'}, {'B'}, {'i': 'i', 'j': 'j'})
+    nsdfg = state.add_nested_sdfg(inner_sdfg.to_sdfg(simplify=False), sdfg, {'A', 'select'}, {'B'}, {
+        'i': 'i',
+        'j': 'j'
+    })
     state.add_memlet_path(A, me, nsdfg, dst_conn='A', memlet=dace.Memlet.from_array('A', sdfg.arrays['A']))
     state.add_memlet_path(select,
                           me,
