@@ -1,6 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for the RefineNestedAccess transformation. """
-
 import dace
 import numpy as np
 

@@ -956,7 +956,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # Check interstate edges for candidates
+        # Check read memlets in interstate edges for candidates
         for e in nsdfg.sdfg.edges():
             for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
                 # If more than one unique element detected, remove from candidates
