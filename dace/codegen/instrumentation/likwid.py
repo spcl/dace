@@ -102,16 +102,35 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         header_code = '''
 #include <likwid.h>
 
+#include <iostream>
+
+#include <csignal>
 #include <unistd.h>
 #include <string>
 #include <sys/types.h>
 
 int* cpu_list = nullptr;
 int LIKWID_ACTIVE_GID = -1;
+
+void __dace_generate_report();
+
+void signalHandler( int signum ) {
+   std::cout << "Interrupt signal (" << signum << ") received.\\n";
+
+   // cleanup and close up stuff here  
+   // terminate program  
+
+    __dace_generate_report();
+   
+   exit(signum);  
+}
+
 '''
         global_stream.write(header_code, sdfg)
 
         init_code = f'''
+signal(SIGINT, signalHandler);  
+
 // Initialize topology module
 int error = topology_init();
 if (error < 0)
@@ -163,19 +182,10 @@ if (error < 0)
     topology_finalize();
     exit(1);
 }}
+
+printf("SETUP");
 '''
         codegen._initcode.write(init_code)
-
-    def on_sdfg_end(self, sdfg, local_stream, global_stream):
-        if not self._likwid_used or sdfg.parent is not None:
-            return
-
-        exit_code = '''
-perfmon_finalize();
-affinity_finalize;
-topology_finalize();
-'''
-        self.codegen._exitcode.write(exit_code, sdfg)
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
         if not self._likwid_used:
@@ -197,6 +207,7 @@ if (error < 0)
     topology_finalize();
     exit(1);
 }}
+std::cout << "STARTED\\n";
 '''
             local_stream.write(start_counters_code)
 
@@ -210,74 +221,45 @@ if (error < 0)
             node_id = -1
             region = f"state_{sdfg_id}_{state_id}_{node_id}"
 
-            stop_counters_code = f'''
-error = perfmon_stopCounters();
-if (error < 0)
-{{
-    printf("Failed to stop counters for group %d for thread %d\\n", LIKWID_ACTIVE_GID, (-1*error)-1);
-    perfmon_finalize();
-    topology_finalize();
-    exit(1);
-}}
-
-CpuTopology_t topo = get_cpuTopology();
-int num_events = perfmon_getNumberOfEvents(LIKWID_ACTIVE_GID);
-for (int j = 0; j < num_events; j++)
-{{
-    char* event_name = perfmon_getEventName(LIKWID_ACTIVE_GID, j);
-    for (int i = 0; i < topo->numHWThreads; i++)
+            sdfg_path = sdfg.build_folder.replace('\\', '/')
+            report_code = f'''
+void __dace_generate_report() {{
+    int error = perfmon_stopCounters();
+    if (error < 0)
     {{
-        double result = perfmon_getResult(LIKWID_ACTIVE_GID, j, i);
-        __state->report.add_counter("{region}", "likwid", event_name, result, i, {sdfg_id}, {state_id}, {node_id});
+        printf("Failed to stop counters for group %d for thread %d\\n", LIKWID_ACTIVE_GID, (-1*error)-1);
+        perfmon_finalize();
+        topology_finalize();
+        exit(1);
     }}
+
+    dace::perf::Report report;
+    report.reset();
+
+    CpuTopology_t topo = get_cpuTopology();
+    int num_events = perfmon_getNumberOfEvents(LIKWID_ACTIVE_GID);
+    for (int j = 0; j < num_events; j++)
+    {{
+        char* event_name = perfmon_getEventName(LIKWID_ACTIVE_GID, j);
+        for (int i = 0; i < topo->numHWThreads; i++)
+        {{
+            double result = perfmon_getResult(LIKWID_ACTIVE_GID, j, i);
+            std::cout << result << "\\n";
+            report.add_counter("{region}", "likwid", event_name, result, i, {sdfg_id}, {state_id}, {node_id});
+        }}
+    }}
+
+    report.save("{sdfg_path}/perf", __HASH_{sdfg.name});
+
+    perfmon_finalize();
+    affinity_finalize();
+    topology_finalize();
 }}
 '''
-            local_stream.write(stop_counters_code)
+            global_stream.write(report_code, sdfg)
 
-
-#     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
-#         if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_CPU:
-#             return
-
-#         if not isinstance(node, dace.nodes.MapEntry) or xfh.get_parent_map(state, node) is not None:
-#             raise TypeError("Only top-level map scopes supported")
-#         elif node.schedule not in LIKWIDInstrumentationCPU.perf_whitelist_schedules:
-#             raise TypeError("Unsupported schedule on scope")
-
-#         sdfg_id = sdfg.sdfg_id
-#         state_id = sdfg.node_id(state)
-#         node_id = state.node_id(node)
-#         region = f"scope_{sdfg_id}_{state_id}_{node_id}"
-
-#         self._regions.append((region, sdfg_id, state_id, node_id))
-#         marker_code = f'''
-# #pragma omp parallel
-# {{
-#     LIKWID_MARKER_REGISTER("{region}");
-
-#     #pragma omp barrier
-#     LIKWID_MARKER_START("{region}");
-# }}
-# '''
-#         outer_stream.write(marker_code)
-
-#     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
-#         entry_node = state.entry_node(node)
-#         if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_CPU:
-#             return
-
-#         sdfg_id = sdfg.sdfg_id
-#         state_id = sdfg.node_id(state)
-#         node_id = state.node_id(entry_node)
-#         region = f"scope_{sdfg_id}_{state_id}_{node_id}"
-
-#         marker_code = f'''
-# #pragma omp parallel
-# {{
-#     LIKWID_MARKER_STOP("{region}");
-# }}
-# '''
-#         outer_stream.write(marker_code)
+            call_code = "__dace_generate_report();\n"
+            local_stream.write(call_code, sdfg)
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_GPU)
