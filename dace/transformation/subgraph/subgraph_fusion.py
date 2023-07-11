@@ -1154,7 +1154,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 intermediate_data[acc.data].append(acc)
             else:
                 intermediate_data[acc.data] = [acc]
-        
+
         filtered_intermediate_data = dict()
         intermediate_sources = dict()
         intermediate_sinks = dict()
@@ -1189,7 +1189,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             intermediate_sinks[dname] = sinks
 
         edges_to_remove = set()
-             
+
         for dname, accesses in filtered_intermediate_data.items():
 
             # Checking if data are contained in the subgraph
@@ -1214,7 +1214,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         if in_subset:
                             in_subset = subsets.union(in_subset, ie.data.dst_subset)
                         else:
-                            in_subset = ie.data.dst_subset 
+                            in_subset = ie.data.dst_subset
                             first_subset = ie.data.dst_subset
 
                 # Create transient data corresponding to the union of the incoming subsets.
@@ -1225,11 +1225,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                     acc.data = new_name
 
-                     # Reconnect incoming edges through the transient data.
+                    # Reconnect incoming edges through the transient data.
                     for ie in graph.in_edges(acc):
                         mem = Memlet(data=new_name,
-                                    subset=ie.data.dst_subset.offset_new(in_subset, True),
-                                    other_subset=ie.data.src_subset)
+                                     subset=ie.data.dst_subset.offset_new(in_subset, True),
+                                     other_subset=ie.data.src_subset)
                         # new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
                         ie.data = mem
                         # Update memlet paths.
@@ -1242,8 +1242,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for oe in graph.out_edges(acc):
                         if in_subset.covers(oe.data.src_subset):
                             mem = Memlet(data=new_name,
-                                        subset=oe.data.src_subset.offset_new(in_subset, True),
-                                        other_subset=oe.data.dst_subset)
+                                         subset=oe.data.src_subset.offset_new(in_subset, True),
+                                         other_subset=oe.data.dst_subset)
                             # new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
                             oe.data = mem
                             # Update memlet paths.
@@ -1264,16 +1264,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
                             edges_to_remove.add(oe)
 
-
                     # Connect transient data to the outer output node.
                     if acc in intermediate_sinks[dname]:
                         if not onode:
                             onode = graph.add_access(dname)
                         graph.add_memlet_path(acc,
-                                            global_map_exit,
-                                            onode,
-                                            memlet=Memlet(data=dname, subset=in_subset),
-                                            src_conn=None)
+                                              global_map_exit,
+                                              onode,
+                                              memlet=Memlet(data=dname, subset=in_subset),
+                                              src_conn=None)
 
         for e in edges_to_remove:
             graph.remove_edge(e)
