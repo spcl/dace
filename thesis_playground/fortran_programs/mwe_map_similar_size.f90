@@ -29,6 +29,8 @@ SUBROUTINE mwe_map_similar_size_routine(&
     INTEGER(KIND=JPIM) KLEV
     INTEGER(KIND=JPIM) NBLOCKS
     INTEGER(KIND=JPIM) NCLV
+    INTEGER(KIND=JPIM) NCLDQI
+    INTEGER(KIND=JPIM) NCLDQL
 
     REAL(KIND=JPRB) INP1(NBLOCKS, KLEV)
     REAL(KIND=JPRB) INP2(NBLOCKS, KLEV)
@@ -36,14 +38,37 @@ SUBROUTINE mwe_map_similar_size_routine(&
     REAL(KIND=JPRB) OUT1(NBLOCKS, KLEV)
         
     DO JN=1,NBLOCKS
-        DO JK=1,KLEV
-            OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQI)
-            OUT1(JN, JK) = NCLDQI
-        ENDDO
-
-        DO JK=2,KLEV
-            OUT1(JN, JK) = OUT1(JN, JK) + INP2(JN, JK) - INP3(JN, JK, NCLDQL)
-        ENDDO
+        CALL inner_loops(KLEV, NCLV, NCLDQI, NCLDQL, INP1(JN, :), INP2(JN, :), INP3(JN, :, :), OUT1(JN, :))
     ENDDO
 
 END SUBROUTINE mwe_map_similar_size_routine
+
+SUBROUTINE inner_loops(&
+        & KLEV, NCLV, NCLDQI, NCLDQL, &
+        & INP1, INP2, INP3, OUT1)
+    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
+
+    INTEGER(KIND=JPIM) KLEV
+    INTEGER(KIND=JPIM) NCLV
+    INTEGER(KIND=JPIM) NCLDQI
+    INTEGER(KIND=JPIM) NCLDQL
+
+    REAL(KIND=JPRB) INP1(KLEV)
+    REAL(KIND=JPRB) INP2(KLEV)
+    REAL(KIND=JPRB) INP3(KLEV, NCLV)
+    REAL(KIND=JPRB) OUT1(KLEV)
+    REAL(KIND=JPRB) TMP1(KLEV)
+
+        DO JK=2,KLEV
+            IF (INP2(JK) > 0.5) THEN
+                TMP1(JK) = INP1(JK) + INP3(JK, NCLDQI)
+            ELSE
+                TMP1(JK) = INP1(JK) - INP3(JK, NCLDQI)
+            ENDIF
+        ENDDO
+
+        DO JK=1,KLEV
+            OUT1(JK) = TMP1(JK) + INP2(JK) - INP3(JK, NCLDQL)
+        ENDDO
+END SUBROUTINE inner_loops
