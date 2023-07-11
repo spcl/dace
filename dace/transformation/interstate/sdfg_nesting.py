@@ -956,8 +956,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # TODO: Check in_candidates in interstate edges as well
-
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
             s1, nstate1, ind1 = in_candidates[cand]
