@@ -123,6 +123,19 @@ def test_single_data_multiple_intermediate_accesses():
     sdfg = sdmi_accesses.to_sdfg(simplify=True)
     assert len(sdfg.states()) == 1
 
+    rng = np.random.default_rng(42)
+    ZSOLQA = rng.random((1, 5, 5))
+    ZEPSEC = rng.random()
+    ZQX = rng.random((1, 137, 5))
+    ref_LLINDEX3 = rng.random((1, 5, 5)) > 0.5
+    ref_ZRATIO = rng.random((1, 5))
+    ref_ZSINKSUM = rng.random((1, 5))
+    val_LLINDEX3 = ref_LLINDEX3.copy()
+    val_ZRATIO = ref_ZRATIO.copy()
+    val_ZSINKSUM = ref_ZSINKSUM.copy()
+
+    sdfg(ZSOLQA=ZSOLQA, ZEPSEC=ZEPSEC, ZQX=ZQX, LLINDEX3=ref_LLINDEX3, ZRATIO=ref_ZRATIO, ZSINKSUM=ref_ZSINKSUM)
+
     graph = sdfg.states()[0]
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
 
@@ -136,9 +149,13 @@ def test_single_data_multiple_intermediate_accesses():
     assert sf.can_be_applied(sdfg, subgraph) == True
     sf.apply(sdfg)
 
-    sdfg.view()
+    sdfg(ZSOLQA=ZSOLQA, ZEPSEC=ZEPSEC, ZQX=ZQX, LLINDEX3=val_LLINDEX3, ZRATIO=val_ZRATIO, ZSINKSUM=val_ZSINKSUM)
+
+    assert np.allclose(ref_LLINDEX3, val_LLINDEX3)
+    assert np.allclose(ref_ZRATIO, val_ZRATIO)
+    assert np.allclose(ref_ZSINKSUM, val_ZSINKSUM)
 
 
 if __name__ == '__main__':
-    # test_mimo()
+    test_mimo()
     test_single_data_multiple_intermediate_accesses()
