@@ -956,22 +956,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # Check interstate edges for candidates
-        for e in nsdfg.sdfg.edges():
-            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
-                # If more than one unique element detected, remove from candidates
-                if m.data in in_candidates:
-                    memlet, ns, indices = in_candidates[m.data]
-                    # Try to find dimensions in which there is a mismatch and remove them from list
-                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
-                        if s1 != s2 and i in indices:
-                            indices.remove(i)
-                    if len(indices) == 0:
-                        ignore.add(m.data)
-                    in_candidates[m.data] = (memlet, ns, indices)
-                    continue
-                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
-
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
             s1, nstate1, ind1 = in_candidates[cand]
@@ -1000,7 +984,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if nstate is not None and len(nstate.ranges) > 0:
+                if len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
