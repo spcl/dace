@@ -1000,7 +1000,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if nstate is not None and len(nstate.ranges) > 0:
+                if len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
