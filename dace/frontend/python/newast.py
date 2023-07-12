@@ -3740,6 +3740,15 @@ class ProgramVisitor(ExtNodeVisitor):
         for arg in args_to_remove:
             args.remove(arg)
 
+        # Drop args that are not in the SDFG
+        filtered_args = []
+        for conn, arg in args:
+            if conn not in sdfg.arrays:
+                warnings.warn(f'Connector {conn} not found in SDFG; dropping it')
+            else:
+                filtered_args.append((conn, arg))
+        args = filtered_args
+
         # Change connector names
         updated_args = []
         arrays_before = list(sdfg.arrays.items())
@@ -3829,6 +3838,12 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in argdict.items() if self._is_outputnode(sdfg, k)
         }
 
+        # If an argument does not register as input nor as output, put it in the inputs.
+        # This may happen with input arguments that are used to set a promoted scalar.
+        for k, v in argdict.items():
+            if k not in inputs.keys() and k not in outputs.keys():
+                inputs[k] = v
+
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
             if arrname not in names_to_replace:
@@ -3840,13 +3855,6 @@ class ProgramVisitor(ExtNodeVisitor):
             if narrname in outputs:
                 self.outputs[arrname] = (state, outputs[narrname], [])
 
-        # If an argument does not register as input nor as output,
-        # put it in the inputs.
-        # This may happen with input argument that are used to set
-        # a promoted scalar.
-        for k, v in argdict.items():
-            if k not in inputs.keys() and k not in outputs.keys():
-                inputs[k] = v
         # Unset parent inputs/read accesses that
         # turn out to be outputs/write accesses.
         for memlet in outputs.values():
