@@ -4370,6 +4370,8 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
         'outputs': ['__out'],
         'code': "__out = dace.{}(__inp)".format(dtype.to_string())
     }
+    if dtype in (dace.bool, dace.bool_):
+        impl['code'] = "__out = dace.bool_(__inp)"
     tasklet_params = _set_tasklet_params(impl, [arg])
 
     # Visitor input only needed when `has_where == True`.
