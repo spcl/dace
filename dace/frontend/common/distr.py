@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from numbers import Integral, Number
-from typing import Sequence, Union
+from typing import Sequence, Tuple, Union
 
 import dace
 from dace import dtypes, symbolic
@@ -58,7 +58,8 @@ def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm:
     """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _cart_create(pv, sdfg, state, dims)
 
@@ -155,18 +156,19 @@ def _comm_neq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Co
 ##### MPI Collectives
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
+# @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
 @oprepo.replaces('dace.comm.Bcast')
 def _bcast(pv: ProgramVisitor,
            sdfg: SDFG,
            state: SDFGState,
            buffer: str,
            root: Union[str, sp.Expr, Number] = 0,
-           grid: str = None):
+           grid: str = None,
+           fcomm: str = None):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
 
-    libnode = Bcast('_Bcast_', grid)
+    libnode = Bcast('_Bcast_', grid, fcomm)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
@@ -185,19 +187,23 @@ def _bcast(pv: ProgramVisitor,
     return None
 
 
+@oprepo.replaces_method('Cartcomm', 'Bcast')
 @oprepo.replaces_method('Intracomm', 'Bcast')
 def _intracomm_bcast(pv: 'ProgramVisitor',
                      sdfg: SDFG,
                      state: SDFGState,
-                     icomm: 'Intracomm',
+                     comm: Tuple[str, 'Comm'],
                      buffer: str,
                      root: Union[str, sp.Expr, Number] = 0):
     """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
-        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
-    return _bcast(pv, sdfg, state, buffer, root)
+    comm_name, comm_obj = comm
+    if comm_obj == MPI.COMM_WORLD:
+        return _bcast(pv, sdfg, state, buffer, root)
+    # NOTE: Highly experimental
+    sdfg.add_scalar(comm_name, dace.int32)
+    return _bcast(pv, sdfg, state, buffer, root, fcomm=comm_name)
 
 
 @oprepo.replaces_method('ProcessGrid', 'Bcast')
@@ -248,7 +254,6 @@ def _Reduce(pv: ProgramVisitor,
     return None
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
 @oprepo.replaces('dace.comm.Alltoall')
 def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
 
@@ -271,7 +276,8 @@ def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icom
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer)`. """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer)
 
@@ -284,7 +290,6 @@ def _pgrid_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: s
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer, grid=pgrid)
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
 def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
 
@@ -306,7 +311,8 @@ def _intracomm_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ico
     """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     if inp_buffer != MPI.IN_PLACE:
         raise ValueError('DaCe currently supports in-place Allreduce only.')
@@ -391,7 +397,6 @@ def _gather(pv: ProgramVisitor,
 ##### Point-To-Point Communication
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: ProgramVisitor,
           sdfg: SDFG,
@@ -464,7 +469,27 @@ def _send(pv: ProgramVisitor,
     return None
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Isend')
+@oprepo.replaces_method('Intracomm', 'Send')
+def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+    """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
+
+    from mpi4py import MPI
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    return _send(pv, sdfg, state, buffer, dst, tag)
+
+
+@oprepo.replaces_method('ProcessGrid', 'Send')
+def _pgrid_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+    """ Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`. """
+
+    raise NotImplementedError('ProcessGrid.Send is not supported yet.')
+    # return _send(pv, sdfg, state, buffer, dst, tag, grid=pgrid)
+
+
 @oprepo.replaces('dace.comm.Isend')
 def _isend(pv: ProgramVisitor,
            sdfg: SDFG,
@@ -571,7 +596,8 @@ def _intracomm_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 
     """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _isend(pv, sdfg, state, buffer, dst, tag, req)
@@ -589,7 +615,6 @@ def _pgrid_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str,
     return req
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Recv')
 @oprepo.replaces('dace.comm.Recv')
 def _recv(pv: ProgramVisitor,
           sdfg: SDFG,
@@ -662,7 +687,27 @@ def _recv(pv: ProgramVisitor,
     return None
 
 
-@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Irecv')
+@oprepo.replaces_method('Intracomm', 'Recv')
+def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
+                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+    """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
+
+    from mpi4py import MPI
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    return _recv(pv, sdfg, state, buffer, src, tag)
+
+
+@oprepo.replaces_method('ProcessGrid', 'Recv')
+def _pgrid_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
+                 src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+    """ Equivalent to `dace.comm.Recv(buffer, dst, tag, grid=pgrid)`. """
+
+    raise NotImplementedError('ProcessGrid.Recv is not supported yet.')
+    # return _recv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
+
+
 @oprepo.replaces('dace.comm.Irecv')
 def _irecv(pv: ProgramVisitor,
            sdfg: SDFG,
@@ -767,7 +812,8 @@ def _intracomm_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 
     """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
 
     from mpi4py import MPI
-    if icomm != MPI.COMM_WORLD:
+    icomm_name, icomm_obj = icomm
+    if icomm_obj != MPI.COMM_WORLD:
         raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
     req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
     _irecv(pv, sdfg, state, buffer, src, tag, req)
