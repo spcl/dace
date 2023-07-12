@@ -295,7 +295,6 @@ def _numpy_full(pv: ProgramVisitor,
     else:
         is_data = True
         vtype = sdfg.arrays[fill_value].dtype
-        # raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
     dtype = dtype or vtype
     name, _ = sdfg.add_temp_transient(shape, dtype)
 

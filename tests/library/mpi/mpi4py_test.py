@@ -91,8 +91,8 @@ def test_process_grid_bcast():
         if pgrid != MPI.COMM_NULL:
             pgrid.Bcast(A)
 
-    if size < 2:
-        raise ValueError("Please run this test with at least two processes.")
+    # if size < 2:
+    #     raise ValueError("Please run this test with at least two processes.")
 
     sdfg = None
     if rank == 0:

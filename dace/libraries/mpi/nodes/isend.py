@@ -97,6 +97,7 @@ class Isend(MPINode):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
 
+        # TODO: Should we expect any integer type here and cast to int32 later?. Investigate further in the future.
         # if dest.dtype.base_type != dace.dtypes.int32:
         #     raise ValueError("Destination must be an integer!")
         # if tag.dtype.base_type != dace.dtypes.int32:

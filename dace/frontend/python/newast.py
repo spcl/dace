@@ -1150,13 +1150,6 @@ class ProgramVisitor(ExtNodeVisitor):
         # Indirections
         self.indirections = dict()
 
-        # Add mpi4py.MPI.COMM_WORLD aliases to variables
-        # try:
-        #     from mpi4py import MPI
-        #     self.variables.update({k: "MPI_COMM_WORLD" for k, v in self.globals.items() if v is MPI.COMM_WORLD})
-        # except:
-        #     pass
-
     @classmethod
     def progress_count(cls) -> int:
         """ Returns the number of parsed SDFGs so far within this run. """
