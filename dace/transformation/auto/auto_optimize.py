@@ -494,6 +494,10 @@ def make_transients_persistent(sdfg: SDFG,
                         not_persistent.add(dnode.data)
                         continue
 
+                if desc.lifetime == dtypes.AllocationLifetime.External:
+                    not_persistent.add(dnode.data)
+                    continue
+
                 persistent.add(dnode.data)
 
         for aname in (persistent - not_persistent):
