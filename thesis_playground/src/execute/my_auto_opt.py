@@ -1,8 +1,10 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
+import copy
 import sympy
 
 import dace
 from dace import dtypes
+from dace.data import _prod
 from dace.sdfg import utils as sdutil
 from dace.sdfg import SDFG, nodes, infer_types, SDFGState
 from dace.transformation.optimizer import Optimizer
@@ -107,6 +109,10 @@ def auto_optimize(sdfg: SDFG,
 
         k_caching_prototype_v1(sdfg, validate, validate_all, program)
 
+    change_strides(sdfg, ('NBLOCKS', ), symbols)
+    if program is not None:
+        save_graph(sdfg, program, "after_change_strides")
+
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
@@ -186,6 +192,7 @@ def auto_optimize(sdfg: SDFG,
 
     if symbols:
         specialise_symbols(sdfg, symbols)
+
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
@@ -391,3 +398,119 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, progr
     sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
     if program is not None:
         save_graph(sdfg, program, "after_map_fusion")
+
+
+def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> Dict[str, int]:
+    # TODO: Add output about how to transform/permute the input
+    premutation = dict()
+
+    for _, name, desc in sdfg.arrays_recursive():
+        shape_str = [str(s) for s in desc.shape]
+        # Get index of the dimension we want to have stride 1
+        stride_one_idx = None
+        this_stride_one_value = None
+        for dim in stride_one_values:
+            if str(dim) in shape_str:
+                stride_one_idx = shape_str.index(str(dim))
+                this_stride_one_value = dim
+                break
+
+        if stride_one_idx is not None:
+
+            # Do I need to check if it is fortran?
+            new_strides = list(desc.strides)
+            new_strides[stride_one_idx] = sympy.S.One
+
+            previous_size = dace.symbolic.symbol(this_stride_one_value)
+            previous_stride = sympy.S.One
+            for i in range(len(new_strides)):
+                if i != stride_one_idx:
+                    new_strides[i] = previous_size * previous_stride
+                    previous_size = desc.shape[i]
+                    previous_stride = new_strides[i]
+
+            desc.strides = tuple(new_strides)
+
+# Copied and apdated from the microbenchmark my Alex and Lex
+def change_strides_old(sdfg: dace.SDFG, klev_vals: Tuple[int], symbols: Dict[str, int],
+                   syms_to_add: Set[str] = None) -> Dict[str, int]:
+
+    permutation = dict()
+    syms_to_add = syms_to_add or set()
+
+    for name, desc in sdfg.arrays.items():
+
+        # We target arrays that have KLEV or KLEV + 1 in their shape
+        shape_str = [str(s) for s in desc.shape]
+        klev_idx = None
+        divisor = None
+        for v in klev_vals:
+            if str(v) in shape_str:
+                klev_idx = shape_str.index(str(v))
+                divisor = v
+                break
+        if klev_idx is None:
+            continue
+
+        permutation[name] = klev_idx
+
+        is_fortran = (desc.strides[0] == 1)
+
+        # Update the strides
+        new_strides = list(desc.strides)
+        if is_fortran:
+            for idx in range(klev_idx + 1, len(desc.shape)):
+                new_strides[idx] /= divisor
+        else:
+            for idx in range(klev_idx):
+                new_strides[idx] /= divisor
+        new_strides[klev_idx] = _prod(desc.shape) / divisor
+        desc.strides = tuple(new_strides)
+
+        # Go to nested SDFGs
+        # Assuming only 1 level of nested SDFG
+        for sd in sdfg.all_sdfgs_recursive():
+
+            if sd is sdfg:
+                continue
+
+            assert sd.parent_sdfg is sdfg
+
+            for s in syms_to_add:
+                if s not in sd.parent_nsdfg_node.symbol_mapping:
+                        sd.parent_nsdfg_node.symbol_mapping[s] = s
+                        sd.add_symbol(s, dace.int32)
+
+            for nname, ndesc in sd.arrays.items():
+
+                if isinstance(ndesc, dace.data.Scalar):
+                    continue
+                if ndesc.transient:
+                    continue
+
+                nsdfg_node = sd.parent_nsdfg_node
+                is_input = True
+                edges = list(sd.parent.in_edges_by_connector(nsdfg_node, nname))
+                if len(edges) == 0:
+                    is_input = False
+                    edges = list(sd.parent.out_edges_by_connector(nsdfg_node, nname))
+                    if len(edges) == 0:
+                        raise ValueError
+                edge = edges[0]
+                if is_input:
+                    src = sd.parent.memlet_path(edge)[0].src
+                else:
+                    src = sd.parent.memlet_path(edge)[-1].dst
+                assert isinstance(src, dace.nodes.AccessNode)
+                if src.data not in sdfg.arrays:
+                    continue
+
+                subset = edge.data.subset
+                squeezed = copy.deepcopy(subset)
+                rem_idx = squeezed.squeeze()
+                assert len(squeezed) == len(ndesc.shape)
+                # inv_sqz_idx = [i for i in range(len(desc.shape)) if i not in sqz_idx]
+                nnew_strides = [new_strides[i] for i in rem_idx]
+                ndesc.strides = tuple(nnew_strides)
+
+    return permutation

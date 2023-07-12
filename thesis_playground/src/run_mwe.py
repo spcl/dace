@@ -41,10 +41,11 @@ def main():
 
     optimize_sdfg(sdfg, device_map[args.device], **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
-    arguments_dace = generate_arguments_fortran(program_name, np.random.default_rng(42), params)
+    arguments_dace = generate_arguments_fortran(args.program, f"{program_name}_routine", np.random.default_rng(42), params)
     arguments_original = copy.deepcopy(arguments_dace)
 
     if args.compare_to_fortran:
+        print("Compare to fortran")
         arguments_fortran = copy.deepcopy(arguments_dace)
         routine_name = f'{program_name}_routine'
         ffunc = get_fortran(fsource, program_name, routine_name)
@@ -57,6 +58,7 @@ def main():
         arguments_dace = copy_to_device(arguments_dace)
 
     csdfg = sdfg.compile()
+    print(f"Arguments: {list(arguments_dace.keys())}")
     csdfg(**{k.upper(): v for k, v in arguments_dace.items()})
     if compare_output_all(arguments_dace, arguments_original, print_if_differ=False):
         print("WARNING: DaCe arguments did not change at all")

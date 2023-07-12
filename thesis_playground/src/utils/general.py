@@ -86,13 +86,15 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> 
 
 
 def generate_arguments_fortran(
-        program: str, rng: np.random.Generator,
+        program: str, routine_name: str, rng: np.random.Generator,
         params: ParametersProvider) -> Dict[str, Union[Number, np.ndarray]]:
     """
     Tries to read the fortran signature and generates random inputs for it.
     WIP. IS STILL A PROTOTYPE
 
     :param program: The name of the fortran program
+    :type program: str
+    :param program: The name of the fortran routine inside the program
     :type program: str
     :param rng: The random number generator to generate the data
     :type rng: np.random.Generator
@@ -105,10 +107,9 @@ def generate_arguments_fortran(
     with tempfile.TemporaryDirectory() as tmp_dir:
         cwd = os.getcwd()
         os.chdir(tmp_dir)
-        program_name = f"{program}_routine"
-        process = f2py.compile(source, modulename=program_name, verbose=False, extension='.f90', full_output=True)
+        process = f2py.compile(source, modulename=routine_name, verbose=False, extension='.f90', full_output=True)
         if process.returncode != 0:
-            print("ERROR: Fortran compilation failed")
+            print("ERROR: Fortran compilation for reading the arguments failed")
             print("stdout")
             print(process.stdout.decode('UTF-8'))
             print("stderr")
@@ -116,8 +117,8 @@ def generate_arguments_fortran(
             exit(1)
 
         sys.path.append(tmp_dir)
-        module = import_module(program_name)
-        doc_str = getattr(module, program_name).__doc__.split('\n')
+        module = import_module(routine_name)
+        doc_str = getattr(module, routine_name).__doc__.split('\n')
 
         while doc_str[0][0:4] != '----':
             doc_str.pop(0)
