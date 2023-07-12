@@ -6,6 +6,76 @@ import numpy as np
 import pytest
 
 
+@pytest.mark.mpi
+def test_comm_world_bcast():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def comm_world_bcast(A: dace.int32[10]):
+        commworld.Bcast(A)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+    
+    sdfg = None
+    if rank == 0:
+        sdfg = comm_world_bcast.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    if rank == 0:
+        A = np.arange(10, dtype=np.int32)
+        A_ref = A.copy()
+    else:
+        A = np.zeros((10, ), dtype=np.int32)
+        A_ref = A.copy()
+
+    func(A=A)
+    comm_world_bcast.f(A_ref)
+
+    assert(np.array_equal(A, A_ref))
+
+
+@pytest.mark.mpi
+def test_external_comm_bcast():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    new_comm = commworld.Split(rank % 2, 0)
+
+    @dace.program
+    def external_comm_bcast(A: dace.int32[10]):
+        new_comm.Bcast(A)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+    
+    sdfg = None
+    if rank == 0:
+        sdfg = external_comm_bcast.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    if rank == 0:
+        A = np.arange(10, dtype=np.int32)
+        A_ref = A.copy()
+    elif rank == 1:
+        A = np.arange(10, 20, dtype=np.int32)
+        A_ref = A.copy()
+    else:
+        A = np.zeros((10, ), dtype=np.int32)
+        A_ref = A.copy()
+
+    func(A=A, new_comm=new_comm.py2f())
+    external_comm_bcast.f(A_ref)
+
+    assert(np.array_equal(A, A_ref))
+
 
 @pytest.mark.mpi
 def test_process_grid_bcast():
@@ -258,6 +328,8 @@ def test_alltoall():
 
 
 if __name__ == "__main__":
+    test_comm_world_bcast()
+    test_external_comm_bcast()
     test_process_grid_bcast()
     test_sub_grid_bcast()
     test_3mm()
