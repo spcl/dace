@@ -1525,17 +1525,10 @@ class MPIResolver(ast.NodeTransformer):
             obj = self.globals[node.id]
             if isinstance(obj, self.MPI.Comm):
                 lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
-                if obj is self.MPI.COMM_WORLD:
-                    newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_WORLD'), node)
-                    newnode.parent = node.parent
-                    return newnode
-                elif obj is self.MPI.COMM_NULL:
+                if obj is self.MPI.COMM_NULL:
                     newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
                     newnode.parent = node.parent
                     return newnode
-                else:
-                    raise DaceSyntaxError('Only the COMM_WORLD and COMM_NULL mpi4py.MPI communicators can be used '
-                                          'directly inside a DaCe Python program.')
         return node
     
     def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
