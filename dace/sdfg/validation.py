@@ -562,6 +562,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         src_node = path[0].src
         dst_node = path[-1].dst
 
+        # NestedSDFGs must connect to AccessNodes
+        if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
+            raise InvalidSDFGEdgeError("Nested SDFG source nodes must be AccessNodes", sdfg, state_id, eid)
+        if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
+            raise InvalidSDFGEdgeError("Nested SDFG destination nodes must be AccessNodes", sdfg, state_id, eid)
+
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)
         for pe in path:
