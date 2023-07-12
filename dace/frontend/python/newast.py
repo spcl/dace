@@ -1312,11 +1312,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # MPI-related stuff
         result.update({k: self.sdfg.process_grids[v] for k, v in self.variables.items() if v in self.sdfg.process_grids})
-        # try:
-        #     from mpi4py import MPI
-        #     result.update({k: v for k, v in self.globals.items() if v is MPI.COMM_WORLD})
-        # except:
-        #     pass
+        try:
+            from mpi4py import MPI
+            result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
+        except:
+            pass
 
         return result
 
@@ -4369,8 +4369,11 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add object as first argument
             if modname in self.variables.keys():
                 arg = self.variables[modname]
-            else:
+            elif modname in self.scope_vars.keys():
                 arg = self.scope_vars[modname]
+            else:
+                # Fallback to (name, object)
+                arg = (modname, self.defined[modname])
             args.append(arg)
         # Otherwise, try to find a default implementation for the SDFG
         elif not found_ufunc:
