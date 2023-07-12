@@ -279,7 +279,7 @@ class MapFusion(transformation.SingleStateTransformation):
                     c = a.offset_new(b, negative=True)
                 for r in c:
                     if r != (0, 0, 1):
-                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected"
+                        print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected "
                               f"stencil pattern 2")
                         return False
 
@@ -443,9 +443,9 @@ class MapFusion(transformation.SingleStateTransformation):
                     continue
 
                 # Add a transient scalar/array
-                # sdfg.save(f"map_fusion/3_1_{edge.label}_case_erase_access_node_before_fuse_nodes.sdfg")
+                sdfg.save("map_fusion/3_1_case_erase_access_node_before_fuse_nodes.sdfg")
                 self.fuse_nodes(sdfg, graph, edge, new_dsts[0].dst, new_dsts[0].dst_conn, new_dsts[1:])
-                # sdfg.save(f"map_fusion/3_2_{edge.label}_case_erase_access_node_after_fuse_nodes.sdfg")
+                sdfg.save("map_fusion/3_2_case_erase_access_node_after_fuse_nodes.sdfg")
 
                 edges_to_remove.add(edge)
 

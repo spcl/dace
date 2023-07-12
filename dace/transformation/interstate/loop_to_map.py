@@ -442,6 +442,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     nsdfg.add_edge(src, dst, data)
             nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
+            sdfg.save(f"loop_to_map/{guard.name}/0_1_after_create_nested_sdfg.sdfg")
+            nsdfg.save(f"loop_to_map/{guard.name}/nsdfg_0_1_after_create_nested_sdfg.sdfg")
+
             # Move guard -> body edge to guard -> new_body
             for src, dst, data, in sdfg.edges_between(guard, body):
                 sdfg.add_edge(src, new_body, data)
@@ -463,6 +466,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 nsdfg.arrays[name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
 
+            sdfg.save(f"loop_to_map/{guard.name}/0_2_nested_sdfg_add_arrays.sdfg")
+            nsdfg.save(f"loop_to_map/{guard.name}/nsdfg_0_2_nested_sdfg_add_arrays.sdfg")
+
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
             if sdfg.parent:
@@ -477,12 +483,17 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 w = new_body.add_write(name)
                 new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
+            sdfg.save(f"loop_to_map/{guard.name}/0_3_nested_sdfg_add_node.sdfg")
+            nsdfg.save(f"loop_to_map/{guard.name}/nsdfg_0_3_nested_sdfg_add_node.sdfg")
+
             # Fix SDFG symbols
             for sym in sdfg.free_symbols - fsymbols:
                 if sym in sdfg.symbols:
                     del sdfg.symbols[sym]
             for sym, dtype in nsymbols.items():
                 nsdfg.symbols[sym] = dtype
+
+            sdfg.save(f"loop_to_map/{guard.name}/0_4_nested_sdfg_fix_symbols.sdfg")
 
             # Change body state reference
             body = new_body
@@ -531,6 +542,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     del nsdfg.symbol_mapping[k]
             isedge.data.assignments = {}
 
+        sdfg.save(f"loop_to_map/{guard.name}/0_9_after_nested_sdfg_assignments.sdfg")
+
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
 
@@ -561,15 +574,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if isinstance(step, sympy.core.basic.Basic):
             step = step.evalf(subs=sdfg.constants)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/1_before_adding_map.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/1_before_adding_map.sdfg")
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
         exit = nodes.MapExit(map)
         body.add_node(entry)
         body.add_node(exit)
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/2_after_adding_map.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/2_after_adding_map.sdfg")
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
@@ -586,8 +597,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if repl_dict:
             map.range.replace(repl_dict)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/3_after_instantiate_reads.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/3_after_instantiate_reads.sdfg")
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
@@ -603,8 +613,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     direct_edges.add(e)
                     body.remove_edge(e)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/4_gather_direct_edges.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/4_gather_direct_edges.sdfg")
 
         # Reroute all memlets through the entry and exit nodes
         for n in source_nodes:
@@ -618,8 +627,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/5_source_nodes.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/5_source_nodes.sdfg")
 
         for n in sink_nodes:
             if isinstance(n, nodes.AccessNode):
@@ -632,8 +640,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/6_sink_nodes.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/6_sink_nodes.sdfg")
 
         intermediate_sinks = {}
         for n in intermediate_nodes:
@@ -646,8 +653,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 intermediate_sinks[n.data] = sink
             helpers.make_map_internal_write_external(sdfg, body, exit, n, sink)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/7_after_intermediate_nodes.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/7_after_intermediate_nodes.sdfg")
 
         # Here we handle the direct edges among source and sink access nodes.
         for e in direct_edges:
@@ -679,8 +685,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                                                       wcr_nonatomic=e.data.wcr_nonatomic),
                                  src_conn=src_conn)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/8_after_direct_edges.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/8_after_direct_edges.sdfg")
         if not source_nodes and not sink_nodes:
             body.add_nedge(entry, exit, memlet.Memlet())
 
@@ -700,15 +705,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # Get rid of backedge to guard
         sdfg.remove_edge(sdfg.edges_between(body, guard)[0])
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/9_after_remove.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/9_after_remove.sdfg")
 
         # Route body directly to after state, maintaining any other assignments
         # it might have had
         sdfg.add_edge(body, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/10_edge_body_after.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/10_edge_body_after.sdfg")
 
         # If this had made the iteration variable a free symbol, we can remove
         # it from the SDFG symbols
@@ -718,5 +721,4 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)
 
-        if guard.name == 'GuardFOR_l_186_c_186':
-            sdfg.save('loop_to_map/11_after_symbols.sdfg')
+        sdfg.save(f"loop_to_map/{guard.name}/11_after_symbols.sdfg")
