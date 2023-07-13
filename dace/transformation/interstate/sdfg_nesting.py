@@ -248,8 +248,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
-        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
+        # TODO: Enable this one if necessary
+        #infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)

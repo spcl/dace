@@ -510,10 +510,6 @@ class NestedSDFG(CodeNode):
 
     # NOTE: We cannot use SDFG as the type because of an import loop
     sdfg = SDFGReferenceProperty(desc="The SDFG", allow_none=True)
-    schedule = EnumProperty(dtype=dtypes.ScheduleType,
-                            desc="SDFG schedule",
-                            allow_none=True,
-                            default=dtypes.ScheduleType.Default)
     symbol_mapping = DictProperty(key_type=str,
                                   value_type=dace.symbolic.pystr_to_symbolic,
                                   desc="Mapping between internal symbols and their values, expressed as "
@@ -538,7 +534,6 @@ class NestedSDFG(CodeNode):
                  inputs: Set[str],
                  outputs: Set[str],
                  symbol_mapping: Dict[str, Any] = None,
-                 schedule=dtypes.ScheduleType.Default,
                  location=None,
                  debuginfo=None):
         from dace.sdfg import SDFG
@@ -547,7 +542,6 @@ class NestedSDFG(CodeNode):
         # Properties
         self.sdfg: SDFG = sdfg
         self.symbol_mapping = symbol_mapping or {}
-        self.schedule = schedule
         self.debuginfo = debuginfo
 
     def __deepcopy__(self, memo):

@@ -380,7 +380,6 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                                       sdfg,
                                       node.in_connectors,
                                       node.out_connectors,
-                                      schedule=node.schedule,
                                       name=node.name)
 
         utils.change_edge_dest(state, node, nsdfg)

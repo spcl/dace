@@ -1636,15 +1636,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if not inline:
                 self._frame.generate_constants(node.sdfg, nested_stream)
 
-            old_schedule = self._toplevel_schedule
-            self._toplevel_schedule = node.schedule
-
             # Generate code for internal SDFG
             global_code, local_code, used_targets, used_environments = self._frame.generate_code(
-                node.sdfg, node.schedule, sdfg_label)
+                node.sdfg, self._toplevel_schedule, sdfg_label)
             self._dispatcher._used_environments |= used_environments
-
-            self._toplevel_schedule = old_schedule
 
             nested_stream.write(local_code)
 

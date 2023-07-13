@@ -210,9 +210,6 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
             nscope = nnode.sdfg
             child_nodes = None
             extra_parent_schedules = []
-            # TODO(later): Remove GPU_Default
-            if nnode.schedule == dtypes.ScheduleType.GPU_Default:
-                extra_parent_schedules.append(nnode.schedule)
         else:
             nscope = nnode
             extra_parent_schedules = [nnode.schedule]
@@ -303,7 +300,7 @@ def _set_default_schedule_in_scope(state: SDFGState,
     # Set child schedule type in scope
     for node in child_nodes[parent_node]:
         # Set default schedule types
-        if isinstance(node, (nodes.EntryNode, nodes.NestedSDFG)):
+        if isinstance(node, nodes.EntryNode):
             nested_scopes.append(node)
             if node.schedule == dtypes.ScheduleType.Default:
                 # If parent schedules do not determine child schedule,
