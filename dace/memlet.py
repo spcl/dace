@@ -5,6 +5,7 @@ from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
 import warnings
+import operator
 
 import dace
 import dace.serialize
@@ -520,6 +521,27 @@ class Memlet(object):
             result |= self.src_subset.free_symbols
         if self.dst_subset:
             result |= self.dst_subset.free_symbols
+        return result
+
+    def get_free_symbols_by_indices(self, indices_src: List[int], indices_dst: List[int]) -> Set[str]:
+        """
+        Returns set of free symbols used in this edges properties but only taking certain indices of the src and dst
+        subset into account
+
+        :param indices_src: The indices of the src subset to take into account
+        :type indices_src: List[int]
+        :param indices_dst: The indices of the dst subset to take into account
+        :type indices_dst: List[int]
+        :return: The set of free symbols
+        :rtype: Set[str]
+        """
+        # Symbolic properties are in volume, and the two subsets
+        result = set()
+        result |= set(map(str, self.volume.free_symbols))
+        if self.src_subset:
+            result |= self.src_subset.get_free_symbols_by_indices(indices_src)
+        if self.dst_subset:
+            result |= self.dst_subset.get_free_symbols_by_indices(indices_dst)
         return result
 
     def get_stride(self, sdfg: 'dace.sdfg.SDFG', map: 'dace.sdfg.nodes.Map', dim: int = -1) -> 'dace.symbolic.SymExpr':
