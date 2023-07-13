@@ -925,8 +925,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
     def _candidates(
             state: SDFGState,
             nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
-        in_candidates: Dict[str, Tuple[Memlet, List[SDFGState], Set[int]]] = {}
-        out_candidates: Dict[str, Tuple[Memlet, List[SDFGState], Set[int]]] = {}
+        in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
+        out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
         for nstate in nsdfg.sdfg.nodes():
             for dnode in nstate.data_nodes():
@@ -938,7 +938,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
-                        memlet, ns_list, indices = out_candidates[e.data.data]
+                        memlet, ns, indices = out_candidates[e.data.data]
                         # Try to find dimensions in which there is a mismatch
                         # and remove them from list
                         for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
@@ -946,16 +946,14 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
-                        # Append the state where array appears to the list
-                        ns_list.append(nstate)
-                        out_candidates[e.data.data] = (memlet, ns_list, indices)
+                        out_candidates[e.data.data] = (memlet, ns, indices)
                         continue
-                    out_candidates[e.data.data] = (e.data, [nstate], set(range(len(e.data.subset))))
+                    out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
-                        memlet, ns_list, indices = in_candidates[e.data.data]
+                        memlet, ns, indices = in_candidates[e.data.data]
                         # Try to find dimensions in which there is a mismatch
                         # and remove them from list
                         for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
@@ -963,34 +961,39 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
-                        ns_list.append(nstate)
-                        # Append the state where array appears to the list
-                        in_candidates[e.data.data] = (memlet, ns_list, indices)
+                        in_candidates[e.data.data] = (memlet, ns, indices)
                         continue
-                    in_candidates[e.data.data] = (e.data, [nstate], set(range(len(e.data.subset))))
+                    in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # TODO: Check in_candidates in interstate edges as well
-        # Samuel: Is a first effort, but not working correctly yet
-        # for edge in nsdfg.sdfg.edges():
-        #     for memlet in edge.data.get_read_memlets(nsdfg.sdfg.arrays):
-        #         if memlet.data not in in_candidates:
-        #             # TODO(Samuel): What state do I need to add here to the list, is one required, what impact does it
-        #             # have?
-        #             in_candidates[memlet.data] = (e.data, [edge.src], set(range(len(memlet.subset))))
+        # Check read memlets in interstate edges for candidates
+        for e in nsdfg.sdfg.edges():
+            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
+                # If more than one unique element detected, remove from candidates
+                if m.data in in_candidates:
+                    memlet, ns, indices = in_candidates[m.data]
+                    # Try to find dimensions in which there is a mismatch and remove them from list
+                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
+                        if s1 != s2 and i in indices:
+                            indices.remove(i)
+                    if len(indices) == 0:
+                        ignore.add(m.data)
+                    in_candidates[m.data] = (memlet, ns, indices)
+                    continue
+                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
-            s1, nstates1, ind1 = in_candidates[cand]
-            s2, nstates2, ind2 = out_candidates[cand]
+            s1, nstate1, ind1 = in_candidates[cand]
+            s2, nstate2, ind2 = out_candidates[cand]
             indices = ind1 & ind2
             if any(s1.subset[ind] != s2.subset[ind] for ind in indices):
                 ignore.add(cand)
-            in_candidates[cand] = (s1, nstates1, indices)
-            out_candidates[cand] = (s2, nstates2, indices)
+            in_candidates[cand] = (s1, nstate1, indices)
+            out_candidates[cand] = (s2, nstate2, indices)
 
         # Ensure minimum elements of candidates do not begin with zero
         def _check_cand(candidates, outer_edges):
-            for cname, (cand, nstate_list, indices) in candidates.items():
+            for cname, (cand, nstate, indices) in candidates.items():
                 if all(me == 0 for i, me in enumerate(cand.subset.min_element()) if i in indices):
                     ignore.add(cname)
                     continue
@@ -1005,44 +1008,29 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     ignore.add(cname)
                     continue
 
-                # TODO(Samuel): Not sure if having the for loop here is correct, could potentially also just take the
-                # first, would better emulate the behaviour before
-                for ns in nstate_list:
-                    # Check w.r.t. loops
-                    if len(ns.ranges) > 0:
-                        # Re-annotate loop ranges, in case someone changed them
-                        # TODO: Move out of here!
-                        for ns in nsdfg.sdfg.states():
-                            ns.ranges = {}
-                        from dace.sdfg.propagation import _annotate_loop_ranges
-                        _annotate_loop_ranges(nsdfg.sdfg, [])
+                # Check w.r.t. loops
+                if len(nstate.ranges) > 0:
+                    # Re-annotate loop ranges, in case someone changed them
+                    # TODO: Move out of here!
+                    for ns in nsdfg.sdfg.states():
+                        ns.ranges = {}
+                    from dace.sdfg.propagation import _annotate_loop_ranges
+                    _annotate_loop_ranges(nsdfg.sdfg, [])
 
-                        memlet = propagation.propagate_subset(
-                            [cand], nsdfg.sdfg.arrays[cname], sorted(ns.ranges.keys()),
-                            subsets.Range([v.ndrange()[0] for _, v in sorted(ns.ranges.items())]))
-                        if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
-                            ignore.add(cname)
-                            continue
+                    memlet = propagation.propagate_subset(
+                        [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
+                        subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
+                    if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
+                        ignore.add(cname)
+                        continue
 
-                        # Modify memlet to propagated one
-                        candidates[cname] = (memlet, nstate_list, indices)
-                    else:
-                        memlet = cand
-
-                # TODO: This approach is not working as one would need the values assigned to each symbol to check that
-                # the value is also constant over all symbols and then add it to the SDFG
-                # Get the defined symbols in each state in the SDFG
-                # symbols_per_state = {state: symbols for state, node, symbols in
-                #                      utils.traverse_sdfg_with_defined_symbols(nsdfg.sdfg)}
-                # # Create intersection of them on all states in which the array is accessed
-                # known_symbols_at_state_intersect = set(symbols_per_state[nstate_list[0]])
-                # for ns in nstate_list[1:]:
-                #     known_symbols_at_state_intersect = known_symbols_at_state_intersect.intersection(
-                #         set(symbols_per_state[ns]))
+                    # Modify memlet to propagated one
+                    candidates[cname] = (memlet, nstate, indices)
+                else:
+                    memlet = cand
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                # missing_symbols = (memlet.free_symbols - known_symbols_at_state_intersect)
                 missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
