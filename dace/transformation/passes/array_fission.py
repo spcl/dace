@@ -55,7 +55,6 @@ class ArrayFission(ppl.Pass):
                                        ] = pipeline_results[UnderapproximateWrites.__name__]["loop_approximation"]
         loops: dict[SDFGState, (SDFGState, SDFGState, list[SDFGState], str, subsets.Range)
                     ] = pipeline_results[UnderapproximateWrites.__name__]["loops"]
-
         access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]
                            ] = pipeline_results[ap.FindAccessNodes.__name__][sdfg.sdfg_id]
         state_reach: Dict[SDFGState, Set[SDFGState]
@@ -64,11 +63,10 @@ class ArrayFission(ppl.Pass):
                           ] = pipeline_results[ap.AccessSets.__name__][sdfg.sdfg_id]
         symbol_access_sets: Dict[Union[SDFGState, Edge[InterstateEdge]],
                                  Tuple[Set[str], Set[str]]] = pipeline_results[ap.SymbolAccessSets.__name__][sdfg.sdfg_id]
-        # list of original array names in the sdfg
+        # list of original array names in the sdfg that fissioning is performed on
         anames = sdfg.arrays.copy().keys()
-        #anames = [aname for aname, a in sdfg.arrays.items() if a.transient and a.total_size == 1]
+        #anames = [aname for aname, a in sdfg.arrays.items() if a.transient and not a.total_size == 1]
         anames = [aname for aname, a in sdfg.arrays.items() if a.transient ]
-
 
         # store all the new names for each original variable name
         definitions: Dict[str, set(str)] = defaultdict(None)
@@ -81,14 +79,16 @@ class ArrayFission(ppl.Pass):
         # only take outgoing edges into account
         var_reads: Dict[str, Set[SDFGState]] = defaultdict(set)
 
-
-        # array that stores "virtual" phi nodes for each variable for each SDFGstate
-        # phi nodes are represented by dictionaries that contain the definitions reaching the phi node
+        # dictionary that stores "virtual" phi nodes for each variable and SDFGstate
+        # phi nodes are represented by dictionaries that contain the variable defined by the phi-node, the corresponding descriptor 
+        # and the definitions reaching the phi node
         # can be extended for later use with path constraints for example
         phi_nodes: Dict[SDFGState, Dict[str, Dict]] = defaultdict(None)
 
+        # maps each variable to it's defining writes that don't involve phi-nodes
         def_states: Dict[str, set[SDFGState]] = {}
 
+        # maps each variable to it's defining writes that involve phi-nodes
         def_states_phi: Dict[str, set[SDFGState]] =  {}
 
         # initialize phi_nodes and var_reads
@@ -114,6 +114,8 @@ class ArrayFission(ppl.Pass):
                     break
                 curr_state = immediate_dominators[curr_state]
 
+        # helper function that returns the nodes of a dictionary representing a tree 
+        # in DFS-order
         def dict_dfs(graph_dict: Dict[SDFGState, SDFGState]):
             stack = []
             visited = []
@@ -123,7 +125,6 @@ class ArrayFission(ppl.Pass):
                 if current_state in visited:
                     continue
                 visited.append(current_state)
-
                 if graph_dict.get(current_state):
                     children = graph_dict[current_state]
                     for child in children:
@@ -131,8 +132,7 @@ class ArrayFission(ppl.Pass):
                             stack.append(child)
             return visited
 
-        # aux function to find the reaching definition given an AccessNode and a state in the original SDFG
-        # only works with the guarantee that predecessors of state have already been traversed/renamed
+        # helper function to find the reaching definition given an AccessNode and a state in the original SDFG
         def find_reaching_def(state: SDFGState, var: str, node: nd.AccessNode = None):
             if last_defs.get(var):
                 if state in last_defs[var].keys():
@@ -147,19 +147,20 @@ class ArrayFission(ppl.Pass):
             if last_defs.get(var):
                 if last_defs[var].get(idom):
                     return last_defs[var][idom]
-
             # in case the state is the initial state and there isn't any reaching definition in the current state just return the original variable
             return var
 
+        # helper function that traverses memlet trees of all incoming and outgoing 
+        # edges of an accessnode and renames it to new_name
         def rename_node(state: SDFGState, node: nd.AccessNode, new_name: str):
             old_name = node.data
             node.data = newname
             for iedge in state.in_edges(node):
-                for edge in state.memlet_path(iedge):
+                for edge in state.memlet_tree(iedge):
                     if edge.data.data == old_name:
                         edge.data.data = newname
             for oedge in state.out_edges(node):
-                for edge in state.memlet_path(oedge):
+                for edge in state.memlet_tree(oedge):
                     if edge.data.data == old_name:
                         edge.data.data = newname
 
@@ -174,7 +175,39 @@ class ArrayFission(ppl.Pass):
                 last_defs[original_name] = {}
             last_defs[original_name][state] = new_def
 
-        
+        def conditional_dfs(G, start = None, condition = None):
+            successors = G.successors
+            visited = set()
+            node = start
+            stack = [node]
+            while (stack):
+                node = stack.pop()
+                if node not in visited:
+                    visited.add(node)
+                    if condition(node):
+                        stack.extend(iter(successors(node)))
+            return visited
+
+        # insert phi nodes at loopheaders of loops that overwrite the variable
+        for loopheader, write_dict in loop_write_approximation.items():
+            if loopheader not in sdfg.states():
+                continue
+
+            for var, memlet in write_dict.items():
+                if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
+                    continue
+                if var not in anames:
+                    continue
+                if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
+                    phi_nodes[loopheader][var] = {
+                        "name": var,
+                        "variables": set(),
+                        "descriptor": None,
+                        "path_conditions": {}
+                    }
+                    if var not in def_states_phi.keys():
+                        def_states_phi[var] = set()
+                    def_states_phi[var].add(loopheader)
 
         # insert phi nodes
         for var in anames:
@@ -188,6 +221,10 @@ class ArrayFission(ppl.Pass):
                 # iterate over access nodes to the array in the current state and check if it fully overwrites the
                 # array with the write underapproximation
 
+                # loopheaders that have phi nodes are also defining states
+                if state in phi_nodes.keys():
+                    if var in phi_nodes[state].keys():
+                        defining_states.add(state)
                 # check if there's even a write to the descriptor in the current state
                 write_nodes = access_nodes[var][state][1]
                 if len(write_nodes) == 0:
@@ -198,6 +235,7 @@ class ArrayFission(ppl.Pass):
                     if any(write_approximation[e].subset.covers_precise(array_set) for e in state.in_edges(node)):
                         defining_states.add(state)
                         break
+                
 
             def_states[var] = defining_states.copy()
 
@@ -228,25 +266,6 @@ class ArrayFission(ppl.Pass):
                     def_states_phi[var] = set()
                 def_states_phi[var].add(state)
 
-        for loopheader, write_dict in loop_write_approximation.items():
-            if loopheader not in sdfg.states():
-                continue
-
-            for var, memlet in write_dict.items():
-                if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
-                    continue
-                if var not in anames:
-                    continue
-                if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
-                    phi_nodes[loopheader][var] = {
-                        "name": var,
-                        "variables": set(),
-                        "descriptor": None,
-                        "path_conditions": {}
-                    }
-                    if var not in def_states_phi.keys():
-                        def_states_phi[var] = set()
-                    def_states_phi[var].add(loopheader)
 
         # traverse the dominator tree depth first and rename all variables
         dom_tree_dfs = dict_dfs(immediate_dominated)
@@ -321,41 +340,39 @@ class ArrayFission(ppl.Pass):
                 oedge.data.replace_dict(rename_dict)
 
         
+        # Initialize var_reads which maps each variable to the states that it is read in
+        # Edges that read from arrays add to the source access sets
         for state in sdfg.nodes():
             for anode in state.data_nodes():
                 if state.out_degree(anode)>0:
                     var_reads[anode.data].add(state)
-        # Edges that read from arrays add to the source access sets
         array_names = sdfg.arrays.keys()
         for e in sdfg.edges():
             fsyms = e.data.free_symbols & array_names
             for access in fsyms:
                 var_reads[access].update({e.src})
 
+        #sdfg.view()
         # iterate over the phi nodes and replace all the occurences of each parameter with the variable defined by the phi node
         to_remove: Set[str] = set()
-        for state in dom_tree_dfs.__reversed__():
+        for state in sdfg.states():
             if not state in phi_nodes.keys():
                 continue
             phi_dict = phi_nodes[state]
             for original_var, phi_node in phi_dict.items():
-                newname = phi_node["name"]
-                parameters = phi_node["variables"]
+                newname = phi_node["name"]  # name of variable defined by phi node
+                parameters = phi_node["variables"]  # variables that can reach phi-node/parameters of phi-node
 
-                # TODO: maybe use the generator directly the reached_by_def list is good for debugging purposes
-                reached_by_def = []
-                dfs_generator = sdutil.dfs_conditional(sdfg,
-                                       sources=[state],
-                                       condition=lambda parent, child: parent is state or (parent not in def_states_phi[original_var] and parent not in def_states[original_var]))
-                for other_state in dfs_generator:
-                    reached_by_def.append(other_state)
+                # Find all states that can be reached by newname
+                reached_by_def = conditional_dfs(sdfg, state, lambda node: node is state or (node not in def_states_phi[original_var] and node not in def_states[original_var]))
 
-                
                 candidate_states = sdfg.states()
                 loop_states = []
-                is_read = True
-                overwriting_loop = False
-                # check if the phi node belongs to a loopheader that completely overwrites the array and the loop does not read from the array defined by the phi node
+                is_read = True  # is the variable defined by the phi-node read in the graph
+                overwriting_loop = False    # if the state is a loop guard, does the loop overwrite the variable
+
+                # check if the phi node belongs to a loopheader that completely overwrites the array 
+                # and the loop does not read from the array defined by the phi node
                 # if so, only rename nodes in the loop body and nodes reached by the loopheader
                 if (state in loops.keys() and
                     (state in loop_write_approximation.keys() and
@@ -364,11 +381,11 @@ class ArrayFission(ppl.Pass):
 
                     _, _, loop_states, _, _ = loops[state]
                     # check if loop reads from outside the loop
-                    # TODO: also check for interstate reads here
                     if not any(newname in [a.label for a in access_nodes[original_var][s][0]] or s in var_reads[newname] for s in loop_states):
                         candidate_states = state_reach[state]
                         overwriting_loop = True
-                # if the variable defined by the phi node is read by any other state we rename the whole sdfg
+                # if the variable defined by the phi node is read by any other 
+                # state we perform renaming in the whole SDFG 
                 # if not we only "rename" all the states that are reachable by the defined variable
                 elif not any(s in state_reach[state] or s is state for s in var_reads[newname]):
                     candidate_states = reached_by_def
@@ -402,6 +419,7 @@ class ArrayFission(ppl.Pass):
                         other_phi_node["variables"] = new_variables
                         phi_nodes[other_state][original_var] = other_phi_node
 
+                    # only rename if newname is read by another state
                     if is_read:
                         if overwriting_loop and other_state not in loop_states:
                             continue
@@ -420,9 +438,9 @@ class ArrayFission(ppl.Pass):
                             for oedge in out_edges:
                                 oedge.data.replace_dict(rename_dict)
                         
-                # update var_read
-                # if a state read from the parameter it now reads from the variable defined by the current phi node
+                # update var_read if any renaming was done
                 if is_read:
+                    # if a state read from the parameter it now reads from the variable defined by the current phi node
                     for parameter in parameters:
                         if parameter is newname:
                             continue
@@ -433,6 +451,8 @@ class ArrayFission(ppl.Pass):
                                 read_remove.add(other_state)
                         var_reads[parameter].difference_update(read_remove)
                 
+                # remove renamed parameters from SDFG
+                # TODO: make this conditional to is_read
                 current_remove = set(parameters)
                 current_remove.discard(newname)
                 to_remove = to_remove.union(current_remove)
@@ -441,6 +461,7 @@ class ArrayFission(ppl.Pass):
                 # no definition is propagated past this phi node
                 if not overwriting_loop:
                     def_states_phi[original_var].remove(state)
+                
             del phi_nodes[state]
         for parameter in to_remove:
             try:
