@@ -1010,15 +1010,30 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
                 subset.squeeze()
-                size0 = subset.size()
+                size0 = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size0.append(dim)
+                    else:
+                        size0.append(dace.symbolic.evaluate(dim, sdfg.constants))
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
                 subset.squeeze()
-                size1 = subset.size()
+                size1 = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size1.append(dim)
+                    else:
+                        size1.append(dace.symbolic.evaluate(dim, sdfg.constants))
             if dst_conn == '_c':
                 subset = dc(memlet.subset)
                 subset.squeeze()
-                size2 = subset.size()
+                size2 = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size2.append(dim)
+                    else:
+                        size2.append(dace.symbolic.evaluate(dim, sdfg.constants))
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -1037,7 +1052,12 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                              "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
-        size3 = out_subset.size()
+        size3 = []
+        for dim in out_subset.size():
+            if dace.symbolic.issymbolic(dim, sdfg.constants):
+                size3.append(dim)
+            else:
+                size3.append(dace.symbolic.evaluate(dim, sdfg.constants))
         if size2 is not None and size2 != size3:
             raise ValueError("Input C matrix must match output matrix.")
         if len(size3) != 2:

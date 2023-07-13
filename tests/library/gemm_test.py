@@ -12,7 +12,8 @@ from dace.libraries.blas import Gemm
 M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
-
+L = dace.symbol('L')
+O = dace.symbol('O')
 
 @pytest.mark.parametrize(
     ('implementation', ),
@@ -33,6 +34,52 @@ def test_gemm_no_c(implementation):
     assert np.allclose(result, A @ B)
 
     Gemm.default_implementation = None
+
+def test_gemm_symbolic():
+    sdfg = dace.SDFG("gemm")
+    state = sdfg.add_state()
+    A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
+    B, B_arr = sdfg.add_array("B", [L, N], dace.float64)
+    C, C_arr = sdfg.add_array("C", [O, N], dace.float64)
+
+    rA = state.add_read("A")
+    rB = state.add_read("B")
+    wC = state.add_write("C")
+
+    libnode = Gemm('_Gemm_', transA=False, transB=False, alpha=1.0, beta=0.0)
+    state.add_node(libnode)
+
+    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+
+    try:
+        sdfg.validate()
+    except dace.sdfg.InvalidSDFGNodeError:
+        pass
+
+    sdfg.specialize({
+        "M": 32,
+        "O": 32,
+        "K": 128,
+        "L": 128,
+        "N": 64
+    })
+
+    sdfg.validate()
+
+
+    sdfg.specialize({
+        "M": 32,
+        "O": 33,
+        "K": 128,
+        "L": 127,
+        "N": 54
+    })
+    try:
+        sdfg.validate()
+    except dace.sdfg.InvalidSDFGNodeError:
+        pass
 
 
 def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, alpha, beta, implementation, sdfg_name):
@@ -176,3 +223,4 @@ if __name__ == "__main__":
         test_library_gemm('cuBLAS')
     test_library_gemm('pure')
     test_library_gemm('MKL')
+    test_gemm_symbolic()

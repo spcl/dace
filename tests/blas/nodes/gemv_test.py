@@ -9,6 +9,10 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 
+M = dace.symbol('M')
+K = dace.symbol('K')
+L = dace.symbol('L')
+O = dace.symbol('O')
 
 def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):
 
@@ -125,6 +129,51 @@ def test_gemv_fpga_accumulate():
     return run_gemv("accumulate", 256, 512, vectorize=4)
 
 
+def test_gemv_symbolic():
+    sdfg = dace.SDFG("gemv")
+    state = sdfg.add_state()
+    A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
+    B, B_arr = sdfg.add_array("B", [L], dace.float64)
+    C, C_arr = sdfg.add_array("C", [O], dace.float64)
+
+    rA = state.add_read("A")
+    rB = state.add_read("B")
+    wC = state.add_write("C")
+
+    libnode = blas.Gemv('_Gemv_', transA=False, alpha=1.0, beta=0.0)
+    state.add_node(libnode)
+
+    state.add_edge(rA, None, libnode, '_A', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_x', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_y', wC, None, dace.Memlet.from_array(C, C_arr))
+
+    try:
+        sdfg.validate()
+    except dace.sdfg.InvalidSDFGNodeError:
+        pass
+
+    sdfg.specialize({
+        "M": 32,
+        "L": 128,
+        "O": 32,
+        "K": 128,
+    })
+
+    sdfg.validate()
+
+    sdfg.specialize({
+        "M": 32,
+        "L": 128,
+        "O": 33,
+        "K": 127,
+    })
+
+    try:
+        sdfg.validate()
+    except dace.sdfg.InvalidSDFGNodeError:
+        pass
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("M", type=int, nargs="?", default=256)
@@ -141,3 +190,5 @@ if __name__ == "__main__":
 
     run_gemv(args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x,
              args.tile_size_y)
+
+    test_gemv_symbolic()

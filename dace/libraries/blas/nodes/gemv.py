@@ -892,15 +892,30 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
             if dst_conn == "_A":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
-                size_a = subset.size()
+                size_a = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size_a.append(dim)
+                    else:
+                        size_a.append(dace.symbolic.evaluate(dim, sdfg.constants))
             if dst_conn == "_x":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
-                size_x = subset.size()
+                size_x = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size_x.append(dim)
+                    else:
+                        size_x.append(dace.symbolic.evaluate(dim, sdfg.constants))
             if dst_conn == "_y":
                 subset = copy.deepcopy(memlet.subset)
                 subset.squeeze()
-                size_y_in = subset.size()
+                size_y_in = []
+                for dim in subset.size():
+                    if dace.symbolic.issymbolic(dim, sdfg.constants):
+                        size_y_in.append(dim)
+                    else:
+                        size_y_in.append(dace.symbolic.evaluate(dim, sdfg.constants))
 
         if len(size_a) != 2 or len(size_x) != 1:
             raise ValueError("Matrix-vector product only supported on matrix-vector input")
@@ -919,7 +934,12 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 
         out_subset = copy.deepcopy(out_memlet.subset)
         out_subset.squeeze()
-        size_y_out = out_subset.size()
+        size_y_out = []
+        for dim in out_subset.size():
+            if dace.symbolic.issymbolic(dim, sdfg.constants):
+                size_y_out.append(dim)
+            else:
+                size_y_out.append(dace.symbolic.evaluate(dim, sdfg.constants))
         if size_y_in is not None and size_y_in != size_y_out:
             raise ValueError("Input y-vector must match output y-vector.")
         if (len(size_y_out) != 1 or size_y_out[0] != a_rows):
