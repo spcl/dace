@@ -5,7 +5,6 @@ from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
 import warnings
-import operator
 
 import dace
 import dace.serialize
