@@ -219,6 +219,26 @@ class ExpressionUnnester(ast.NodeTransformer):
 
         node.elts = [elt if isinstance(elt, ast.Name) else self._new_val(elt) for elt in node.elts]
         return node
+    
+    def visit_ListComp(self, node: ast.ListComp) -> ast.ListComp:
+
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_SetComp(self, node: ast.SetComp) -> ast.SetComp:
+
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_DictComp(self, node: ast.DictComp) -> ast.DictComp:
+
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.GeneratorExp:
+
+        # TODO: Unnest to for-loops or Maps?
+        return node
 
 
 class AttributeTransformer(ast.NodeTransformer):
