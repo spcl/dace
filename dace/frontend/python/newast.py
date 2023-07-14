@@ -3653,6 +3653,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     # If the symbol is a callback, but is not used in the nested SDFG, skip it
                     continue
 
+                # NOTE: Is it possible that an array in the SDFG's closure is not in the SDFG?
+                # NOTE: Perhaps its use was simplified/optimized away?
+                if aname not in sdfg.arrays:
+                    continue
+
                 # First, we do an inverse lookup on the already added closure arrays for `arr`.
                 is_new_arr = True
                 for k, v in self.nested_closure_arrays.items():
@@ -3739,15 +3744,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 mapping[aname] = arg
         for arg in args_to_remove:
             args.remove(arg)
-
-        # Drop args that are not in the SDFG
-        filtered_args = []
-        for conn, arg in args:
-            if conn not in sdfg.arrays:
-                warnings.warn(f'Connector {conn} not found in SDFG; dropping it')
-            else:
-                filtered_args.append((conn, arg))
-        args = filtered_args
 
         # Change connector names
         updated_args = []
