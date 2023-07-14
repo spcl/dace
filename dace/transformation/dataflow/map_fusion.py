@@ -443,9 +443,16 @@ class MapFusion(transformation.SingleStateTransformation):
             graph.node_id(edge.dst),
             edge.dst_conn,
         )
-        # Add intermediate memory between subgraphs. If a scalar,
-        # uses direct connection. If an array, adds a transient node
-        if edge.data.subset.num_elements() == 1:
+        # Add intermediate memory between subgraphs.
+        # If a scalar, uses direct connection. If an array, adds a transient node.
+        # NOTE: If any of the src/dst nodes is a nested SDFG, treat it as an array.
+        is_scalar = edge.data.subset.num_elements() == 1
+        accesses = (
+            [graph.memlet_path(e1)[0].src for e0 in graph.in_edges(access_node) for e1 in graph.memlet_tree(e0)] +
+            [graph.memlet_path(e1)[-1].dst for e0 in graph.out_edges(access_node) for e1 in graph.memlet_tree(e0)])
+        if any(isinstance(a, nodes.NestedSDFG) for a in accesses):
+            is_scalar = False
+        if is_scalar:
             local_name, _ = sdfg.add_scalar(
                 local_name,
                 dtype=access_node.desc(graph).dtype,
@@ -520,5 +527,7 @@ class MapFusion(transformation.SingleStateTransformation):
             # Modify data and memlets on all surrounding edges to match array
             for neighbor in graph.all_edges(local_node):
                 for e in graph.memlet_tree(neighbor):
+                    if e.data.data == local_name:
+                        continue
                     e.data.data = local_name
                     e.data.subset.offset(old_edge.data.subset, negative=True)
