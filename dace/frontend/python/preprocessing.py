@@ -116,6 +116,111 @@ def find_new_name(names: Set[str], base: str = '__var_') -> str:
     return name
 
 
+class ExpressionUnnester(ast.NodeTransformer):
+    """
+    unnests expressions in a given AST.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def _new_val(self, old_val: ast.AST) -> Union[ast.Constant, ast.Name]:
+
+        if isinstance(old_val, (ast.Constant, ast.Name)):
+            return old_val
+
+        old_val = self.visit(old_val)
+
+        if isinstance(old_val, (ast.Constant, ast.Name)):
+            return old_val
+
+        new_val = self._new_name(old_val)
+        self._new_assign(old_val, new_val.id)
+        new_val.parent = old_val.parent
+
+        return new_val
+    
+    def _new_name(self, old_node: ast.AST) -> ast.Name:
+
+        new_id = find_new_name(self.names)
+        self.names.add(new_id)
+        new_name = ast.Name(id=new_id, ctx=ast.Load())
+        ast.copy_location(new_name, old_node)
+
+        return new_name
+    
+    def _new_assign(self, old_node: ast.AST, new_id: str) -> None:
+
+        parent, attr, idx = find_parent_body(old_node.parent)
+        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=old_node)
+        self.ast_nodes_to_add.append((parent, attr, idx, assign))
+    
+    def visit(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, _do_not_parse):
+            return node
+        if isinstance(node, _only_parse_body):
+            for stmt in node.body:
+                self.visit(stmt)
+            return node
+        return super().visit(node)
+    
+    def visit_BoolOp(self, node: ast.BoolOp) -> ast.BoolOp:
+
+        node.values = [self._new_val(val) for val in node.values]
+        return node
+    
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.Name:
+        
+        node.target = self._new_val(node.target)
+        node.value = self._new_val(node.value)
+        
+        self._new_assign(node.value, node.target.id)
+
+        new_node = node.target
+        new_node.ctx = ast.Load()
+        new_node.parent = node.parent
+ 
+        return new_node
+    
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
+    
+        node.left = self._new_val(node.left)
+        node.right = self._new_val(node.right)
+        
+        return node
+    
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.UnaryOp:
+    
+        node.operand = self._new_val(node.operand) 
+        return node
+    
+    def visit_Lambda(self, node: ast.Lambda) -> ast.Lambda:
+
+        # NOTE: We cannot unnest the body of a lambda, so we just return the node.
+        # TODO: We could unnest the body of a lambda to a proper function definition.
+
+        return node
+    
+    def visit_IfExp(self, node: ast.IfExp) -> ast.IfExp:
+        
+        node.test = self._new_val(node.test)
+        node.body = self._new_val(node.body)
+        node.orelse = self._new_val(node.orelse)
+        return node
+    
+    def visit_Dict(self, node: ast.Dict) -> ast.Dict:
+
+        node.keys = [key if isinstance(key, ast.Name) else self._new_val(key) for key in node.keys]
+        node.values = [val if isinstance(val, ast.Name) else self._new_val(val) for val in node.values]
+        return node
+    
+    def visit_Set(self, node: ast.Set) -> ast.Set:
+
+        node.elts = [elt if isinstance(elt, ast.Name) else self._new_val(elt) for elt in node.elts]
+        return node
+
+
 class AttributeTransformer(ast.NodeTransformer):
     """
     Transforms indirect attribute accesses to SSA.
@@ -1860,16 +1965,17 @@ def preprocess_dace_program(f: Callable[..., Any],
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
-    
 
     name_getter = NameGetter()
     name_getter.visit(src_ast)
     program_names = name_getter.names
     src_ast = ParentSetter().visit(src_ast)
-    subatrr_replacer = NestedSubsAttrsReplacer(names=program_names)
-    src_ast = subatrr_replacer.visit(src_ast)
-    for parent, idx, node in reversed(subatrr_replacer.ast_nodes_to_add):
+    unnester = ExpressionUnnester(names=program_names)
+    src_ast = unnester.visit(src_ast)
+    for parent, idx, node in reversed(unnester.ast_nodes_to_add):
         parent.body.insert(idx, node)
+    
+    print(astutils.unparse(src_ast))
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
