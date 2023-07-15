@@ -125,7 +125,13 @@ class ExpressionUnnester(ast.NodeTransformer):
         self.names = names or set()
         self.ast_nodes_to_add = []
     
-    def _new_val(self, old_val: ast.AST) -> Union[ast.Constant, ast.Name]:
+    def _new_val(self, old_val: Union[ast.AST, Any]) -> Union[ast.Constant, ast.Name]:
+
+        if old_val is None:
+            return old_val
+
+        if not isinstance(old_val, ast.AST):
+            return old_val
 
         if isinstance(old_val, (ast.Constant, ast.Name)):
             return old_val
@@ -152,8 +158,13 @@ class ExpressionUnnester(ast.NodeTransformer):
     
     def _new_assign(self, old_node: ast.AST, new_id: str) -> None:
 
+        val = old_node
+        if isinstance(old_node, ast.Slice):
+            val = ast.Call(func=ast.Name(id='slice', ctx=ast.Load()),
+                           args=[old_node.lower, old_node.upper, old_node.step], keywords=[])
+
         parent, attr, idx = find_parent_body(old_node.parent)
-        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=old_node)
+        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=val)
         self.ast_nodes_to_add.append((parent, attr, idx, assign))
     
     def visit(self, node: ast.AST) -> ast.AST:
@@ -222,22 +233,113 @@ class ExpressionUnnester(ast.NodeTransformer):
     
     def visit_ListComp(self, node: ast.ListComp) -> ast.ListComp:
 
+        # NOTE: We cannot unnest a ListComp's elt because it likely depends on the generators
         # TODO: Unnest to for-loops or Maps?
         return node
     
     def visit_SetComp(self, node: ast.SetComp) -> ast.SetComp:
 
+        # NOTE: We cannot unnest a SetComp's elt because it likely depends on the generators
         # TODO: Unnest to for-loops or Maps?
         return node
     
     def visit_DictComp(self, node: ast.DictComp) -> ast.DictComp:
 
+        # NOTE: We cannot unnest a DictComp's key-value pair because it likely depends on the generators
         # TODO: Unnest to for-loops or Maps?
         return node
     
     def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.GeneratorExp:
 
+        # NOTE: We cannot unnest a GeneratorExp's elt because it likely depends on the generators
         # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_Await(self, node: ast.Await) -> ast.Await:
+
+        if isinstance(node.value, ast.Call):
+            return self.generic_visit(node)
+        node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Yield(self, node: ast.Yield) -> ast.Yield:
+
+        if node.value is not None:
+            node.value = self._new_val(node.value)
+        return node
+    
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> ast.YieldFrom:
+
+        node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Compare(self, node: ast.Compare) -> ast.Compare:
+
+        node.left = self._new_val(node.left)
+        node.comparators = [self._new_val(comp) for comp in node.comparators]
+        return node
+    
+    def visit_Call(self, node: ast.Call) -> ast.Call:
+
+        node.func = self._new_val(node.func)
+        node.args = [self._new_val(arg) for arg in node.args]
+        node.keywords = [self._new_val(kw) for kw in node.keywords]
+        return node
+    
+    def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
+
+        node.value = self._new_val(node.value)
+        node.conversion = self._new_val(node.conversion)
+        if node.format_spec is not None:
+            node.format_spec = self.visit(node.format_spec)
+        return node
+    
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+
+        # NOTE: JoinedStr's values must be only FormattedValues and Constants
+        node.values = [self.visit(val) for val in node.values]
+        return node
+    
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+
+        return node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+
+        node.value = self._new_val(node.value)
+        node.attr = self._new_val(node.attr)
+        return node
+    
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+
+        node.value = self._new_val(node.value)
+        node.slice = self._new_val(node.slice)
+        return node
+    
+    def visit_Starred(self, node: ast.Starred) -> ast.Starred:
+
+        # TODO: How should this be handled?
+        return node
+    
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+
+        return node
+    
+    def visit_List(self, node: ast.List) -> ast.List:
+
+        node.elts = [self._new_val(elt) for elt in node.elts]
+        return node
+    
+    def visit_Tuple(self, node: ast.Tuple) -> ast.Tuple:
+
+        node.elts = [self._new_val(elt) for elt in node.elts]
+        return node
+    
+    def visit_Slice(self, node: ast.Slice) -> ast.Slice:
+
+        node.lower = self._new_val(node.lower) or ast.Constant(value=0)
+        node.upper = self._new_val(node.upper)
+        node.step = self._new_val(node.step) or ast.Constant(value=1)
         return node
 
 
