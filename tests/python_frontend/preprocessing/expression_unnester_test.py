@@ -6,10 +6,10 @@ import inspect
 import itertools
 import numpy as np
 
-
 from collections.abc import Callable
 from dace.frontend.python.astutils import _remove_outer_indentation
 from dace.frontend.python import preprocessing as pr
+from dataclasses import dataclass, field
 from numpy import typing as npt
 from typing import Any, Dict, List, Tuple
 
@@ -278,6 +278,33 @@ def test_Attribute():
         a = np.arange(s, dtype=np.int32)
         assert original_function(a, b) == new_function(a, b)
 
+
+def test_Attribute_1():
+
+    @dataclass
+    class MyClass:
+        a: npt.NDArray[np.int32]
+        b: npt.NDArray[np.int32] = field(default=None, init=False)
+
+    def original_function(arr: MyClass, b: int) -> int:
+        arr.a += b
+        arr.b = MyClass(arr.a)
+        arr.b.b = MyClass(arr.a)
+    
+    new_function = _unnest(original_function, 3, locals())
+
+    a_ref = MyClass(np.arange(10, dtype=np.int32))
+    a_val = MyClass(np.arange(10, dtype=np.int32))
+
+    original_function(a_ref, 1)
+    new_function(a_val, 1)
+
+    assert np.array_equal(a_ref.a, a_val.a)
+    assert np.array_equal(a_ref.b.a, a_val.b.a)
+    assert np.array_equal(a_ref.b.b.a, a_val.b.b.a)
+    assert a_val.b.b.b is None
+
+
 def test_Subscript():
 
     def original_function(a: npt.NDArray[np.int32], b: int) -> int:
@@ -339,6 +366,25 @@ def test_Slice():
         assert np.array_equal(original_function(a, b, c), new_function(a, b, c))
 
 
+def test_Slice_1():
+
+    def original_function(a: npt.NDArray[np.int32], b: npt.NDArray[np.int32], c: npt.NDArray[np.int32]):
+        a[b[c[0]:c[1]]] = 1000
+    
+    new_function = _unnest(original_function, 4, locals())
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(1, 100, size=(10,))
+    for s in randints:
+        a_ref = np.arange(s, dtype=np.int32)
+        a_val = a_ref.copy()
+        b = np.arange(s, dtype=np.int32)
+        n = rng.integers(0, s)
+        c = np.array([n, min(s-1, n + 2)], dtype=np.int32)
+        original_function(a_ref, b, c)
+        new_function(a_val, b, c)
+        assert np.array_equal(a_ref, a_val)
+
 if __name__ == '__main__':
     test_BoolOp()
     test_NamedExpr()
@@ -355,7 +401,9 @@ if __name__ == '__main__':
     test_Call()
     test_JoinedStr()
     test_Attribute()
+    test_Attribute_1()
     test_Subscript()
     test_List()
     test_Tuple()
     test_Slice()
+    test_Slice_1()
