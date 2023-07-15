@@ -161,6 +161,19 @@ def test_if_return_chain():
     assert if_return_chain(15)[0] == 4
 
 
+def test_if_test_call():
+
+    @dace.program
+    def if_test_call(a, b):
+        if bool(a):
+            return a
+        else:
+            return b
+
+    assert if_test_call(0, 2)[0] == if_test_call.f(0, 2)
+    assert if_test_call(1, 2)[0] == if_test_call.f(1, 2)
+
+
 if __name__ == "__main__":
     test_simple_if()
     test_call_if()
@@ -169,3 +182,4 @@ if __name__ == "__main__":
     test_call_while()
     test_if_return_both()
     test_if_return_chain()
+    test_if_test_call()

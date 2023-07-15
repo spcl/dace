@@ -2352,6 +2352,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Visit test-condition
         if not is_test_simple:
             parsed_node = self.visit(node)
+            if isinstance(parsed_node, (list, tuple)) and len(parsed_node) == 1:
+                parsed_node = parsed_node[0]
             if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
                 datadesc = self.sdfg.arrays[parsed_node]
                 if isinstance(datadesc, data.Array):
