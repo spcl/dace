@@ -86,7 +86,7 @@ class TensorTranspose(nodes.LibraryNode):
     """ Implements out-of-place tensor transpositions. """
 
     implementations = {"pure": ExpandPure, "HPTT": ExpandHPTT}
-    default_implementation = None
+    default_implementation = 'pure'
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
     alpha = properties.Property(dtype=Number, default=1, desc="Input tensor scaling factor")

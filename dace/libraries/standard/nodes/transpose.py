@@ -215,7 +215,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS
     }
-    default_implementation = None
+    default_implementation = 'pure'
 
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 
