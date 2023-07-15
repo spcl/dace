@@ -1,12 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import dace
+import dace.libraries.linalg.environments as environments
+
 from dace import library, nodes, properties
 from dace.data import _prod
 from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-import dace.libraries.linalg.environments as environments
 
 
 @library.expansion

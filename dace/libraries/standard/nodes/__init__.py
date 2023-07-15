@@ -1,4 +1,5 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from .code import CodeLibraryNode
 from .gearbox import Gearbox
 from .reduce import Reduce
+from .transpose import Transpose

@@ -778,8 +778,8 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
     if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
-        import dace.libraries.blas  # Avoid import loop
-        tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+        import dace.libraries.standard  # Avoid import loop
+        tasklet = dace.libraries.standard.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
