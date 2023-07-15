@@ -3,3 +3,4 @@ from .code import CodeLibraryNode
 from .gearbox import Gearbox
 from .reduce import Reduce
 from .transpose import Transpose
+from .ttranspose import TensorTranspose

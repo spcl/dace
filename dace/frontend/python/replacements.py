@@ -796,7 +796,7 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
 
         read = state.add_read(inpname)
         write = state.add_write(outname)
-        from dace.libraries.ttranspose import TensorTranspose
+        from dace.libraries.standard import TensorTranspose
         tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
         state.add_node(tasklet)
         state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))

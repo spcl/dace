@@ -1,5 +1,4 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import ctypes
 import os
 from dace import config, library
 

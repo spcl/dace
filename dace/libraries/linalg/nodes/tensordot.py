@@ -232,7 +232,7 @@ class ExpandTTGT(ExpandTransformation):
             state.add_edge(tasklet, '_c', dot_vnode, None, dace.Memlet.from_array(dot_vname, dot_view))
             state.add_edge(dot_vnode, 'views', dot_anode, None, dace.Memlet.from_array(dot_name, dot_arr))
             out_node = state.add_write('_out_tensor')
-            from dace.libraries.ttranspose import TensorTranspose
+            from dace.libraries.standard import TensorTranspose
             tasklet = TensorTranspose('_TensorTranspose', node.permutation)
             state.add_edge(dot_anode, None, tasklet, '_inp_tensor', dace.Memlet.from_array(dot_name, dot_arr))
             state.add_edge(tasklet, '_out_tensor', out_node, None, dace.Memlet.from_array('_out_tensor', out_arr))
