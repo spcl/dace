@@ -93,6 +93,93 @@ def test_Delete():
         assert ref == val
 
 
+def test_Assign():
+
+    def original_function(a: int, b: int) -> int:
+        c, d = a + b, a - b
+        return c, d
+    
+    new_function = _unnest(original_function, 2)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_AugAssign():
+
+    def original_function(a: int, b: int) -> int:
+        a += b
+        return a
+    
+    new_function = _unnest(original_function, 0)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_AnnAssign():
+
+    def original_function(a: int, b: int) -> int:
+        c: int = a + b
+        return c
+    
+    new_function = _unnest(original_function, 0)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_For():
+
+    def original_function(a: int, b: int) -> int:
+        for i in range(b):
+            a += i
+        return a
+    
+    new_function = _unnest(original_function, 0)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_While():
+
+    def original_function(a: int, b: int) -> int:
+        while min(a, b) < b:
+            a += 1
+        return a
+    
+    new_function = _unnest(original_function, 0)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_If():
+
+    def original_function(a: int, b: int) -> int:
+        if a < b:
+            a += 1
+        return a
+    
+    new_function = _unnest(original_function, 1)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
 ##### Tests for Expressions #####
 
 
@@ -537,7 +624,7 @@ def test_mixed_3():
 
         return table
 
-    new_function = _unnest(original_function, 54, locals())
+    new_function = _unnest(original_function, 58, locals())
 
     rng = np.random.default_rng(42)
     for _ in range(10):
@@ -546,9 +633,69 @@ def test_mixed_3():
         assert np.allclose(original_function(N, seq), new_function(N, seq))
 
 
+def test_mixed_4():
+
+    # -----------------------------------------------------------------------------
+    # From Numpy to Python
+    # Copyright (2017) Nicolas P. Rougier - BSD license
+    # More information at https://github.com/rougier/numpy-book
+    # -----------------------------------------------------------------------------
+
+    def original_function(xmin, xmax, ymin, ymax, xn, yn, itermax, horizon=2.0):
+        # Adapted from https://thesamovar.wordpress.com/2009/03/22/fast-fractals-with-python-and-numpy/
+        Xi, Yi = np.mgrid[0:xn, 0:yn]
+        X = np.linspace(xmin, xmax, xn, dtype=np.float64)[Xi]
+        Y = np.linspace(ymin, ymax, yn, dtype=np.float64)[Yi]
+        C = X + Y * 1j
+        N_ = np.zeros(C.shape, dtype=np.int64)
+        Z_ = np.zeros(C.shape, dtype=np.complex128)
+        Xi.shape = Yi.shape = C.shape = xn * yn
+
+        Z = np.zeros(C.shape, np.complex128)
+        for i in range(itermax):
+            if not len(Z):
+                break
+
+            # Compute for relevant points only
+            np.multiply(Z, Z, Z)
+            np.add(Z, C, Z)
+
+            # Failed convergence
+            I = abs(Z) > horizon
+            N_[Xi[I], Yi[I]] = i + 1
+            Z_[Xi[I], Yi[I]] = Z[I]
+
+            # Keep going with those who have not diverged yet
+            np.logical_not(I, I)  # np.negative(I, I) not working any longer
+            Z = Z[I]
+            Xi, Yi = Xi[I], Yi[I]
+            C = C[I]
+        return Z_.T, N_.T
+    
+    new_function = _unnest(original_function, 36, locals())
+
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        xmin = rng.random()
+        xmax = xmin + rng.random()
+        ymin = rng.random()
+        ymax = ymin + rng.random()
+        xn = rng.integers(10, 20)
+        yn = rng.integers(10, 20)
+        itermax = rng.integers(10, 20)
+        assert np.allclose(original_function(xmin, xmax, ymin, ymax, xn, yn, itermax)[0],
+                           new_function(xmin, xmax, ymin, ymax, xn, yn, itermax)[0])
+
+
 if __name__ == '__main__':
     test_Return()
     test_Delete()
+    test_Assign()
+    test_AugAssign()
+    test_AnnAssign()
+    test_For()
+    test_While()
+    test_If()
     test_BoolOp()
     test_NamedExpr()
     test_BinOp()
@@ -574,3 +721,4 @@ if __name__ == '__main__':
     test_mixed_1()
     test_mixed_2()
     test_mixed_3()
+    test_mixed_4()

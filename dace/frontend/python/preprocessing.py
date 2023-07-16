@@ -183,7 +183,11 @@ class ExpressionUnnester(ast.NodeTransformer):
 
     def visit_Return(self, node: ast.Return) -> ast.Return:
 
-        node.value = self._new_val(node.value)
+        if node.value is not None:
+            if isinstance(node.value, ast.Tuple):
+                node.value = self.visit(node.value)
+            else:
+                node.value = self._new_val(node.value)
         return node
     
     def visit_Delete(self, node: ast.Delete) -> ast.Delete:
@@ -202,6 +206,38 @@ class ExpressionUnnester(ast.NodeTransformer):
     
     def visit_Assign(self, node: ast.Assign) -> ast.Assign:
 
+        # TODO: How to handle swaps?
+        return self.generic_visit(node)
+    
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
+
+        return self.generic_visit(node)
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+
+        return self.generic_visit(node)
+    
+    def visit_For(self, node: ast.For) -> ast.For:
+
+        # TODO: Do we want to break down iterator structures to their components?
+        return self.generic_visit(node)
+    
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+
+        return self.generic_visit(node)
+    
+    def visit_While(self, node: ast.While) -> ast.While:
+
+        # NOTE: We cannot unnest the test expression because it has to be reevaluated every iteration.
+        # TODO: Rewrite the test expression as a function call?
+        # TODO: Unnest the test expression and repeat it at the end of the loop body?
+        node.body = [self.visit(stmt) for stmt in node.body]
+        node.orelse = [self.visit(stmt) for stmt in node.orelse]
+        return node
+    
+    def visit_If(self, node: ast.If) -> ast.If:
+
+        node.test = self._new_val(node.test)
         return self.generic_visit(node)
 
     ##### Expressions #####
