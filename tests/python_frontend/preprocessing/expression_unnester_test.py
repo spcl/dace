@@ -5,6 +5,7 @@ import ast
 import inspect
 import itertools
 import numpy as np
+import warnings
 
 from collections.abc import Callable
 from dace.frontend.python.astutils import _remove_outer_indentation
@@ -12,6 +13,9 @@ from dace.frontend.python import preprocessing as pr
 from dataclasses import dataclass, field
 from numpy import typing as npt
 from typing import Any, Dict, List, Tuple
+
+
+##### Helper functions #####
 
 
 def _unnest(func: Callable[..., Any], expected_var_num: int, context: Dict[str, Any] = None) -> Callable[..., Any]:
@@ -52,6 +56,44 @@ def _validate_unnesting(unnested_ast: ast.AST, expected_var_num: int) -> None:
         name = f'__var_{i}'
         assert name in program_names
     assert f'__var_{expected_var_num}' not in program_names
+
+
+##### Tests for Statements #####
+
+
+def test_Return():
+
+    def original_function(a: int, b: int) -> int:
+        return a + b
+    
+    new_function = _unnest(original_function, 1)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(-99, 100, size=(10, 2))
+    for (a, b) in randints:
+        assert original_function(a, b) == new_function(a, b)
+
+
+def test_Delete():
+
+    def original_function(a: Dict[int, Any], b: int) -> int:
+        for i in range(b):
+            del a[b - i]
+            
+    
+    new_function = _unnest(original_function, 1)
+
+    rng = np.random.default_rng(42)
+    randints = rng.integers(10, 100, size=(10,))
+    for s in randints:
+        ref = {i: i for i in range(s)}
+        val = {i: i for i in range(s)}
+        original_function(ref, s - 1)
+        new_function(val, s - 1)
+        assert ref == val
+
+
+##### Tests for Expressions #####
 
 
 def test_BoolOp():
@@ -114,7 +156,7 @@ def test_Lambda():
         f = lambda x: x + a * 2
         return f(b)
     
-    new_function = _unnest(original_function, 0)
+    new_function = _unnest(original_function, 1)
 
     rng = np.random.default_rng(42)
     randints = rng.integers(-99, 100, size=(10, 2))
@@ -385,7 +427,128 @@ def test_Slice_1():
         new_function(a_val, b, c)
         assert np.array_equal(a_ref, a_val)
 
+
+##### Mixed tests #####
+
+
+def test_mixed():
+
+    try:
+        from scipy import sparse
+    except ImportError:
+        warnings.warn('Skipping mixed test, scipy not installed')
+        return
+    
+    def original_function(A: sparse.csr_matrix, B: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        C = np.zeros((A.shape[0], B.shape[1]), dtype=A.dtype)
+        for i, j in itertools.product(range(A.shape[0]), range(B.shape[1])):
+            for k in range(A.indptr[i], A.indptr[i + 1]):
+                C[i, j] += A.data[k] * B[A.indices[k], j]
+        return C
+    
+    new_function = _unnest(original_function, 26, locals())
+
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        A = sparse.random(20, 10, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+        B = rng.random((10, 5), dtype=np.float32)
+        assert np.allclose(original_function(A, B), new_function(A, B))
+
+
+def test_mixed_1():
+
+    try:
+        from scipy import sparse
+    except ImportError:
+        warnings.warn('Skipping mixed test, scipy not installed')
+        return
+    
+    def original_function(A: List[sparse.csr_matrix], B: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        C = np.zeros((len(A), A[0].shape[0], B.shape[-1]), dtype=np.float32)
+        for l, i, j in itertools.product(range(len(A)), range(A[0].shape[0]), range(B.shape[-1])):
+            for k in range(A[l].indptr[i], A[l].indptr[i + 1]):
+                C[l, i, j] += A[l].data[k] * B[l, A[l].indices[k], j]
+        return C
+    
+    new_function = _unnest(original_function, 37, locals())
+
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        A = [sparse.random(20, 10, density=0.1, format='csr', dtype=np.float32, random_state=rng) for _ in range(5)]
+        B = rng.random((5, 10, 5), dtype=np.float32)
+        assert np.allclose(original_function(A, B), new_function(A, B))
+
+
+def test_mixed_2():
+
+    try:
+        from scipy import sparse
+    except ImportError:
+        warnings.warn('Skipping mixed test, scipy not installed')
+        return
+    
+    def original_function(A: sparse.csr_matrix,
+                          B: npt.NDArray[np.float32],
+                          C: npt.NDArray[np.float32]) -> sparse.csr_matrix:
+        D = sparse.csr_matrix((np.zeros(A.nnz, dtype=A.dtype), A.indices, A.indptr), shape=A.shape)
+        for i in range(A.shape[0]):
+            for j in range(A.indptr[i], A.indptr[i + 1]):
+                for k in range(B.shape[1]):
+                    D.data[j] += A.data[j] * B[i, k] * C[k, A.indices[j]]
+        return D
+    
+    new_function = _unnest(original_function, 28, locals())
+
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        A = sparse.random(20, 10, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+        B = rng.random((20, 5), dtype=np.float32)
+        C = rng.random((5, 10), dtype=np.float32)
+        assert np.allclose(original_function(A, B, C).todense(), new_function(A, B, C).todense())
+
+
+def test_mixed_3():
+
+    def match(b1: int, b2: int) -> int:
+        if b1 + b2 == 3:
+            return 1
+        else:
+            return 0
+
+    def original_function(N: int, seq: npt.NDArray[np.int32]) -> npt.NDArray[np.int32]:
+
+        table = np.zeros((N, N), np.int32)
+
+        for i in range(N - 1, -1, -1):
+            for j in range(i + 1, N):
+                if j - 1 >= 0:
+                    table[i, j] = max(table[i, j], table[i, j - 1])
+                if i + 1 < N:
+                    table[i, j] = max(table[i, j], table[i + 1, j])
+                if j - 1 >= 0 and i + 1 < N:
+                    if i < j - 1:
+                        table[i,
+                            j] = max(table[i, j],
+                                    table[i + 1, j - 1] + match(seq[i], seq[j]))
+                    else:
+                        table[i, j] = max(table[i, j], table[i + 1, j - 1])
+                for k in range(i + 1, j):
+                    table[i, j] = max(table[i, j], table[i, k] + table[k + 1, j])
+
+        return table
+
+    new_function = _unnest(original_function, 54, locals())
+
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        N = rng.integers(10, 20)
+        seq = rng.integers(0, 4, N)
+        assert np.allclose(original_function(N, seq), new_function(N, seq))
+
+
 if __name__ == '__main__':
+    test_Return()
+    test_Delete()
     test_BoolOp()
     test_NamedExpr()
     test_BinOp()
@@ -407,3 +570,7 @@ if __name__ == '__main__':
     test_Tuple()
     test_Slice()
     test_Slice_1()
+    test_mixed()
+    test_mixed_1()
+    test_mixed_2()
+    test_mixed_3()

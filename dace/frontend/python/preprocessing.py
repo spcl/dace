@@ -80,7 +80,7 @@ def find_parent_body(node: ast.AST) -> Tuple[ast.AST, int]:
     :return: A tuple of the parent AST node and the index of the given node within its body.
     """
     last_parent = node.parent
-    found, attr, idx = False, None, None
+    found, attr, idx = parent_found(last_parent, node)
     while not found:
         new_parent = last_parent.parent
         last_parent, new_parent = new_parent, last_parent
@@ -135,6 +135,9 @@ class ExpressionUnnester(ast.NodeTransformer):
 
         if isinstance(old_val, (ast.Constant, ast.Name)):
             return old_val
+        
+        if hasattr(old_val, 'ctx') and isinstance(old_val.ctx, ast.Del):
+            old_val.ctx = ast.Load()
 
         old_val = self.visit(old_val)
 
@@ -175,6 +178,33 @@ class ExpressionUnnester(ast.NodeTransformer):
                 self.visit(stmt)
             return node
         return super().visit(node)
+    
+    ##### Statements #####
+
+    def visit_Return(self, node: ast.Return) -> ast.Return:
+
+        node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Delete(self, node: ast.Delete) -> ast.Delete:
+
+        targets = []
+        for target in node.targets:
+            if isinstance(target, ast.Subscript):
+                target = self.visit(target)
+            else:
+                target = self._new_val(target)
+            if hasattr(target, 'ctx') and not isinstance(target.ctx, ast.Del):
+                target.ctx = ast.Del()
+            targets.append(target)
+        node.targets = targets
+        return node
+    
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+
+        return self.generic_visit(node)
+
+    ##### Expressions #####
     
     def visit_BoolOp(self, node: ast.BoolOp) -> ast.BoolOp:
 
@@ -283,7 +313,8 @@ class ExpressionUnnester(ast.NodeTransformer):
 
         node.func = self._new_val(node.func)
         node.args = [self._new_val(arg) for arg in node.args]
-        node.keywords = [self._new_val(kw) for kw in node.keywords]
+        for kw in node.keywords:
+            kw.value = self._new_val(kw.value)
         return node
     
     def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
