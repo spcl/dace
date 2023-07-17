@@ -322,6 +322,8 @@ def test_persistent_fusion():
 
     assert np.allclose(depth, reference), "Result doesn't match!"
 
+
+@pytest.mark.gpu
 def test_persistent_fusion_interstate():
     N = dace.symbol('N', dtype=dace.int64)
 
