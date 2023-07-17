@@ -1309,6 +1309,18 @@ class ProgramVisitor(ExtNodeVisitor):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 
+        from dace.transformation.interstate import RefineNestedAccess
+        def _refine_nested_sdfg(parent: SDFG):
+            for state in parent.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.NestedSDFG):
+                        _refine_nested_sdfg(node.sdfg)
+            if parent.parent_sdfg is not None:
+                try:
+                    RefineNestedAccess.apply_to(parent.parent_sdfg, nsdfg=parent.parent_nsdfg_node)
+                except ValueError:
+                    pass
+        _refine_nested_sdfg(self.sdfg)
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
