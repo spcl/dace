@@ -213,8 +213,8 @@ class GPUPersistentKernel(SubgraphTransformation):
         kernel_args = []
         for data in kernel_data:
             if data not in other_data and (isinstance(sdfg.arrays[data], dace.data.Stream) or
-                                           (isinstance(sdfg.arrays[data], dace.data.Array)
-                                            and sdfg.arrays[data].storage == StorageType.Register)):
+                                           (isinstance(sdfg.arrays[data], dace.data.Array) and sdfg.arrays[data].storage
+                                            in (StorageType.Register, StorageType.GPU_Shared))):
                 kernel_sdfg.add_datadesc(data, sdfg.arrays[data])
                 del sdfg.arrays[data]
             else:
@@ -257,23 +257,29 @@ class GPUPersistentKernel(SubgraphTransformation):
         )
         nested_sdfg.schedule = ScheduleType.GPU_Persistent
 
+        # If no inputs or outputs were given, connect with an empty memlet
+        if not kernel_args_read:
+            launch_state.add_nedge(map_entry, nested_sdfg, dace.Memlet())
+        if not kernel_args_write:
+            launch_state.add_nedge(nested_sdfg, map_exit, dace.Memlet())
+
         # Create and connect read only data access nodes
         for arg in kernel_args_read:
             read_node = launch_state.add_read(arg)
-            launch_state.add_memlet_path(read_node,
-                                         map_entry,
-                                         nested_sdfg,
-                                         dst_conn=arg,
-                                         memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
+            launch_state.add_edge_pair(map_entry,
+                                       nested_sdfg,
+                                       read_node,
+                                       internal_connector=arg,
+                                       internal_memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
 
         # Create and connect writable data access nodes
         for arg in kernel_args_write:
             write_node = launch_state.add_write(arg)
-            launch_state.add_memlet_path(nested_sdfg,
-                                         map_exit,
-                                         write_node,
-                                         src_conn=arg,
-                                         memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
+            launch_state.add_edge_pair(map_exit,
+                                       nested_sdfg,
+                                       write_node,
+                                       internal_connector=arg,
+                                       internal_memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
 
         # Remove no-longer-used symbols in parent SDFG
         from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -318,6 +324,12 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     @staticmethod
     def get_entry_states(sdfg: SDFG, subgraph):
+        """
+        Returns a 2-tuple of the (internal, external) states inside and outside of the SDFG,
+        around which the new nested SDFG will be created. The first element will be a set
+        of source nodes in the internal SDFG; and the second element will be a set of
+        predecessor nodes to the nested SDFG.
+        """
         entry_states_in = set()
         entry_states_out = set()
 
@@ -333,6 +345,12 @@ class GPUPersistentKernel(SubgraphTransformation):
 
     @staticmethod
     def get_exit_states(sdfg: SDFG, subgraph):
+        """
+        Returns a 2-tuple of the (internal, external) states inside and outside of the SDFG,
+        around which the new nested SDFG will be created. The first element will be a set
+        of sink nodes in the internal SDFG; and the second element will be a set of
+        successor nodes to the nested SDFG.
+        """
         exit_states_in = set()
         exit_states_out = set()
 
