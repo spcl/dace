@@ -21,8 +21,10 @@ from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGC
 
 
 _do_not_parse: Tuple[ast.AST]
+NamedExpr = ast.AST
 if sys.version_info >= (3, 8):
     _do_not_parse = (ast.FunctionType, ast.ClassDef)
+    NamedExpr = ast.NamedExpr
 else:
     _do_not_parse = (ast.ClassDef,)
 
@@ -247,7 +249,7 @@ class ExpressionUnnester(ast.NodeTransformer):
         node.values = [self._new_val(val) for val in node.values]
         return node
     
-    def visit_NamedExpr(self, node: ast.NamedExpr) -> ast.Name:
+    def visit_NamedExpr(self, node: NamedExpr) -> ast.Name:
         
         node.target = self._new_val(node.target)
         node.value = self._new_val(node.value)
