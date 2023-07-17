@@ -292,7 +292,19 @@ class InterstateEdge(object):
         else:
             alltypes = symbols
 
-        return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+    
+        # Symbols in assignment keys are candidate newly defined symbols
+        lhs_symbols = set()
+        # Symbols already defined
+        rhs_symbols = set()
+        for lhs, rhs in self.assignments.items():
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
+            if lhs not in rhs_symbols:
+                lhs_symbols.add(lhs)
+        
+        return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
     def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
         """
