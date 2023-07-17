@@ -2143,10 +2143,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
         if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
-                              'not supported')
+            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 not supported')
 
-        if arr1.shape[-1] != arr2.shape[-2]:
+        res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
+        if res is None:
+            warnings.warn(f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
+                          f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
+        elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
@@ -2160,7 +2163,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
 
-        if arr1.shape[1] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Number of matrix columns {} must match"
                               "size of vector {}.".format(arr1.shape[1], arr2.shape[0]))
 
@@ -2168,7 +2175,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
 
-        if arr1.shape[0] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Size of vector {} must match number of matrix "
                               "rows {} must match".format(arr1.shape[0], arr2.shape[0]))
 
@@ -2176,7 +2187,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
-        if arr1.shape[0] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Vectors in vector product must have same size: "
                               "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
 
