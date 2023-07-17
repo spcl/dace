@@ -45,7 +45,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     validate = Property(
         desc="Validate the sdfg and the nested sdfg",
         dtype=bool,
-        default=True,
+        default=False,
     )
 
     include_in_assignment = Property(
@@ -172,10 +172,15 @@ class GPUPersistentKernel(SubgraphTransformation):
         # create sdfg for kernel and fill it with states and edges from
         # ssubgraph dfg will be nested at the end
         kernel_sdfg = SDFG('{}kernel'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
+        new_symbols = set()
 
         edges = subgraph.edges()
         for edge in edges:
             kernel_sdfg.add_edge(edge.src, edge.dst, edge.data)
+            for k in entry_edge.data.assignments:
+                new_symbols.add(k)
+                if k in sdfg.symbols and k not in kernel_sdfg.symbols:
+                    kernel_sdfg.add_symbol(k, sdfg.symbols[k])
 
         # Setting entry node in nested SDFG if no entry guard was created
         if entry_guard_state is None:
@@ -187,6 +192,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         # remove the now nested nodes from the outer sdfg and make sure the
         # launch state is properly connected to remaining states
         sdfg.remove_nodes_from(subgraph.nodes())
+        other_states = sdfg.nodes()
 
         if entry_state_out is not None \
                 and len(sdfg.edges_between(entry_state_out, launch_state)) == 0:
@@ -199,13 +205,16 @@ class GPUPersistentKernel(SubgraphTransformation):
         # Handle data for kernel
         kernel_data = set(node.data for state in kernel_sdfg for node in state.nodes()
                           if isinstance(node, nodes.AccessNode))
+        other_data = set(node.data for state in other_states for node in state.nodes()
+                         if isinstance(node, nodes.AccessNode))
 
         # move Streams and Register data into the nested SDFG
         # normal data will be added as kernel argument
         kernel_args = []
         for data in kernel_data:
-            if (isinstance(sdfg.arrays[data], dace.data.Stream) or
-                (isinstance(sdfg.arrays[data], dace.data.Array) and sdfg.arrays[data].storage == StorageType.Register)):
+            if data not in other_data and (isinstance(sdfg.arrays[data], dace.data.Stream) or
+                                           (isinstance(sdfg.arrays[data], dace.data.Array)
+                                            and sdfg.arrays[data].storage == StorageType.Register)):
                 kernel_sdfg.add_datadesc(data, sdfg.arrays[data])
                 del sdfg.arrays[data]
             else:
@@ -265,6 +274,12 @@ class GPUPersistentKernel(SubgraphTransformation):
                                          write_node,
                                          src_conn=arg,
                                          memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
+
+        # Remove no-longer-used symbols in parent SDFG
+        from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+        p = RemoveUnusedSymbols()
+        p.symbols = new_symbols
+        p.apply_pass(sdfg, {})
 
         # Transformation is done
         if self.validate:
