@@ -45,6 +45,7 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.codegen.compiled_sdfg import CompiledSDFG
 
 
 def _arrays_to_json(arrays):
@@ -291,7 +292,19 @@ class InterstateEdge(object):
         else:
             alltypes = symbols
 
-        return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+    
+        # Symbols in assignment keys are candidate newly defined symbols
+        lhs_symbols = set()
+        # Symbols already defined
+        rhs_symbols = set()
+        for lhs, rhs in self.assignments.items():
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
+            if lhs not in rhs_symbols:
+                lhs_symbols.add(lhs)
+        
+        return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
     def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
         """
@@ -359,6 +372,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         the `Memlet` class documentation.
     """
 
+    name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
     _arrays = Property(dtype=dict,
@@ -425,7 +439,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param parent: The parent SDFG or SDFG state (for nested SDFGs).
         """
         super(SDFG, self).__init__()
-        self._name = name
+        self.name = name
         if name is not None and not validate_name(name):
             raise InvalidSDFGError('Invalid SDFG name "%s"' % name, self, None)
 
@@ -491,7 +505,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
         result._sdfg_list = []
         if self._parent_sdfg is None:
+            # Avoid import loops
+            from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
+
             result._sdfg_list = result.reset_sdfg_list()
+            fixed = FixNestedSDFGReferences().apply_pass(result, {})
+            if fixed:
+                warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
+
         return result
 
     @property
@@ -572,7 +593,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         """
-
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1116,27 +1136,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                          for syntax highlighting and completion.
         """
         self.sourcecode = {'code': code, 'language': lang}
-
-    @property
-    def name(self):
-        """ The name of this SDFG. """
-        if self._name != self._orig_name:
-            return self._name
-        newname = self._orig_name
-        numbers = []
-        for sdfg in self._sdfg_list:
-            if sdfg is not self and sdfg._orig_name == self._orig_name:
-                numbers.append(sdfg._num)
-        while self._num in numbers:
-            self._num += 1
-        if self._num > 0:
-            newname = '{}_{}'.format(self._orig_name, self._num)
-            self._name = newname
-        return newname
-
-    @name.setter
-    def name(self, newname: str):
-        self._name = newname
 
     @property
     def label(self):
@@ -1976,8 +1975,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists '
-                                "in SDFG" % name)
+                raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -2214,8 +2212,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> \
-            'dace.codegen.compiler.CompiledSDFG':
+    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
@@ -2250,7 +2247,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
             while sdfg.is_loaded():
-                sdfg._name = f'{self._name}_{index}'
+                sdfg.name = f'{self.name}_{index}'
                 index += 1
             if self.name != sdfg.name:
                 warnings.warn('SDFG "%s" is already loaded by another object, '
@@ -2263,7 +2260,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
-                self.save(os.path.join('_dacegraphs', 'failing.sdfg'))
+                fpath = os.path.join('_dacegraphs', 'failing.sdfg')
+                self.save(fpath)
+                print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
 
             # Generate the program folder and write the source files
@@ -2373,8 +2372,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             before computing the given state. """
         return (e.src for e in self.bfs_edges(state, reverse=True))
 
-    def validate(self, references: Optional[Set[int]] = None) -> None:
-        validate_sdfg(self, references)
+    def validate(self, references: Optional[Set[int]] = None, **context: bool) -> None:
+        validate_sdfg(self, references, **context)
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).
@@ -2609,7 +2608,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                   validate_all=False,
                                   permissive=False,
                                   sequential_innermaps=True,
-                                  register_transients=True):
+                                  register_transients=True,
+                                  simplify=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
 
@@ -2625,7 +2625,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
-                                                register_trans=register_transients),
+                                                register_trans=register_transients,
+                                                simplify=simplify),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,

@@ -130,7 +130,8 @@ Common issues with the DaCe Python module
   * **BLAS libraries**: When using fast BLAS operators (for example, matrix multiplication with Intel MKL), sometimes CMake cannot find the
     required include files or libraries on its own. If a library is installed but not found, add the include folders to
     the ``CPATH`` environment variable, and the library folders to the ``LIBRARY_PATH`` and ``LD_LIBRARY_PATH`` environment
-    variables.
+    variables. If OpenBLAS is installed but not found, also ensure that ``libblas.so`` and ``liblapacke.so`` exist in the
+    library folders as symbolic links pointing to ``libopenblas.so``.
 
   * **Bug in DaCe**: If you suspect an issue happens within DaCe, see :ref:`debugging` for ways to pinpoint the source
     of the issue.

@@ -1,8 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import properties
+from dace import properties, symbolic
 from copy import deepcopy as dc
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 import warnings
 
 
@@ -58,8 +58,13 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
         batch = a_shape[0]
         stride_a = a_strides[0]
     if len(b_shape) == 3:
-        if batch and batch != b_shape[0]:
-            raise ValueError('Batch size mismatch for matrix multiplication')
+        if batch is not None:
+            res = symbolic.equal(batch, b_shape[0])
+            if res is None:
+                warnings.warn(f'Batch size of first tensor ({batch}) may not match second tensor ({b_shape[0]})',
+                              UserWarning)
+            elif not res:
+                raise ValueError('Batch size mismatch for matrix multiplication')
         batch = b_shape[0]
         stride_b = b_strides[0]
     if c_shape and len(c_shape) == 3:
@@ -143,6 +148,8 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             from dace.libraries.blas.nodes.gemm import Gemm
             beta = node.beta
             cin = True
+            if '_cin' not in node.in_connectors:
+                cin = False
             if c[0].data.wcr:
                 from dace.frontend import operations
                 redtype = operations.detect_reduction_type(c[0].data.wcr)

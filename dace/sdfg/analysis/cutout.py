@@ -3,6 +3,9 @@
 Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.e., memory preserving) for localized
 testing or optimization.
 """
+import networkx as nx
+from networkx.algorithms.flow import edmondskarp
+import sympy as sp
 from collections import deque
 import copy
 from typing import Deque, Dict, List, Set, Tuple, Union, Optional, Any
@@ -15,6 +18,7 @@ from dace.transformation.transformation import (MultiStateTransformation,
                                                 PatternTransformation,
                                                 SubgraphTransformation,
                                                 SingleStateTransformation)
+from dace.transformation.interstate.loop_detection import DetectLoop
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -77,8 +81,10 @@ class SDFGCutout(SDFG):
                     # Ignore.
                     pass
         elif isinstance(transformation, MultiStateTransformation):
-            transformation._sdfg = self
-            transformation.sdfg_id = 0
+            new_sdfg_id = self._in_translation[transformation.sdfg_id]
+            new_sdfg = self.sdfg_list[new_sdfg_id]
+            transformation._sdfg = new_sdfg
+            transformation.sdfg_id = new_sdfg_id
             for k in transformation.subgraph.keys():
                 old_state = self._base_sdfg.node(transformation.subgraph[k])
                 try:
@@ -111,18 +117,40 @@ class SDFGCutout(SDFG):
     @classmethod
     def from_transformation(
         cls, sdfg: SDFG, transformation: Union[PatternTransformation, SubgraphTransformation],
-        make_side_effects_global = True, use_alibi_nodes: bool = True
+        make_side_effects_global = True, use_alibi_nodes: bool = True, reduce_input_config = True,
+        symbols_map: Optional[Dict[str, Any]] = None
     ) -> Union['SDFGCutout', SDFG]:
+        """
+        Create a cutout from a transformation's set of affected graph elements.
+
+        :param sdfg: The SDFG to create the cutout from.
+        :param transformation: The transformation to create the cutout from.
+        :param make_side_effects_global: Whether to make side effect data containers global, i.e. non-transient.
+        :param use_alibi_nodes: Whether to use alibi nodes for the cutout across scope borders.
+        :param reduce_input_config: Whether to reduce the input configuration where possible in singlestate cutouts.
+        :param symbols_map: A mapping of symbols to values to use for the cutout. Optional, only used when reducing the
+                            input configuration.
+        :return: The cutout.
+        """
         affected_nodes = _transformation_determine_affected_nodes(sdfg, transformation)
+
+        if len(affected_nodes) == 0:
+            cut_sdfg = copy.deepcopy(sdfg)
+            transformation._sdfg = cut_sdfg
+            return cut_sdfg
 
         target_sdfg = sdfg
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
 
-        if isinstance(transformation, (SubgraphTransformation, SingleStateTransformation)):
-            state = target_sdfg.node(transformation.state_id)
+        if (all(isinstance(n, nd.Node) for n in affected_nodes) or
+            isinstance(transformation, (SubgraphTransformation, SingleStateTransformation))):
+            state = target_sdfg.parent
+            if transformation.state_id >= 0:
+                state = target_sdfg.node(transformation.state_id)
             cutout = cls.singlestate_cutout(state, *affected_nodes, make_side_effects_global=make_side_effects_global,
-                                            use_alibi_nodes=use_alibi_nodes)
+                                            use_alibi_nodes=use_alibi_nodes, reduce_input_config=reduce_input_config,
+                                            symbols_map=symbols_map)
             cutout.translate_transformation_into(transformation)
             return cutout
         elif isinstance(transformation, MultiStateTransformation):
@@ -132,14 +160,16 @@ class SDFGCutout(SDFG):
                 cutout.translate_transformation_into(transformation)
             return cutout
         raise Exception('Unsupported transformation type: {}'.format(type(transformation)))
-
+                    
     @classmethod
     def singlestate_cutout(cls,
                            state: SDFGState,
                            *nodes: nd.Node,
                            make_copy: bool = True,
                            make_side_effects_global: bool = True,
-                           use_alibi_nodes: bool = True) -> 'SDFGCutout':
+                           use_alibi_nodes: bool = True,
+                           reduce_input_config: bool = False,
+                           symbols_map: Optional[Dict[str, Any]] = None) -> 'SDFGCutout':
         """
         Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
         The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -155,8 +185,13 @@ class SDFGCutout(SDFG):
                                          inside the cutout but may be read _after_ the cutout, are made global.
         :param use_alibi_nodes: If True, do not extend the cutout with access nodes that span outside of a scope, but
                                 introduce alibi nodes instead that represent only the accesses subset.
+        :param reduce_input_config: Whether to reduce the input configuration where possible in singlestate cutouts.
+        :param symbols_map: A mapping of symbols to values to use for the cutout. Optional, only used when reducing the
+                            input configuration.
         :return: The created SDFGCutout.
         """
+        if reduce_input_config:
+            nodes = _reduce_in_configuration(state, nodes, use_alibi_nodes, symbols_map)
         create_element = copy.deepcopy if make_copy else (lambda x: x)
         sdfg = state.parent
         subgraph: StateSubgraphView = StateSubgraphView(state, nodes)
@@ -272,6 +307,15 @@ class SDFGCutout(SDFG):
         cutout._in_translation = in_translation
         cutout._out_translation = out_translation
 
+        # Translate in nested SDFG nodes and their SDFGs (their list id, specifically).
+        cutout.reset_sdfg_list()
+        outers = set(in_translation.keys())
+        for outer in outers:
+            if isinstance(outer, nd.NestedSDFG):
+                inner: nd.NestedSDFG = in_translation[outer]
+                cutout._in_translation[outer.sdfg.sdfg_id] = inner.sdfg.sdfg_id
+        _recursively_set_nsdfg_parents(cutout)
+
         return cutout
 
     @classmethod
@@ -319,14 +363,14 @@ class SDFGCutout(SDFG):
                 frontier, frontier_edges = bfs_queue.popleft()
                 if len(frontier_edges) == 0:
                     # No explicit start state, but also no frontier to select from.
-                    return sdfg
+                    return copy.deepcopy(sdfg)
                 elif len(frontier_edges) == 1:
                     # If there is only one predecessor frontier edge, its destination must be the start state.
                     start_state = list(frontier_edges)[0].dst
                 else:
                     if len(frontier) == 0:
                         # No explicit start state, but also no frontier to select from.
-                        return sdfg
+                        return copy.deepcopy(sdfg)
                     if len(frontier) == 1:
                         # For many frontier edges but only one frontier state, the frontier state is the new start state
                         # and is included in the cutout.
@@ -349,8 +393,18 @@ class SDFGCutout(SDFG):
             state_defined_symbols = state.defined_symbols()
             for sym in state_defined_symbols:
                 defined_symbols[sym] = state_defined_symbols[sym]
+        for edge in subgraph.edges():
+            is_edge: InterstateEdge = edge.data
+            available_symbols = sdfg.symbols.keys()
+            free_symbols |= (is_edge.free_symbols & available_symbols)
+            for rmem in is_edge.get_read_memlets(sdfg.arrays):
+                if rmem.data in cutout.arrays:
+                    continue
+                new_desc = sdfg.arrays[rmem.data].clone()
+                cutout.add_datadesc(rmem.data, new_desc)
         for sym in free_symbols:
-            cutout.add_symbol(sym, defined_symbols[sym])
+            if not sym in cutout.symbols:
+                cutout.add_symbol(sym, defined_symbols[sym])
 
         for state in cutout_states:
             for dnode in state.data_nodes():
@@ -413,6 +467,9 @@ class SDFGCutout(SDFG):
         cutout._in_translation = in_translation
         cutout._out_translation = out_translation
 
+        cutout.reset_sdfg_list()
+        _recursively_set_nsdfg_parents(cutout)
+
         return cutout
 
 
@@ -447,6 +504,27 @@ def _transformation_determine_affected_nodes(
             except KeyError:
                 # Ignored.
                 pass
+
+        # Transformations that modify a loop in any way must also include the loop init node, i.e. the state directly
+        # before the loop guard. Also make sure that ALL loop body states are part of the set of affected nodes.
+        # TODO: This is hacky and should be replaced with a more general mechanism - this is something that
+        #       transformation intents / transactions will need to solve.
+        if isinstance(transformation, DetectLoop):
+            if transformation.loop_guard is not None and transformation.loop_guard in target_sdfg.nodes():
+                for iedge in target_sdfg.in_edges(transformation.loop_guard):
+                    affected_nodes.add(iedge.src)
+            if transformation.loop_begin is not None and transformation.loop_begin in target_sdfg.nodes():
+                to_visit = [transformation.loop_begin]
+                while to_visit:
+                    state = to_visit.pop(0)
+                    for _, dst, _ in target_sdfg.out_edges(state):
+                        if dst not in affected_nodes and dst is not transformation.loop_guard:
+                            to_visit.append(dst)
+                    affected_nodes.add(state)
+
+        if len(affected_nodes) == 0 and transformation.state_id < 0 and target_sdfg.parent_nsdfg_node is not None:
+            # This is a transformation that affects a nested SDFG node, grab that NSDFG node.
+            affected_nodes.add(target_sdfg.parent_nsdfg_node)
     else:
         if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
             target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
@@ -477,6 +555,202 @@ def _transformation_determine_affected_nodes(
         return expanded
 
     return affected_nodes
+
+def _reduce_in_configuration(state: SDFGState, affected_nodes: Set[nd.Node], use_alibi_nodes: bool = False,
+                             symbols_map: Optional[Dict[str, Any]] = None) -> Set[nd.Node]:
+    """
+    For a given set of nodes that should be cut out in a single state cutout, try to reduce the size of the input
+    configuration as much as possible by adding more nodes to find a S-T minimum 2-cut in the state.
+
+    :param state: The state in which to cut out.
+    :param affected_nodes: The set of nodes that should be cut out.
+    :param use_alibi_nodes: If True, use alibi nodes across scope borders.
+    :param symbols_map: A map of symbols to values. An assumption will be made about symbol values if None is provided.
+    :return: A new set of node greater than or equal to the initial cutout nodes, which makes up a minimized cutout.
+    """
+    subgraph: StateSubgraphView = StateSubgraphView(state, affected_nodes)
+    subgraph = _extend_subgraph_with_access_nodes(state, subgraph, use_alibi_nodes)
+    subgraph_nodes = set(subgraph.nodes())
+
+    # For the given state, determine what should count as the input configuration if we were to cut out the entire
+    # state.
+    state_reachability_dict = StateReachability().apply_pass(state.parent, None)
+    state_reach = state_reachability_dict[state.parent.sdfg_id]
+    reaching_cutout: Set[SDFGState] = set()
+    for k, v in state_reach.items():
+        if state in v:
+            reaching_cutout.add(k)
+    state_input_configuration = set()
+    check_for_write_before = set()
+    for dn in state.data_nodes():
+        if state.out_degree(dn) > 0:
+            # This is read from, add to the system state if it is written anywhere else in the graph.
+            # Except if it is also written to at the same time and is scalar or of size 1.
+            array = state.parent.arrays[dn.data]
+            if state.in_degree(dn) > 0 and (array.total_size == 1 or isinstance(array, data.Scalar)):
+                continue
+            elif not array.transient:
+                # Non-transients are always part of the input config if they are read and not overwritten anyway.
+                state_input_configuration.add(dn.data)
+            else:
+                check_for_write_before.add(dn.data)
+    for pre_state in reaching_cutout:
+        for dn in pre_state.data_nodes():
+            if pre_state.in_degree(dn) > 0:
+                # For any writes, check if they are reads from the cutout that need to be checked. If they are, they're
+                # part of the system state.
+                if dn.data in check_for_write_before:
+                    state_input_configuration.add(dn.data)
+
+    # If no explicit symbol map was provided, we have to make an assumption about symbol values to determine a minimum
+    # cut.
+    # TODO: This is a hack. Ideally, we should be able to determine the minimum cut without having to make assumptions
+    # about symbol values. Not sure how to do that yet.
+    if symbols_map is None:
+        symbols_map = dict()
+        consts = state.parent.constants
+        for s in state.parent.symbols:
+            if s in consts:
+                symbols_map[s] = consts[s]
+            else:
+                symbols_map[s] = 20
+
+    # Use a proxy graph to compute the minium cut.
+    proxy_graph = nx.DiGraph()
+
+    # By expanding over the borders of a scope (e.g. over the entry of a map), we know that we universally can only
+    # increase the size of the input configuration. Consequently, we can use the outer-most scope entry node as our
+    # source node for the minimum cut, if there is such a unique outer entry node.
+    source_candidates = set()
+    for n in subgraph_nodes:
+        source_candidates.add(state.entry_node(n))
+
+    source = None
+    scope_children = state.scope_children()
+    transitive_scope_children: Dict[SDFGState, Set[SDFGState]] = dict()
+    for k, v in scope_children.items():
+        queue = deque(v)
+        k_children = set(v)
+        while queue:
+            child = queue.popleft()
+            if child in scope_children:
+                n_children = set(scope_children[child])
+                queue.extend(n_children)
+                k_children.update(n_children)
+        transitive_scope_children[k] = k_children
+    if len(source_candidates) > 1:
+        for cand in source_candidates:
+            if all(other_cand in transitive_scope_children[cand] for other_cand in source_candidates):
+                source = cand
+                break
+    elif len(source_candidates) == 1:
+        source = list(source_candidates)[0]
+
+    # If there is no unique outer entry node, we use a proxy node as the source.
+    scope_nodes: Set[nd.Node] = set()
+    if source == None:
+        source = nd.Node()
+        scope_nodes = set(scope_children[None])
+    else:
+        scope_nodes = set(scope_children[source])
+        scope_nodes.add(source)
+    expand_with = set()
+    for n in scope_nodes:
+        if isinstance(n, nd.EntryNode):
+            exit = state.exit_node(n)
+            expand_with.add(exit)
+    scope_nodes.update(expand_with)
+    scope_subgraph = StateSubgraphView(state, scope_nodes)
+
+    # Add the source and a proxy sink to the proxy graph.
+    proxy_graph.add_node(source)
+    sink = nd.Node()
+    proxy_graph.add_node(sink)
+
+    # Build up the proxy graph.
+    for edge in scope_subgraph.edges():
+        proxy_edge_src = edge.src
+        proxy_edge_dst = edge.dst
+
+        vol = 0
+        memlet: Memlet = edge.data
+        if memlet.data:
+            vol = memlet.volume
+            if isinstance(vol, sp.Expr):
+                vol = vol.subs(symbols_map)
+
+        remain_free = False
+        if edge.src in subgraph_nodes and edge.dst in subgraph_nodes:
+            # Edge completely in subgraph, don't do anything. Unless the destination is an access node which is in the
+            # state input configuration, in which case we add an edge from the source to the sink with that volume.
+            if isinstance(edge.dst, nd.AccessNode) and memlet.data in state_input_configuration:
+                if proxy_graph.has_edge(source, sink):
+                    proxy_graph[source][sink]['capacity'] += vol
+                else:
+                    proxy_graph.add_node(source)
+                    proxy_graph.add_node(sink)
+                    proxy_graph.add_edge(source, sink, capacity=vol)
+            continue
+        elif edge.src in subgraph_nodes:
+            # Edge starts in subgraph, ends outside.
+            # If there's no path back inside, it's source is the proxy sink. Otherwise, it's source is set to the proxy
+            # source and the volume is made 0, since the value will already be part of the cutout.
+            if any([n in nx.descendants(state.nx, proxy_edge_src) for n in subgraph_nodes]):
+                proxy_edge_src = source
+                vol = 0
+                remain_free = True
+            else:
+                proxy_edge_src = sink
+        elif edge.dst in subgraph_nodes:
+            # Edge starts outside, ends in the subgraph. It's destination thus is the proxy sink.
+            proxy_edge_dst = sink
+
+        if isinstance(proxy_edge_dst, nd.AccessNode) and memlet.data in state_input_configuration:
+            # If the destination is an access node that is part of the state input configuration, we add an edge from
+            # the source with that volume.
+            if proxy_graph.has_edge(source, proxy_edge_dst):
+                proxy_graph[source][proxy_edge_dst]['capacity'] += vol
+            else:
+                proxy_graph.add_edge(source, proxy_edge_dst, capacity=vol)
+            # The actual edge between src and dst is set to have infinite capacity.
+            vol = float('inf')
+        elif isinstance(proxy_edge_src, nd.AccessNode) and not remain_free:
+            # All outgoing edges from access nodes (with data) are set to have infinite capacity.
+            vol = float('inf')
+
+        if isinstance(proxy_edge_src, nd.ExitNode):
+            proxy_edge_src = state.entry_node(proxy_edge_src)
+
+        if proxy_graph.has_edge(proxy_edge_src, proxy_edge_dst):
+            proxy_graph[proxy_edge_src][proxy_edge_dst]['capacity'] += vol
+        else:
+            proxy_graph.add_node(proxy_edge_src)
+            proxy_graph.add_node(proxy_edge_dst)
+            proxy_graph.add_edge(proxy_edge_src, proxy_edge_dst, capacity=vol)
+
+    for node in scope_nodes:
+        if isinstance(node, nd.AccessNode) and node.data in state_input_configuration:
+            if not proxy_graph.has_edge(source, node) and node.data in state.parent.arrays:
+                vol = state.parent.arrays[node.data].total_size
+                if isinstance(vol, sp.Expr):
+                    vol = vol.subs(symbols_map)
+                proxy_graph.add_edge(source, node, capacity=vol)
+
+    _, (_, non_reachable) = nx.minimum_cut(proxy_graph,
+                                                 source,
+                                                 sink,
+                                                 flow_func=edmondskarp.edmonds_karp)
+
+    non_reachable -= {sink}
+    if len(non_reachable) > 0:
+        subscope_expansions = set()
+        for n in non_reachable:
+            if isinstance(n, nd.EntryNode):
+                subscope_expansions.update(transitive_scope_children[n])
+            elif isinstance(n, nd.ExitNode):
+                subscope_expansions.update(transitive_scope_children[state.entry_node(n)])
+        return subgraph_nodes.union(non_reachable.union(subscope_expansions))
+    return subgraph_nodes
 
 def _stateset_predecessor_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:
     """
@@ -667,14 +941,17 @@ def _cutout_determine_input_config(ct: SDFG, inverse_cutout_reach: Set[SDFGState
     for state in cutout_states:
         for dn in state.data_nodes():
             noded_descriptors.add(dn.data)
-
-            array = ct.arrays[dn.data]
-            if not array.transient:
-                # Non-transients are always part of the system state.
-                input_configuration.add(dn.data)
-            elif state.out_degree(dn) > 0:
+            if state.out_degree(dn) > 0:
                 # This is read from, add to the system state if it is written anywhere else in the graph.
-                check_for_write_before.add(dn.data)
+                # Except if it is also written to at the same time and is scalar or of size 1.
+                array = ct.arrays[dn.data]
+                if state.in_degree(dn) > 0 and (array.total_size == 1 or isinstance(array, data.Scalar)):
+                    continue
+                elif not array.transient:
+                    # Non-transients are always part of the input config if they are read and not overwritten anyway.
+                    input_configuration.add(dn.data)
+                else:
+                    check_for_write_before.add(dn.data)
 
         original_state: Optional[SDFGState] = None
         try:
@@ -759,3 +1036,11 @@ def _cutout_determine_output_configuration(ct: SDFG, cutout_reach: Set[SDFGState
                     system_state.add(dn.data)
 
     return system_state
+
+
+def _recursively_set_nsdfg_parents(target: SDFG):
+    for state in target.states():
+        for n in state.nodes():
+            if isinstance(n, nd.NestedSDFG):
+                n.sdfg.parent_sdfg = target
+                _recursively_set_nsdfg_parents(n.sdfg)

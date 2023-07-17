@@ -133,6 +133,7 @@ class AllocationLifetime(aenum.AutoNumberEnum):
     SDFG = ()  #: Allocated throughout the innermost SDFG (possibly nested)
     Global = ()  #: Allocated throughout the entire program (outer SDFG)
     Persistent = ()  #: Allocated throughout multiple invocations (init/exit)
+    External = ()  #: Allocated and managed outside the generated code
 
 
 @undefined_safe_enum
@@ -216,6 +217,18 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
+}
+
+# Maps from StorageType to a preferred ScheduleType for helping determine schedules.
+# If mapped to None or does not exist in this dictionary, does not affect decision.
+# Scalar data containers also do not affect this decision.
+STORAGEDEFAULT_SCHEDULE = {
+    StorageType.CPU_Heap: ScheduleType.CPU_Multicore,
+    StorageType.CPU_ThreadLocal: ScheduleType.CPU_Multicore,
+    StorageType.GPU_Global: ScheduleType.GPU_Device,
+    StorageType.GPU_Shared: ScheduleType.GPU_ThreadBlock,
+    StorageType.FPGA_Global: ScheduleType.FPGA_Device,
+    StorageType.SVE_Register: ScheduleType.SVE_Map,
 }
 
 # Translation of types to C types
@@ -600,6 +613,7 @@ class opaque(typeclass):
 
         try:
             typeclass = json_to_typeclass(json_obj['ctype'], context)
+            return typeclass()
         except KeyError:
             typeclass = json_obj['ctype']
 
