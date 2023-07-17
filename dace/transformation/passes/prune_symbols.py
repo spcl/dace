@@ -51,8 +51,9 @@ class RemoveUnusedSymbols(ppl.Pass):
 
         # Remove unused symbols
         for sym in symbols_to_consider - used_symbols:
-            sdfg.remove_symbol(sym)
-            result.add(sym)
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
+                result.add(sym)
 
         if self.recursive:
             # Prune nested SDFGs recursively
@@ -62,7 +63,10 @@ class RemoveUnusedSymbols(ppl.Pass):
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
+                        old_symbols = self.symbols
+                        self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
+                        self.symbols = old_symbols
                         if nres:
                             result.update(nres)
 

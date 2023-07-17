@@ -19,6 +19,7 @@ def _make_sdfg():
     bfs.add_array('row_index', shape=[N + 1], dtype=dace.int32)
     bfs.add_scalar('root', dtype=dace.int32)
     bfs.add_array('result', shape=[N], dtype=dace.int32)
+    bfs.add_symbol('depth', dace.int32)
 
     # Transients fot interstate data transfers
     # TODO: Replace may_alias with better code generation
