@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
 import dace
@@ -530,21 +530,24 @@ def auto_optimize(sdfg: SDFG,
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
         * Tiled stream accumulation (MapTiling -> AccumulateTransient)
         * Collapse all maps to parallelize across all dimensions
-        * Set all library nodes to expand to ``fast`` expansion, which calls
-          the fastest library on the target device
+        * Set all library nodes to expand to ``fast`` expansion, which calls the fastest library on the target device
 
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
-    :param validate: If True, validates the SDFG after all transformations
-                     have been applied.
+    :param validate: If True, validates the SDFG after all transformations have been applied.
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
-    :note: This function is still experimental and may harm correctness in
-           certain cases. Please report an issue if it does.
+    :note: This function is still experimental and may harm correctness in certain cases.
+           Please report an issue if it does.
     """
     debugprint = config.Config.get_bool('debugprint')
+
+    check_accessibility = config.Config.get_bool('experimental', 'check_accessibility')
+    if device != dtypes.DeviceType.CPU:
+        config.Config.set('experimental', 'check_accessibility', value=False)
+
 
     # Simplification and loop parallelization
     transformed = True
@@ -565,6 +568,7 @@ def auto_optimize(sdfg: SDFG,
     # Apply GPU transformations and set library node implementations
 
     if device == dtypes.DeviceType.GPU:
+        config.Config.set('experimental', 'check_accessibility', value=check_accessibility)
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 
@@ -581,6 +585,7 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
+        config.Config.set('experimental', 'check_accessibility', value=check_accessibility)
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
         fpga_auto_opt.fpga_global_to_local(sdfg)
