@@ -791,6 +791,7 @@ class struct(typeclass):
         return ret
 
     def _parse_field_and_types(self, **fields_and_types):
+        from dace.symbolic import pystr_to_symbolic
         self._data = dict()
         self._length = dict()
         self.bytes = 0
@@ -799,8 +800,12 @@ class struct(typeclass):
                 t, l = v
                 if not isinstance(t, pointer):
                     raise TypeError("Only pointer types may have a length.")
-                if l not in fields_and_types.keys():
-                    raise ValueError("Length {} not a field of struct {}".format(l, self.name))
+                sym_tokens = pystr_to_symbolic(l).free_symbols
+                for sym in sym_tokens:
+                    if str(sym) not in fields_and_types.keys():
+                        raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
+                # if l not in fields_and_types.keys():
+                #     raise ValueError("Length {} not a field of struct {}".format(l, self.name))
                 self._data[k] = t
                 self._length[k] = l
                 self.bytes += t.bytes
