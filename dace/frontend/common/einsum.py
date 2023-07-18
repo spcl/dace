@@ -199,7 +199,7 @@ def _create_einsum_internal(sdfg: SDFG,
 
     if init_output is None:
         init_output = (beta != 1.0)
-    
+
     if alpha is None:
         alpha = 1.0
     if beta is None:
@@ -372,6 +372,14 @@ def _create_einsum_internal(sdfg: SDFG,
         if len(c_shape) == 1 and len(einsum.a_sum) == len(einsum.b_sum):
             strides['sCN'] = 1
             strides['sCB'] = strides['sCM'] = strides['N']
+
+        # Transposed output, swap order
+        if strides['sCM'] == 1:
+            strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
+            strides['M'], strides['N'] = strides['N'], strides['M']
+            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \
+                (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'], strides['sAB'])
+            a, b = b, a
 
         # Create nested SDFG for GEMM
         nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
