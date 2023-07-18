@@ -606,9 +606,10 @@ def _elementwise(pv: 'ProgramVisitor',
 
 def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
+    create_input = True
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
-    if not isinstance(inpname, str):
+    if not isinstance(inpname, str) and not symbolic.issymbolic(inpname):
         # Constant parameter
         cst = inpname
         inparr = data.create_datadescriptor(cst)
@@ -616,6 +617,10 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
         inparr.transient = True
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
+    elif symbolic.issymbolic(inpname):
+        dtype = symbolic.symtype(inpname)
+        inparr = data.Scalar(dtype)
+        create_input = False
     else:
         inparr = sdfg.arrays[inpname]
 
@@ -625,10 +630,16 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     outarr.dtype = restype
     num_elements = data._prod(inparr.shape)
     if num_elements == 1:
-        inp = state.add_read(inpname)
+        if create_input:
+            inp = state.add_read(inpname)
+            inconn_name = '__inp'
+        else:
+            inconn_name = symbolic.symstr(inpname)
+
         out = state.add_write(outname)
-        tasklet = state.add_tasklet(func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
-        state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
+        tasklet = state.add_tasklet(func, {'__inp'} if create_input else {}, {'__out'}, f'__out = {func}({inconn_name})')
+        if create_input:
+            state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None, Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
