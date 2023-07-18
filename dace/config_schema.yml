@@ -898,6 +898,13 @@ required:
                 title: Undefined Symbol Check
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
+            
+            check_accessibility:
+                type: bool
+                default: True
+                title: Accessibility Check
+                description: >
+                    Check if data containers can be accessed in the SDFG contexts with corresponding AccessNodes.
 
     #############################################
     # Features for unit testing
