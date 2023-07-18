@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 
 import ast
@@ -778,19 +778,29 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
     if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
-        import dace.libraries.blas  # Avoid import loop
-        tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+        import dace.libraries.standard  # Avoid import loop
+        tasklet = dace.libraries.standard.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
-    else:
-        state.add_mapped_tasklet(
-            "_transpose_", {"_i{}".format(i): "0:{}".format(s)
-                            for i, s in enumerate(arr1.shape)},
-            dict(_in=Memlet.simple(inpname, ", ".join("_i{}".format(i) for i, _ in enumerate(arr1.shape)))),
-            "_out = _in",
-            dict(_out=Memlet.simple(outname, ", ".join("_i{}".format(axes[i]) for i, _ in enumerate(arr1.shape)))),
-            external_edges=True)
+    else:  # Tensor transpose
+        modes = len(arr1.shape)
+        idx = axes.index(0)
+        # Special case of tensor transposition: matrix transpose + reshape
+        if axes[idx:] == list(range(modes - idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
+            rows = data._prod([arr1.shape[axes[i]] for i in range(idx, len(arr1.shape))])
+            cols = data._prod([arr1.shape[axes[i]] for i in range(idx)])
+            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [rows, cols])
+            trans_matrix = _transpose(pv, sdfg, state, matrix)
+            return _ndarray_reshape(pv, sdfg, state, trans_matrix, [arr1.shape[i] for i in axes])
+
+        read = state.add_read(inpname)
+        write = state.add_write(outname)
+        from dace.libraries.standard import TensorTranspose
+        tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
+        state.add_node(tasklet)
+        state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out_tensor', write, None, Memlet.from_array(outname, arr2))
 
     return outname
 
@@ -2133,10 +2143,13 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
         if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
-                              'not supported')
+            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 not supported')
 
-        if arr1.shape[-1] != arr2.shape[-2]:
+        res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
+        if res is None:
+            warnings.warn(f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
+                          f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
+        elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
@@ -2150,7 +2163,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 2 and len(arr2.shape) == 1:  # matrix * vector
 
-        if arr1.shape[1] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Number of matrix columns {} must match"
                               "size of vector {}.".format(arr1.shape[1], arr2.shape[0]))
 
@@ -2158,7 +2175,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 2:  # vector * matrix
 
-        if arr1.shape[0] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Size of vector {} must match number of matrix "
                               "rows {} must match".format(arr1.shape[0], arr2.shape[0]))
 
@@ -2166,7 +2187,11 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     elif len(arr1.shape) == 1 and len(arr2.shape) == 1:  # vector * vector
 
-        if arr1.shape[0] != arr2.shape[0]:
+        res = symbolic.equal(arr1.shape[0], arr2.shape[0])
+        if res is None:
+            warnings.warn(f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
+                          f'may not match', UserWarning)
+        elif not res:
             raise SyntaxError("Vectors in vector product must have same size: "
                               "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
 
@@ -4371,6 +4396,8 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
         'code': "__out = {}(__inp)".format(f"dace.{dtype.to_string()}" if dtype not in (dace.bool, dace.bool_)
                                                                        else dtype.to_string())
     }
+    if dtype in (dace.bool, dace.bool_):
+        impl['code'] = "__out = dace.bool_(__inp)"
     tasklet_params = _set_tasklet_params(impl, [arg])
 
     # Visitor input only needed when `has_where == True`.
@@ -4536,6 +4563,64 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
     state.add_memlet_path(chlsky_node, out, src_conn="_b", memlet=Memlet.from_array(*out_arr))
 
     return out_arr[0]
+
+
+@oprepo.replaces('dace.tensordot')
+@oprepo.replaces('numpy.tensordot')
+def _tensordot(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               op_a: str,
+               op_b: str,
+               axes: Union[int, Sequence[int]] = 2,
+               out_axes: Sequence[int] = None):
+
+    # NOTE: `out_axes` is a non-standard extension to `numpy.tensordot`, allowing trasposition of the output
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    arr_a = sdfg.arrays[op_a]
+    arr_b = sdfg.arrays[op_b]
+
+    if isinstance(axes, Integral):
+        left_axes = list(range(len(arr_a.shape) - axes, len(arr_a.shape)))
+        right_axes = list(range(0, axes))
+    else:
+        left_axes = axes[0]
+        right_axes = axes[1]
+
+    # Some validation (more detailed validation is done inside the TensorDot library node)
+    if any(a >= len(arr_a.shape) or a < 0 for a in left_axes):
+        raise ValueError("Axes for left tensor are out-of-bounds.")
+    if any(a >= len(arr_b.shape) or a < 0 for a in right_axes):
+        raise ValueError("Axes for right tensor are out-of-bounds.")
+    if len(left_axes) != len(right_axes):
+        raise ValueError("The input tensors must have the same number of contracting modes.")
+    if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
+        raise ValueError("The input tensors' contracting modes must have the same length.")
+
+    dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
+    dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
+
+    if out_axes:
+        if list(sorted(out_axes)) != list(range(len(dot_shape))):
+            raise ValueError("Output axes is not a permutation of the output's modes.")
+        dot_shape = [dot_shape[i] for i in out_axes]
+
+    op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
+
+    from dace.libraries.linalg import TensorDot
+    a = state.add_read(op_a)
+    b = state.add_read(op_b)
+    c = state.add_write(op_c)
+    tasklet = TensorDot("_TensorDot_", left_axes, right_axes, out_axes)
+    state.add_edge(a, None, tasklet, '_left_tensor', Memlet.from_array(op_a, arr_a))
+    state.add_edge(b, None, tasklet, '_right_tensor', Memlet.from_array(op_b, arr_b))
+    state.add_edge(tasklet, '_out_tensor', c, None, Memlet.from_array(op_c, arr_c))
+
+    return op_c
 
 
 # CuPy replacements

@@ -195,11 +195,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 1: Create cloned GPU arrays and replace originals
 
+        data_already_on_gpu = {}
+
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
-            if isinstance(inode, data.Scalar):  # Scalars can remain on host
-                continue
             if inode.storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[inodename] = None
+                continue
+            if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
@@ -208,9 +211,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             cloned_arrays[inodename] = name
 
         for onodename, onode in set(output_nodes):
-            if onodename in cloned_arrays:
-                continue
             if onode.storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[onodename] = None
+                continue
+            if onodename in cloned_arrays:
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
@@ -245,6 +249,12 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     assert found_full_write
                 if not found_full_write:
                     input_nodes.append((onodename, onode))
+
+        for edge in sdfg.edges():
+            memlets = edge.data.get_read_memlets(sdfg.arrays)
+            for mem in memlets:
+                if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
+                    data_already_on_gpu[mem.data] = None
 
         # Replace nodes
         for state in sdfg.nodes():
@@ -459,7 +469,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges
 
-        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys())
+        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(data_already_on_gpu.keys())
 
         for state in list(sdfg.nodes()):
             arrays_used = set()
@@ -490,6 +500,17 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             desc.transient = True
                             hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
                             gpu_scalars[nname] = hostname
+                        else:
+                            desc = sdfg.arrays[hostname]
+                        devicename = nname
+                    elif nname in data_already_on_gpu:
+                        hostname = data_already_on_gpu[nname]
+                        if not hostname:
+                            desc = sdfg.arrays[nname].clone()
+                            desc.storage = dtypes.StorageType.CPU_Heap
+                            desc.transient = True
+                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                            data_already_on_gpu[nname] = hostname
                         else:
                             desc = sdfg.arrays[hostname]
                         devicename = nname

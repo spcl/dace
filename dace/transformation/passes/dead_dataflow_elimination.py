@@ -222,7 +222,7 @@ class DeadDataflowElimination(ppl.Pass):
 
             # If access node is persistent, mark as dead only if self.remove_persistent_memory is set
             if not self.remove_persistent_memory:
-                if desc.lifetime == dtypes.AllocationLifetime.Persistent:
+                if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                     return False
 
             # If data will be used later, cannot remove

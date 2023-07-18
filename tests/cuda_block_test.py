@@ -117,14 +117,14 @@ def test_custom_block_size_onemap():
     mapentry: dace.nodes.MapEntry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
 
     # Test 1: too many dimensions
-    mapentry.map.gpu_block_size = (257, 5, 3, 4)
+    mapentry.map.gpu_block_size = (13, 5, 3, 4)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(257, 5, 12)' in code
+    assert 'dim3(13, 5, 12)' in code
 
     # Test 2: too few dimensions
-    mapentry.map.gpu_block_size = (257, 5)
+    mapentry.map.gpu_block_size = (127, 5)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(257, 5, 1)' in code
+    assert 'dim3(127, 5, 1)' in code
 
     # Test 3: compilation
     sdfg.compile()
@@ -141,14 +141,14 @@ def test_custom_block_size_twomaps():
                     a = 1
 
     sdfg = tester.to_sdfg()
-    sdfg.apply_gpu_transformations(sequential_innermaps=False)
+    sdfg.apply_gpu_transformations(sequential_innermaps=True)
     mapentry: dace.nodes.MapEntry = next(
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)
 
-    mapentry.map.gpu_block_size = (257, 5)
+    mapentry.map.gpu_block_size = (127, 5)
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
-    assert 'dim3(257, 5, 1)' in code
+    assert 'dim3(127, 5, 1)' in code
 
     # Test 3: compilation
     sdfg.compile()

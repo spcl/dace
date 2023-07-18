@@ -2352,6 +2352,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Visit test-condition
         if not is_test_simple:
             parsed_node = self.visit(node)
+            if isinstance(parsed_node, (list, tuple)) and len(parsed_node) == 1:
+                parsed_node = parsed_node[0]
             if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
                 datadesc = self.sdfg.arrays[parsed_node]
                 if isinstance(datadesc, data.Array):
@@ -4569,7 +4571,10 @@ class ProgramVisitor(ExtNodeVisitor):
         rname = self.scope_vars[name]
         if rname in self.scope_arrays:
             rng = subsets.Range.from_array(self.scope_arrays[rname])
-            rname, _ = self._add_read_access(rname, rng, node)
+            if isinstance(node.ctx, ast.Store):
+                rname, _ = self._add_write_access(rname, rng, node)
+            else:
+                rname, _ = self._add_read_access(rname, rng, node)
         return rname
 
     #### Visitors that return arrays
@@ -4618,7 +4623,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to find sub-SDFG attribute
         func = oprepo.Replacements.get_attribute(type(arr), node.attr)
         if func is not None:
-            return func(self, self.sdfg, self.last_state, result)
+            # A new state is likely needed here, e.g., for transposition (ndarray.T)
+            self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+            self.last_state.set_default_lineinfo(self.current_lineinfo)
+            result = func(self, self.sdfg, self.last_state, result)
+            self.last_state.set_default_lineinfo(None)
+            return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
@@ -4899,6 +4909,8 @@ class ProgramVisitor(ExtNodeVisitor):
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript, inference: bool = False):
 
+        is_read: bool = not isinstance(node.ctx, ast.Store)
+
         if self.nested:
 
             defined_vars = {**self.variables, **self.scope_vars}
@@ -4929,13 +4941,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 if inference:
                     rng.offset(rng, True)
                     return self.sdfg.arrays[true_name].dtype, rng.size()
-                new_name, new_rng = self._add_read_access(true_name, rng, node)
+                if is_read:
+                    new_name, new_rng = self._add_read_access(true_name, rng, node)
+                else:
+                    new_name, new_rng = self._add_write_access(true_name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
                 if new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
-                    new_name, _ = self.make_slice(new_name, new_rng)
+                    if is_read:
+                        new_name, _ = self.make_slice(new_name, new_rng)
+                    else:
+                        raise NotImplementedError('Cannot slice a write access')
                     return new_name
 
         # Obtain array/tuple
@@ -4976,8 +4994,11 @@ class ProgramVisitor(ExtNodeVisitor):
             rng = expr.subset
             rng.offset(rng, True)
             return self.sdfg.arrays[array].dtype, rng.size()
-
-        return self._add_read_slice(array, node, expr)
+        
+        if is_read:
+            return self._add_read_slice(array, node, expr)
+        else:
+            raise NotImplementedError('Write slicing not implemented')
 
     def _visit_ast_or_value(self, node: ast.AST) -> Any:
         result = self.visit(node)
