@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -412,12 +412,12 @@ def make_properties(cls):
             except AttributeError:
                 if not prop.unmapped:
                     raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
-        # Assert that there are no fields in the object not captured by
-        # properties, unless they are prefixed with "_"
-        for name, prop in obj.__dict__.items():
-            if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
-                raise PropertyError("{} : Variable {} is neither a Property nor "
-                                    "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
+        # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
+        if not isinstance(obj, dace.data.Structure):
+            for name, prop in obj.__dict__.items():
+                if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
+                    raise PropertyError("{} : Variable {} is neither a Property nor "
+                                        "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
 
     # Replace the __init__ method
     cls.__init__ = initialize_properties
