@@ -1,12 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
-from dace.dtypes import DebugInfo, StorageType
 import os
-from typing import TYPE_CHECKING, Dict, List, Set, Tuple, Union
 import warnings
-from dace import dtypes, data as dt, subsets
-from dace import symbolic
+
+from dace import config, dtypes, data as dt, subsets, symbolic
+from dace.dtypes import DebugInfo, StorageType
+from typing import TYPE_CHECKING, Dict, List, Set, Tuple, Union
 
 if TYPE_CHECKING:
     import dace
@@ -235,6 +235,10 @@ def _accessible(sdfg: 'dace.sdfg.SDFG', container: str, context: Dict[str, bool]
     """
     Helper function that returns False if a data container cannot be accessed in the current SDFG context.
     """
+
+    if not config.Config.get_bool('experimental', 'check_accessibility'):
+        return True
+
     storage = sdfg.arrays[container].storage
     if storage == dtypes.StorageType.GPU_Global or storage in dtypes.GPU_STORAGES:
         return context.get('in_gpu', False)
