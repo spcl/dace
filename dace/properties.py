@@ -1381,6 +1381,45 @@ class TypeClassProperty(Property):
             raise TypeError("Cannot parse type from: {}".format(obj))
 
 
+class NestedDataClassProperty(Property):
+    """ Custom property type for nested data. """
+
+    def __get__(self, obj, objtype=None) -> 'Data':
+        return super().__get__(obj, objtype)
+
+    @property
+    def dtype(self):
+        return pydoc.locate("dace.data.Data")
+
+    @staticmethod
+    def from_string(s):
+        dtype = pydoc.locate("dace.data.{}".format(s))
+        if dtype is None or not isinstance(dtype, pydoc.locate("dace.data.Data")):
+            raise ValueError("Not a valid data type: {}".format(s))
+        return dtype
+
+    @staticmethod
+    def to_string(obj):
+        return obj.to_string()
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return obj.dtype.to_json()
+
+    @staticmethod
+    def from_json(obj, context=None):
+        if obj is None:
+            return None
+        elif isinstance(obj, str):
+            return NestedDataClassProperty.from_string(obj)
+        elif isinstance(obj, dict):
+            # Let the deserializer handle this
+            return dace.serialize.from_json(obj)
+        else:
+            raise TypeError("Cannot parse type from: {}".format(obj))
+
+
 class LibraryImplementationProperty(Property):
     """
     Property for choosing an implementation type for a library node. On the
