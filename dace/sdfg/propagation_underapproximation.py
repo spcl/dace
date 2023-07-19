@@ -168,7 +168,7 @@ class SeparableMemlet(MemletPattern):
 @registry.autoregister
 class AffineSMemlet(SeparableMemletPattern):
     """ Separable memlet pattern that matches affine expressions, i.e.,
-        of the form `a * {index} + b`. Only works for ranges like (a * i + b : a * i + b : s)
+        of the form `a * {index} + b`. Only works for expressions like (a * i + b : a * i + b : 1)
     """
 
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
@@ -257,14 +257,14 @@ class AffineSMemlet(SeparableMemletPattern):
 
             node_rb, node_re, node_rs = node_range[self.paramind]
             result_begin = subexprs[0].subs(self.param, node_rb).expand()
-            if node_rs != 1:
-                # Special case: i:i+stride for a begin:end:stride range
-                if node_rb == result_begin and bre + 1 == node_rs and step == 1:
-                    pass
-                else:
-                    # Map ranges where the last index is not known
-                    # exactly are not supported by this pattern.
-                    return False
+            # if node_rs != 1:
+            #     # Special case: i:i+stride for a begin:end:stride range
+            #     if node_rb == result_begin and bre + 1 == node_rs and step == 1:
+            #         pass
+            #     else:
+            #         # Map ranges where the last index is not known
+            #         # exactly are not supported by this pattern.
+            #         return False
             if (any(s not in defined_vars for s in node_rb.free_symbols)
                     or any(s not in defined_vars for s in node_re.free_symbols)):
                 # Cannot propagate variables only defined in this scope (e.g.,
@@ -480,29 +480,29 @@ class GenericSMemlet(SeparableMemletPattern):
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
         return False
-        dims = []
-        for dim in dim_exprs:
-            if isinstance(dim, tuple):
-                dims.extend(dim)
-            else:
-                dims.append(dim)
+        # dims = []
+        # for dim in dim_exprs:
+        #     if isinstance(dim, tuple):
+        #         dims.extend(dim)
+        #     else:
+        #         dims.append(dim)
 
-        self.params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        # self.params = variable_context[-1]
+        # defined_vars = variable_context[-2]
 
-        used_symbols = set()
-        for dim in dims:
-            if symbolic.issymbolic(dim):
-                used_symbols.update(dim.free_symbols)
+        # used_symbols = set()
+        # for dim in dims:
+        #     if symbolic.issymbolic(dim):
+        #         used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
-            # Cannot propagate symbols that are undefined in the outer range
-            # (e.g., dynamic map ranges).
-            return False
+        # if (used_symbols & set(self.params)
+        #         and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
+        #     # Cannot propagate symbols that are undefined in the outer range
+        #     # (e.g., dynamic map ranges).
+        #     return False
 
-        # Always matches
-        return True
+        # # Always matches
+        # return True
 
     def propagate(self, array, dim_exprs, node_range):
 
@@ -843,14 +843,9 @@ class UnderapproximateWrites(ppl.Pass):
         # Build a map of connectors to associated 'border' memlets inside
         # the nested SDFG. This map will be populated with memlets once they
         # get propagated in the SDFG.
-        border_memlets = {
-            'in': {},
-            'out': {},
-        }
-        for connector in nsdfg_node.in_connectors:
-            border_memlets['in'][connector] = None
+        border_memlets = {}
         for connector in nsdfg_node.out_connectors:
-            border_memlets['out'][connector] = None
+            border_memlets[connector] = None
 
         sdfg: dace.SDFG = nsdfg_node.sdfg
         outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
@@ -877,19 +872,12 @@ class UnderapproximateWrites(ppl.Pass):
         # This is passed out via `border_memlets` and propagated along from there.
         for state in states:
             for node in state.data_nodes():
-                for direction in border_memlets:
-                    if (node.label not in border_memlets[direction]):
+                    if (node.label not in border_memlets):
                         continue
 
-                    memlet = border_memlets[direction][node.label]
-
-                    # Collect the edges to/from this access node, depending on the
-                    # direction the connector leads in.
-                    edges = []
-                    if direction == 'in':
-                        edges = state.out_edges(node)
-                    elif direction == 'out':
-                        edges = state.in_edges(node)
+                    memlet = border_memlets[node.label]
+                    # Get the edges to this access node
+                    edges = state.in_edges(node)
 
                     # Collect all memlets belonging to this access node, and
                     # accumulate the total volume between them.
@@ -903,7 +891,7 @@ class UnderapproximateWrites(ppl.Pass):
                             # and accumulate the sum on it.
                             memlet = Memlet(data=inside_memlet.data)
                             memlet._is_data_src = True
-                            border_memlets[direction][node.label] = memlet
+                            border_memlets[node.label] = memlet
 
                     # Given all of this access nodes' memlets, propagate the subset
                     # according to the state's variable ranges.
@@ -916,15 +904,11 @@ class UnderapproximateWrites(ppl.Pass):
                             ranges = [(0, 0, 1)]
 
                         # Propagate the subset based on the direction this memlet is
-                        # pointing. If we're accessing from an incoming connector,
-                        # propagate the source subset, if we're going to an outgoing
-                        # connector, propagate the destination subset.
-                        use_dst = False
-                        if direction == 'out':
-                            use_dst = True
+                        # pointing.
+                        # TODO: get rid of this propagation all together
                         array = sdfg.arrays[node.label]
                         subset = self.propagate_subset(
-                            memlets, array, params, subsets.Range(ranges), use_dst=use_dst).subset
+                            memlets, array, params, subsets.Range(ranges), use_dst=True).subset
                         if not subset:
                             continue
                         # If the border memlet already has a set range, compute the
@@ -942,16 +926,16 @@ class UnderapproximateWrites(ppl.Pass):
             # propagate the memlets for each loop
             if state in loop_write_dict.keys():
                 for node_label, loop_memlet in loop_write_dict[state].items():
-                    if (node_label not in border_memlets["out"]):
+                    if (node_label not in border_memlets):
                         continue
-                    memlet = border_memlets["out"][node_label]
+                    memlet = border_memlets[node_label]
 
                     if memlet is None:
                         # Use the first encountered memlet as a 'border' memlet
                         # and accumulate the sum on it.
                         memlet = Memlet(data=loop_memlet.data)
                         memlet._is_data_src = True
-                        border_memlets["out"][node_label] = memlet
+                        border_memlets[node_label] = memlet
 
                     params = []
                     ranges = []
@@ -978,74 +962,57 @@ class UnderapproximateWrites(ppl.Pass):
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.
-        for direction in border_memlets:
-            for connector in border_memlets[direction]:
-                border_memlet = border_memlets[direction][connector]
-                if border_memlet is not None:
-                    border_memlet.replace(nsdfg_node.symbol_mapping)
+        for connector in border_memlets:
+            border_memlet = border_memlets[connector]
+            if border_memlet is not None:
+                border_memlet.replace(nsdfg_node.symbol_mapping)
 
-                    # Also make sure that there's no symbol in the border memlet's
-                    # range that only exists inside the nested SDFG. If that's the
-                    # case, use an empty set to stay correct.
+                # Also make sure that there's no symbol in the border memlet's
+                # range that only exists inside the nested SDFG. If that's the
+                # case, use an empty set to stay correct.
 
-                    if border_memlet.src_subset is not None:
-                        if isinstance(border_memlet.src_subset, subsets.Subsetlist):
-                            _subsets = border_memlet.src_subset.subset_list
-                        else:
-                            _subsets = [border_memlet.src_subset]
-                        for i, subset in enumerate(_subsets):
-                            for rng in subset:
-                                fall_back = False
-                                for item in rng:
-                                    if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                        fall_back = True
-                                        break
-                                if fall_back:
-                                    _subsets[i] = None
+                if border_memlet.src_subset is not None:
+                    if isinstance(border_memlet.src_subset, subsets.Subsetlist):
+                        _subsets = border_memlet.src_subset.subset_list
+                    else:
+                        _subsets = [border_memlet.src_subset]
+                    for i, subset in enumerate(_subsets):
+                        for rng in subset:
+                            fall_back = False
+                            for item in rng:
+                                if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                    fall_back = True
                                     break
-                        border_memlet.src_subset = subsets.Subsetlist(_subsets)
-                    if border_memlet.dst_subset is not None:
-                        if isinstance(border_memlet.dst_subset, subsets.Subsetlist):
-                            _subsets = border_memlet.dst_subset.subset_list
-                        else:
-                            _subsets = [border_memlets.dst_subset]
-                        for i, subset in enumerate(_subsets):
-                            for rng in subset:
-                                fall_back = False
-                                for item in rng:
-                                    if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
-                                        fall_back = True
-                                        break
-                                if fall_back:
-                                    _subsets[i] = None
+                            if fall_back:
+                                _subsets[i] = None
+                                break
+                    border_memlet.src_subset = subsets.Subsetlist(_subsets)
+                if border_memlet.dst_subset is not None:
+                    if isinstance(border_memlet.dst_subset, subsets.Subsetlist):
+                        _subsets = border_memlet.dst_subset.subset_list
+                    else:
+                        _subsets = [border_memlet.dst_subset]
+                    for i, subset in enumerate(_subsets):
+                        for rng in subset:
+                            fall_back = False
+                            for item in rng:
+                                if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                    fall_back = True
                                     break
-                        border_memlet.dst_subset = subsets.Subsetlist(_subsets)
+                            if fall_back:
+                                _subsets[i] = None
+                                break
+                    border_memlet.dst_subset = subsets.Subsetlist(_subsets)
 
         # TODO: Make sure that this makes sense, especially the part in the try clause
         # TODO: if oedge has no corresponding border memlet assign empty memlet to it.
 
         # Propagate the inside 'border' memlets outside the SDFG by
         # offsetting, and unsqueezing if necessary.
-        for edge in parent_state.in_edges(nsdfg_node):
-            in_memlet = approximation_dict[edge]
-            if edge.dst_conn in border_memlets['in']:
-                internal_memlet = border_memlets['in'][edge.dst_conn]
-                # iterate over all the subset in the Subsetlist of internal
-                if internal_memlet is None:
-                    in_memlet.subset = None
-                    in_memlet.src_subset = None
-                    approximation_dict[edge] = in_memlet
-                    continue
-
-                self.unsqueeze_memlet_subsetList(
-                    internal_memlet, in_memlet, parent_sdfg)
-
-                approximation_dict[edge] = in_memlet
-
         for edge in parent_state.out_edges(nsdfg_node):
             out_memlet = approximation_dict[edge]
-            if edge.src_conn in border_memlets['out']:
-                internal_memlet = border_memlets['out'][edge.src_conn]
+            if edge.src_conn in border_memlets:
+                internal_memlet = border_memlets[edge.src_conn]
 
                 if internal_memlet is None:
                     out_memlet.subset = None
@@ -1213,7 +1180,7 @@ class UnderapproximateWrites(ppl.Pass):
         states.add(last_loop_state)
         # maintain a list of states that are part of nested loops
         ignore = []
-        for state in states:
+        for state in loop_states:
             if state in ignore:
                 continue
 
@@ -1222,6 +1189,9 @@ class UnderapproximateWrites(ppl.Pass):
                 self.propagate_memlet_loop(sdfg, loops, state)
                 _, _, nested_loop_states, _, _ = loops[state]
                 ignore += nested_loop_states
+
+            if state not in states:
+                continue
 
             # iterate over the data_nodes that are actually in the current state
             # plus the data_nodes that are overwritten in the corresponding loop body
