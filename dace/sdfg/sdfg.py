@@ -55,16 +55,17 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
-        tokens = key.split('.')
+        tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
         while tokens:
             token = tokens.pop(0)
             result = result.members[token]
         return result
+
     
     def __contains__(self, key):
-        tokens = key.split('.')
+        tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)
         desc = None
