@@ -1307,7 +1307,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             ordered_states = self.nodes()
 
         for state in ordered_states:
-            free_syms |= state.free_symbols
+            state_fsyms = state.free_symbols
+            free_syms |= state_fsyms
 
             # Add free inter-state symbols
             for e in self.out_edges(state):
@@ -1315,7 +1316,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.free_symbols
-                defined_syms |= set(e.data.assignments.keys()) - efsyms
+                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_fsyms)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
 
