@@ -48,6 +48,35 @@ if TYPE_CHECKING:
     from dace.codegen.compiled_sdfg import CompiledSDFG
 
 
+class NestedDict(dict):
+
+    def __init__(self):
+        super(NestedDict, self).__init__()
+
+    def __getitem__(self, key):
+        tokens = key.split('.')
+        token = tokens.pop(0)
+        result = super(NestedDict, self).__getitem__(token)
+        while tokens:
+            token = tokens.pop(0)
+            result = result.members[token]
+        return result
+    
+    def __contains__(self, key):
+        tokens = key.split('.')
+        token = tokens.pop(0)
+        result = super(NestedDict, self).__contains__(token)
+        desc = None
+        while tokens and result:
+            if desc is None:
+                desc = super(NestedDict, self).__getitem__(token)
+            else:
+                desc = desc.members[token]
+            token = tokens.pop(0)
+            result = token in desc.members
+        return result
+
+
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
@@ -375,7 +404,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict,
+    _arrays = Property(dtype=NestedDict,
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
@@ -456,7 +485,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._sdfg_list = [self]
         self._start_state: Optional[int] = None
         self._cached_start_state: Optional[SDFGState] = None
-        self._arrays = {}  # type: Dict[str, dt.Array]
+        self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
