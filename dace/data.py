@@ -341,42 +341,54 @@ class Data:
         return new_desc
 
 
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return {k: serialize.to_json(v) for k, v in arrays.items()}
+
+
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return {k: serialize.from_json(v, context) for k, v in obj.items()}
+
+
+@make_properties
 class Structure(Data):
     """ Base class for structures. """
 
+    members = Property(dtype=dict,
+                       desc="Dictionary of structure members",
+                       from_json=_arrays_from_json,
+                       to_json=_arrays_to_json)
+
     def __init__(self,
-                 shape: Sequence[Union[int, symbolic.SymbolicType]] = None,
+                 members: Dict[str, Any],
                  transient: bool = False,
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  debuginfo: dtypes.DebugInfo = None):
-        fields = {
-            attr: getattr(self, attr)
-            for attr in dir(self) if (
-                not attr in dir(Data) and
-                not attr.startswith("_") and
-                not attr in ('total_size', 'offset', 'start_offset', 'strides'))}
+        self.members = members or {}
         fields_and_types = dict()
         symbols = set()
-        for attr in dir(self):
-            if (attr in dir(Data) or attr.startswith("__") or
-                    attr in ('total_size', 'offset', 'start_offset', 'strides')):
-                continue
-            value = getattr(self, attr)
-            if isinstance(value, Array):
-                symbols |= value.free_symbols
-                fields_and_types[attr] = (dtypes.pointer(value.dtype), str(_prod(value.shape)))
-            elif isinstance(value, Scalar):
-                symbols |= value.free_symbols
-                fields_and_types[attr] = value.dtype
-            elif isinstance(value, (sp.Basic, symbolic.SymExpr)):
-                symbols |= value.free_symbols
-                fields_and_types[attr] = symbolic.symtype(value)
-            elif isinstance(value, (int, numpy.integer)):
-                fields_and_types[attr] = dtypes.typeclass(type(value))
+        for k, v in members.items():
+            if isinstance(v, Structure):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (v.dtype, str(v.total_size))
+            elif isinstance(v, Array):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+            elif isinstance(v, Scalar):
+                symbols |= v.free_symbols
+                fields_and_types[k] = v.dtype
+            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+                symbols |= v.free_symbols
+                fields_and_types[k] = symbolic.symtype(v)
+            elif isinstance(v, (int, numpy.integer)):
+                fields_and_types[k] = dtypes.typeclass(type(v))
             else:
-                raise TypeError(f"Attribute {attr}'s value {value} has unsupported type: {type(value)}")
+                raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
         for s in symbols:
             if str(s) in fields_and_types:
                 continue
@@ -384,8 +396,8 @@ class Structure(Data):
                 fields_and_types[str(s)] = s.dtype
             else:
                 fields_and_types[str(s)] = dtypes.int32
-        dtype = dtypes.struct(self.__class__.__name__, **fields_and_types)
-        shape = shape or (1,)
+        dtype = dtypes.pointer(dtypes.struct(self.__class__.__name__, **fields_and_types))
+        shape = (1,)
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @property
