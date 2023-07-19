@@ -7,6 +7,7 @@ import numpy as np
 
 
 def test_for_in_map_in_for():
+
     @dace.program
     def matmul(A: dace.float32[10, 10], B: dace.float32[10, 10], C: dace.float32[10, 10]):
         for i in range(10):
@@ -55,6 +56,7 @@ def test_libnode():
 
 
 def test_nesting():
+
     @dace.program
     def nest2(a: dace.float64[10]):
         a += 1
@@ -89,6 +91,7 @@ def test_nesting():
 
 
 def test_nesting_view():
+
     @dace.program
     def nest2(a: dace.float64[40]):
         a += 1
@@ -109,6 +112,7 @@ def test_nesting_view():
 
 
 def test_nesting_nview():
+
     @dace.program
     def nest2(a: dace.float64[40]):
         a += 1
@@ -168,6 +172,9 @@ def test_irreducible_in_loops():
 
     # Irreducible part
     sdfg.add_edge(l3, l1, dace.InterstateEdge('i < 5'))
+
+    # Avoiding undefined behavior
+    sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
 
     # TODO: gblock must cover the greatest common scope its labels are in.
     # print(as_schedule_tree(sdfg).as_string())
