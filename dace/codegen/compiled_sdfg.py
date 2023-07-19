@@ -452,9 +452,10 @@ class CompiledSDFG(object):
                 # GPU scalars are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global:
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
-            elif not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dtypes.callback) and not isinstance(
-                    arg,
-                (atype.dtype.type, sp.Basic)) and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype):
+            elif (not isinstance(atype, (dt.Array, dt.Structure)) and
+                  not isinstance(atype.dtype, dtypes.callback) and
+                  not isinstance(arg, (atype.dtype.type, sp.Basic)) and
+                  not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
                 if isinstance(arg, int) and atype.dtype.type == np.int64:
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
@@ -521,7 +522,7 @@ class CompiledSDFG(object):
         # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
             for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
@@ -531,7 +532,8 @@ class CompiledSDFG(object):
 
         try:
             newargs = tuple(
-                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+                actype(arg) if not isinstance(arg, (ctypes._SimpleCData)) else arg
+                for arg, actype, atype in newargs)
         except TypeError:
             # Pinpoint bad argument
             for i, (arg, actype, _) in enumerate(newargs):
