@@ -587,9 +587,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         break
 
         # Check if memlet data matches src or dst nodes
-        if (e.data.data is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or e.data.data != src_node.data)
-                and (not isinstance(dst_node, nd.AccessNode) or e.data.data != dst_node.data)):
+        name = e.data.data
+        if isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Structure):
+            name = None
+        if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
+            name = None
+        if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
