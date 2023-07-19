@@ -150,15 +150,23 @@ class DaCeCodeGenerator(object):
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
+        
+        def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
+            if isinstance(dtype, dtypes.pointer):
+                wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
+            elif isinstance(dtype, dtypes.struct):
+                for field in dtype.fields.values():
+                    wrote_something = _emit_definitions(field, wrote_something)
+            if hasattr(dtype, 'emit_definition'):
+                if not wrote_something:
+                    global_stream.write("", sdfg)
+                global_stream.write(dtype.emit_definition(), sdfg)
+            return wrote_something
 
         # Emit unique definitions
         wrote_something = False
         for typ in datatypes:
-            if hasattr(typ, 'emit_definition'):
-                if not wrote_something:
-                    global_stream.write("", sdfg)
-                wrote_something = True
-                global_stream.write(typ.emit_definition(), sdfg)
+            wrote_something = _emit_definitions(typ, wrote_something)
         if wrote_something:
             global_stream.write("", sdfg)
 
