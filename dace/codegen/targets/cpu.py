@@ -55,10 +55,30 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
-        # Keeps track of generated connectors, so we know how to access them in
-        # nested scopes
+        def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
+            for k, v in struct.members.items():
+                if isinstance(v, data.Structure):
+                    _visit_structure(v, args, f'{prefix}.{k}')
+                elif isinstance(v, data.Data):
+                    args[f'{prefix}.{k}'] = v
+
+        # Keeps track of generated connectors, so we know how to access them in nested scopes
+        arglist = dict(self._frame.arglist)
         for name, arg_type in self._frame.arglist.items():
-            if isinstance(arg_type, data.Scalar):
+            if isinstance(arg_type, data.Structure):
+                desc = sdfg.arrays[name]
+                _visit_structure(arg_type, arglist, name)
+            elif isinstance(arg_type, data.StructArray):
+                desc = sdfg.arrays[name]
+                desc = desc.stype
+                for attr in dir(desc):
+                    value = getattr(desc, attr)
+                    if isinstance(value, data.Data):
+                        assert attr in sdfg.arrays
+                        arglist[attr] = value
+
+        for name, arg_type in arglist.items():
+            if isinstance(arg_type, (data.Scalar, data.Structure)):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
