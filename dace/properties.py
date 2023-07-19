@@ -888,6 +888,8 @@ class SetProperty(Property):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
     def to_json(self, l):
+        if l is None:
+            return None
         return list(sorted(l))
 
     def from_json(self, l, sdfg=None):
