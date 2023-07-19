@@ -50,8 +50,9 @@ if TYPE_CHECKING:
 
 class NestedDict(dict):
 
-    def __init__(self):
-        super(NestedDict, self).__init__()
+    def __init__(self, mapping=None):
+        mapping = mapping or {}
+        super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
         tokens = key.split('.')
@@ -87,6 +88,12 @@ def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
     return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
+
+
+def _nested_arrays_from_json(obj, context=None):
+    if obj is None:
+        return NestedDict({})
+    return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
 def _replace_dict_keys(d, old, new):
@@ -407,7 +414,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     _arrays = Property(dtype=NestedDict,
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
-                       from_json=_arrays_from_json)
+                       from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,

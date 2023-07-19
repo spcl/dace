@@ -2,12 +2,29 @@
 import dace
 import numpy as np
 
+from dace import serialize
+from dace.properties import make_properties
 from scipy import sparse
 
 
 def create_structure(name: str, **members) -> dace.data.Structure:
 
     StructureClass = type(name, (dace.data.Structure, ), {})
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != name:
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = StructureClass({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+    
+    setattr(StructureClass, 'from_json', from_json)
+    StructureClass = make_properties(StructureClass)
+
     return StructureClass(members)
 
 
