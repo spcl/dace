@@ -370,6 +370,8 @@ def emit_memlet_reference(dispatcher,
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
+    expr = expr.replace('.', '->')
+
     return (typedef + ref, pointer_name, expr)
 
 
