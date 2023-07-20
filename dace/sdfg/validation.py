@@ -111,6 +111,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
+        in_default_scope = None
 
         # Check every state separately
         start_state = sdfg.start_state
@@ -172,12 +173,13 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                 container = memlet.data
                 if not _accessible(sdfg, container, context):
                     # Check context w.r.t. maps
-                    in_default_scope = False
-                    if sdfg.parent_nsdfg_node is not None:
-                        if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
-                                       [dtypes.ScheduleType.Default]):
-                            in_default_scope = True
-                    if not in_default_scope:
+                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                        in_default_scope = False
+                        if sdfg.parent_nsdfg_node is not None:
+                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                        [dtypes.ScheduleType.Default]):
+                                in_default_scope = True
+                    if in_default_scope is False:
                         eid = sdfg.edge_id(edge)
                         raise InvalidSDFGInterstateEdgeError(
                             f'Trying to read an inaccessible data container "{container}" '
@@ -226,9 +228,17 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for memlet in ise_memlets:
                 container = memlet.data
                 if not _accessible(sdfg, container, context):
-                    raise InvalidSDFGInterstateEdgeError(
-                        f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+                    # Check context w.r.t. maps
+                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                        in_default_scope = False
+                        if sdfg.parent_nsdfg_node is not None:
+                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                        [dtypes.ScheduleType.Default]):
+                                in_default_scope = True
+                    if in_default_scope is False:
+                        raise InvalidSDFGInterstateEdgeError(
+                            f'Trying to read an inaccessible data container "{container}" '
+                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
