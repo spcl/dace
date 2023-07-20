@@ -8,7 +8,7 @@ from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import utils as sdutil, graph as gr
 from dace.frontend.python.astutils import negate_expr
-from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses, utils as tutils
+from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.transformation.helpers import unsqueeze_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
@@ -47,7 +47,7 @@ def dealias_sdfg(sdfg: SDFG):
                     else:
                         inv_replacements[parent_name] = [name]
                     break
-        
+
         if to_unsqueeze:
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
@@ -87,32 +87,21 @@ def dealias_sdfg(sdfg: SDFG):
                         else:
                             e.data.other_subset = subsets.Range.from_array(parent_arr)
 
-        
         if replacements:
             nsdfg.replace_dict(replacements)
-            parent_node.in_connectors = {replacements[c] if c in replacements else c: t for c, t in parent_node.in_connectors.items()}
-            parent_node.out_connectors = {replacements[c] if c in replacements else c: t for c, t in parent_node.out_connectors.items()}
+            parent_node.in_connectors = {
+                replacements[c] if c in replacements else c: t
+                for c, t in parent_node.in_connectors.items()
+            }
+            parent_node.out_connectors = {
+                replacements[c] if c in replacements else c: t
+                for c, t in parent_node.out_connectors.items()
+            }
             for e in parent_state.all_edges(parent_node):
                 if e.src_conn in replacements:
                     e._src_conn = replacements[e.src_conn]
                 elif e.dst_conn in replacements:
                     e._dst_conn = replacements[e.dst_conn]
-
-
-def populate_containers(scope: tn.ScheduleTreeScope, defined_arrays: Set[str] = None):
-    defined_arrays = defined_arrays or set()
-    if scope.top_level:
-        scope.containers = {name: copy.deepcopy(desc) for name, desc in scope.sdfg.arrays.items() if not desc.transient}
-        scope.symbols = dict()
-        for sdfg in scope.sdfg.all_sdfgs_recursive():
-            scope.symbols.update(sdfg.symbols)
-        defined_arrays = set(scope.containers.keys())
-    _, defined_arrays = scope.define_arrays(0, defined_arrays)
-    for child in scope.children:
-        child.parent = scope
-        if isinstance(child, tn.ScheduleTreeScope):
-            # _, defined_arrays = child.define_arrays(0, defined_arrays)
-            populate_containers(child, defined_arrays)
 
 
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
@@ -166,7 +155,6 @@ def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
             if s in array_mapping:
                 repl_dict[s] = str(array_mapping[s])
         e.data.replace_dict(repl_dict)
-            
 
 
 def remove_name_collisions(sdfg: SDFG):
@@ -326,7 +314,6 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                 target_name = innermost_node.data
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
-                # result[e] = tn.CopyNode(sdfg=sdfg, target=target_name, memlet=new_memlet)
 
     return result
 
@@ -363,7 +350,10 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Create scope node and add to stack
             scopes.append(result)
             subnodes = []
-            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node, sdfg=state.parent, top_level=False, children=subnodes))
+            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node,
+                                                         sdfg=state.parent,
+                                                         top_level=False,
+                                                         children=subnodes))
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
@@ -497,7 +487,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
                     if e not in parent.assignments_to_ignore:
                         for aname, aval in e.data.assignments.items():
-                            edge_body.append(tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval})))
+                            edge_body.append(
+                                tn.AssignNode(name=aname,
+                                              value=CodeBlock(aval),
+                                              edge=InterstateEdge(assignments={aname: aval})))
 
                     if not parent.sequential:
                         if e not in parent.gotos_to_ignore:
@@ -512,12 +505,18 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:
                             # Conditional state in sequential block! Add "if not condition goto exit"
                             result.append(
-                                tn.StateIfScope(sdfg=sdfg, top_level=False, condition=CodeBlock(negate_expr(e.data.condition)),
+                                tn.StateIfScope(sdfg=sdfg,
+                                                top_level=False,
+                                                condition=CodeBlock(negate_expr(e.data.condition)),
                                                 children=[tn.GotoNode(target=None)]))
                             result.extend(edge_body)
                         else:
                             # Add "if condition" with the body above
-                            result.append(tn.StateIfScope(sdfg=sdfg, top_level=False, condition=e.data.condition, children=edge_body))
+                            result.append(
+                                tn.StateIfScope(sdfg=sdfg,
+                                                top_level=False,
+                                                condition=e.data.condition,
+                                                children=edge_body))
                     else:
                         result.extend(edge_body)
 
@@ -529,7 +528,8 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 result.append(tn.ElseScope(sdfg=sdfg, top_level=False, children=totree(node.orelse)))
         elif isinstance(node, cf.IfElseChain):
             # Add "if" for the first condition, "elif"s for the rest
-            result.append(tn.IfScope(sdfg=sdfg, top_level=False, condition=node.body[0][0], children=totree(node.body[0][1])))
+            result.append(
+                tn.IfScope(sdfg=sdfg, top_level=False, condition=node.body[0][0], children=totree(node.body[0][1])))
             for cond, body in node.body[1:]:
                 result.append(tn.ElifScope(sdfg=sdfg, top_level=False, condition=cond, children=totree(body)))
             # "else goto exit"
@@ -550,42 +550,10 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     # Recursive traversal of the control flow tree
     result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
 
-    if toplevel:
-        populate_containers(result)
-
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)
 
     return result
-
-
-def as_sdfg(tree: tn.ScheduleTreeScope) -> SDFG:
-    """
-    Converts a ScheduleTree to its SDFG representation.
-
-    :param tree: The ScheduleTree
-    :return: The ScheduleTree's SDFG representation
-    """
-
-    # Write tree as DaCe Python code.
-    code, _ = tree.as_python()
-
-    # Save DaCe Python code to temporary file.
-    import tempfile
-    tmp = tempfile.NamedTemporaryFile(suffix='.py', delete=False)
-    tmp.write(b'import dace\n')
-    tmp.write(b'import numpy\n')
-    tmp.write(bytes(code, encoding='utf-8'))
-    tmp.close()
-
-    # Load DaCe Python program from temporary file.
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(tmp.name.split('/')[-1][:-3], tmp.name)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    prog = eval(f"mod.{tree.sdfg.label}")
-
-    return prog.to_sdfg()
 
 
 if __name__ == '__main__':

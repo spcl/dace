@@ -637,7 +637,8 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
             inconn_name = symbolic.symstr(inpname)
 
         out = state.add_write(outname)
-        tasklet = state.add_tasklet(func, {'__inp'} if create_input else {}, {'__out'}, f'__out = {func}({inconn_name})')
+        tasklet = state.add_tasklet(func, {'__inp'} if create_input else {}, {'__out'},
+                                    f'__out = {func}({inconn_name})')
         if create_input:
             state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None, Memlet.from_array(outname, outarr))
@@ -2158,8 +2159,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
         if res is None:
-            warnings.warn(f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
-                          f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
+            warnings.warn(
+                f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
+                f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
         elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
@@ -2176,8 +2178,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Number of matrix columns {} must match"
                               "size of vector {}.".format(arr1.shape[1], arr2.shape[0]))
@@ -2188,8 +2191,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Size of vector {} must match number of matrix "
                               "rows {} must match".format(arr1.shape[0], arr2.shape[0]))
@@ -2200,8 +2204,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Vectors in vector product must have same size: "
                               "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
@@ -4401,11 +4406,13 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
 
     # Set tasklet parameters
     impl = {
-        'name': "_convert_to_{}_".format(dtype.to_string()),
+        'name':
+        "_convert_to_{}_".format(dtype.to_string()),
         'inputs': ['__inp'],
         'outputs': ['__out'],
-        'code': "__out = {}(__inp)".format(f"dace.{dtype.to_string()}" if dtype not in (dace.bool, dace.bool_)
-                                                                       else dtype.to_string())
+        'code':
+        "__out = {}(__inp)".format(f"dace.{dtype.to_string()}" if dtype not in (dace.bool,
+                                                                                dace.bool_) else dtype.to_string())
     }
     if dtype in (dace.bool, dace.bool_):
         impl['code'] = "__out = dace.bool_(__inp)"
@@ -4733,107 +4740,3 @@ def _makeboolop(op: str, method: str):
 
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
-
-
-# ScheduleTree-related replacements ###################################################################################
-
-
-@oprepo.replaces('dace.tree.tasklet')
-def _tasklet(pv: 'ProgramVisitor',
-             sdfg: SDFG,
-             state: SDFGState,
-             label: StringLiteral,
-             inputs: Dict[StringLiteral, str],
-             inputs_wcr: Dict[StringLiteral, Union[None, Callable[[Any, Any], Any]]],
-             outputs: Dict[StringLiteral, str],
-             outputs_wcr: Dict[StringLiteral, Union[None, Callable[[Any, Any], Any]]],
-             code: StringLiteral,
-             language: dtypes.Language):
-
-    # Extract strings from StringLiterals
-    label = label.value
-    inputs = {k.value: v for k, v in inputs.items()}
-    inputs_wcr = {k.value: v for k, v in inputs_wcr.items()}
-    outputs = {k.value: v for k, v in outputs.items()}
-    outputs_wcr = {k.value: v for k, v in outputs_wcr.items()}
-    code = code.value
-
-    # Create Tasklet
-    tasklet = state.add_tasklet(label, inputs.keys(), outputs.keys(), code, language)
-    for conn, name in inputs.items():
-        access = state.add_access(name)
-        memlet = Memlet.from_array(name, sdfg.arrays[name])
-        memlet.wcr = inputs_wcr[conn]
-        state.add_edge(access, None, tasklet, conn, memlet)
-    for conn, name in outputs.items():
-        access = state.add_access(name)
-        memlet = Memlet.from_array(name, sdfg.arrays[name])
-        memlet.wcr = outputs_wcr[conn]
-        state.add_edge(tasklet, conn, access, None, memlet)
-
-    # Handle scope output
-    for out in outputs.values():
-        for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
-            if out == var:
-                if not (outer_var, outer_rng, 'w') in pv.accesses:
-                    pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
-                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), set())
-                break
-
-
-@oprepo.replaces('dace.tree.library')
-def _library(pv: 'ProgramVisitor', 
-             sdfg: SDFG,
-             state: SDFGState,
-             ltype: type,
-             label: StringLiteral,
-             inputs: Union[Dict[StringLiteral, str], Set[str]],
-             outputs: Union[Dict[StringLiteral, str], Set[str]],
-             **kwargs):
-
-    # Extract strings from StringLiterals
-    label = label.value
-    if isinstance(inputs, dict):
-        inputs = {k.value: v for k, v in inputs.items()}
-    else:
-        inputs = {i: v for i, v in enumerate(inputs)}
-    if isinstance(outputs, dict):
-        outputs = {k.value: v for k, v in outputs.items()}
-    else:
-        outputs = {i: v for i, v in enumerate(outputs)}
-    
-    # Create LibraryNode
-    tasklet = ltype(label, **kwargs)
-    state.add_node(tasklet)
-    for k, name in inputs.items():
-        access = state.add_access(name)
-        conn = k if isinstance(k, str) else None
-        state.add_edge(access, None, tasklet, conn, Memlet.from_array(name, sdfg.arrays[name]))
-    for k, name in outputs.items():
-        access = state.add_access(name)
-        memlet = Memlet.from_array(name, sdfg.arrays[name])
-        conn = k if isinstance(k, str) else None
-        state.add_edge(tasklet, conn, access, None, memlet)
-    
-    # Handle scope output
-    for out in outputs.values():
-        for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
-            if out == var:
-                if not (outer_var, outer_rng, 'w') in pv.accesses:
-                    pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
-                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), set())
-                break
-
-
-@oprepo.replaces('dace.tree.copy')
-def _copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src: str, dst: str, wcr: str = None):
-    src_access = state.add_access(src)
-    dst_access = state.add_access(dst)
-    state.add_nedge(src_access, dst_access, Memlet.from_array(dst, sdfg.arrays[dst], wcr=None))
-
-    for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
-        if dst == var:
-            if not (outer_var, outer_rng, 'w') in pv.accesses:
-                pv.accesses[(outer_var, outer_rng, 'w')] = (dst, rng)
-            pv.outputs[dst] = (state, Memlet(data=outer_var, subset=outer_rng), set())
-            break

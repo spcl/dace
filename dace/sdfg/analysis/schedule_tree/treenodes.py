@@ -28,34 +28,6 @@ class ScheduleTreeNode:
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
 
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + 'pass', defined_arrays
-
-    def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
-        return '', defined_arrays
-        # defined_arrays = defined_arrays or set()
-        # string = ''
-        # undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
-        # if hasattr(self, 'children'):
-        #     times_used = {name: 0 for name in undefined_arrays}
-        #     for child in self.children:
-        #         for name in undefined_arrays:
-        #             if child.is_data_used(name):
-        #                 times_used[name] += 1
-        #     undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
-        # for name, desc in undefined_arrays.items():
-        #     string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
-        # defined_arrays |= undefined_arrays.keys()
-        # return string, defined_arrays
-
-    def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
-        pass
-        # for child in self.children:
-        #     if child.is_data_used(name):
-        #         return True
-        # return False
-
     def preorder_traversal(self) -> Iterator['ScheduleTreeNode']:
         """
         Traverse tree nodes in a pre-order manner.
@@ -71,7 +43,6 @@ class ScheduleTreeScope(ScheduleTreeNode):
     containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
     symbols: Optional[Dict[str, symbol]] = field(default_factory=dict, init=False)
 
-    # def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
     def __init__(self,
                  sdfg: Optional[SDFG] = None,
                  top_level: Optional[bool] = False,
@@ -82,23 +53,6 @@ class ScheduleTreeScope(ScheduleTreeNode):
         if self.children:
             for child in children:
                 child.parent = self
-        # self.__post_init__()
-        # for child in children:
-        #     child.parent = self
-        # _, defined_arrays = self.define_arrays(0, set())
-        # self.containers = {name: copy.deepcopy(sdfg.arrays[name]) for name in defined_arrays}
-        # if top_level:
-        #     self.containers.update({name: copy.deepcopy(desc) for name, desc in sdfg.arrays.items() if not desc.transient})
-        # # self.containers = {name: copy.deepcopy(container) for name, container in sdfg.arrays.items()}
-
-    # def __post_init__(self):
-    #     for child in self.children:
-    #         child.parent = self
-    #     _, defined_arrays = self.define_arrays(0, set())
-    #     self.containers = {name: copy.deepcopy(self.sdfg.arrays[name]) for name in defined_arrays}
-    #     if self.top_level:
-    #         self.containers.update({name: copy.deepcopy(desc) for name, desc in self.sdfg.arrays.items() if not desc.transient})
-    #     # self.containers = {name: copy.deepcopy(container) for name, container in sdfg.arrays.items()}
 
     def as_string(self, indent: int = 0):
         return '\n'.join([child.as_string(indent + 1) for child in self.children])
@@ -110,74 +64,6 @@ class ScheduleTreeScope(ScheduleTreeNode):
         yield from super().preorder_traversal()
         for child in self.children:
             yield from child.preorder_traversal()
-
-    def as_python(self,
-                  indent: int = 0,
-                  defined_arrays: Set[str] = None,
-                  def_offset: int = 1,
-                  sep_defs: bool = False) -> Tuple[str, Set[str]]:
-        if self.top_level:
-            header = ''
-            for s in self.sdfg.free_symbols:
-                header += f"{s} = dace.symbol('{s}', {TYPECLASS_TO_STRING[self.sdfg.symbols[s]].replace('::', '.')})\n"
-            header += f"""
-@dace.program
-def {self.sdfg.label}({self.sdfg.python_signature()}):
-"""
-            # defined_arrays = set([name for name, desc in self.sdfg.arrays.items() if not desc.transient])
-            defined_arrays = set([name for name, desc in self.containers.items() if not desc.transient])
-        else:
-            header = ''
-            defined_arrays = defined_arrays or set()
-        cindent = indent + def_offset
-        # string, defined_arrays = self.define_arrays(indent + 1, defined_arrays)
-        definitions = ''
-        body = ''
-        undefined_arrays = {name: desc for name, desc in self.containers.items() if name not in defined_arrays}
-        for name, desc in undefined_arrays.items():
-            if isinstance(desc, data.Scalar):
-                definitions += cindent * INDENTATION + f"{name} = numpy.{desc.dtype.as_numpy_dtype()}(0)\n"
-            else:
-                definitions += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
-        defined_arrays |= undefined_arrays.keys()
-        for child in self.children:
-            substring, defined_arrays = child.as_python(indent + 1, defined_arrays)
-            body += substring
-            if body[-1] != '\n':
-                body += '\n'
-        if sep_defs:
-            return definitions, body, defined_arrays
-        else:
-            return header + definitions + body, defined_arrays
-
-    def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
-        defined_arrays = defined_arrays or set()
-        string = ''
-        undefined_arrays = {}
-        for sdfg in self.sdfg.all_sdfgs_recursive():
-            undefined_arrays.update(
-                {name: desc
-                 for name, desc in sdfg.arrays.items() if not name in defined_arrays and desc.transient})
-        # undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
-        times_used = {name: 0 for name in undefined_arrays}
-        for child in self.children:
-            for name in undefined_arrays:
-                if child.is_data_used(name):
-                    times_used[name] += 1
-        undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
-        if not self.containers:
-            self.containers = {}
-        for name, desc in undefined_arrays.items():
-            string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
-            self.containers[name] = copy.deepcopy(desc)
-        defined_arrays |= undefined_arrays.keys()
-        return string, defined_arrays
-
-    def is_data_used(self, name: str) -> bool:
-        for child in self.children:
-            if child.is_data_used(name):
-                return True
-        return False
 
     # TODO: Get input/output memlets?
 
@@ -203,8 +89,6 @@ class GBlock(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + 'gblock:\n'
         return result + super().as_string(indent)
-
-    pass
 
 
 @dataclass
@@ -251,15 +135,6 @@ class ForScope(ControlFlowScope):
                   f'{node.itervar} = {node.update}:\n')
         return result + super().as_string(indent)
 
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        node = self.header
-        result = indent * INDENTATION + f'{node.itervar} = {node.init}\n'
-        result += indent * INDENTATION + f'while {node.condition.as_string}:\n'
-        defs, body, defined_arrays = super().as_python(indent, defined_arrays, def_offset=0, sep_defs=True)
-        result = defs + result + body
-        result += (indent + 1) * INDENTATION + f'{node.itervar} = {node.update}\n'
-        return result, defined_arrays
-
 
 @dataclass
 class WhileScope(ControlFlowScope):
@@ -296,16 +171,6 @@ class IfScope(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
-
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
-        string, defined_arrays = super().as_python(indent, defined_arrays)
-        return result + string, defined_arrays
-
-    def is_data_used(self, name: str) -> bool:
-        result = name in self.condition.get_free_symbols()
-        result |= super().is_data_used(name)
-        return result
 
 
 @dataclass
@@ -373,12 +238,6 @@ class MapScope(DataflowScope):
         result = indent * INDENTATION + f'map {", ".join(self.node.map.params)} in [{rangestr}]:\n'
         return result + super().as_string(indent)
 
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
-        result = indent * INDENTATION + f'for {", ".join(self.node.map.params)} in dace.map[{rangestr}]:\n'
-        string, defined_arrays = super().as_python(indent, defined_arrays)
-        return result + string, defined_arrays
-
 
 @dataclass
 class ConsumeScope(DataflowScope):
@@ -405,14 +264,6 @@ class PipelineScope(DataflowScope):
         return result + super().as_string(indent)
 
 
-def _memlet_to_str(memlet: Memlet) -> str:
-    assert memlet.other_subset == None
-    wcr = ""
-    if memlet.wcr:
-        wcr = f"({reduce(lambda x, y: x * y, memlet.subset.size())}, {memlet.wcr})"
-    return f"{memlet.data}{wcr}[{memlet.subset}]"
-
-
 @dataclass
 class TaskletNode(ScheduleTreeNode):
     node: nodes.Tasklet
@@ -423,28 +274,6 @@ class TaskletNode(ScheduleTreeNode):
         in_memlets = ', '.join(f'{v}' for v in self.in_memlets.values())
         out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
-
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        explicit_dataflow = indent * INDENTATION + "with dace.tasklet:\n"
-        for conn, memlet in self.in_memlets.items():
-            explicit_dataflow += (indent + 1) * INDENTATION + f"{conn} << {_memlet_to_str(memlet)}\n"
-        for conn, memlet in self.out_memlets.items():
-            explicit_dataflow += (indent + 1) * INDENTATION + f"{conn} >> {_memlet_to_str(memlet)}\n"
-        code = self.node.code.as_string.replace('\n', f"\n{(indent + 1) * INDENTATION}")
-        explicit_dataflow += (indent + 1) * INDENTATION + code
-        defined_arrays = defined_arrays or set()
-        string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + explicit_dataflow, defined_arrays
-
-    def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
-        used_data = set([memlet.data for memlet in self.in_memlets.values()])
-        used_data |= set([memlet.data for memlet in self.out_memlets.values()])
-        if include_symbols:
-            for memlet in self.in_memlets.values():
-                used_data |= memlet.subset.free_symbols
-                if memlet.other_subset:
-                    used_data |= memlet.other_subset.free_symbols
-        return name in used_data
 
 
 @dataclass
@@ -468,34 +297,6 @@ class LibraryCall(ScheduleTreeNode):
                                    if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
         return indent * INDENTATION + f'{out_memlets} = library {libname}[{own_properties}]({in_memlets})'
 
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        if isinstance(self.in_memlets, set):
-            in_memlets = ', '.join(f'{v}' for v in self.in_memlets)
-        else:
-            in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
-        if isinstance(self.out_memlets, set):
-            out_memlets = ', '.join(f'{v}' for v in self.out_memlets)
-        else:
-            out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
-        libname = type(self.node).__module__ + '.' + type(self.node).__qualname__
-        # Get the properties of the library node without its superclasses
-        own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
-                                   if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
-        defined_arrays = defined_arrays or set()
-        string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + f"dace.tree.library(ltype={libname}, label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, {own_properties})", defined_arrays
-
-    def is_data_used(self, name: str) -> bool:
-        if isinstance(self.in_memlets, set):
-            used_data = set([memlet.data for memlet in self.in_memlets])
-        else:
-            used_data = set([memlet.data for memlet in self.in_memlets.values()])
-        if isinstance(self.out_memlets, set):
-            used_data |= set([memlet.data for memlet in self.out_memlets])
-        else:
-            used_data |= set([memlet.data for memlet in self.out_memlets.values()])
-        return name in used_data
-
 
 @dataclass
 class CopyNode(ScheduleTreeNode):
@@ -513,23 +314,6 @@ class CopyNode(ScheduleTreeNode):
             wcr = ''
 
         return indent * INDENTATION + f'{self.target}{offset} = copy {self.memlet.data}[{self.memlet.subset}]{wcr}'
-
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        if self.memlet.other_subset is not None and any(s != 0 for s in self.memlet.other_subset.min_element()):
-            offset = f'[{self.memlet.other_subset}]'
-        else:
-            offset = f'[{self.memlet.subset}]'
-        if self.memlet.wcr is not None:
-            wcr = f' with {self.memlet.wcr}'
-        else:
-            wcr = ''
-
-        defined_arrays = defined_arrays or set()
-        string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + f'dace.tree.copy(src={self.memlet.data}[{self.memlet.subset}], dst={self.target}{offset}, wcr={self.memlet.wcr})', defined_arrays
-
-    def is_data_used(self, name: str) -> bool:
-        return name is self.memlet.data or name is self.target
 
 
 @dataclass
@@ -554,15 +338,6 @@ class ViewNode(ScheduleTreeNode):
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'{self.target} = view {self.memlet} as {self.view_desc.shape}'
-
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        defined_arrays = defined_arrays or set()
-        string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + f"{self.target} = {self.memlet}", defined_arrays
-
-    def is_data_used(self, name: str) -> bool:
-        # NOTE: View data must not be considered used
-        return name is self.memlet.data
 
 
 @dataclass
