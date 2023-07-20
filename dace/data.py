@@ -369,7 +369,10 @@ class Structure(Data):
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  debuginfo: dtypes.DebugInfo = None):
+        # TODO: Should we make a deep-copy here?
         self.members = members or {}
+        for k, v in self.members.items():
+            v.transient = transient
         fields_and_types = dict()
         symbols = set()
         for k, v in members.items():
@@ -432,6 +435,31 @@ class Structure(Data):
             return StructArray(self, tuple(s))
         return StructArray(self, (s, ))
 
+
+@make_properties
+class StructureView(Structure):
+    """ 
+    Data descriptor that acts as a reference (or view) of another structure.
+    """
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'StructureView':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = StructureView({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
 
 @make_properties
 class Scalar(Data):
