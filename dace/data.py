@@ -361,9 +361,11 @@ class Structure(Data):
                        desc="Dictionary of structure members",
                        from_json=_arrays_from_json,
                        to_json=_arrays_to_json)
+    name = Property(dtype=str, desc="Structure name")
 
     def __init__(self,
                  members: Dict[str, Any],
+                 name: str = 'Structure',
                  transient: bool = False,
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
@@ -373,6 +375,7 @@ class Structure(Data):
         self.members = members or {}
         for k, v in self.members.items():
             v.transient = transient
+        self.name = name
         fields_and_types = dict()
         symbols = set()
         for k, v in members.items():
@@ -399,9 +402,20 @@ class Structure(Data):
                 fields_and_types[str(s)] = s.dtype
             else:
                 fields_and_types[str(s)] = dtypes.int32
-        dtype = dtypes.pointer(dtypes.struct(self.__class__.__name__, **fields_and_types))
+        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
         shape = (1,)
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+    
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'Structure':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Structure({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
 
     @property
     def total_size(self):
