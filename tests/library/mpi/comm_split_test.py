@@ -21,9 +21,9 @@ def test_comm_split():
     
     sdfg = dace.SDFG("mpi_comm_split")
     state = sdfg.add_state("start")
-    
-    sdfg.add_array("color", [1], dace.dtypes.int32, transient=False)
-    sdfg.add_array("key", [1], dace.dtypes.int32, transient=False)
+
+    sdfg.add_scalar("color", dace.dtypes.int32, transient=False)
+    sdfg.add_scalar("key", dace.dtypes.int32, transient=False)
     sdfg.add_array("new_rank", [1], dtype=dace.int32, transient=False)
     sdfg.add_array("new_size", [1], dtype=dace.int32, transient=False)
 
@@ -57,8 +57,8 @@ def test_comm_split():
     func = utils.distributed_compile(sdfg, comm_world)
 
     # split world
-    color = np.full((1,), comm_rank % 2, dtype=np.int32)
-    key = np.full((1,), comm_rank, dtype=np.int32)
+    color = comm_rank % 2
+    key = comm_rank
     new_rank = np.zeros((1, ), dtype=np.int32)
     new_size = np.zeros((1, ), dtype=np.int32)
 
@@ -68,8 +68,8 @@ def test_comm_split():
     assert (correct_new_rank[comm_rank] == new_rank[0])
 
     # reverse rank order
-    color = np.full((1,), 0, dtype=np.int32)
-    key = np.full((1,), comm_size - comm_rank, dtype=np.int32)
+    color = 0
+    key = comm_size - comm_rank
     new_rank = np.zeros((1, ), dtype=np.int32)
     new_size = np.zeros((1, ), dtype=np.int32)
 
