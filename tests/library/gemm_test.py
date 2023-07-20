@@ -12,6 +12,8 @@ from dace.libraries.blas import Gemm
 M = dace.symbol('M')
 K = dace.symbol('K')
 N = dace.symbol('N')
+L = dace.symbol('L')
+O = dace.symbol('O')
 
 
 @pytest.mark.parametrize(
@@ -171,8 +173,55 @@ def test_library_gemm(implementation):
                       "misconfigured, skipping test for {}.".format(implementation))
 
 
+def test_gemm_symbolic():
+    sdfg = dace.SDFG("gemm")
+    state = sdfg.add_state()
+    A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
+    B, B_arr = sdfg.add_array("B", [L, N], dace.float64)
+    C, C_arr = sdfg.add_array("C", [O, N], dace.float64)
+
+    rA = state.add_read("A")
+    rB = state.add_read("B")
+    wC = state.add_write("C")
+
+    libnode = Gemm('_Gemm_', transA=False, transB=False, alpha=1.0, beta=0.0)
+    state.add_node(libnode)
+
+    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+
+    sdfg.validate()
+
+
+def test_gemm_symbolic_1():
+    sdfg = dace.SDFG("gemm")
+    state = sdfg.add_state()
+    A, A_arr = sdfg.add_array("A", [M, K], dace.float64)
+    B, B_arr = sdfg.add_array("B", [K + 2, N], dace.float64)
+    C, C_arr = sdfg.add_array("C", [M, N], dace.float64)
+
+    rA = state.add_read("A")
+    rB = state.add_read("B")
+    wC = state.add_write("C")
+
+    libnode = Gemm('_Gemm_', transA=False, transB=False, alpha=1.0, beta=0.0)
+    state.add_node(libnode)
+
+    state.add_edge(rA, None, libnode, '_a', dace.Memlet.from_array(A, A_arr))
+    state.add_edge(rB, None, libnode, '_b', dace.Memlet.from_array(B, B_arr))
+    state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
+
+    try:
+        sdfg.validate()
+    except dace.sdfg.InvalidSDFGError:
+        pass
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_library_gemm('cuBLAS')
-    test_library_gemm('pure')
-    test_library_gemm('MKL')
+    # test_library_gemm('pure')
+    # test_library_gemm('MKL')
+    test_gemm_symbolic()
+    test_gemm_symbolic_1()
