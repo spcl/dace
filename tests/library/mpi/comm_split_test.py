@@ -33,17 +33,9 @@ def test_comm_split():
     # color and key needs to be variable
     comm_name = sdfg.add_comm()
     comm_split_node = mpi.nodes.comm_split.Comm_split(comm_name)
-    # comm_name = comm._comm_split(None, sdfg, state, str(color), str(key))
 
-    state.add_memlet_path(color,
-                          comm_split_node,
-                          dst_conn="_color",
-                          memlet=Memlet.simple(color, "0:1", num_accesses=1))
-    
-    state.add_memlet_path(key,
-                          comm_split_node,
-                          dst_conn="_key",
-                          memlet=Memlet.simple(key, "0:1", num_accesses=1))
+    state.add_edge(color, None, comm_split_node, '_color', Memlet.simple(color, "0:1", num_accesses=1))
+    state.add_edge(key, None, comm_split_node, '_key', Memlet.simple(key, "0:1", num_accesses=1))
     
     state2 = sdfg.add_state("main")
     
@@ -58,6 +50,7 @@ def test_comm_split():
 
     new_rank = state2.add_write("new_rank")
     new_size = state2.add_write("new_size")
+
     state2.add_edge(tasklet, '_rank', new_rank, None, Memlet.simple(new_rank, "0:1", num_accesses=1))
     state2.add_edge(tasklet, '_size', new_size, None, Memlet.simple(new_size, "0:1", num_accesses=1))
 
