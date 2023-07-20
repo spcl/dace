@@ -9,6 +9,7 @@ import networkx as nx
 NodeT = str
 EdgeT = Tuple[NodeT, NodeT]
 
+
 class NodeCycle:
 
     nodes: Set[NodeT] = []
@@ -23,30 +24,27 @@ class NodeCycle:
 
 UUID_SEPARATOR = '/'
 
+
 def ids_to_string(sdfg_id, state_id=-1, node_id=-1, edge_id=-1):
-    return (str(sdfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR +
-            str(node_id) + UUID_SEPARATOR + str(edge_id))
+    return (str(sdfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR + str(node_id) + UUID_SEPARATOR +
+            str(edge_id))
+
 
 def get_uuid(element, state=None):
     if isinstance(element, SDFG):
         return ids_to_string(element.sdfg_id)
     elif isinstance(element, SDFGState):
-        return ids_to_string(element.parent.sdfg_id,
-                             element.parent.node_id(element))
+        return ids_to_string(element.parent.sdfg_id, element.parent.node_id(element))
     elif isinstance(element, nodes.Node):
-        return ids_to_string(state.parent.sdfg_id, state.parent.node_id(state),
-                             state.node_id(element))
+        return ids_to_string(state.parent.sdfg_id, state.parent.node_id(state), state.node_id(element))
     else:
         return ids_to_string(-1)
-    
-def get_domtree(
-    graph: nx.DiGraph,
-    start_node: str,
-    idom: Dict[str, str] = None
-):
+
+
+def get_domtree(graph: nx.DiGraph, start_node: str, idom: Dict[str, str] = None):
     idom = idom or nx.immediate_dominators(graph, start_node)
 
-    alldominated = { n: set() for n in graph.nodes }
+    alldominated = {n: set() for n in graph.nodes}
     domtree = nx.DiGraph()
 
     for node, dom in idom.items():
@@ -75,9 +73,9 @@ def get_domtree(
     return alldominated, domtree
 
 
-def get_backedges(
-    graph: nx.DiGraph, start: Optional[NodeT], strict: bool = False
-) -> Union[Set[EdgeT], Tuple[Set[EdgeT], Set[EdgeT]]]:
+def get_backedges(graph: nx.DiGraph,
+                  start: Optional[NodeT],
+                  strict: bool = False) -> Union[Set[EdgeT], Tuple[Set[EdgeT], Set[EdgeT]]]:
     '''Find all backedges in a directed graph.
 
     Note:
@@ -106,16 +104,13 @@ def get_backedges(
                 start = node
                 break
     if start is None:
-        raise ValueError(
-            'No start node provided and no start node could ' +
-            'be determined automatically'
-        )
+        raise ValueError('No start node provided and no start node could ' + 'be determined automatically')
 
     # Gather all cycles in the graph. Cycles are represented as a sequence of
     # nodes.
     # O((|V|+|E|)*(C+1)), for C cycles.
-    all_cycles_nx: List[List[NodeT]] = nx.cycles.simple_cycles(graph) 
-    #all_cycles_nx: List[List[NodeT]] = nx.simple_cycles(graph) 
+    all_cycles_nx: List[List[NodeT]] = nx.cycles.simple_cycles(graph)
+    #all_cycles_nx: List[List[NodeT]] = nx.simple_cycles(graph)
     all_cycles: Set[NodeCycle] = set()
     for cycle in all_cycles_nx:
         all_cycles.add(NodeCycle(cycle))
@@ -207,7 +202,6 @@ def get_backedges(
             if eclipsed_candidates:
                 eclipsed_backedges.update(eclipsed_candidates)
 
-
         # Continue BFS.
         for neighbour in graph.successors(node):
             if neighbour not in visited:
@@ -235,7 +229,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
             break
     if start is None:
         raise ValueError('No start node could be determined')
-    
+
     # sdfg can have multiple end nodes --> not good for postDomTree
     # --> add a new end node
     artificial_end_node = 'artificial_end_node'
@@ -264,7 +258,6 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
             backedgesDstDict[be[1]].add(be)
         else:
             backedgesDstDict[be[1]] = set([be])
-    
 
     # This list will be filled with triples (node, oNode, exit), one triple for each loop construct in the SDFG.
     # There will always be a backedge from oNode to node. Either node or oNode will be the corresponding loop guard,
@@ -283,7 +276,6 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                 if not edge in backedges:
                     successors.append(edge[1])
 
-
             # For each incoming backedge, we want to find oNode and exit. There can be multiple backedges, in case
             # we have a continue statement in the original code. But we can handle these backedges normally.
             for be in inc_backedges:
@@ -293,7 +285,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                 exitCandidates = set()
                 # search for exit candidates:
                 # a state is a exit candidate if:
-                #   - it is in successor and it does not dominate oNode (else it dominates 
+                #   - it is in successor and it does not dominate oNode (else it dominates
                 #           the last loop state, and hence is inside the loop itself)
                 #   - is is a successor of oNode (but not node)
                 # This handles both cases of while-do and do-while loops
@@ -303,7 +295,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                 for succ in sdfg_nx.successors(oNode):
                     if succ != node:
                         exitCandidates.add(succ)
-                
+
                 if len(exitCandidates) == 0:
                     raise ValueError('failed to find any exit nodes')
                 elif len(exitCandidates) > 1:
@@ -327,7 +319,7 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                         elif curr_level == minLevel:
                             # add cand to curr set
                             minSet.add(cand)
-                    
+
                     if len(minSet) > 0:
                         exitCandidates = minSet
                     else:

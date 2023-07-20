@@ -813,7 +813,7 @@ def propagate_states_symbolically(sdfg) -> None:
                                 unannotated_loop_edge = oedge
                                 # remove cycle, since it is now annotated with symbol
                                 to_remove.append(cycle)
-                    
+
                     for c in to_remove:
                         unannotated_cycle_states.remove(c)
 
@@ -827,7 +827,10 @@ def propagate_states_symbolically(sdfg) -> None:
 
                         # Introduce the num_execs symbol and propagate it down the loop.
                         # These symbols will always be non-negative.
-                        traversal_q.append((unannotated_loop_edge.dst, Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}', nonnegative=True), False, itvar_stack))
+                        traversal_q.append(
+                            (unannotated_loop_edge.dst,
+                             Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
+                                    nonnegative=True), False, itvar_stack))
                     else:
                         # Traverse as a conditional split.
                         proposed_executions = state.executions
@@ -858,7 +861,6 @@ def propagate_states_symbolically(sdfg) -> None:
     # If we had to create a temporary exit state, we remove it again here.
     if temp_exit_state is not None:
         sdfg.remove_node(temp_exit_state)
-
 
 
 def propagate_states(sdfg) -> None:
