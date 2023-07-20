@@ -69,5 +69,10 @@ class Comm_split(MPINode):
                 color = sdfg.arrays[e.data.data]
             if e.dst_conn == "_key":
                 key = sdfg.arrays[e.data.data]
+
+        if color.dtype.base_type != dace.dtypes.int32:
+            raise ValueError("Source must be an integer!")
+        if key.dtype.base_type != dace.dtypes.int32:
+            raise ValueError("Tag must be an integer!")
         
         return color, key
