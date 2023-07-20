@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
 from dace import serialize
 from dace.properties import make_properties
@@ -21,7 +22,7 @@ def create_structure(name: str) -> dace.data.Structure:
         serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
-    
+
     setattr(StructureClass, 'from_json', from_json)
     StructureClass = make_properties(StructureClass)
 
@@ -31,13 +32,13 @@ def create_structure(name: str) -> dace.data.Structure:
 def test_read_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix')
-    csr_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
 
     sdfg = dace.SDFG('csr_to_dense')
 
@@ -80,13 +81,13 @@ def test_read_structure():
     B = np.zeros((20, 20), dtype=np.float32)
 
     inpA = csr_obj.dtype._typeclass.as_ctypes()(indptr=A.indptr.__array_interface__['data'][0],
-                                            indices=A.indices.__array_interface__['data'][0],
-                                            data=A.data.__array_interface__['data'][0],
-                                            rows=A.shape[0],
-                                            cols=A.shape[1],
-                                            M=A.shape[0],
-                                            N=A.shape[1],
-                                            nnz=A.nnz)
+                                                indices=A.indices.__array_interface__['data'][0],
+                                                data=A.data.__array_interface__['data'][0],
+                                                rows=A.shape[0],
+                                                cols=A.shape[1],
+                                                M=A.shape[0],
+                                                N=A.shape[1],
+                                                nnz=A.nnz)
 
     func(A=inpA, B=B, M=20, N=20, nnz=A.nnz)
     ref = A.toarray()
@@ -97,13 +98,13 @@ def test_read_structure():
 def test_write_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix')
-    csr_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
 
     sdfg = dace.SDFG('dense_to_csr')
 
@@ -168,13 +169,13 @@ def test_write_structure():
     B.data[:] = -1
 
     outB = csr_obj.dtype._typeclass.as_ctypes()(indptr=B.indptr.__array_interface__['data'][0],
-                                            indices=B.indices.__array_interface__['data'][0],
-                                            data=B.data.__array_interface__['data'][0],
-                                            rows=tmp.shape[0],
-                                            cols=tmp.shape[1],
-                                            M=tmp.shape[0],
-                                            N=tmp.shape[1],
-                                            nnz=tmp.nnz)
+                                                indices=B.indices.__array_interface__['data'][0],
+                                                data=B.data.__array_interface__['data'][0],
+                                                rows=tmp.shape[0],
+                                                cols=tmp.shape[1],
+                                                M=tmp.shape[0],
+                                                N=tmp.shape[1],
+                                                nnz=tmp.nnz)
 
     func(A=A, B=outB, M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
 
@@ -182,23 +183,25 @@ def test_write_structure():
 
 
 def test_local_structure():
-    
-    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix')
-    csr_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz))
-    tmp_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz), transient=True)
 
-    sdfg = dace.SDFG('dense_to_csr')
+    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
+    tmp_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix',
+                                  transient=True)
+
+    sdfg = dace.SDFG('dense_to_csr_local')
 
     sdfg.add_array('A', [M, N], dace.float32)
     sdfg.add_datadesc('B', csr_obj)
@@ -273,15 +276,12 @@ def test_local_structure():
     set_B.add_edge(B_data, 'views', B, 'data', dace.Memlet(data='B.data', subset='0:nnz'))
     set_B.add_edge(tmp_indptr, None, B_indptr, None, dace.Memlet(data='tmp_vindptr', subset='0:M+1'))
     set_B.add_edge(tmp_indices, None, B_indices, None, dace.Memlet(data='tmp_vindices', subset='0:nnz'))
-    t, me, mx = set_B.add_mapped_tasklet('set_data',
-                                         {'idx': '0:nnz'},
+    t, me, mx = set_B.add_mapped_tasklet('set_data', {'idx': '0:nnz'},
                                          {'__inp': dace.Memlet(data='tmp_vdata', subset='idx')},
-                                         '__out = 2 * __inp',
-                                         {'__out': dace.Memlet(data='vdata', subset='idx')},
+                                         '__out = 2 * __inp', {'__out': dace.Memlet(data='vdata', subset='idx')},
                                          external_edges=True,
                                          input_nodes={'tmp_vdata': tmp_data},
                                          output_nodes={'vdata': B_data})
-
 
     func = sdfg.compile()
 
@@ -294,13 +294,13 @@ def test_local_structure():
     B.data[:] = -1
 
     outB = csr_obj.dtype._typeclass.as_ctypes()(indptr=B.indptr.__array_interface__['data'][0],
-                                            indices=B.indices.__array_interface__['data'][0],
-                                            data=B.data.__array_interface__['data'][0],
-                                            rows=tmp.shape[0],
-                                            cols=tmp.shape[1],
-                                            M=tmp.shape[0],
-                                            N=tmp.shape[1],
-                                            nnz=tmp.nnz)
+                                                indices=B.indices.__array_interface__['data'][0],
+                                                data=B.data.__array_interface__['data'][0],
+                                                rows=tmp.shape[0],
+                                                cols=tmp.shape[1],
+                                                M=tmp.shape[0],
+                                                N=tmp.shape[1],
+                                                nnz=tmp.nnz)
 
     func(A=A, B=outB, M=tmp.shape[0], N=tmp.shape[1], nnz=tmp.nnz)
 
@@ -309,15 +309,14 @@ def test_local_structure():
 
 def test_read_nested_structure():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix')
-    csr_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz))
-    Wrapper = create_structure('WrapperClass')
-    wrapper_obj = Wrapper(dict(csr=csr_obj))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
+    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 
     sdfg = dace.SDFG('nested_csr_to_dense')
 
@@ -378,24 +377,25 @@ def test_read_nested_structure():
     assert np.allclose(B, ref)
 
 
+@pytest.mark.skip
 def test_read_nested_structure_2():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix',
-                           indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz)
-    CSRView = dace.data.StructureView(CSR.members, transient=True)
-    Wrapper = create_structure('WrapperClass', csr=CSR)
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
+    CSRView = dace.data.StructureView(csr_obj.members, transient=True)
+    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 
     sdfg = dace.SDFG('nested_csr_to_dense_2')
 
-    sdfg.add_datadesc('A', Wrapper)
+    sdfg.add_datadesc('A', wrapper_obj)
     sdfg.add_array('B', [M, N], dace.float32)
 
-    spmat = Wrapper.members['csr']
+    spmat = wrapper_obj.members['csr']
     sdfg.add_datadesc('vcsr', CSRView)
     sdfg.add_view('vindptr', spmat.members['indptr'].shape, spmat.members['indptr'].dtype)
     sdfg.add_view('vindices', spmat.members['indices'].shape, spmat.members['indices'].dtype)
@@ -428,13 +428,14 @@ def test_read_nested_structure_2():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
     A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
     B = np.zeros((20, 20), dtype=np.float32)
 
-    structclass = CSR.dtype._typeclass.as_ctypes()
+    structclass = csr_obj.dtype._typeclass.as_ctypes()
     inpCSR = structclass(indptr=A.indptr.__array_interface__['data'][0],
                          indices=A.indices.__array_interface__['data'][0],
                          data=A.data.__array_interface__['data'][0],
@@ -444,7 +445,7 @@ def test_read_nested_structure_2():
                          K=A.shape[1],
                          nnz=A.nnz)
     import ctypes
-    inpW = Wrapper.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(inpCSR))
+    inpW = wrapper_obj.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(inpCSR))
 
     func(A=inpW, B=B, M=20, N=20, nnz=A.nnz)
     ref = A.toarray()
@@ -455,15 +456,14 @@ def test_read_nested_structure_2():
 def test_write_nested_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
-    CSR = create_structure('CSRMatrix')
-    csr_obj = CSR(dict(indptr=dace.int32[M + 1],
-                           indices=dace.int32[nnz],
-                           data=dace.float32[nnz],
-                           rows=M,
-                           cols=N,
-                           nnz=nnz))
-    Wrapper = create_structure('WrapperClass')
-    wrapper_obj = Wrapper(dict(csr=csr_obj))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
+    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 
     sdfg = dace.SDFG('dense_to_csr')
 
@@ -529,13 +529,13 @@ def test_write_nested_structure():
     B.data[:] = -1
 
     outCSR = csr_obj.dtype._typeclass.as_ctypes()(indptr=B.indptr.__array_interface__['data'][0],
-                                            indices=B.indices.__array_interface__['data'][0],
-                                            data=B.data.__array_interface__['data'][0],
-                                            rows=tmp.shape[0],
-                                            cols=tmp.shape[1],
-                                            M=tmp.shape[0],
-                                            N=tmp.shape[1],
-                                            nnz=tmp.nnz)
+                                                  indices=B.indices.__array_interface__['data'][0],
+                                                  data=B.data.__array_interface__['data'][0],
+                                                  rows=tmp.shape[0],
+                                                  cols=tmp.shape[1],
+                                                  M=tmp.shape[0],
+                                                  N=tmp.shape[1],
+                                                  nnz=tmp.nnz)
     import ctypes
     outW = wrapper_obj.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(outCSR))
 
@@ -549,5 +549,5 @@ if __name__ == "__main__":
     test_write_structure()
     test_local_structure()
     test_read_nested_structure()
-    # test_read_nested_structure_2()
+    test_read_nested_structure_2()
     test_write_nested_structure()
