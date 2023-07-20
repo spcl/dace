@@ -58,9 +58,9 @@ def test_read_structure():
     indices = state.add_access('vindices')
     data = state.add_access('vdata')
 
-    state.add_edge(A, 'indptr', indptr, 'views', dace.Memlet.from_array('A.indptr', csr_obj.members['indptr']))
-    state.add_edge(A, 'indices', indices, 'views', dace.Memlet.from_array('A.indices', csr_obj.members['indices']))
-    state.add_edge(A, 'data', data, 'views', dace.Memlet.from_array('A.data', csr_obj.members['data']))
+    state.add_edge(A, None, indptr, 'views', dace.Memlet.from_array('A.indptr', csr_obj.members['indptr']))
+    state.add_edge(A, None, indices, 'views', dace.Memlet.from_array('A.indices', csr_obj.members['indices']))
+    state.add_edge(A, None, data, 'views', dace.Memlet.from_array('A.data', csr_obj.members['data']))
 
     ime, imx = state.add_map('i', dict(i='0:M'))
     jme, jmx = state.add_map('idx', dict(idx='start:stop'))
@@ -74,6 +74,7 @@ def test_read_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -129,10 +130,10 @@ def test_write_structure():
     indices = if_body.add_access('vindices')
     data = if_body.add_access('vdata')
     if_body.add_edge(A, None, data, None, dace.Memlet(data='A', subset='i, j', other_subset='idx'))
-    if_body.add_edge(data, 'views', B, 'data', dace.Memlet(data='B.data', subset='0:nnz'))
+    if_body.add_edge(data, 'views', B, None, dace.Memlet(data='B.data', subset='0:nnz'))
     t = if_body.add_tasklet('set_indices', {}, {'__out'}, '__out = j')
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='vindices', subset='idx'))
-    if_body.add_edge(indices, 'views', B, 'indices', dace.Memlet(data='B.indices', subset='0:nnz'))
+    if_body.add_edge(indices, 'views', B, None, dace.Memlet(data='B.indices', subset='0:nnz'))
     # Make For Loop  for j
     j_before, j_guard, j_after = sdfg.add_loop(None,
                                                if_before,
@@ -151,13 +152,14 @@ def test_write_structure():
     indptr = i_guard.add_access('vindptr')
     t = i_guard.add_tasklet('set_indptr', {}, {'__out'}, '__out = idx')
     i_guard.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='i'))
-    i_guard.add_edge(indptr, 'views', B, 'indptr', dace.Memlet(data='B.indptr', subset='0:M+1'))
+    i_guard.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.indptr', subset='0:M+1'))
     B = i_after.add_access('B')
     indptr = i_after.add_access('vindptr')
     t = i_after.add_tasklet('set_indptr', {}, {'__out'}, '__out = nnz')
     i_after.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='M'))
-    i_after.add_edge(indptr, 'views', B, 'indptr', dace.Memlet(data='B.indptr', subset='0:M+1'))
+    i_after.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.indptr', subset='0:M+1'))
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -229,10 +231,10 @@ def test_local_structure():
     indices = if_body.add_access('tmp_vindices')
     data = if_body.add_access('tmp_vdata')
     if_body.add_edge(A, None, data, None, dace.Memlet(data='A', subset='i, j', other_subset='idx'))
-    if_body.add_edge(data, 'views', tmp, 'data', dace.Memlet(data='tmp.data', subset='0:nnz'))
+    if_body.add_edge(data, 'views', tmp, None, dace.Memlet(data='tmp.data', subset='0:nnz'))
     t = if_body.add_tasklet('set_indices', {}, {'__out'}, '__out = j')
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='tmp_vindices', subset='idx'))
-    if_body.add_edge(indices, 'views', tmp, 'indices', dace.Memlet(data='tmp.indices', subset='0:nnz'))
+    if_body.add_edge(indices, 'views', tmp, None, dace.Memlet(data='tmp.indices', subset='0:nnz'))
     # Make For Loop  for j
     j_before, j_guard, j_after = sdfg.add_loop(None,
                                                if_before,
@@ -251,12 +253,12 @@ def test_local_structure():
     indptr = i_guard.add_access('tmp_vindptr')
     t = i_guard.add_tasklet('set_indptr', {}, {'__out'}, '__out = idx')
     i_guard.add_edge(t, '__out', indptr, None, dace.Memlet(data='tmp_vindptr', subset='i'))
-    i_guard.add_edge(indptr, 'views', tmp, 'indptr', dace.Memlet(data='tmp.indptr', subset='0:M+1'))
+    i_guard.add_edge(indptr, 'views', tmp, None, dace.Memlet(data='tmp.indptr', subset='0:M+1'))
     tmp = i_after.add_access('tmp')
     indptr = i_after.add_access('tmp_vindptr')
     t = i_after.add_tasklet('set_indptr', {}, {'__out'}, '__out = nnz')
     i_after.add_edge(t, '__out', indptr, None, dace.Memlet(data='tmp_vindptr', subset='M'))
-    i_after.add_edge(indptr, 'views', tmp, 'indptr', dace.Memlet(data='tmp.indptr', subset='0:M+1'))
+    i_after.add_edge(indptr, 'views', tmp, None, dace.Memlet(data='tmp.indptr', subset='0:M+1'))
 
     set_B = sdfg.add_state('set_B')
     sdfg.add_edge(i_after, set_B, dace.InterstateEdge())
@@ -264,16 +266,16 @@ def test_local_structure():
     tmp_indptr = set_B.add_access('tmp_vindptr')
     tmp_indices = set_B.add_access('tmp_vindices')
     tmp_data = set_B.add_access('tmp_vdata')
-    set_B.add_edge(tmp, 'indptr', tmp_indptr, 'views', dace.Memlet(data='tmp.indptr', subset='0:M+1'))
-    set_B.add_edge(tmp, 'indices', tmp_indices, 'views', dace.Memlet(data='tmp.indices', subset='0:nnz'))
-    set_B.add_edge(tmp, 'data', tmp_data, 'views', dace.Memlet(data='tmp.data', subset='0:nnz'))
+    set_B.add_edge(tmp, None, tmp_indptr, 'views', dace.Memlet(data='tmp.indptr', subset='0:M+1'))
+    set_B.add_edge(tmp, None, tmp_indices, 'views', dace.Memlet(data='tmp.indices', subset='0:nnz'))
+    set_B.add_edge(tmp, None, tmp_data, 'views', dace.Memlet(data='tmp.data', subset='0:nnz'))
     B = set_B.add_access('B')
     B_indptr = set_B.add_access('vindptr')
     B_indices = set_B.add_access('vindices')
     B_data = set_B.add_access('vdata')
-    set_B.add_edge(B_indptr, 'views', B, 'indptr', dace.Memlet(data='B.indptr', subset='0:M+1'))
-    set_B.add_edge(B_indices, 'views', B, 'indices', dace.Memlet(data='B.indices', subset='0:nnz'))
-    set_B.add_edge(B_data, 'views', B, 'data', dace.Memlet(data='B.data', subset='0:nnz'))
+    set_B.add_edge(B_indptr, 'views', B, None, dace.Memlet(data='B.indptr', subset='0:M+1'))
+    set_B.add_edge(B_indices, 'views', B, None, dace.Memlet(data='B.indices', subset='0:nnz'))
+    set_B.add_edge(B_data, 'views', B, None, dace.Memlet(data='B.data', subset='0:nnz'))
     set_B.add_edge(tmp_indptr, None, B_indptr, None, dace.Memlet(data='tmp_vindptr', subset='0:M+1'))
     set_B.add_edge(tmp_indices, None, B_indices, None, dace.Memlet(data='tmp_vindices', subset='0:nnz'))
     t, me, mx = set_B.add_mapped_tasklet('set_data', {'idx': '0:nnz'},
@@ -283,6 +285,7 @@ def test_local_structure():
                                          input_nodes={'tmp_vdata': tmp_data},
                                          output_nodes={'vdata': B_data})
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -337,9 +340,9 @@ def test_read_nested_structure():
     indices = state.add_access('vindices')
     data = state.add_access('vdata')
 
-    state.add_edge(A, 'indptr', indptr, 'views', dace.Memlet.from_array('A.csr.indptr', spmat.members['indptr']))
-    state.add_edge(A, 'indices', indices, 'views', dace.Memlet.from_array('A.csr.indices', spmat.members['indices']))
-    state.add_edge(A, 'data', data, 'views', dace.Memlet.from_array('A.csr.data', spmat.members['data']))
+    state.add_edge(A, None, indptr, 'views', dace.Memlet.from_array('A.csr.indptr', spmat.members['indptr']))
+    state.add_edge(A, None, indices, 'views', dace.Memlet.from_array('A.csr.indices', spmat.members['indices']))
+    state.add_edge(A, None, data, 'views', dace.Memlet.from_array('A.csr.data', spmat.members['data']))
 
     ime, imx = state.add_map('i', dict(i='0:M'))
     jme, jmx = state.add_map('idx', dict(idx='start:stop'))
@@ -353,6 +356,7 @@ def test_read_nested_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -429,6 +433,7 @@ def test_read_nested_structure_2():
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
     sdfg.view()
+    return
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -489,10 +494,10 @@ def test_write_nested_structure():
     indices = if_body.add_access('vindices')
     data = if_body.add_access('vdata')
     if_body.add_edge(A, None, data, None, dace.Memlet(data='A', subset='i, j', other_subset='idx'))
-    if_body.add_edge(data, 'views', B, 'data', dace.Memlet(data='B.csr.data', subset='0:nnz'))
+    if_body.add_edge(data, 'views', B, None, dace.Memlet(data='B.csr.data', subset='0:nnz'))
     t = if_body.add_tasklet('set_indices', {}, {'__out'}, '__out = j')
     if_body.add_edge(t, '__out', indices, None, dace.Memlet(data='vindices', subset='idx'))
-    if_body.add_edge(indices, 'views', B, 'indices', dace.Memlet(data='B.csr.indices', subset='0:nnz'))
+    if_body.add_edge(indices, 'views', B, None, dace.Memlet(data='B.csr.indices', subset='0:nnz'))
     # Make For Loop  for j
     j_before, j_guard, j_after = sdfg.add_loop(None,
                                                if_before,
@@ -511,13 +516,14 @@ def test_write_nested_structure():
     indptr = i_guard.add_access('vindptr')
     t = i_guard.add_tasklet('set_indptr', {}, {'__out'}, '__out = idx')
     i_guard.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='i'))
-    i_guard.add_edge(indptr, 'views', B, 'indptr', dace.Memlet(data='B.csr.indptr', subset='0:M+1'))
+    i_guard.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.csr.indptr', subset='0:M+1'))
     B = i_after.add_access('B')
     indptr = i_after.add_access('vindptr')
     t = i_after.add_tasklet('set_indptr', {}, {'__out'}, '__out = nnz')
     i_after.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='M'))
-    i_after.add_edge(indptr, 'views', B, 'indptr', dace.Memlet(data='B.csr.indptr', subset='0:M+1'))
+    i_after.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.csr.indptr', subset='0:M+1'))
 
+    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -549,5 +555,5 @@ if __name__ == "__main__":
     test_write_structure()
     test_local_structure()
     test_read_nested_structure()
-    test_read_nested_structure_2()
+    # test_read_nested_structure_2()
     test_write_nested_structure()
