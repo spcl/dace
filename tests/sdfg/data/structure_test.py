@@ -620,6 +620,80 @@ def test_direct_read_structure():
     assert np.allclose(B, ref)
 
 
+def test_direct_read_nested_structure():
+    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
+    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1],
+                                       indices=dace.int32[nnz],
+                                       data=dace.float32[nnz],
+                                       rows=M,
+                                       cols=N,
+                                       nnz=nnz),
+                                  name='CSRMatrix')
+    wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
+
+    sdfg = dace.SDFG('nested_csr_to_dense_direct')
+
+    sdfg.add_datadesc('A', wrapper_obj)
+    sdfg.add_array('B', [M, N], dace.float32)
+
+    spmat = wrapper_obj.members['csr']
+    sdfg.add_view('vindptr', spmat.members['indptr'].shape, spmat.members['indptr'].dtype)
+    sdfg.add_view('vindices', spmat.members['indices'].shape, spmat.members['indices'].dtype)
+    sdfg.add_view('vdata', spmat.members['data'].shape, spmat.members['data'].dtype)
+
+    state = sdfg.add_state()
+
+    # A = state.add_access('A')
+    indptr = state.add_access('A.csr.indptr')
+    indices = state.add_access('A.csr.indices')
+    data = state.add_access('A.csr.data')
+    B = state.add_access('B')
+
+    # indptr = state.add_access('vindptr')
+    # indices = state.add_access('vindices')
+    # data = state.add_access('vdata')
+
+    # state.add_edge(A, None, indptr, 'views', dace.Memlet.from_array('A.csr.indptr', spmat.members['indptr']))
+    # state.add_edge(A, None, indices, 'views', dace.Memlet.from_array('A.csr.indices', spmat.members['indices']))
+    # state.add_edge(A, None, data, 'views', dace.Memlet.from_array('A.csr.data', spmat.members['data']))
+
+    ime, imx = state.add_map('i', dict(i='0:M'))
+    jme, jmx = state.add_map('idx', dict(idx='start:stop'))
+    jme.add_in_connector('start')
+    jme.add_in_connector('stop')
+    t = state.add_tasklet('indirection', {'j', '__val'}, {'__out'}, '__out[i, j] = __val')
+
+    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='A.csr.indptr', subset='i'), dst_conn='start')
+    state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='A.csr.indptr', subset='i+1'), dst_conn='stop')
+    state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='A.csr.indices', subset='idx'), dst_conn='j')
+    state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='A.csr.data', subset='idx'), dst_conn='__val')
+    state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
+
+    sdfg.view()
+    func = sdfg.compile()
+
+    rng = np.random.default_rng(42)
+    A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+    B = np.zeros((20, 20), dtype=np.float32)
+
+    structclass = csr_obj.dtype._typeclass.as_ctypes()
+    inpCSR = structclass(indptr=A.indptr.__array_interface__['data'][0],
+                         indices=A.indices.__array_interface__['data'][0],
+                         data=A.data.__array_interface__['data'][0],
+                         rows=A.shape[0],
+                         cols=A.shape[1],
+                         M=A.shape[0],
+                         K=A.shape[1],
+                         nnz=A.nnz)
+    import ctypes
+    inpW = wrapper_obj.dtype._typeclass.as_ctypes()(csr=ctypes.pointer(inpCSR))
+
+    func(A=inpW, B=B, M=20, N=20, nnz=A.nnz)
+    ref = A.toarray()
+
+    assert np.allclose(B, ref)
+
+
 if __name__ == "__main__":
     # test_read_structure()
     # test_write_structure()
@@ -627,3 +701,4 @@ if __name__ == "__main__":
     # test_read_nested_structure()
     # test_write_nested_structure()
     test_direct_read_structure()
+    test_direct_read_nested_structure()
