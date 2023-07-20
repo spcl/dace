@@ -42,7 +42,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace.codegen.targets import fpga
-    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
+    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
 
     references = references or set()
 
@@ -171,10 +171,17 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for memlet in ise_memlets:
                 container = memlet.data
                 if not _accessible(sdfg, container, context):
-                    eid = sdfg.edge_id(edge)
-                    raise InvalidSDFGInterstateEdgeError(
-                        f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+                    # Check context w.r.t. maps
+                    in_default_scope = False
+                    if sdfg.parent_nsdfg_node is not None:
+                        if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                       [dtypes.ScheduleType.Default]):
+                            in_default_scope = True
+                    if not in_default_scope:
+                        eid = sdfg.edge_id(edge)
+                        raise InvalidSDFGInterstateEdgeError(
+                            f'Trying to read an inaccessible data container "{container}" '
+                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
             # Add edge symbols into defined symbols
             symbols.update(issyms)
