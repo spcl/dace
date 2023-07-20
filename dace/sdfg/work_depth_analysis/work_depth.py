@@ -1,12 +1,15 @@
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+""" Work depth analysis for any input SDFG. Can be used with the DaCe VS Code extension or
+from command line as a Python script. """
+
 import argparse
 from collections import deque
-from dace.sdfg import nodes as nd, propagation, InterstateEdge, utils as sdutil
+from dace.sdfg import nodes as nd, propagation, InterstateEdge
 from dace import SDFG, SDFGState, dtypes
 from dace.subsets import Range
 from typing import Tuple, Dict
 import os
 import sympy as sp
-import networkx as nx
 from copy import deepcopy
 from dace.libraries.blas import MatMul, Transpose
 from dace.libraries.standard import Reduce
@@ -14,121 +17,20 @@ from dace.symbolic import pystr_to_symbolic
 import ast
 import astunparse
 import warnings
-from dace.sdfg.graph import Edge
 
-from dace.sdfg.work_depth_analysis.helpers import get_uuid, get_domtree, backedges as get_backedges
-
-
-def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
-    # preparation phase: compute dominators, backedges etc
-    for node in sdfg_nx.nodes():
-        if sdfg_nx.in_degree(node) == 0:
-            start = node
-            break
-    if start is None:
-        raise ValueError('No start node could be determined')
-    
-    # sdfg can have multiple end nodes --> not good for postDomTree
-    # --> add a new end node
-    artificial_end_node = 'artificial_end_node'
-    sdfg_nx.add_node(artificial_end_node)
-    for node in sdfg_nx.nodes():
-        if sdfg_nx.out_degree(node) == 0 and node != artificial_end_node:
-            # this is an end node of the sdfg
-            sdfg_nx.add_edge(node, artificial_end_node)
-
-    # sanity check:
-    if sdfg_nx.in_degree(artificial_end_node) == 0:
-        raise ValueError('No end node could be determined in the SDFG')
+from dace.sdfg.work_depth_analysis.helpers import get_uuid, find_loop_guards_tails_exits
 
 
-
-    iDoms = nx.immediate_dominators(sdfg_nx, start)
-    allDom, domTree = get_domtree(sdfg_nx, start, iDoms)
-
-    reversed_sdfg_nx = sdfg_nx.reverse()
-    iPostDoms = nx.immediate_dominators(reversed_sdfg_nx, artificial_end_node)
-    allPostDoms, postDomTree = get_domtree(reversed_sdfg_nx, artificial_end_node, iPostDoms)
-
-    backedges = get_backedges(sdfg_nx, start)
-    backedgesDstDict = {}
-    for be in backedges:
-        if be[1] in backedgesDstDict:
-            backedgesDstDict[be[1]].add(be)
-        else:
-            backedgesDstDict[be[1]] = set([be])
-    
-
-    nodes_oNodes_exits = []
-
-    # iterate over all nodes
-    for node in sdfg_nx.nodes():
-        # does any backedge end in node
-        if node in backedgesDstDict:
-            inc_backedges = backedgesDstDict[node]
-
-
-            # gather all successors of node that are not reached by backedges
-            successors = []
-            for edge in sdfg_nx.out_edges(node):
-                if not edge in backedges:
-                    successors.append(edge[1])
-
-
-            # if len(inc_backedges) > 1:
-            #     raise ValueError('node has multiple incoming backedges...')
-            # instead: if multiple incoming backedges, do the below for each backedge
-            for be in inc_backedges:
-
-
-                # since node has an incoming backedge, it is either a loop guard or loop tail
-                # oNode will exactly be the other thing
-                oNode = be[0]
-                exitCandidates = set()
-                for succ in successors:
-                    if succ != oNode and oNode not in allDom[succ]:
-                        exitCandidates.add(succ)
-                for succ in sdfg_nx.successors(oNode):
-                    if succ != node:
-                        exitCandidates.add(succ)
-                
-                if len(exitCandidates) == 0:
-                    raise ValueError('failed to find any exit nodes')
-                elif len(exitCandidates) > 1:
-                    # // Find the exit candidate that sits highest up in the
-                    # // postdominator tree (i.e., has the lowest level).
-                    # // That must be the exit node (it must post-dominate)
-                    # // everything inside the loop. If there are multiple
-                    # // candidates on the lowest level (i.e., disjoint set of
-                    # // postdominated nodes), there are multiple exit paths,
-                    # // and they all share one level.
-                    cand = exitCandidates.pop()
-                    minSet = set([cand])
-                    minLevel = nx.get_node_attributes(postDomTree, 'level')[cand]
-                    for cand in exitCandidates:
-                        curr_level = nx.get_node_attributes(postDomTree, 'level')[cand]
-                        if curr_level < minLevel:
-                            # new minimum found
-                            minLevel = curr_level
-                            minSet.clear()
-                            minSet.add(cand)
-                        elif curr_level == minLevel:
-                            # add cand to curr set
-                            minSet.add(cand)
-                    
-                    if len(minSet) > 0:
-                        exitCandidates = minSet
-                    else:
-                        raise ValueError('failed to find exit minSet')
-
-                # now we have a triple (node, oNode, exitCandidates)
-                nodes_oNodes_exits.append((node, oNode, exitCandidates))
-
-    return nodes_oNodes_exits
-
-                
 
 def get_array_size_symbols(sdfg):
+    """
+    Returns all symbols that appear isolated in shapes of the SDFG's arrays.
+    These symbols can then be assumed to be positive.
+
+    :note: This only works if a symbol appears in isolation, i.e. array A[N]. If we have A[N+1], we cannot assume N to be positive.
+    :param sdfg: The SDFG in which it searches for symbols.
+    :return: A set containing symbols which we can assume to be positive.
+    """
     symbols = set()
     for _, _, arr in sdfg.arrays_recursive():
         for s in arr.shape:
@@ -136,18 +38,29 @@ def get_array_size_symbols(sdfg):
                 symbols.add(s)
     return symbols
 
-def posify_certain_symbols(expr, syms_to_posify, syms_to_nonnegify):
+def posify_certain_symbols(expr, syms_to_posify):
+    """
+    Takes an expression and evaluates it while assuming that certain symbols are positive.
+
+    :param expr: The expression to evaluate.
+    :param syms_to_posify: List of symbols we assume to be positive.
+    :note: This is adapted from the Sympy function posify.
+    """
+
     expr = sp.sympify(expr)
-    nonneg = {s: sp.Dummy(s.name, nonnegative=True, **s.assumptions0)
-                 for s in syms_to_nonnegify if s.is_nonnegative is None}
-    pos = {s: sp.Dummy(s.name, positive=True, **s.assumptions0)
+    
+    reps = {s: sp.Dummy(s.name, positive=True, **s.assumptions0)
                  for s in syms_to_posify if s.is_positive is None}
-    # merge the two dicts into reps
-    reps = {**nonneg, **pos}
     expr = expr.subs(reps)
     return expr.subs({r: s for s, r in reps.items()})
 
 def symeval(val, symbols):
+    """
+    Takes a sympy expression and substitutes its symbols according to a dict { old_symbol: new_symbol}.
+
+    :param val: The expression we are updating.
+    :param symbols: Dictionary of key value pairs { old_symbol: new_symbol}.
+    """
     first_replacement = {
         pystr_to_symbolic(k): pystr_to_symbolic('__REPLSYM_' + k)
         for k in symbols.keys()
@@ -158,7 +71,13 @@ def symeval(val, symbols):
     }
     return val.subs(first_replacement).subs(second_replacement)
 
-def count_matmul(node, symbols, state):
+def evaluate_symbols(base, new):
+    result = {}
+    for k, v in new.items():
+        result[k] = symeval(v, base)
+    return result
+
+def count_work_matmul(node, symbols, state):
     A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
     B_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_b')
     C_memlet = next(e for e in state.out_edges(node) if e.src_conn == '_c')
@@ -173,8 +92,7 @@ def count_matmul(node, symbols, state):
     result *= symeval(A_memlet.data.subset.size()[-1], symbols)
     return result
 
-
-def count_reduce(node, symbols, state):
+def count_work_reduce(node, symbols, state):
     result = 0
     if node.wcr is not None:
         result += count_arithmetic_ops_code(node.wcr)
@@ -188,24 +106,53 @@ def count_reduce(node, symbols, state):
         result = 0
     return result
 
+LIBNODES_TO_WORK = {
+    MatMul: count_work_matmul,
+    Transpose: lambda *args: 0,
+    Reduce: count_work_reduce,
+}
+
+def count_depth_matmul(node, symbols, state):
+    # For now we set it equal to work: see comments in count_depth_reduce just below
+    return count_work_matmul(node, symbols, state)
+
+def count_depth_reduce(node, symbols, state):
+    # depth of reduction is log2 of the work
+    # TODO: Can we actually assume this? Or is it equal to the work?
+    #       Another thing to consider is that we essetially do NOT count wcr edges as operations for now...
+
+    # return sp.ceiling(sp.log(count_work_reduce(node, symbols, state), 2))
+    # set it equal to work for now
+    return count_work_reduce(node, symbols, state)
+
+
+LIBNODES_TO_DEPTH = {
+    MatMul: count_depth_matmul,
+    Transpose: lambda *args: 0,
+    Reduce: count_depth_reduce,
+}
+
+
 bigo = sp.Function('bigo')
 PYFUNC_TO_ARITHMETICS = {
     'float': 0,
+    'dace.float64': 0,
+    'dace.int64': 0,
     'math.exp': 1,
+    'exp': 1,
     'math.tanh': 1,
+    'sin': 1,
+    'cos': 1,
+    'tanh': 1,
     'math.sqrt': 1,
+    'sqrt': 1,
+    'atan2:': 1,
     'min': 0,
     'max': 0,
     'ceiling': 0,
     'floor': 0,
-    # TODO: what about: "cos", "sin", "sqrt", "atan2" (source: npbench's arc_distance), "abs" (mandelbrot1), "exp" (mlp)
-    # tanh (go_fast)
+    'abs': 0
 }   
-LIBNODES_TO_ARITHMETICS = {
-    MatMul: count_matmul,
-    Transpose: lambda *args: 0,
-    Reduce: count_reduce,
-}
 
 
 class ArithmeticCounter(ast.NodeVisitor):
@@ -227,8 +174,7 @@ class ArithmeticCounter(ast.NodeVisitor):
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
         if fname not in PYFUNC_TO_ARITHMETICS:
-            # TODO: why do we get this warning? WARNING: Unrecognized python function "dace.float64" (source: npbench's azimint_hist)
-            print('WARNING: Unrecognized python function "%s"' % fname)
+            print('WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.' % fname)
             return self.generic_visit(node)
         self.count += PYFUNC_TO_ARITHMETICS[fname]
         return self.generic_visit(node)
@@ -254,12 +200,10 @@ def count_arithmetic_ops_code(code):
     return ctr.count
 
 class DepthCounter(ast.NodeVisitor):
-
+    # so far this is identical to the ArithmeticCounter above.
     def __init__(self):
         self.count = 0
 
-    # TODO: if we have a tasklet like _out = 2 * _in + 500
-    #       will this then have depth of 2? or not because of instruction level parallelism?
     def visit_BinOp(self, node):
         if isinstance(node.op, ast.MatMult):
             raise NotImplementedError('MatMult op count requires shape '
@@ -274,7 +218,7 @@ class DepthCounter(ast.NodeVisitor):
     def visit_Call(self, node):
         fname = astunparse.unparse(node.func)[:-1]
         if fname not in PYFUNC_TO_ARITHMETICS:
-            print('WARNING: Unrecognized python function "%s"' % fname)
+            print('WARNING: Unrecognized python function "%s". If this is a type conversion, like "dace.float64", then this is fine.' % fname)
             return self.generic_visit(node)
         self.count += PYFUNC_TO_ARITHMETICS[fname]
         return self.generic_visit(node)
@@ -289,7 +233,8 @@ class DepthCounter(ast.NodeVisitor):
         raise NotImplementedError
 
 def count_depth_code(code):
-    ctr = DepthCounter()
+    # so far this is the same as the work counter, since work = depth for each tasklet, as we can't assume any parallelism
+    ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
             ctr.visit(stmt)
@@ -313,14 +258,14 @@ def tasklet_work(tasklet_node, state):
         return 1
 
 def tasklet_depth(tasklet_node, state):
-    # if tasklet_node.code.language == dtypes.Language.CPP:
-    #     for oedge in state.out_edges(tasklet_node):
-    #         return bigo(oedge.data.num_accesses)
-    
+    # TODO: how to get depth of CPP tasklets?
+    # For now we use depth == work:
+    if tasklet_node.code.language == dtypes.Language.CPP:
+        for oedge in state.out_edges(tasklet_node):
+            return bigo(oedge.data.num_accesses)
     if tasklet_node.code.language == dtypes.Language.Python:
         return count_depth_code(tasklet_node.code.code)
     else:
-        # TODO: improve this
         # other languages not implemented, count whole tasklet as work of 1
         warnings.warn('Depth of tasklets only properly analyzed for Python code. For all other '
                       'languages depth = 1 will be counted for each tasklet.')
@@ -332,91 +277,65 @@ def get_tasklet_work(node, state):
 def get_tasklet_work_depth(node, state):
     return tasklet_work(node, state), tasklet_depth(node, state)
 
-def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], analyze_tasklet, syms_to_nonnegify) -> None:
-    # print('Analyzing work and depth of SDFG', sdfg.name)
-    # print('SDFG has', len(sdfg.nodes()), 'states')
-    # print('Calculating work and depth for all states individually...')
+def get_tasklet_avg_par(node, state):
+    return tasklet_work(node, state), tasklet_depth(node, state)
 
+
+
+def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], analyze_tasklet, symbols) -> Tuple[sp.Expr, sp.Expr]:
+    """
+    Analyze the work and depth of a given SDFG.
+    First we determine the work and depth of each state. Then we break loops in the state machine, such that we get a DAG.
+    Lastly, we compute the path with most work and the path with the most depth in order to get the total work depth.
+
+    :param sdfg: The SDFG to analyze.
+    :param w_d_map: Dictionary which will save the result.
+    :param analyze_tasklet: Function used to analyze tasklet nodes.
+    :param symbols: A dictionary mapping local nested SDFG symbols to global symbols.
+    :return: A tuple containing the work and depth of the SDFG.
+    """
+
+    
     # First determine the work and depth of each state individually.
     # Keep track of the work and depth for each state in a dictionary, where work and depth are multiplied by the number
     # of times the state will be executed.
     state_depths: Dict[SDFGState, sp.Expr] = {}
     state_works: Dict[SDFGState, sp.Expr] = {}
     for state in sdfg.nodes():
-        state_work, state_depth = state_work_depth(state, w_d_map, analyze_tasklet, syms_to_nonnegify)
-        if state.executions == 0:# or state.executions == sp.zoo:
-            # print('State executions must be statically known exactly or with an upper bound. Offender:', state)
-            new_symbol = sp.Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(state)}')
-            state.executions = new_symbol
-            syms_to_nonnegify |= {new_symbol}
-        state_works[state] = state_work * state.executions
-        state_depths[state] = state_depth * state.executions
-        w_d_map[get_uuid(state)] = (sp.simplify(state_work * state.executions), sp.simplify(state_depth * state.executions))
-
-    # print('Calculating work and depth of the SDFG...')
+        state_work, state_depth = state_work_depth(state, w_d_map, analyze_tasklet, symbols)
+        state_works[state] = sp.simplify(state_work * state.executions)
+        state_depths[state] = sp.simplify(state_depth * state.executions)
+        w_d_map[get_uuid(state)] = (state_works[state], state_depths[state])
 
 
+    # Prepare the SDFG for a depth analysis by breaking loops. This removes the edge between the last loop state and
+    # the guard, and instead places an edge between the last loop state and the exit state.
+    # This transforms the state machine into a DAG. Hence, we can find the "heaviest" and "deepest" paths in linear time.
+    # Additionally, construct a dummy exit state and connect every state that has no outgoing edges to it.
+
+    # identify all loops in the SDFG
     nodes_oNodes_exits = find_loop_guards_tails_exits(sdfg._nx)
-    print(nodes_oNodes_exits)
-    # Now we need to go over each triple (node, oNode, exits)
-    # for each triple, we 
-    #               - remove edge (oNode, node), i.e. the backward edge
-    #               - for all exits e, add edge (oNode, e). This edge may already exist
-
+    
+    # Now we need to go over each triple (node, oNode, exits). For each triple, we 
+    #       - remove edge (oNode, node), i.e. the backward edge
+    #       - for all exits e, add edge (oNode, e). This edge may already exist
     for node, oNode, exits in nodes_oNodes_exits:
         sdfg.remove_edge(sdfg.edges_between(oNode, node)[0])
         for e in exits:
-            # TODO: This will probably fail if len(exits) > 1, but in which cases does that even happen?
             if len(sdfg.edges_between(oNode, e)) == 0:
                 # no edge there yet
                 sdfg.add_edge(oNode, e, InterstateEdge())
 
-    # Prepare the SDFG for a detph analysis by 'inlining' loops. This removes the edge between the guard and the exit
-    # state and the edge between the last loop state and the guard, and instead places an edge between the last loop
-    # state and the exit state. Additionally, construct a dummy exit state and connect every state that has no outgoing
-    # edges to it.
-
-
-
-
-
+    # add a dummy exit to the SDFG, such that each path ends there.
     dummy_exit = sdfg.add_state('dummy_exit')
     for state in sdfg.nodes():
-        """
-        if hasattr(state, 'condition_edge') and hasattr(state, 'is_loop_guard') and state.is_loop_guard:
-            # This is a loop guard.
-            loop_begin = state.condition_edge.dst
-            # Determine loop states through a depth first search from the start of the loop. Everything reached before
-            # arriving back at the loop guard is part of the loop.
-            # TODO: This is hacky. Loops should report the loop states directly. This may fail or behave unexpectedly
-            #       for break/return statements inside of loops.
-            loop_states = set(sdutil.dfs_conditional(sdfg, sources=[loop_begin], condition=lambda _, s: s != state))
-            loop_exit = None
-            exit_edge = None
-            loop_end = None
-            end_edge = None
-            for iedge in sdfg.in_edges(state):
-                if iedge.src in loop_states:
-                    end_edge = iedge
-                    loop_end = iedge.src
-            for oedge in sdfg.out_edges(state):
-                if oedge.dst not in loop_states:
-                    loop_exit = oedge.dst
-                    exit_edge = oedge
-
-            if loop_exit is None or loop_end is None:
-                raise RuntimeError('Failed to analyze the depth of a loop starting at', state)
-
-            sdfg.remove_edge(exit_edge)
-            sdfg.remove_edge(end_edge)
-            sdfg.add_edge(loop_end, loop_exit, InterstateEdge())
-        #"""
-
         if len(sdfg.out_edges(state)) == 0 and state != dummy_exit:
             sdfg.add_edge(state, dummy_exit, InterstateEdge())
 
-    depth_map: Dict[SDFGState, sp.Expr] = {}
+    # These two dicts save the current length of the "heaviest", resp. "deepest", paths at each state.
     work_map: Dict[SDFGState, sp.Expr] = {}
+    depth_map: Dict[SDFGState, sp.Expr] = {}
+    # The dummy state has 0 work and depth.
     state_depths[dummy_exit] = sp.sympify(0)
     state_works[dummy_exit] = sp.sympify(0)
 
@@ -435,47 +354,73 @@ def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], ana
         n_depth = sp.simplify(depth + state_depths[state])
         n_work = sp.simplify(work + state_works[state])
 
-        if state in depth_map:
-            depth_map[state] = sp.Max(depth_map[state], n_depth)
+        # If we are analysing average parallelism, we don't search "heaviest" and "deepest" paths separately, but we want one
+        # single path with the least average parallelsim (of all paths with more than 0 work).
+        if analyze_tasklet == get_tasklet_avg_par:
+            if state in depth_map: # and hence als state in work_map
+                # if current path has 0 depth, we don't do anything.
+                if n_depth != 0:
+                    # see if we need to update the work and depth of the current state
+                    # we update if avg parallelism of new incoming path is less than current avg parallelism
+                    old_avg_par = sp.simplify(work_map[state] / depth_map[state])
+                    new_avg_par = sp.simplify(n_work / n_depth)
+                    
+                    if depth_map[state] == 0 or new_avg_par < old_avg_par:
+                        # old value was divided by zero or new path gives actually worse avg par, then we keep new value
+                        depth_map[state] = n_depth
+                        work_map[state] = n_work
+            else:
+                depth_map[state] = n_depth
+                work_map[state] = n_work
         else:
-            depth_map[state] = n_depth
-
-        if state in work_map:
-            work_map[state] = sp.Max(work_map[state], n_work)
-        else:
-            work_map[state] = n_work
-
+            # search heaviest and deepest path separately
+            if state in depth_map: # and consequently also in work_map
+                depth_map[state] = sp.Max(depth_map[state], n_depth)
+                work_map[state] = sp.Max(work_map[state], n_work)
+            else:
+                depth_map[state] = n_depth
+                work_map[state] = n_work
+        
         out_edges = sdfg.out_edges(state)
+        # only advance after all incoming edges were visited (meaning that current work depth values of state are final).
         if any(iedge not in visited for iedge in sdfg.in_edges(state)):
             pass    
         else:
             for oedge in out_edges:
                 traversal_q.append((oedge.dst, depth_map[state], work_map[state], oedge))
 
-    max_depth = depth_map[dummy_exit]
-    max_work = work_map[dummy_exit]
+    try:
+        max_depth = depth_map[dummy_exit]
+        max_work = work_map[dummy_exit]
+    except KeyError:
+        # If we get a KeyError above, this means that the traversal never reached the dummy_exit state.
+        # This happens if the loops were not properly detected and broken.
+        raise Exception('Analysis failed, since not all loops got detected. It may help to use more structured loop constructs.')
+    
+    sdfg_result = (sp.simplify(max_work), sp.simplify(max_depth))
+    w_d_map[get_uuid(sdfg)] = sdfg_result
+    return sdfg_result
 
-    print('SDFG', sdfg.name, 'processed')
-    w_d_map[get_uuid(sdfg)] = (sp.simplify(max_work), sp.simplify(max_depth))
-    return sp.simplify(max_work), sp.simplify(max_depth)
 
+def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_tasklet, symbols, entry: nd.EntryNode = None) -> Tuple[sp.Expr, sp.Expr]:
+    """
+    Analyze the work and depth of a scope.
+    This works by traversing through the scope analyzing the work and depth of each encountered node.
+    Depending on what kind of node we encounter, we do the following:
+        - EntryNode: Recursively analyze work depth of scope.
+        - Tasklet: use analyze_tasklet to get work depth of tasklet node.
+        - NestedSDFG: After translating its local symbols to global symbols, we analyze the nested SDFG recursively.
+        - LibraryNode: Library nodes are analyzed with special functions depending on their type.
+    Work inside a state can simply be summed up, but for the depth we need to find the longest path. Since dataflow is a DAG,
+    this can be done in linear time by traversing the graph in topological order.
 
-"""
-Analyze the work and depth of a scope.
-This works by constructing a proxy graph of the scope and then finding the maximum depth path in that graph between
-the source and sink. The proxy graph is constructed to remove any multi-edges between nodes and to remove nodes that
-do not contribute to the depth. Additionally, nested scopes are summarized into single nodes. All of this is necessary
-to reduce the number of possible paths in the graph, as much as possible, since they all have to be brute-force
-enumerated to find the maximum depth path.
-:note: This is terribly inefficient and should be improved.
-:param state: The state in which the scope to analyze is contained.
-:param sym_map: A dictionary mapping symbols to their values.
-:param entry: The entry node of the scope to analyze. If None, the entire state is analyzed.
-:return: A tuple containing the work and depth of the scope.
-"""
-def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_tasklet, syms_to_nonnegify, entry: nd.EntryNode = None) -> Tuple[sp.Expr, sp.Expr]:
- 
-    # find the work / depth of each node
+    :param state: The state in which the scope to analyze is contained.
+    :param sym_map: A dictionary mapping symbols to their values.
+    :param entry: The entry node of the scope to analyze. If None, the entire state is analyzed.
+    :return: A tuple containing the work and depth of the scope.
+    """
+
+    # find the work and depth of each node
     # for maps and nested SDFG, we do it recursively
     work = sp.sympify(0)
     max_depth = sp.sympify(0)
@@ -483,15 +428,16 @@ def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_task
     scope_exit = None if entry is None else state.exit_node(entry)
     for node in scope_nodes:
         # add node to map
-        w_d_map[get_uuid(node, state)] = (sp.sympify(0), sp.sympify(0)) # TODO: do we need this line?
+        w_d_map[get_uuid(node, state)] = (sp.sympify(0), sp.sympify(0))
         if isinstance(node, nd.EntryNode):
-            # If the scope contains an entry node, we need to recursively analyze the scope of the entry node first.
+            # If the scope contains an entry node, we need to recursively analyze the sub-scope of the entry node first.
             # The resulting work/depth are summarized into the entry node
-            s_work, s_depth = scope_work_depth(state, w_d_map, analyze_tasklet, syms_to_nonnegify, node)
+            s_work, s_depth = scope_work_depth(state, w_d_map, analyze_tasklet, symbols, node)
             # add up work for whole state, but also save work for this sub-scope scope in w_d_map
             work += s_work
             w_d_map[get_uuid(node, state)] = (s_work, s_depth)            
         elif node == scope_exit:
+            # don't do anything for exit nodes, everthing handled already in the corresponding entry node.
             pass
         elif isinstance(node, nd.Tasklet):
             # add up work for whole state, but also save work for this node in w_d_map
@@ -499,12 +445,25 @@ def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_task
             work += t_work
             w_d_map[get_uuid(node, state)] = (sp.sympify(t_work), sp.sympify(t_depth))
         elif isinstance(node, nd.NestedSDFG):
+            # keep track of nested symbols: "symbols" maps local nested SDFG symbols to global symbols.
+            # We only want global symbols in our final work depth expressions.
+            nested_syms = {}
+            nested_syms.update(symbols)
+            nested_syms.update(evaluate_symbols(symbols, node.symbol_mapping))
             # Nested SDFGs are recursively analyzed first.
-            nsdfg_work, nsdfg_depth = sdfg_work_depth(node.sdfg, w_d_map, analyze_tasklet, syms_to_nonnegify)
+            nsdfg_work, nsdfg_depth = sdfg_work_depth(node.sdfg, w_d_map, analyze_tasklet, nested_syms)
 
             # add up work for whole state, but also save work for this nested SDFG in w_d_map
             work += nsdfg_work
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)
+        elif isinstance(node, nd.LibraryNode):
+            lib_node_work = LIBNODES_TO_WORK[type(node)](node, symbols, state)
+            lib_node_depth = -1     # not analyzed
+            if analyze_tasklet != get_tasklet_work:
+                # we are analyzing depth
+                lib_node_depth = LIBNODES_TO_DEPTH[type(node)](node, symbols, state)
+            w_d_map[get_uuid(node, state)] = (lib_node_work, lib_node_depth)
+            
             
     if entry is not None:
         # If the scope being analyzed is a map, multiply the work by the number of iterations of the map.
@@ -517,12 +476,13 @@ def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_task
             print('WARNING: Only Map scopes are supported in work analysis for now. Assuming 1 iteration.')
 
 
-    # TODO: Kinda ugly if condition...
-    # only do this if we even analyzed depth of tasklets
+    # Work inside a state can simply be summed up. But now we need to find the depth of a state (i.e. longest path).
+    # Since dataflow graph is a DAG, this can be done in linear time.
     max_depth = sp.sympify(0)
-    if analyze_tasklet == get_tasklet_work_depth:
+    # only do this if we are analyzing depth
+    if analyze_tasklet == get_tasklet_work_depth or analyze_tasklet == get_tasklet_avg_par:
         # Calculate the maximum depth of the scope by finding the 'deepest' path from the source to the sink. This is done by
-        # a BFS in topological order, where each node propagates its current max depth for all incoming paths
+        # a traversal in topological order, where each node propagates its current max depth for all incoming paths.
         traversal_q = deque()
         visited = set()
         # find all starting nodes
@@ -532,12 +492,10 @@ def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_task
         else:
             for node in scope_nodes:
                 if len(state.in_edges(node)) == 0:
-                    # push this node into the deque
+                    # This node is a start node of the traversal
                     traversal_q.append((node, sp.sympify(0), None))
-
-        
+        # this map keeps track of the length of the longest path ending at each state so far seen.
         depth_map = {}
-
         while traversal_q:
             node, in_depth, in_edge = traversal_q.popleft()
 
@@ -552,141 +510,72 @@ def scope_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_task
                 depth_map[node] = n_depth
 
             out_edges = state.out_edges(node)
-            # only advance to next node, if all incoming edges have been visited or the current node is the entry (aka starting node)
-            # if the current node is the exit of the current scope, we stop, such that we don't leave the current scope
+            # Only advance to next node, if all incoming edges have been visited or the current node is the entry (aka starting node).
+            # If the current node is the exit of the scope, we stop, such that we don't leave the scope.
             if (all(iedge in visited for iedge in state.in_edges(node)) or node == entry) and node != scope_exit:
-                # if we encounter a nested map, we must not analyze its contents (as they have already been recursively analyzed)
-                # hence, we continue from the outgoing edges of the corresponding exit
+                # If we encounter a nested map, we must not analyze its contents (as they have already been recursively analyzed).
+                # Hence, we continue from the outgoing edges of the corresponding exit.
                 if isinstance(node, nd.EntryNode) and node != entry:
-                    # get the corresponding exit note
                     exit_node = state.exit_node(node)
                     # replace out_edges with the out_edges of the scope exit node
                     out_edges = state.out_edges(exit_node)
                 for oedge in out_edges:
                     traversal_q.append((oedge.dst, depth_map[node], oedge))
             if len(out_edges) == 0 or node == scope_exit:
-                # this is an end node --> update max_depth
+                # We have reached an end node --> update max_depth
                 max_depth = sp.Max(max_depth, depth_map[node])
 
-    # summarise work / depth of the whole state in the dictionary
-    w_d_map[get_uuid(state)] = (sp.simplify(work), sp.simplify(max_depth))
-    return sp.simplify(work), sp.simplify(max_depth)
+    # summarise work / depth of the whole scope in the dictionary
+    scope_result = (sp.simplify(work), sp.simplify(max_depth))
+    w_d_map[get_uuid(state)] = scope_result
+    return scope_result
 
-"""
-Analyze the work and depth of a state.
-:param state: The state to analyze.
-:param sym_map: A dictionary mapping symbols to their values.
-:return: A tuple containing the work and depth of the state.
-"""
-def state_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_tasklet, syms_to_nonnegify) -> None:
-    work, depth = scope_work_depth(state, w_d_map, analyze_tasklet, syms_to_nonnegify, None)
+
+def state_work_depth(state: SDFGState, w_d_map: Dict[str, sp.Expr], analyze_tasklet, symbols) -> Tuple[sp.Expr, sp.Expr]:
+    """
+    Analyze the work and depth of a state.
+
+    :param state: The state to analyze.
+    :param w_d_map: The result will be saved to this map.
+    :param analyze_tasklet: Function used to analyze tasklet nodes.
+    :param symbols: A dictionary mapping local nested SDFG symbols to global symbols.
+    :return: A tuple containing the work and depth of the state.
+    """
+    work, depth = scope_work_depth(state, w_d_map, analyze_tasklet, symbols, None)
     return work, depth
 
 
-"""
-Analyze the work and depth of an SDFG.
-Optionally, a dictionary mapping symbols to their values can be provided to concretize the analysis.
-Note that this also significantly speeds up the analysis due to sympy not having to perform the analysis symbolically.
-:note: SDFGs should have split interstate edges. This means there should be no interstate edges containing both a
-       condition and an assignment.
-:param sdfg: The SDFG to analyze.
-:param sym_map: A dictionary mapping symbols to their values.
-:return: A tuple containing the work and depth of the SDFG
-"""
-# def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, str], sym_map: Dict[str, int]) -> Dict[str, Tuple[str, str]]:
-def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> Dict[str, Tuple[sp.Expr, sp.Expr]]:
-    # Run state propagation for all SDFGs recursively. This is necessary to determine the number of times each state
-    # will be executed, or to determine upper bounds for that number (such as in the case of branching)
-    # print('Propagating states...')
-    for sd in sdfg.all_sdfgs_recursive():
-        propagation.propagate_states(sd)
+def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> None:
+    """
+    Analyze a given SDFG. We can either analyze work, work and depth or average parallelism.
+
+    :note: SDFGs should have split interstate edges. This means there should be no interstate edges containing both a
+        condition and an assignment.
+    :param sdfg: The SDFG to analyze.
+    :param w_d_map: Dictionary of SDFG elements to (work, depth) tuples. Result will be saved in here.
+    :param analyze_tasklet: The function used to analyze tasklet nodes. Analyzes either just work, work and depth or average parallelism.
+    """
 
     # deepcopy such that original sdfg not changed
-    # sdfg = deepcopy(sdfg)
+    sdfg = deepcopy(sdfg)
 
-    # Check if the SDFG has any dynamically unbounded executions, i.e., if there are any states that have neither a
-    # statically known number of executions, nor an upper bound on the number of executions. Warn if this is the case.
-    # print('Checking for dynamically unbounded executions...')
+    # Run state propagation for all SDFGs recursively. This is necessary to determine the number of times each state
+    # will be executed, or to determine upper bounds for that number (such as in the case of branching)
     for sd in sdfg.all_sdfgs_recursive():
-        if any([s.executions == 0 and s.dynamic_executions for s in sd.nodes()]):
-            pass
-            # print('WARNING: SDFG has dynamic executions. The analysis may fail in unexpected ways or be inaccurate.')
+        propagation.propagate_states_symbolically(sd)
 
-    syms_to_nonnegify = set()
     # Analyze the work and depth of the SDFG.
-    # print('Analyzing SDFG...')
-    sdfg_work_depth(sdfg, w_d_map, analyze_tasklet, syms_to_nonnegify)
+    symbols = {}
+    sdfg_work_depth(sdfg, w_d_map, analyze_tasklet, symbols)
 
-    # TODO: maybe do this posify more often for performance?
+    # Note: This posify could be done more often to improve performance.
     array_symbols = get_array_size_symbols(sdfg)
     for k, (v_w, v_d) in w_d_map.items():
-        v_w = posify_certain_symbols(v_w, array_symbols, syms_to_nonnegify)
-        v_d = posify_certain_symbols(v_d, array_symbols, syms_to_nonnegify)
+        # The symeval replaces nested SDFG symbols with their global counterparts.
+        v_w = posify_certain_symbols(symeval(v_w, symbols), array_symbols)
+        v_d = posify_certain_symbols(symeval(v_d, symbols), array_symbols)
         w_d_map[k] = (v_w, v_d)
-    sdfg.view()
     
-
-
-
-
-def get_work(sdfg_json):
-    # final version loads sdfg from json
-        # loaded = load_sdfg_from_json(sdfg_json)
-        # if loaded['error'] is not None:
-        #     return loaded['error']
-        # sdfg = loaded['sdfg']
-
-    # for now we load simply load from a file
-    sdfg = SDFG.from_file(sdfg_json)
-
-    
-
-    # try:
-    work_map = {}
-    analyze_sdfg(sdfg, work_map, get_tasklet_work)
-    for k, v, in work_map.items():
-        work_map[k] = (str(sp.simplify(v[0])))
-    return {
-        'workMap': work_map,
-    }
-    # except Exception as e:
-    #     return {
-    #         'error': {
-    #             'message': 'Failed to analyze work depth',
-    #             'details': get_exception_message(e),
-    #         },
-    #     }
-
-
-
-def get_work_depth(sdfg_json):
-    # final version loads sdfg from json
-        # loaded = load_sdfg_from_json(sdfg_json)
-        # if loaded['error'] is not None:
-        #     return loaded['error']
-        # sdfg = loaded['sdfg']
-
-    # for now we load simply load from a file
-    sdfg = SDFG.from_file(sdfg_json)
-
-
-    # try:
-    work_depth_map = {}
-    analyze_sdfg(sdfg, work_depth_map, get_tasklet_work_depth)
-    for k, v, in work_depth_map.items():
-        work_depth_map[k] = (str(sp.simplify(v[0])), str(sp.simplify(v[1])))
-    return {
-        'workDepthMap': work_depth_map,
-    }
-    # except Exception as e:
-    #     return {
-    #         'error': {
-    #             'message': 'Failed to analyze work depth',
-    #             'details': get_exception_message(e),
-    #         },
-    #     }
-
-
 
 
 
@@ -694,26 +583,16 @@ def get_work_depth(sdfg_json):
 # Utility functions for running the analysis from the command line #############
 ################################################################################
 
-class keyvalue(argparse.Action):
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        setattr(namespace, self.dest, dict())
-        for v in values:
-            k, v = v.split('=')
-            getattr(namespace, self.dest)[k] = v
-
-
 def main() -> None:
-    analyze_depth = True
 
     parser = argparse.ArgumentParser(
-        'work_depth_analysis',
-        usage='python work_depth_analysis.py [-h] filename',
+        'work_depth',
+        usage='python work_depth.py [-h] filename --analyze {work,workDepth,avgPar}',
         description='Analyze the work/depth of an SDFG.'
     )
 
     parser.add_argument('filename', type=str, help='The SDFG file to analyze.')
-    parser.add_argument('--kwargs', nargs='*', help='Define symbols.', action=keyvalue)
+    parser.add_argument('--analyze', choices=['work', 'workDepth', 'avgPar'], default='workDepth', help='Choose what to analyze. Default: workDepth')
 
     args = parser.parse_args()
 
@@ -721,34 +600,39 @@ def main() -> None:
         print(args.filename, 'does not exist.')
         exit()
 
-    symbols_map = {}
-    if args.kwargs:
-        for k, v in args.kwargs.items():
-            symbols_map[k] = int(v)
+    if args.analyze == 'workDepth':    
+        analyze_tasklet = get_tasklet_work_depth
+    elif args.analyze == 'avgPar':
+        analyze_tasklet = get_tasklet_avg_par
+    elif args.analyze == 'work':
+        analyze_tasklet = get_tasklet_work
 
-    # TODO: symbols_map maybe not needed
-    if analyze_depth:
-        map = get_work_depth(args.filename)
-        map = map['workDepthMap']
-    else:
-        map = get_work(args.filename)
-        map = map['workMap']
-
-    # find uuid of the whole SDFG
     sdfg = SDFG.from_file(args.filename)
-    result = map[get_uuid(sdfg)]
+    work_depth_map = {}
+    analyze_sdfg(sdfg, work_depth_map, analyze_tasklet)
 
+
+    if args.analyze == 'workDepth':
+        for k, v, in work_depth_map.items():
+            work_depth_map[k] = (str(sp.simplify(v[0])), str(sp.simplify(v[1])))
+    elif args.analyze == 'work':
+        for k, v, in work_depth_map.items():
+            work_depth_map[k] = str(sp.simplify(v[0]))
+    elif args.analyze == 'avgPar':
+        for k, v, in work_depth_map.items():
+            work_depth_map[k] = str(sp.simplify(v[0] / v[1]) if str(v[1]) != '0' else 0)      # work / depth = avg par
+
+    result_whole_sdfg = work_depth_map[get_uuid(sdfg)]
 
     print(80*'-')
-    if isinstance(result, Tuple):
-        print("Work:\t", result[0])
-        print("Depth:\t", result[1])
-    else:
-        print("Work:\t", result)
-
+    if args.analyze == 'workDepth':
+        print("Work:\t", result_whole_sdfg[0])
+        print("Depth:\t", result_whole_sdfg[1])
+    elif args.analyze == 'work':
+        print("Work:\t", result_whole_sdfg)
+    elif args.analyze == 'avgPar':
+        print("Average Parallelism:\t", result_whole_sdfg)
     print(80*'-')
-
-
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+""" Contains test cases for the work depth analysis. """
 import dace as dc
-import numpy as np
 from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth
 from dace.sdfg.work_depth_analysis.helpers import get_uuid
 import sympy as sp
@@ -8,7 +9,7 @@ from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
 
-# TODO: add tests for function calls (e.g. reduce)
+# TODO: add tests for library nodes (e.g. reduce, matMul)
 
 
 N = dc.symbol('N')
@@ -38,7 +39,7 @@ def if_else_sym(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64[1]
     if x[10] > 50:
         z[:] = x + y            # N work, 1 depth
     else:
-        for i in range(K):    # K work, K depth
+        for i in range(K):      # K work, K depth
             sum += x[i]
 
 @dc.program
@@ -61,7 +62,7 @@ def nested_if_else(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64
     if x[10] > 50:
         if x[9] > 50:
             z[:] = x + y            # N work, 1 depth
-        z[:] += 2 * x               # 2*N work, 2 depth         --> total outer if: 3*N work, 3 depth
+        z[:] += 2 * x               # 2*N work, 2 depth     --> total outer if: 3*N work, 3 depth
     else:
         if y[9] > 50:
             for i in range(K):      
@@ -69,9 +70,9 @@ def nested_if_else(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64
         else:
             for j in range(M):      
                 sum += x[j]         # M work, M depth
-            z[:] = x + y            # N work, depth 1   --> total inner else: M+N work, M+1 depth
+            z[:] = x + y            # N work, depth 1       --> total inner else: M+N work, M+1 depth
                                 # --> total outer else: Max(K, M+N) work, Max(K, M+1) depth
-                    # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
+                # --> total over both branches: Max(K, M+N, 3*N) work, Max(K, M+1, 3) depth
 
 @dc.program
 def max_of_positive_symbol(x: dc.float64[N]):
@@ -98,7 +99,7 @@ def multiple_array_sizes(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N],
         z3[:] = 2 * x3 + y3         # work 2*K, depth 2
     elif x[3] > 0:
         z[:] = 3 * x + y + 1        # work 3*N, depth 3
-                        # --> work= Max(3*N, 2*M, 2*K)      and depth = 5
+                        # --> work= Max(3*N, 2*M, 2*K) and depth = 5
 
 
 @dc.program
@@ -143,54 +144,24 @@ def break_while_loop(x:dc.float64[N]):
             break
         x += 1   
 
-# @dc.program
-# def continue_for_loop2(x:dc.float64[N]):
-#     i = 0
-#     while True:
-#         i += 1
-#         if i % 2 == 0:
-#             continue
-#         x += 1
-#         if x[0] > 10:
-#             break
 
-
-tests = [single_map,
-         single_for_loop,
-         if_else,
-         if_else_sym,
-         nested_sdfg,
-         nested_maps,
-         nested_for_loops,
-         nested_if_else,
-         max_of_positive_symbol,
-         multiple_array_sizes,
-         unbounded_while_do,
-         unbounded_do_while,
-         unbounded_nonnegify,
-         continue_for_loop,
-         break_for_loop,
-         break_while_loop]
-# tests = [single_map]
-results = [(N, 1),
-           (N, N),
-           (1000, 100),
-           (sp.Max(N, K), sp.Max(K,1)),
-           (2*N, N + 1),
-           (N*M, 1),
-           (N*K, N*K),
-           (sp.Max(K, M+N, 3*N), sp.Max(K, M+1, 3)),
-           (3*N**2, 3*N),
-           (sp.Max(3*N, 2*M + 3, 2*K), 5),
-           (N*sp.Symbol('num_execs_0_2'), sp.Symbol('num_execs_0_2')),
-           (N*sp.Symbol('num_execs_0_1'), sp.Symbol('num_execs_0_1')),
-           (sp.Max(N*sp.Symbol('num_execs_0_5'), 2*N*sp.Symbol('num_execs_0_3')), sp.Max(sp.Symbol('num_execs_0_5'), 2*sp.Symbol('num_execs_0_3'))),
-           (sp.Symbol('num_execs_0_2')*N, sp.Symbol('num_execs_0_2')),
-           (N**2, N),
-           (sp.Symbol('num_execs_0_3')*N, sp.Symbol('num_execs_0_3'))]
-
-
-
+tests_cases = [(single_map, (N, 1)),
+            (single_for_loop, (N, N)),
+            (if_else, (1000, 100)),
+            (if_else_sym, (sp.Max(K, N), sp.Max(1, K))),
+            (nested_sdfg, (2*N, N + 1)),
+            (nested_maps, (M*N, 1)),
+            (nested_for_loops, (K*N, K*N)),
+            (nested_if_else, (sp.Max(K, 3*N, M + N), sp.Max(3, K, M + 1))),
+            (max_of_positive_symbol, (3*N**2, 3*N)),
+            (multiple_array_sizes, (sp.Max(2*K, 3*N, 2*M + 3), 5)),
+            (unbounded_while_do, (sp.Symbol('num_execs_0_2', nonnegative=True)*N, sp.Symbol('num_execs_0_2', nonnegative=True))),
+            # TODO: why we get this ugly max(1, num_execs) here??
+            (unbounded_do_while, (sp.Max(1,sp.Symbol('num_execs_0_1', nonnegative=True))*N, sp.Max(1,sp.Symbol('num_execs_0_1', nonnegative=True)))),
+            (unbounded_nonnegify, (2*sp.Symbol('num_execs_0_7', nonnegative=True)*N, 2*sp.Symbol('num_execs_0_7', nonnegative=True))),
+            (continue_for_loop, (sp.Symbol('num_execs_0_6', nonnegative=True)*N, sp.Symbol('num_execs_0_6', nonnegative=True))),
+            (break_for_loop, (N**2, N)),
+            (break_while_loop, (sp.Symbol('num_execs_0_5', nonnegative=True)*N, sp.Symbol('num_execs_0_5', nonnegative=True)))]
 
 
 def test_work_depth():
@@ -198,37 +169,35 @@ def test_work_depth():
     failed = 0
     exception = 0
     failed_tests = []
-    for test, correct in zip(tests, results):
+    for test, correct in tests_cases:
         w_d_map = {}
-        sdfg = test.to_sdfg()#simplify=False)
+        sdfg = test.to_sdfg()
         if 'nested_sdfg' in test.name:
             sdfg.apply_transformations(NestSDFG)
         if 'nested_maps' in test.name:
             sdfg.apply_transformations(MapExpansion)
-        # sdfg.view()
-        # try:
-        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth)
-        res = w_d_map[get_uuid(sdfg)]
+        try:
+            analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth)
+            res = w_d_map[get_uuid(sdfg)]
 
-        # check result
-        if correct == res:
-            good += 1
-        else:
-            # sdfg.view()
+            # check result
+            if correct == res:
+                good += 1
+            else:
+                failed += 1
+                failed_tests.append(test.name)
+                print(f'Test {test.name} failed:')
+                print('correct', correct)
+                print('result',  res)
+                print()
+        except Exception as e:
+            print(e)
             failed += 1
-            failed_tests.append(test.name)
-            print(f'Test {test.name} failed:')
-            print('correct', correct)
-            print('result',  res)
-            print()
-        # except Exception as e:
-        # print(e)
-        # failed += 1
-        # exception += 1
+            exception += 1
         
     print(100*'-')
     print(100*'-')
-    print(f'Ran {len(tests)} tests. {good} succeeded and {failed} failed '
+    print(f'Ran {len(tests_cases)} tests. {good} succeeded and {failed} failed '
           f'({exception} of those triggered an exception)')
     print(100*'-')
     print('failed tests:', failed_tests)

@@ -1,4 +1,7 @@
-from dace import SDFG, SDFGState, nodes, serialize
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+""" Helper functions used by the work depth analysis. """
+
+from dace import SDFG, SDFGState, nodes
 from collections import deque
 from typing import List, Dict, Set, Tuple, Optional, Union
 import networkx as nx
@@ -20,7 +23,6 @@ class NodeCycle:
 
 UUID_SEPARATOR = '/'
 
-
 def ids_to_string(sdfg_id, state_id=-1, node_id=-1, edge_id=-1):
     return (str(sdfg_id) + UUID_SEPARATOR + str(state_id) + UUID_SEPARATOR +
             str(node_id) + UUID_SEPARATOR + str(edge_id))
@@ -37,13 +39,6 @@ def get_uuid(element, state=None):
     else:
         return ids_to_string(-1)
     
-
-
-
-
-
-
-
 def get_domtree(
     graph: nx.DiGraph,
     start_node: str,
@@ -80,9 +75,7 @@ def get_domtree(
     return alldominated, domtree
 
 
-
-
-def backedges(
+def get_backedges(
     graph: nx.DiGraph, start: Optional[NodeT], strict: bool = False
 ) -> Union[Set[EdgeT], Tuple[Set[EdgeT], Set[EdgeT]]]:
     '''Find all backedges in a directed graph.
@@ -227,3 +220,120 @@ def backedges(
         return backedges
 
 
+def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
+    """
+    Detects loops in a SDFG. For each loop, it identifies (node, oNode, exit).
+    We know that there is a backedge from oNode to node that creates the loop and that exit is the exit state of the loop.
+    
+    :param sdfg_nx: The networkx representation of a SDFG.
+    """
+
+    # preparation phase: compute dominators, backedges etc
+    for node in sdfg_nx.nodes():
+        if sdfg_nx.in_degree(node) == 0:
+            start = node
+            break
+    if start is None:
+        raise ValueError('No start node could be determined')
+    
+    # sdfg can have multiple end nodes --> not good for postDomTree
+    # --> add a new end node
+    artificial_end_node = 'artificial_end_node'
+    sdfg_nx.add_node(artificial_end_node)
+    for node in sdfg_nx.nodes():
+        if sdfg_nx.out_degree(node) == 0 and node != artificial_end_node:
+            # this is an end node of the sdfg
+            sdfg_nx.add_edge(node, artificial_end_node)
+
+    # sanity check:
+    if sdfg_nx.in_degree(artificial_end_node) == 0:
+        raise ValueError('No end node could be determined in the SDFG')
+
+    # compute dominators and backedges
+    iDoms = nx.immediate_dominators(sdfg_nx, start)
+    allDom, domTree = get_domtree(sdfg_nx, start, iDoms)
+
+    reversed_sdfg_nx = sdfg_nx.reverse()
+    iPostDoms = nx.immediate_dominators(reversed_sdfg_nx, artificial_end_node)
+    allPostDoms, postDomTree = get_domtree(reversed_sdfg_nx, artificial_end_node, iPostDoms)
+
+    backedges = get_backedges(sdfg_nx, start)
+    backedgesDstDict = {}
+    for be in backedges:
+        if be[1] in backedgesDstDict:
+            backedgesDstDict[be[1]].add(be)
+        else:
+            backedgesDstDict[be[1]] = set([be])
+    
+
+    # This list will be filled with triples (node, oNode, exit), one triple for each loop construct in the SDFG.
+    # There will always be a backedge from oNode to node. Either node or oNode will be the corresponding loop guard,
+    # depending on whether it is a while-do or a do-while loop. exit will always be the exit state of the loop.
+    nodes_oNodes_exits = []
+
+    # iterate over all nodes
+    for node in sdfg_nx.nodes():
+        # Check if any backedge ends in node.
+        if node in backedgesDstDict:
+            inc_backedges = backedgesDstDict[node]
+
+            # gather all successors of node that are not reached by backedges
+            successors = []
+            for edge in sdfg_nx.out_edges(node):
+                if not edge in backedges:
+                    successors.append(edge[1])
+
+
+            # For each incoming backedge, we want to find oNode and exit. There can be multiple backedges, in case
+            # we have a continue statement in the original code. But we can handle these backedges normally.
+            for be in inc_backedges:
+                # since node has an incoming backedge, it is either a loop guard or loop tail
+                # oNode will exactly be the other thing
+                oNode = be[0]
+                exitCandidates = set()
+                # search for exit candidates:
+                # a state is a exit candidate if:
+                #   - it is in successor and it does not dominate oNode (else it dominates 
+                #           the last loop state, and hence is inside the loop itself)
+                #   - is is a successor of oNode (but not node)
+                # This handles both cases of while-do and do-while loops
+                for succ in successors:
+                    if succ != oNode and oNode not in allDom[succ]:
+                        exitCandidates.add(succ)
+                for succ in sdfg_nx.successors(oNode):
+                    if succ != node:
+                        exitCandidates.add(succ)
+                
+                if len(exitCandidates) == 0:
+                    raise ValueError('failed to find any exit nodes')
+                elif len(exitCandidates) > 1:
+                    # Find the exit candidate that sits highest up in the
+                    # postdominator tree (i.e., has the lowest level).
+                    # That must be the exit node (it must post-dominate)
+                    # everything inside the loop. If there are multiple
+                    # candidates on the lowest level (i.e., disjoint set of
+                    # postdominated nodes), there are multiple exit paths,
+                    # and they all share one level.
+                    cand = exitCandidates.pop()
+                    minSet = set([cand])
+                    minLevel = nx.get_node_attributes(postDomTree, 'level')[cand]
+                    for cand in exitCandidates:
+                        curr_level = nx.get_node_attributes(postDomTree, 'level')[cand]
+                        if curr_level < minLevel:
+                            # new minimum found
+                            minLevel = curr_level
+                            minSet.clear()
+                            minSet.add(cand)
+                        elif curr_level == minLevel:
+                            # add cand to curr set
+                            minSet.add(cand)
+                    
+                    if len(minSet) > 0:
+                        exitCandidates = minSet
+                    else:
+                        raise ValueError('failed to find exit minSet')
+
+                # now we have a triple (node, oNode, exitCandidates)
+                nodes_oNodes_exits.append((node, oNode, exitCandidates))
+
+    return nodes_oNodes_exits
