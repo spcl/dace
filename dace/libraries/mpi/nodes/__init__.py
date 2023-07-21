@@ -14,3 +14,4 @@ from .alltoall import Alltoall
 from .dummy import Dummy
 from .redistribute import Redistribute
 from .comm_split import Comm_split
+from .free import Free

@@ -1,0 +1,53 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import dace.library
+import dace.properties
+import dace.sdfg.nodes
+from dace.transformation.transformation import ExpandTransformation
+from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
+
+
+@dace.library.expansion
+class ExpandFreeMPI(ExpandTransformation):
+
+    environments = [environments.mpi.MPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+        comm = "MPI_COMM_WORLD"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
+
+        code = f"""
+            MPI_Comm_free(&{comm});
+            """
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.node
+class Free(MPINode):
+
+    # Global properties
+    implementations = {
+        "MPI": ExpandFreeMPI,
+    }
+    default_implementation = "MPI"
+
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, grid=None, *args, **kwargs):
+        super().__init__(name, *args, inputs={}, outputs={}, **kwargs)
+        self.grid = grid
+
+    def validate(self, sdfg, state):
+        """
+        :return: A three-tuple (buffer, root) of the three data descriptors in the
+                 parent SDFG.
+        """
+
+        return None
