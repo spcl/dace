@@ -11,8 +11,8 @@ from typing import Tuple, Dict
 import os
 import sympy as sp
 from copy import deepcopy
-from dace.libraries.blas import MatMul, Transpose
-from dace.libraries.standard import Reduce
+from dace.libraries.blas import MatMul
+from dace.libraries.standard import Reduce, Transpose
 from dace.symbolic import pystr_to_symbolic
 import ast
 import astunparse
