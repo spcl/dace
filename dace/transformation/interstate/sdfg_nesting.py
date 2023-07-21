@@ -925,7 +925,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # For now we only detect one element
+                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
+                    if e.data.data not in write_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
@@ -941,6 +946,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
+                    if e.data.data not in read_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
