@@ -298,11 +298,10 @@ class StateGraphView(object):
 
         # Get scopes
         for node, scopenodes in sdc.items():
-            scope_exit_nodes = [v for v in scopenodes if isinstance(v, nd.ExitNode)]
             if node is None:
                 exit_node = None
             else:
-                exit_node = next(iter(scope_exit_nodes))
+                exit_node = next(v for v in scopenodes if isinstance(v, nd.ExitNode))
             scope = ScopeTree(node, exit_node)
             result[node] = scope
 
@@ -506,10 +505,10 @@ class StateGraphView(object):
                     in_edges = sg.in_edges(n)
                     out_edges = sg.out_edges(n)
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
-                    for out_edge in out_edges:
-                        for in_edge in in_edges:
-                            if in_edge.data.data == out_edge.data.data and \
-                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset):
+                    for out_edge in list(out_edges):
+                        for in_edge in list(in_edges):
+                            if (in_edge.data.data == out_edge.data.data and
+                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
 
                     for e in in_edges:
