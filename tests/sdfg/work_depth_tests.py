@@ -166,7 +166,7 @@ tests_cases = [
     (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
     (unbounded_while_do, (sp.Symbol('num_execs_0_2', nonnegative=True) * N, sp.Symbol('num_execs_0_2',
                                                                                       nonnegative=True))),
-    # TODO: why we get this ugly max(1, num_execs) here??
+    # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
     (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1', nonnegative=True)) * N,
                           sp.Max(1, sp.Symbol('num_execs_0_1', nonnegative=True)))),
     (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7', nonnegative=True) * N,
@@ -190,32 +190,11 @@ def test_work_depth():
             sdfg.apply_transformations(NestSDFG)
         if 'nested_maps' in test.name:
             sdfg.apply_transformations(MapExpansion)
-        try:
-            analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth)
-            res = w_d_map[get_uuid(sdfg)]
 
-            # check result
-            if correct == res:
-                good += 1
-            else:
-                failed += 1
-                failed_tests.append(test.name)
-                print(f'Test {test.name} failed:')
-                print('correct', correct)
-                print('result', res)
-                print()
-        except Exception as e:
-            print(e)
-            failed += 1
-            exception += 1
-
-    print(100 * '-')
-    print(100 * '-')
-    print(f'Ran {len(tests_cases)} tests. {good} succeeded and {failed} failed '
-          f'({exception} of those triggered an exception)')
-    print(100 * '-')
-    print('failed tests:', failed_tests)
-    print(100 * '-')
+        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth)
+        res = w_d_map[get_uuid(sdfg)]
+        # check result
+        assert correct == res
 
 
 if __name__ == '__main__':
