@@ -114,7 +114,9 @@ def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEd
     :param data: The data descriptor.
     :return: A new memlet.
     """
-    edge = copy.deepcopy(original)
+    # Shallow copy edge
+    edge = gr.MultiConnectorEdge(original.src, original.src_conn, original.dst, original.dst_conn,
+                                 copy.deepcopy(original.data), original.key)
     edge.data.try_initialize(sdfg, state, edge)
 
     if edge.data.data == data:
