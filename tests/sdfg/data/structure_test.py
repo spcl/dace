@@ -48,7 +48,6 @@ def test_read_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -123,7 +122,6 @@ def test_write_structure():
     i_after.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='M'))
     i_after.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.indptr', subset='0:M+1'))
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -234,7 +232,6 @@ def test_local_structure():
                                          input_nodes={'tmp_vdata': tmp_data},
                                          output_nodes={'vdata': B_data})
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -295,7 +292,6 @@ def test_read_nested_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -375,7 +371,6 @@ def test_write_nested_structure():
     i_after.add_edge(t, '__out', indptr, None, dace.Memlet(data='vindptr', subset='M'))
     i_after.add_edge(indptr, 'views', B, None, dace.Memlet(data='B.csr.indptr', subset='0:M+1'))
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -427,7 +422,6 @@ def test_direct_read_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='A.data', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
@@ -484,7 +478,6 @@ def test_direct_read_nested_structure():
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='A.csr.data', subset='idx'), dst_conn='__val')
     state.add_memlet_path(t, jmx, imx, B, memlet=dace.Memlet(data='B', subset='0:M, 0:N', volume=1), src_conn='__out')
 
-    sdfg.view()
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
