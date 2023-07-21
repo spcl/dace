@@ -62,8 +62,12 @@ class NestedDict(dict):
             token = tokens.pop(0)
             result = result.members[token]
         return result
-
     
+    def __setitem__(self, key, val):
+        if isinstance(key, str) and '.' in key:
+            raise KeyError('NestedDict does not support setting nested keys')
+        super(NestedDict, self).__setitem__(key, val)
+
     def __contains__(self, key):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
