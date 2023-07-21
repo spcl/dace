@@ -216,10 +216,10 @@ def test_code_to_code():
     t2 = state.add_tasklet('b', {'inp'}, {}, 'print(inp)', side_effects=True)
     state.add_edge(t1, 'out', t2, 'inp', dace.Memlet('scal'))
 
-    # TODO: Nicely print tasklets without outputs
     stree = as_schedule_tree(sdfg)
     assert len(stree.children) == 2
     assert all(isinstance(c, tn.TaskletNode) for c in stree.children)
+    assert stree.children[1].as_string().startswith('tasklet(scal')
 
 
 def test_dyn_map_range():

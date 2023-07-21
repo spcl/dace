@@ -273,6 +273,8 @@ class TaskletNode(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         in_memlets = ', '.join(f'{v}' for v in self.in_memlets.values())
         out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
+        if not out_memlets:
+            return indent * INDENTATION + f'tasklet({in_memlets})'
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
 
 
