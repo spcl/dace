@@ -2015,9 +2015,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     self.add_symbol(sym.name, sym.dtype)
 
         # Add free symbols to the SDFG global symbol storage
-        # for sym in datadesc.free_symbols:
-        #     if sym.name not in self.symbols:
-        #         self.add_symbol(sym.name, sym.dtype)
         _add_symbols(datadesc)
 
         return name
