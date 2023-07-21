@@ -436,7 +436,7 @@ class Structure(Data):
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        result = set(self.symbols.keys())
+        result = set()
         for k, v in self.members.items():
             result |= v.free_symbols
         return result
