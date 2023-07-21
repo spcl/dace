@@ -37,6 +37,11 @@ def test_comm_split():
     state.add_edge(color, None, comm_split_node, '_color', Memlet.simple(color, "0:1", num_accesses=1))
     state.add_edge(key, None, comm_split_node, '_key', Memlet.simple(key, "0:1", num_accesses=1))
     
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(comm_name, dace.int32, transient=True)
+    wnode = state.add_write(comm_name)
+    state.add_edge(comm_split_node, "_out", wnode, None, Memlet.from_array(comm_name, scal))
+
     state2 = sdfg.add_state("main")
     
     sdfg.add_edge(state, state2, dace.InterstateEdge())

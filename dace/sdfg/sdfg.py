@@ -32,7 +32,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.distr_types import ProcessGrid, SubArray, RedistrArray
+from dace.distr_types import ProcessComm, ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
@@ -388,6 +388,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
+    _comms = DictProperty(str,
+                           ProcessComm,
+                           desc="Process-comm descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_arrays_from_json)
     _pgrids = DictProperty(str,
                            ProcessGrid,
                            desc="Process-grid descriptors for this SDFG",
@@ -460,6 +465,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._recompile = True
 
         # Grid-distribution-related fields
+        self._comms = {}
         self._pgrids = {}
         self._subarrays = {}
         self._rdistrarrays = {}
@@ -624,6 +630,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+
+    @property
+    def process_comms(self):
+        """ Returns a dictionary of process-comm descriptors (`ProcessComm` objects) used in this SDFG. """
+        return self._comms
 
     @property
     def process_grids(self):
@@ -1628,7 +1639,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
+        names = (self._arrays.keys() | self.constants_prop.keys() | self._comms.keys() | self._pgrids.keys() | self._subarrays.keys()
                  | self._rdistrarrays.keys())
         return dt.find_new_name(name, names)
 
@@ -1962,6 +1973,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 self.add_symbol(sym.name, sym.dtype)
 
         return name
+
+    def add_comm(self):
+        """ Adds a comm world to the process-comm descriptor store.
+        """
+
+        comm_name = self._find_new_name('__proc')
+
+        self._comms[comm_name] = ProcessComm(comm_name)
+
+        return comm_name
 
     def add_pgrid(self,
                   shape: ShapeType = None,

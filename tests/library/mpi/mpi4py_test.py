@@ -77,6 +77,48 @@ def test_external_comm_bcast():
     assert(np.array_equal(A, A_ref))
 
 
+# @pytest.mark.mpi
+def test_process_comm_split_bcast():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def comm_split_bcast(rank: dace.int32, A: dace.int32[10]):
+        # new_comm = commworld.Split(rank % 2, 0)
+        color = np.full((1,), rank % 2, dtype=np.int32)
+        key = np.full((1,), 0, dtype=np.int32)
+        new_comm = commworld.Split(color, key)
+        new_comm.Bcast(A)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = comm_split_bcast.to_sdfg()
+        # disable openMP section for split completeness
+        sdfg.openmp_sections = False
+    func = utils.distributed_compile(sdfg, commworld)
+
+    if rank == 0:
+        A = np.arange(10, dtype=np.int32)
+        A_ref = A.copy()
+    elif rank == 1:
+        A = np.arange(10, 20, dtype=np.int32)
+        A_ref = A.copy()
+    else:
+        A = np.zeros((10, ), dtype=np.int32)
+        A_ref = A.copy()
+
+    func(rank=rank, A=A)
+    comm_split_bcast.f(rank, A_ref)
+
+    assert(np.array_equal(A, A_ref))
+
+
 @pytest.mark.mpi
 def test_process_grid_bcast():
 
@@ -327,12 +369,44 @@ def test_alltoall():
         raise (ValueError("The received values are not what I expected."))
 
 
+@pytest.mark.mpi
+def test_comm_split_alltoall():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_comm_split_alltoall(rank: dace.int32, size: dace.compiletime):
+        color = np.full((1,), rank % 2, dtype=np.int32)
+        key = np.full((1,), 0, dtype=np.int32)
+        new_comm = commworld.Split(color, key)
+
+        sbuf = np.full((size // 2,), rank, dtype=np.int32)
+        rbuf = np.zeros((size // 2, ), dtype=np.int32)
+        new_comm.Alltoall(sbuf, rbuf)
+        return rbuf
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_comm_split_alltoall.to_sdfg(simplify=True, size=size)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    val = func(rank=rank)
+    ref = mpi4py_comm_split_alltoall.f(rank, size)
+
+    if (not np.allclose(val, ref)):
+        raise (ValueError("The received values are not what I expected."))
+
+
 if __name__ == "__main__":
     test_comm_world_bcast()
     test_external_comm_bcast()
+    test_process_comm_split_bcast()
     test_process_grid_bcast()
     test_sub_grid_bcast()
     test_3mm()
     test_isend_irecv()
     test_send_recv()
     test_alltoall()
+    test_comm_split_alltoall()

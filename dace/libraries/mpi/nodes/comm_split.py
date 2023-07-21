@@ -16,19 +16,19 @@ class ExpandCommSplitMPI(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         color, key = node.validate(parent_sdfg, parent_state)
 
-        comm_name = node.name
         comm = "MPI_COMM_WORLD"
+        comm_name = node.name
 
         node.fields = [
-            f'MPI_Comm {comm_name};',
+            f'MPI_Comm {comm_name}_comm;',
             f'int {comm_name}_rank;',
             f'int {comm_name}_size;',
         ]
 
         code = f"""
-            MPI_Comm_split({comm}, _color, _key, &__state->{comm_name});
-            MPI_Comm_rank(__state->{comm_name}, &__state->{comm_name}_rank);
-            MPI_Comm_size(__state->{comm_name}, &__state->{comm_name}_size);
+            MPI_Comm_split({comm}, _color, _key, &__state->{comm_name}_comm);
+            MPI_Comm_rank(__state->{comm_name}_comm, &__state->{comm_name}_rank);
+            MPI_Comm_size(__state->{comm_name}_comm, &__state->{comm_name}_size);
         """
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
@@ -53,7 +53,7 @@ class Comm_split(MPINode):
     grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
     def __init__(self, name, grid=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_color", "_key"}, outputs={}, **kwargs)
+        super().__init__(name, *args, inputs={"_color", "_key"}, outputs={"_out"}, **kwargs)
         self.grid = grid
 
     def validate(self, sdfg, state):
