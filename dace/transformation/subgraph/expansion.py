@@ -62,6 +62,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
     permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
 
     allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
+    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=1)
+    max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=1)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -72,25 +74,30 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
         # next, get all the maps by obtaining a copy (for potential offsets)
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
+        print(f"[MultiExpansion::can_be_applied] map_entries {map_entries}")
         ranges = [dcpy(map_entry.range) for map_entry in map_entries]
         # offset if option is toggled
         if self.allow_offset == True:
             for r in ranges:
                 r.offset(r.min_element(), negative=True)
-        brng = helpers.common_map_base_ranges(ranges)
+        brng, _ = helpers.common_map_base_ranges(ranges, max_difference_start=self.max_difference_start, max_difference_end=self.max_difference_end)
 
         # more than one outermost scoped map entry has to be availble
         if len(map_entries) <= 1:
+            print("[MultiExpansion::can_be_applied] Rejected: Only one map entry")
             return False
 
         # check whether any parameters are in common
         if len(brng) == 0:
+            print(f"[MultiExpansion::can_be_applied] Rejected: No parameter in common. Ranges {ranges}")
             return False
 
         # if option enabled, return false if any splits are introduced
         if self.permutation_only == True:
             for map_entry in map_entries:
                 if len(map_entry.params) != len(brng):
+                    print(f"[MultiExpansion::can_be_applied] Rejected: Permutation only and splits introduced"
+                          f"map_entry.params {map_entry.params} base_ranges: {brng}")
                     return False
 
         # if option enabled, check contiguity in the last contiguous dimension
@@ -109,8 +116,10 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
+                                print("[MultiExpansion::can_be_applied] Rejected: Contiguity fusion violation detected")
                                 return False
 
+        print("[MultiExpansion::can_be_applied] Success")
         return True
 
     def apply(self, sdfg, map_base_variables=None):
@@ -121,6 +130,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         # next, get all the base maps and expand
         maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
         self.expand(sdfg, graph, maps, map_base_variables=map_base_variables)
+        sdfg.save('subgraph/after_expansion.sdfg')
 
     def expand(self, sdfg, graph, map_entries, map_base_variables=None):
         """
@@ -144,6 +154,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         """
 
         maps = [entry.map for entry in map_entries]
+        print(f"[MultiExpansion::apply] maps: {maps}")
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
         if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
@@ -158,17 +169,20 @@ class MultiExpansion(transformation.SubgraphTransformation):
             # greedy if there exist multiple ranges that are equal in a map
 
             ranges = [map_entry.range for map_entry in map_entries]
-            map_base_ranges = helpers.common_map_base_ranges(ranges)
-            reassignments = helpers.find_reassignment(maps, map_base_ranges)
+            map_base_ranges, range_indices = helpers.common_map_base_ranges(ranges, self.max_difference_start, self.max_difference_end)
+            reassignments = helpers.find_reassignment(maps, map_base_ranges,
+                                                      max_difference_start=self.max_difference_start,
+                                                      max_difference_end=self.max_difference_end)
 
             # first, regroup and reassign
             # create params_dict for every map
             # first, let us define the outer iteration variable names,
             # just take the first map and their indices at common ranges
             map_base_variables = []
-            for rng in map_base_ranges:
+            for rng, indices in zip(map_base_ranges, range_indices):
                 for i in range(len(maps[0].params)):
-                    if maps[0].range[i] == rng and maps[0].params[i] not in map_base_variables:
+                    # if maps[0].range[i] == rng and maps[0].params[i] not in map_base_variables:
+                    if i in indices and maps[0].params[i] not in map_base_variables:
                         map_base_variables.append(maps[0].params[i])
                         break
 
