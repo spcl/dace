@@ -77,7 +77,7 @@ def test_external_comm_bcast():
     assert(np.array_equal(A, A_ref))
 
 
-# @pytest.mark.mpi
+@pytest.mark.mpi
 def test_process_comm_split_bcast():
 
     from mpi4py import MPI
