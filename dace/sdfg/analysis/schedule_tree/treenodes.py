@@ -181,7 +181,7 @@ class StateIfScope(IfScope):
 
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'stateif {self.condition.as_string}:\n'
-        return result + super().as_string(indent)
+        return result + super(IfScope, self).as_string(indent)
 
 
 @dataclass
