@@ -224,6 +224,11 @@ def _bcast(pv: ProgramVisitor,
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
+    if grid:
+        comm_node = state.add_read(grid)
+        comm_desc = sdfg.arrays[grid]
+        state.add_edge(comm_node, None, libnode, None, Memlet.from_array(grid, comm_desc))
+
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
