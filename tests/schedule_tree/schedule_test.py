@@ -201,8 +201,11 @@ def test_reference():
     s2.add_edge(s2.add_access('B'), None, s2.add_access('ref'), 'set', dace.Memlet('B[0:20]'))
     end.add_nedge(end.add_access('ref'), end.add_access('C'), dace.Memlet('ref[0:20]'))
 
-    # TODO: Align reference memlet
-    # print(as_schedule_tree(sdfg).as_string())
+    stree = as_schedule_tree(sdfg)
+    nodes = list(stree.preorder_traversal())[1:]
+    assert [type(n) for n in nodes] == [tn.IfScope, tn.RefSetNode, tn.ElseScope, tn.RefSetNode, tn.CopyNode]
+    assert nodes[1].as_string() == 'ref = refset to A[0:20]'
+    assert nodes[3].as_string() == 'ref = refset to B[0:20]'
 
 
 def test_code_to_code():
