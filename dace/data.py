@@ -364,7 +364,7 @@ class Structure(Data):
     name = Property(dtype=str, desc="Structure name")
 
     def __init__(self,
-                 members: Dict[str, Any],
+                 members: Dict[str, Data],
                  name: str = 'Structure',
                  transient: bool = False,
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
@@ -432,6 +432,17 @@ class Structure(Data):
     @property
     def strides(self):
         return [1]
+    
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """ Returns a set of undefined symbols in this data descriptor. """
+        result = set(self.symbols.keys())
+        for k, v in self.members.items():
+            result |= v.free_symbols
+        return result
+
+    def __repr__(self):
+        return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         if self.storage is dtypes.StorageType.GPU_Global:
