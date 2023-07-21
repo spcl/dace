@@ -47,11 +47,13 @@ struct Context {
   int num_streams;
   int num_events;
   gpuStream_t *streams;
+  gpuStream_t *internal_streams;
   gpuEvent_t *events;
   gpuError_t lasterror;
   Context(int nstreams, int nevents)
       : num_streams(nstreams), num_events(nevents), lasterror((gpuError_t)0) {
     streams = new gpuStream_t[nstreams];
+    internal_streams = new gpuStream_t[nstreams];
     events = new gpuEvent_t[nevents];
   }
   ~Context() {

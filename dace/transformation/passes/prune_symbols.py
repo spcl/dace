@@ -23,6 +23,7 @@ class RemoveUnusedSymbols(ppl.Pass):
     CATEGORY: str = 'Simplification'
 
     recursive = properties.Property(dtype=bool, default=True, desc='Prune nested SDFGs recursively')
+    symbols = properties.SetProperty(element_type=str, allow_none=True, desc='Limit considered symbols to this set')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols
@@ -43,13 +44,16 @@ class RemoveUnusedSymbols(ppl.Pass):
         """
         result: Set[str] = set()
 
+        symbols_to_consider = self.symbols or set(sdfg.symbols.keys())
+
         # Compute used symbols
         used_symbols = self.used_symbols(sdfg)
 
         # Remove unused symbols
-        for sym in set(sdfg.symbols.keys()) - used_symbols:
-            sdfg.remove_symbol(sym)
-            result.add(sym)
+        for sym in symbols_to_consider - used_symbols:
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
+                result.add(sym)
 
         if self.recursive:
             # Prune nested SDFGs recursively
@@ -59,7 +63,10 @@ class RemoveUnusedSymbols(ppl.Pass):
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
+                        old_symbols = self.symbols
+                        self.symbols = set()
                         nres = self.apply_pass(node.sdfg, _)
+                        self.symbols = old_symbols
                         if nres:
                             result.update(nres)
 

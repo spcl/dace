@@ -346,11 +346,13 @@ class Graph(Generic[NodeT, EdgeT]):
                 parent, children = stack[-1]
                 try:
                     e = next(children)
+                    to_yield = condition is None or condition(e.src, e.dst, e.data)
                     if e.dst not in visited:
                         visited.add(e.dst)
-                        if condition is None or condition(e.src, e.dst, e.data):
-                            yield e
+                        if to_yield:
                             stack.append((e.dst, self.out_edges(e.dst).__iter__()))
+                    if to_yield:
+                        yield e
                 except StopIteration:
                     stack.pop()
 
