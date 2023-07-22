@@ -575,7 +575,7 @@ def analyze_sdfg(sdfg: SDFG, w_d_map: Dict[str, sp.Expr], analyze_tasklet) -> No
     # Run state propagation for all SDFGs recursively. This is necessary to determine the number of times each state
     # will be executed, or to determine upper bounds for that number (such as in the case of branching)
     for sd in sdfg.all_sdfgs_recursive():
-        propagation.propagate_states_symbolically(sd)
+        propagation.propagate_states(sd, concretize_dynamic_unbounded=True)
 
     # Analyze the work and depth of the SDFG.
     symbols = {}
