@@ -26,7 +26,8 @@ def get_array_size_symbols(sdfg):
     Returns all symbols that appear isolated in shapes of the SDFG's arrays.
     These symbols can then be assumed to be positive.
 
-    :note: This only works if a symbol appears in isolation, i.e. array A[N]. If we have A[N+1], we cannot assume N to be positive.
+    :note: This only works if a symbol appears in isolation, i.e. array A[N].
+           If we have A[N+1], we cannot assume N to be positive.
     :param sdfg: The SDFG in which it searches for symbols.
     :return: A set containing symbols which we can assume to be positive.
     """
