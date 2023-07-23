@@ -473,6 +473,7 @@ def scope_work_depth(state: SDFGState,
             w_d_map[get_uuid(node, state)] = (nsdfg_work, nsdfg_depth)
         elif isinstance(node, nd.LibraryNode):
             lib_node_work = LIBNODES_TO_WORK[type(node)](node, symbols, state)
+            work += lib_node_work
             lib_node_depth = -1  # not analyzed
             if analyze_tasklet != get_tasklet_work:
                 # we are analyzing depth
