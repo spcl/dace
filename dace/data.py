@@ -1,10 +1,10 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import copy as cp
 import ctypes
 import functools
-import re
+
 from numbers import Number
-from typing import Any, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Optional, Sequence, Set, Tuple, Union
 
 import numpy
 import sympy as sp
@@ -17,9 +17,8 @@ except (ModuleNotFoundError, ImportError):
 import dace.dtypes as dtypes
 from dace import serialize, symbolic
 from dace.codegen import cppunparse
-from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty, Property,
-                             ReferenceProperty, ShapeProperty, SubsetProperty, SymbolicProperty, TypeClassProperty,
-                             make_properties)
+from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
+                             Property, ShapeProperty, SymbolicProperty, TypeClassProperty, make_properties)
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -341,6 +340,151 @@ class Data:
         new_desc.storage = storage
         return new_desc
 
+
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return {k: serialize.to_json(v) for k, v in arrays.items()}
+
+
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return {k: serialize.from_json(v, context) for k, v in obj.items()}
+
+
+@make_properties
+class Structure(Data):
+    """ Base class for structures. """
+
+    members = Property(dtype=dict,
+                       desc="Dictionary of structure members",
+                       from_json=_arrays_from_json,
+                       to_json=_arrays_to_json)
+    name = Property(dtype=str, desc="Structure name")
+
+    def __init__(self,
+                 members: Dict[str, Data],
+                 name: str = 'Structure',
+                 transient: bool = False,
+                 storage: dtypes.StorageType = dtypes.StorageType.Default,
+                 location: Dict[str, str] = None,
+                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 debuginfo: dtypes.DebugInfo = None):
+        # TODO: Should we make a deep-copy here?
+        self.members = members or {}
+        for k, v in self.members.items():
+            v.transient = transient
+        self.name = name
+        fields_and_types = dict()
+        symbols = set()
+        for k, v in members.items():
+            if isinstance(v, Structure):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (v.dtype, str(v.total_size))
+            elif isinstance(v, Array):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+            elif isinstance(v, Scalar):
+                symbols |= v.free_symbols
+                fields_and_types[k] = v.dtype
+            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+                symbols |= v.free_symbols
+                fields_and_types[k] = symbolic.symtype(v)
+            elif isinstance(v, (int, numpy.integer)):
+                fields_and_types[k] = dtypes.typeclass(type(v))
+            else:
+                raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
+        for s in symbols:
+            if str(s) in fields_and_types:
+                continue
+            if hasattr(s, "dtype"):
+                fields_and_types[str(s)] = s.dtype
+            else:
+                fields_and_types[str(s)] = dtypes.int32
+        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        shape = (1,)
+        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+    
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'Structure':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Structure({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    @property
+    def total_size(self):
+        return -1
+
+    @property
+    def offset(self):
+        return [0]
+
+    @property
+    def start_offset(self):
+        return 0
+
+    @property
+    def strides(self):
+        return [1]
+    
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """ Returns a set of undefined symbols in this data descriptor. """
+        result = set()
+        for k, v in self.members.items():
+            result |= v.free_symbols
+        return result
+
+    def __repr__(self):
+        return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
+
+    def __getitem__(self, s):
+        """ This is syntactic sugar that allows us to define an array type
+            with the following syntax: ``Structure[N,M]``
+            :return: A ``data.Array`` data descriptor.
+        """
+        if isinstance(s, list) or isinstance(s, tuple):
+            return StructArray(self, tuple(s))
+        return StructArray(self, (s, ))
+
+
+@make_properties
+class StructureView(Structure):
+    """ 
+    Data descriptor that acts as a reference (or view) of another structure.
+    """
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'StructureView':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = StructureView({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
 
 @make_properties
 class Scalar(Data):
@@ -900,6 +1044,36 @@ class Stream(Data):
                 result |= set(o.free_symbols)
 
         return result
+
+
+@make_properties
+class StructArray(Array):
+    """ Array of Structures. """
+
+    stype = NestedDataClassProperty(allow_none=True, default=None)
+
+    def __init__(self,
+                 stype,
+                 shape,
+                 transient=False,
+                 allow_conflicts=False,
+                 storage=dtypes.StorageType.Default,
+                 location=None,
+                 strides=None,
+                 offset=None,
+                 may_alias=False,
+                 lifetime=dtypes.AllocationLifetime.Scope,
+                 alignment=0,
+                 debuginfo=None,
+                 total_size=-1,
+                 start_offset=None,
+                 optional=None,
+                 pool=False):
+
+        self.stype = stype
+        dtype = stype.dtype
+        super(StructArray, self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset,
+                                          may_alias, lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
 
 
 @make_properties

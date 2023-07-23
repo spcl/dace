@@ -74,7 +74,7 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
     Replaces the symbols used in a persistent data descriptor according to NestedSDFG's symbol mapping.
     The replacement happens recursively up to the top-level SDFG.
     """
-    if (desc.lifetime == dtypes.AllocationLifetime.Persistent and sdfg.parent
+    if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External) and sdfg.parent
             and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
         newdesc = deepcopy(desc)
         csdfg = sdfg
@@ -155,7 +155,7 @@ def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     backend = get_gpu_backend()
     if backend == 'cuda':
         libpath = ctypes.util.find_library('cudart')
-        if os.name == 'nt' and not libpath: # Windows-based search
+        if os.name == 'nt' and not libpath:  # Windows-based search
             for version in (12, 11, 10, 9):
                 libpath = ctypes.util.find_library(f'cudart64_{version}0')
                 if libpath:

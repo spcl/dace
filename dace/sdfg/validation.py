@@ -42,7 +42,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace.codegen.targets import fpga
-    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
+    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
 
     references = references or set()
 
@@ -76,9 +76,10 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
             # Allocation lifetime checks
-            if (desc.lifetime is dtypes.AllocationLifetime.Persistent and desc.storage is dtypes.StorageType.Register):
+            if (desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)
+                    and desc.storage == dtypes.StorageType.Register):
                 raise InvalidSDFGError(
-                    "Array %s cannot be both persistent and use Register as "
+                    "Array %s cannot be both persistent/external and use Register as "
                     "storage type. Please use a different storage location." % name, sdfg, None)
 
             # Check for valid bank assignments
@@ -110,6 +111,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
+        in_default_scope = None
 
         # Check every state separately
         start_state = sdfg.start_state
@@ -170,10 +172,18 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for memlet in ise_memlets:
                 container = memlet.data
                 if not _accessible(sdfg, container, context):
-                    eid = sdfg.edge_id(edge)
-                    raise InvalidSDFGInterstateEdgeError(
-                        f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+                    # Check context w.r.t. maps
+                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                        in_default_scope = False
+                        if sdfg.parent_nsdfg_node is not None:
+                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                        [dtypes.ScheduleType.Default]):
+                                in_default_scope = True
+                    if in_default_scope is False:
+                        eid = sdfg.edge_id(edge)
+                        raise InvalidSDFGInterstateEdgeError(
+                            f'Trying to read an inaccessible data container "{container}" '
+                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
             # Add edge symbols into defined symbols
             symbols.update(issyms)
@@ -218,9 +228,17 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             for memlet in ise_memlets:
                 container = memlet.data
                 if not _accessible(sdfg, container, context):
-                    raise InvalidSDFGInterstateEdgeError(
-                        f'Trying to read an inaccessible data container "{container}" '
-                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+                    # Check context w.r.t. maps
+                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                        in_default_scope = False
+                        if sdfg.parent_nsdfg_node is not None:
+                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                        [dtypes.ScheduleType.Default]):
+                                in_default_scope = True
+                    if in_default_scope is False:
+                        raise InvalidSDFGInterstateEdgeError(
+                            f'Trying to read an inaccessible data container "{container}" '
+                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
@@ -320,7 +338,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct " "parent", sdfg, state_id)
+        raise InvalidSDFGError("State does not point to the correct "
+                               "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
@@ -560,6 +579,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         src_node = path[0].src
         dst_node = path[-1].dst
 
+        # NestedSDFGs must connect to AccessNodes
+        if not e.data.is_empty():
+            if isinstance(src_node, nd.NestedSDFG) and not isinstance(dst_node, nd.AccessNode):
+                raise InvalidSDFGEdgeError("Nested SDFG source nodes must be AccessNodes", sdfg, state_id, eid)
+            if isinstance(dst_node, nd.NestedSDFG) and not isinstance(src_node, nd.AccessNode):
+                raise InvalidSDFGEdgeError("Nested SDFG destination nodes must be AccessNodes", sdfg, state_id, eid)
+
         # Set up memlet-specific SDFG context
         memlet_context = copy.copy(context)
         for pe in path:
@@ -578,9 +604,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         break
 
         # Check if memlet data matches src or dst nodes
-        if (e.data.data is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or e.data.data != src_node.data)
-                and (not isinstance(dst_node, nd.AccessNode) or e.data.data != dst_node.data)):
+        name = e.data.data
+        if isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Structure):
+            name = None
+        if isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Structure):
+            name = None
+        if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
@@ -736,6 +767,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -759,7 +791,8 @@ class InvalidSDFGError(Exception):
 
         if lineinfo.start_line >= 0:
             if lineinfo.start_column > 0:
-                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, ' f'column {lineinfo.start_column}')
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, '
+                        f'column {lineinfo.start_column}')
             return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
 
         return f'File "{lineinfo.filename}"'
@@ -790,6 +823,7 @@ class InvalidSDFGError(Exception):
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
+
     def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -835,6 +869,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -872,12 +907,14 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
+
     def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg

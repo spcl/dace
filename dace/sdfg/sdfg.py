@@ -45,6 +45,42 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+    from dace.codegen.compiled_sdfg import CompiledSDFG
+
+
+class NestedDict(dict):
+
+    def __init__(self, mapping=None):
+        mapping = mapping or {}
+        super(NestedDict, self).__init__(mapping)
+
+    def __getitem__(self, key):
+        tokens = key.split('.') if isinstance(key, str) else [key]
+        token = tokens.pop(0)
+        result = super(NestedDict, self).__getitem__(token)
+        while tokens:
+            token = tokens.pop(0)
+            result = result.members[token]
+        return result
+    
+    def __setitem__(self, key, val):
+        if isinstance(key, str) and '.' in key:
+            raise KeyError('NestedDict does not support setting nested keys')
+        super(NestedDict, self).__setitem__(key, val)
+
+    def __contains__(self, key):
+        tokens = key.split('.') if isinstance(key, str) else [key]
+        token = tokens.pop(0)
+        result = super(NestedDict, self).__contains__(token)
+        desc = None
+        while tokens and result:
+            if desc is None:
+                desc = super(NestedDict, self).__getitem__(token)
+            else:
+                desc = desc.members[token]
+            token = tokens.pop(0)
+            result = token in desc.members
+        return result
 
 
 def _arrays_to_json(arrays):
@@ -57,6 +93,12 @@ def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
     return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
+
+
+def _nested_arrays_from_json(obj, context=None):
+    if obj is None:
+        return NestedDict({})
+    return NestedDict({k: dace.serialize.from_json(v, context) for k, v in obj.items()})
 
 
 def _replace_dict_keys(d, old, new):
@@ -291,7 +333,19 @@ class InterstateEdge(object):
         else:
             alltypes = symbols
 
-        return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+        inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+    
+        # Symbols in assignment keys are candidate newly defined symbols
+        lhs_symbols = set()
+        # Symbols already defined
+        rhs_symbols = set()
+        for lhs, rhs in self.assignments.items():
+            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
+            if lhs not in rhs_symbols:
+                lhs_symbols.add(lhs)
+        
+        return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
     def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
         """
@@ -362,10 +416,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
     constants_prop = Property(dtype=dict, default={}, desc="Compile-time constants")
-    _arrays = Property(dtype=dict,
+    _arrays = Property(dtype=NestedDict,
                        desc="Data descriptors for this SDFG",
                        to_json=_arrays_to_json,
-                       from_json=_arrays_from_json)
+                       from_json=_nested_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -443,7 +497,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._sdfg_list = [self]
         self._start_state: Optional[int] = None
         self._cached_start_state: Optional[SDFGState] = None
-        self._arrays = {}  # type: Dict[str, dt.Array]
+        self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1955,10 +2009,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
         self._arrays[name] = datadesc
 
+        def _add_symbols(desc: dt.Data):
+            if isinstance(desc, dt.Structure):
+                for v in desc.members.values():
+                    if isinstance(v, dt.Data):
+                        _add_symbols(v)
+            for sym in desc.free_symbols:
+                if sym.name not in self.symbols:
+                    self.add_symbol(sym.name, sym.dtype)
+
         # Add free symbols to the SDFG global symbol storage
-        for sym in datadesc.free_symbols:
-            if sym.name not in self.symbols:
-                self.add_symbol(sym.name, sym.dtype)
+        _add_symbols(datadesc)
 
         return name
 
@@ -2189,8 +2250,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> \
-            'dace.codegen.compiler.CompiledSDFG':
+    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to

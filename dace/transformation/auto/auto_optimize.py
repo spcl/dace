@@ -330,7 +330,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
             backend = 'none'
 
         if backend == 'cuda':
-            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'CUB', 'pure']
+            return ['cuBLAS', 'cuSolverDn', 'GPUAuto', 'cuTENSOR', 'CUB', 'pure']
         elif backend == 'hip':
             return ['rocBLAS', 'GPUAuto', 'pure']
         else:
@@ -493,6 +493,10 @@ def make_transients_persistent(sdfg: SDFG,
                     elif desc.lifetime == dtypes.AllocationLifetime.Scope:
                         not_persistent.add(dnode.data)
                         continue
+
+                if desc.lifetime == dtypes.AllocationLifetime.External:
+                    not_persistent.add(dnode.data)
+                    continue
 
                 persistent.add(dnode.data)
 

@@ -147,21 +147,20 @@ class ReloadableDLL(object):
         self.unload()
 
 
-def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
 
     :param array: Array object that implements NumPy's array interface.
-    :param array_type: Data descriptor of the array (used to get storage
-                       location to determine whether it's a host or GPU device
-                       pointer).
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
     :return: A pointer to the base location of the allocated buffer.
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
-    if array_type.storage == dtypes.StorageType.GPU_Global:
+    if storage == dtypes.StorageType.GPU_Global:
         return array.__cuda_array_interface__['data'][0]
     return array.__array_interface__['data'][0]
 
@@ -200,10 +199,13 @@ class CompiledSDFG(object):
         self.argnames = argnames
 
         self.has_gpu_code = False
+        self.external_memory_types = set()
         for _, _, aval in self._sdfg.arrays_recursive():
             if aval.storage in dtypes.GPU_STORAGES:
                 self.has_gpu_code = True
                 break
+            if aval.lifetime == dtypes.AllocationLifetime.External:
+                self.external_memory_types.add(aval.storage)
         if not self.has_gpu_code:
             for node, _ in self._sdfg.all_nodes_recursive():
                 if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
@@ -270,6 +272,42 @@ class CompiledSDFG(object):
             _fields_ = fields
 
         return State
+
+    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+        """
+        Returns the total external memory size to be allocated for this SDFG.
+
+        :return: A dictionary mapping storage types to the number of bytes necessary
+                 to allocate for the SDFG to work properly.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'querying external memory size.')
+
+        result: Dict[dtypes.StorageType, int] = {}
+        for storage in self.external_memory_types:
+            func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            result[storage] = func(self._libhandle, *self._lastargs[1])
+
+        return result
+
+    def set_workspace(self, storage: dtypes.StorageType, workspace: Any):
+        """
+        Sets the workspace for the given storage type to the given buffer.
+
+        :param storage: The storage type to fill.
+        :param workspace: An array-convertible object (through ``__[cuda_]array_interface__``,
+                          see ``_array_interface_ptr``) to use for the workspace.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'setting external memory.')
+        if storage not in self.external_memory_types:
+            raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
+
+        func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
+        ptr = _array_interface_ptr(workspace, storage)
+        func(self._libhandle, ctypes.c_void_p(ptr), *self._lastargs[1])
 
     @property
     def filename(self):
@@ -414,9 +452,10 @@ class CompiledSDFG(object):
                 # GPU scalars are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global:
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
-            elif not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dtypes.callback) and not isinstance(
-                    arg,
-                (atype.dtype.type, sp.Basic)) and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype):
+            elif (not isinstance(atype, (dt.Array, dt.Structure)) and
+                  not isinstance(atype.dtype, dtypes.callback) and
+                  not isinstance(arg, (atype.dtype.type, sp.Basic)) and
+                  not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
                 if isinstance(arg, int) and atype.dtype.type == np.int64:
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
@@ -483,17 +522,18 @@ class CompiledSDFG(object):
         # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
             for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
+        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)), actype,
                          atype) if dtypes.is_array(arg) else (arg, actype, atype)
                         for arg, actype, atype, _ in callparams)
 
         try:
             newargs = tuple(
-                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+                actype(arg) if not isinstance(arg, (ctypes._SimpleCData)) else arg
+                for arg, actype, atype in newargs)
         except TypeError:
             # Pinpoint bad argument
             for i, (arg, actype, _) in enumerate(newargs):

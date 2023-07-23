@@ -377,7 +377,8 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
 
     // Create {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->streams[i], {backend}StreamNonBlocking));
+        DACE_GPU_CHECK({backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {backend}StreamNonBlocking));
+        __state->gpu_context->streams[i] = __state->gpu_context->internal_streams[i]; // Allow for externals to modify streams
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventCreateWithFlags(&__state->gpu_context->events[i], {backend}EventDisableTiming));
@@ -398,7 +399,7 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     // Destroy {backend} streams and events
     for(int i = 0; i < {nstreams}; ++i) {{
-        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->streams[i]));
+        DACE_GPU_CHECK({backend}StreamDestroy(__state->gpu_context->internal_streams[i]));
     }}
     for(int i = 0; i < {nevents}; ++i) {{
         DACE_GPU_CHECK({backend}EventDestroy(__state->gpu_context->events[i]));
@@ -497,7 +498,9 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join('--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch) for arch in hip_arch)
+            flags += ' ' + ' '.join(
+                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
+                for arch in hip_arch)
             options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
@@ -568,7 +571,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                         allocation_stream)
 
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
@@ -717,7 +720,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(dataname):
-            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+            is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
@@ -1302,10 +1306,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for c in components:
 
                 has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
+                # If a global is modified, execute once per global state,
+                # if a shared memory element is modified, execute once per block,
+                # if a local scalar is modified, execute in every thread.
                 if not has_map:
-                    callsite_stream.write("if (blockIdx.x == 0 "
-                                          "&& threadIdx.x == 0) "
-                                          "{  // sub-graph begin", sdfg, state.node_id)
+                    written_nodes = [n for n in c if state.in_degree(n) > 0 and isinstance(n, dace.nodes.AccessNode)]
+
+                    # The order of the branching below matters - it reduces the scope with every detected write
+                    write_scope = 'thread'  # General case acts in every thread
+                    if any(sdfg.arrays[n.data].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
+                           for n in written_nodes):
+                        write_scope = 'grid'
+                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.GPU_Shared for n in written_nodes):
+                        write_scope = 'block'
+                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.Register for n in written_nodes):
+                        write_scope = 'thread'
+
+                    if write_scope == 'grid':
+                        callsite_stream.write("if (blockIdx.x == 0 "
+                                            "&& threadIdx.x == 0) "
+                                            "{  // sub-graph begin", sdfg, state.node_id)
+                    elif write_scope == 'block':
+                        callsite_stream.write("if (threadIdx.x == 0) "
+                                            "{  // sub-graph begin", sdfg, state.node_id)
+                    else:
+                        callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
                 else:
                     callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
 
@@ -1449,7 +1474,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
                     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                       dtypes.AllocationLifetime.Persistent)
+                                                       dtypes.AllocationLifetime.Persistent,
+                                                       dtypes.AllocationLifetime.External)
                     # Non-free symbol dependent Arrays due to their shape
                     dependent_shape = (isinstance(data_desc, dt.Array) and not isinstance(data_desc, dt.View) and any(
                         str(s) not in self._frame.symbols_and_constants(sdfg)
@@ -1482,7 +1508,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     data_desc = sdfg.arrays[aname]
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                       dtypes.AllocationLifetime.Persistent)
+                                                       dtypes.AllocationLifetime.Persistent,
+                                                       dtypes.AllocationLifetime.External)
                     defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)

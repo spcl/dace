@@ -62,7 +62,8 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                       dtypes.AllocationLifetime.External)
     defined_types = None
     # Non-free symbol dependent Arrays due to their shape
     dependent_shape = (isinstance(data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
@@ -219,7 +220,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent):
+    if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
@@ -368,6 +369,8 @@ def emit_memlet_reference(dispatcher,
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
+
+    expr = expr.replace('.', '->')
 
     return (typedef + ref, pointer_name, expr)
 
@@ -1081,11 +1084,20 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 ]
 
         if isinstance(visited_slice, ast.Tuple):
-            if len(strides) != len(visited_slice.elts):
+            # If slice is multi-dimensional and writes to array with more than 1 elements, then:
+            # - Assume this is indirection (?)
+            # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
+            if target not in self.constants:
+                desc = self.sdfg.arrays[dname]
+                if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
+                    elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+            else:
+                elts = visited_slice.elts
+            if len(strides) != len(elts):
                 raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
-                                  'got %d)' % (len(strides), len(visited_slice.elts)))
+                                  'got %d)' % (len(strides), len(elts)))
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
@@ -1252,7 +1264,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if isinstance(node.op, ast.Pow):
             from dace.frontend.python import astutils
             try:
-                evaluated_node = astutils.evalnode(node.right, {**self.constants, 'dace': dace,'math': math})
+                evaluated_node = astutils.evalnode(node.right, {**self.constants, 'dace': dace, 'math': math})
                 unparsed = symbolic.pystr_to_symbolic(evaluated_node)
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
@@ -1356,8 +1368,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg,
-                                      state_id, scope_exit)
+                callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id,
+                                      scope_exit)
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             else:
                 callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
@@ -1381,7 +1393,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));""".format(
+DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));"""
+                    .format(
                         ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream,
