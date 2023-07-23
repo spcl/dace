@@ -277,6 +277,31 @@ class Call_Expr_Node(FNode):
     )
 
 
+class Derived_Type_Stmt_Node(FNode):
+    _attributes = ('name', )
+    _fields = ('args', )
+
+
+class Derived_Type_Def_Node(FNode):
+    _attributes = ('name', )
+    _fields = ('component_part', )
+
+
+class Component_Part_Node(FNode):
+    _attributes = ()
+    _fields = ('component_def_stmts', )
+
+
+class Data_Component_Def_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('vars', )
+
+
+class Data_Ref_Node(FNode):
+    _attributes = ( )
+    _fields = ('parent', 'part_ref')    
+
+
 class Array_Constructor_Node(FNode):
     _attributes = ()
     _fields = ('value_list', )

@@ -47,6 +47,8 @@ def get_child(node: Union[FASTNode, List[FASTNode]], child_type: Union[str, Type
 
     if len(children_of_type) == 1:
         return children_of_type[0]
+    #Temporary workaround to allow feature list to be generated
+    return None
     raise ValueError('Expected only one child of type {} but found {}'.format(child_type, children_of_type))
 
 
@@ -108,6 +110,7 @@ class InternalFortranAst:
         :param tables: the symbol table of the fparser AST
 
         """
+        self.unsupported_fortran_syntax = []
         self.ast = ast
         self.tables = tables
         self.functions_and_subroutines = []
@@ -254,6 +257,14 @@ class InternalFortranAst:
             "Allocation": self.allocation,
             "Allocate_Shape_Spec": self.allocate_shape_spec,
             "Allocate_Shape_Spec_List": self.allocate_shape_spec_list,
+            "Derived_Type_Def": self.derived_type_def,
+            "Derived_Type_Stmt": self.derived_type_stmt,
+            "Component_Part": self.component_part,
+            "Data_Component_Def_Stmt": self.data_component_def_stmt,
+            "End_Type_Stmt": self.end_type_stmt,
+            "Data_Ref": self.data_ref,
+            #"Component_Decl_List": self.component_decl_list,
+            #"Component_Decl": self.component_decl,
         }
 
     def list_tables(self):
@@ -275,8 +286,55 @@ class InternalFortranAst:
         if node is not None:
             if isinstance(node, (list, tuple)):
                 return [self.create_ast(child) for child in node]
-            return self.supported_fortran_syntax[type(node).__name__](node)
+            try:
+                return self.supported_fortran_syntax[type(node).__name__](node)
+            except KeyError:
+                self.unsupported_fortran_syntax.append(type(node).__name__)
+                for i in node.children:
+                    self.create_ast(i)
+                print("Unsupported syntax: ", type(node).__name__)
+                return None
+
         return None
+
+    def data_ref(self, node: FASTNode):
+        children = self.create_children(node)
+        parent=children[0]
+        part_ref=children[1]
+        return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref)
+
+    def end_type_stmt(self, node: FASTNode):
+        return None
+    
+    def derived_type_def(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Type_Name_Node)
+        component_part = get_child(children, ast_internal_classes.Component_Part_Node)
+        return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
+
+    def derived_type_stmt(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Type_Name_Node)
+        return ast_internal_classes.Derived_Type_Stmt_Node(name=name)
+
+    def component_part(self, node: FASTNode):
+        children = self.create_children(node)
+        component_def_stmts = [i for i in children if isinstance(i, ast_internal_classes.Data_Component_Def_Stmt_Node)]
+        return ast_internal_classes.Component_Part_Node(component_def_stmts=component_def_stmts)
+
+    def data_component_def_stmt(self, node: FASTNode):
+        children = self.type_declaration_stmt(node)
+        return ast_internal_classes.Data_Component_Def_Stmt_Node(vars=children)
+
+    def component_decl_list(self, node: FASTNode):
+        children = self.create_children(node)
+        component_decls = [i for i in children if isinstance(i, ast_internal_classes.Component_Decl_Node)]
+        return ast_internal_classes.Component_Decl_List_Node(component_decls=component_decls)
+
+    def component_decl(self, node: FASTNode):
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Name_Node)
+        return ast_internal_classes.Component_Decl_Node(name=name)
 
     def write_stmt(self, node: FASTNode):
         children = self.create_children(node.children[1])
@@ -553,8 +611,8 @@ class InternalFortranAst:
                             raise TypeError("Derived type not supported")
                     else:
                         raise TypeError("Derived type not supported")
-                if derived_type:
-                    raise TypeError("Derived type not supported")
+                #if derived_type:
+                #    raise TypeError("Derived type not supported")
         if not derived_type:
             testtype = self.types[basetype]
         else:

@@ -33,6 +33,7 @@ class AST_translator:
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
         """
+        self.registered_types={}
         self.tables = ast.tables
         self.top_level = None
         self.globalsdfg = None
@@ -1092,3 +1093,38 @@ def create_sdfg_from_fortran_file(source_string: str):
     ast2sdfg.translate(program, sdfg)
 
     return sdfg
+
+
+
+def create_sdfg_from_fortran_file_with_options(source_string: str,source_list,include_list):
+    """
+    Creates an SDFG from a fortran file
+    :param source_string: The fortran file name
+    :return: The resulting SDFG
+
+    """
+    parser = pf().create(std="f2008")
+    reader = ffr(file_candidate=source_string,include_dirs=include_list,source_only=source_list)
+    ast = parser(reader)
+    tables = SymbolTable
+    own_ast = ast_components.InternalFortranAst(ast, tables)
+    program = own_ast.create_ast(ast)
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ArrayToLoop().visit(program)
+    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ForDeclarer().visit(program)
+    program = ast_transforms.IndexExtractor().visit(program)
+    ast2sdfg = AST_translator(own_ast, __file__)
+    sdfg = SDFG(source_string)
+    ast2sdfg.top_level = program
+    ast2sdfg.globalsdfg = sdfg
+    ast2sdfg.translate(program, sdfg)
+
+    return sdfg
+
