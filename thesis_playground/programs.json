@@ -141,7 +141,7 @@
         "cloudsc_vert_loop_orig_mwe_no_klon": ["PTSPHY", "PAPH_NS"],
         "cloudsc_vert_loop_mwe_wip": ["PTSPHY", "PAPH_NF"],
         "cloudsc_vert_loop_10": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
-                                "PAPH_N", "PSUPSAT_N", "PT_N", "tendency_tmp_t_N", "tendency_tmp_cld_N", "PCLV_N"],
+                                "PAPH_N", "PSUPSAT_N", "PT_N", "TENDENCY_TMP_T_N", "TENDENCY_TMP_CLD_N", "PCLV_N"],
         "microbenchmark_v1": ["INPUT"],
         "microbenchmark_v3": ["INPUT_F"]
 

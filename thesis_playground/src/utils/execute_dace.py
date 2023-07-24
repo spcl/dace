@@ -141,6 +141,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         additional_args = {}
         if run_config.specialise_symbols:
             additional_args['symbols'] = params.get_dict()
+        additional_args['k_caching'] = True
 
         optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
     else:

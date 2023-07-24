@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--read-sdfg', action='store_true', help='Read sdfg from .dacecache folder')
     parser.add_argument('--sdfg-file', type=str, default=None, help='File to read sdfg from')
     parser.add_argument('--not-specialise-symbols', action='store_true', default=False)
+    parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
 
     args = parser.parse_args()
     run_config = RunConfig()

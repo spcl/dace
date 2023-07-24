@@ -170,7 +170,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             #     return None
 
             if (out_range.ranges[index][0] - in_range.ranges[index][0] < diff_start and
-                in_range.ranges[index][1] - out_range.ranges[indedx][1] < diff_end):
+                in_range.ranges[index][1] - out_range.ranges[index][1] < diff_end):
                 return None
             else:
                 differences[index] = max(diff_start, diff_end)
