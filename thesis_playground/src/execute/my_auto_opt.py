@@ -359,12 +359,6 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
 
 
 def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, device: dace.DeviceType, program: Optional[str] = None):
-    # if program is not None:
-    #     save_graph(sdfg, program, "before_trivial_map_elimination")
-    # sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_trivial_map_elimination")
-
     # Force KLEV loop with vertical dependency into a map
     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
     if len(xforms) == 1:
@@ -391,31 +385,20 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, devic
     if program is not None:
         save_graph(sdfg, program, "after_map_expansion")
 
-    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+    greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={'max_difference_start': 1,
+                                                                                'max_difference_end': 1})
     if program is not None:
         save_graph(sdfg, program, "after_greedy_fuse")
 
-    # TODO: Does not yet fuse all KLEV maps
-    # Try to fuse maps -> want all KLEV maps fused into one
-
     # sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
-    # apply_transformation_stepwise(sdfg, [map_fusion_merge_different_ranges(MapFusion, 1, 1)], program, "map_fusion")
     apply_transformation_stepwise(sdfg, [MapFusion], program, "map_fusion")
     if program is not None:
         save_graph(sdfg, program, "after_map_fusion")
 
-    # sdfg.apply_transformations_repeated([MapExpansion])
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_expansion")
-
-    # # sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
-    # apply_transformation_stepwise(sdfg, [map_fusion_merge_different_ranges(MapFusion, 1, 1)], program, "map_fusion")
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_fusion")
-
     sdfg.simplify()
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
+
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> Dict[str, int]:
     # TODO: Add output about how to transform/permute the input

@@ -78,8 +78,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         desc="A list of array names to treat as non-transients and not compress",
     )
 
-    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=1)
+    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=0)
     max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=1)
+    change_init_outside = Property(dtype=int,
+                                   desc="Changes arraysizes even if it is initialised outside the current state. "
+                                        "Experimental",
+                                   default=False)
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
@@ -203,7 +207,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         maps = [map_entry.map for map_entry in map_entries]
         print(f"[SubgraphFusion::can_be_applied] entries: [{map_entries}], exits: [{map_exits}]")
 
-
         # 1. basic checks:
         # 1.1 we need to have at least two maps
         if len(maps) <= 1:
@@ -221,7 +224,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                       f"{base_map.params}")
                 return False
             if not self._map_ranges_compatible(map, base_map):
-                print("[SubgraphFusion::can_be_applied] Rejected: Maps are not same (1.2), map.range")
+                print(f"[SubgraphFusion::can_be_applied] Rejected: Maps are not same (1.2), map.range. max_diff_start:"
+                      f"{self.max_difference_start}, max_diff_end: {self.max_difference_end}")
                 return False
 
         # 1.3 check whether all map entries have the same schedule
@@ -829,6 +833,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                              map_exit.map.range]
                         array_dims = [int(dim_size.evalf(subs=sdfg.constants)) for dim_size in sdfg.arrays[data_name].shape]
                         for map_idx, map_length in enumerate(map_range_lengths):
+                            # Can lead to problems it map as two dimension of same size
                             if map_length in array_dims:
                                 init_maps[array_dims.index(map_length)] = (map_exit, map_idx)
                             else:
@@ -840,6 +845,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     tasklet = map_exit
                     if (isinstance(tasklet, nodes.Tasklet) and len(init_state.in_edges(tasklet)) == 1 and
                        init_state.in_edges(tasklet)[0].data.data is None and found_map):
+                        print(f"[SubgraphFusion::data_initialised_somewhere_else] found init maps for {data_name}:"
+                              f"{init_maps}")
                         return (init_state, init_maps)
         return None
 
@@ -1093,12 +1100,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             print(subgraph_contains_data)
 
         self.init_maps = {}
-        for node in intermediate_nodes:
-            init_map = SubgraphFusion.data_initialised_somewhere_else(sdfg, graph, node.data)
-            if init_map is not None:
-                print(f"[SubgraphFusion::apply] found init map for {node.data}")
-                self.init_maps[node.data] = init_map
-                subgraph_contains_data[node.data] = True
+        if self.change_init_outside:
+            for node in intermediate_nodes:
+                init_map = SubgraphFusion.data_initialised_somewhere_else(sdfg, graph, node.data)
+                if init_map is not None:
+                    print(f"[SubgraphFusion::apply] found init map for {node.data}")
+                    self.init_maps[node.data] = init_map
+                    subgraph_contains_data[node.data] = True
 
         inconnectors_dict = {}
         # Dict for saving incoming nodes and their assigned connectors
@@ -1299,8 +1307,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         print(f"[SubgraphFusion::apply] subgraph_contains_data: {subgraph_contains_data}")
         for data_name in data_intermediate:
             desc = sdfg.data(data_name)
-            # TODO: is it correct to also include arrays_as_circular_buffer??
-            # if (subgraph_contains_data[data_name] or data_name in self.arrays_as_circular_buffer) and isinstance(desc, dace.data.Array):
             if subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
@@ -1395,10 +1401,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             sdfg.save(f"subgraph/map_fusion_7_{data_name}_intermediate_data_first_pass.sdfg")
 
+        # Add modulo operations to the memlets with the data which is shrank but needs to be used as a circular buffer
         for data_name in self.arrays_as_circular_buffer:
-            helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
-        # TODO: Need to introduce modulo for the arrays to shrink
-        # do one pass to adjust strides and the memlets of in-between transients
+            if data_name in subgraph_contains_data and subgraph_contains_data[data_name]:
+                print(f"Add modulos to memlets with {data_name}")
+                helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
+
         for node in intermediate_nodes:
             # all incoming edges to node
             in_edges = graph.in_edges(node)

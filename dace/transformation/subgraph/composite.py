@@ -47,13 +47,32 @@ class CompositeFusion(transformation.SubgraphTransformation):
     stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Stencil tile stride")
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
+    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=0)
+    max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=0)
+    change_init_outside = Property(dtype=int,
+                                   desc="Changes arraysizes even if it is initialised outside the current state. "
+                                        "Experimental",
+                                   default=False)
+
+    def get_subgraph_fusion(self) -> SubgraphFusion:
+        """
+        Creates a SubgraphFusion object and sets its property which it shares with this
+
+        :return: The SubgraphFusion object
+        :rtype: SubgraphFusion
+        """
+        sf = SubgraphFusion()
+        sf.max_difference_start = self.max_difference_start
+        sf.max_difference_end = self.max_difference_end
+        sf.change_init_outside = self.change_init_outside
+        return sf
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
         print()
         print(f"[CompositeFusion::can_be_applied] allow expansion: {self.allow_expansion}")
         if self.allow_expansion == True:
-            subgraph_fusion = SubgraphFusion()
+            subgraph_fusion = self.get_subgraph_fusion()
             subgraph_fusion.setup_match(subgraph)
             print("[CompositeFusion::can_be_applied] Try SubgraphFusion without copy")
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
@@ -80,7 +99,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 #expansion.setup_match(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
-                subgraph_fusion = SubgraphFusion()
+                subgraph_fusion = self.get_subgraph_fusion()
                 subgraph_fusion.setup_match(subgraph_copy)
                 print("[CompositeFusion::can_be_applied] Check SubgraphFusion again")
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
@@ -93,7 +112,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                     return True
 
         else:
-            subgraph_fusion = SubgraphFusion()
+            subgraph_fusion = self.get_subgraph_fusion()
             subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 return True
@@ -122,7 +141,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
 
-        sf = SubgraphFusion()
+        sf = self.get_subgraph_fusion()
         sf.setup_match(subgraph, self.sdfg_id, self.state_id)
         if sf.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             # set SubgraphFusion properties
@@ -145,7 +164,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 # StencilTiling: update nodes
                 new_entries = st._outer_entries
                 subgraph = helpers.subgraph_from_maps(sdfg, graph, new_entries)
-                sf = SubgraphFusion()
+                sf = self.get_subgraph_fusion()
                 sf.setup_match(subgraph, self.sdfg_id, self.state_id)
                 # set SubgraphFusion properties
                 sf.debug = self.debug
