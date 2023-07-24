@@ -6,7 +6,7 @@ import copy
 from execute.parameters import ParametersProvider
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import get_programs_data, get_sdfg, read_source, optimize_sdfg, generate_arguments_fortran, \
-                          get_fortran, compare_output_all
+                          get_fortran, compare_output_all, use_cache
 
 
 def main():
@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
     parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
     parser.add_argument('--compare-to-fortran', default=False, action='store_true')
+    parser.add_argument('--cache', default=False, action='store_true')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -30,6 +31,9 @@ def main():
         add_args['symbols'] = params.get_dict()
 
     add_args['k_caching'] = args.k_caching
+
+    if args.cache:
+        use_cache(args.program)
 
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)

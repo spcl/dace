@@ -285,7 +285,8 @@ def use_cache(program: Optional[str] = None, dacecache_folder: Optional[str] = N
     os.environ['DACE_compiler_use_cache'] = '1'
     os.putenv('DACE_compiler_use_cache', '1')
     print("Build it without regenerating the code")
-    dacecache_folder = f"{programs[program]}_routine" if dacecache_folder is None else dacecache_folder
+    program_name = programs[program] if program in programs else program
+    dacecache_folder = f"{program_name}_routine" if dacecache_folder is None else dacecache_folder
     build = run(['make'],
                 cwd=os.path.join(get_dacecache(), dacecache_folder, 'build'),
                 capture_output=True)
