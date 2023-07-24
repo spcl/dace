@@ -401,8 +401,8 @@ def k_caching_prototype_v1(sdfg: SDFG,
     for xf in xforms:
         # expect that maps only have one dimension, as we did the MapExpansion transformation before
         if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
-            xf.apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
-                     sdfg.sdfg_list[xforms[0].sdfg_id])
+            xf.apply(sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id),
+                     sdfg.sdfg_list[xf.sdfg_id])
     if program is not None:
         save_graph(sdfg, program, "after_map_to_for_loop")
 
