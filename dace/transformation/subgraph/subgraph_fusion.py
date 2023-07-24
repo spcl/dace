@@ -1044,24 +1044,27 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for map_entry in map_entries:
             # as maps are split into outer and inner, indices should only have one entry as we are fusing one range
             # dimension only
-            assert len(map_entry.map.range.ranges) == 1
-            assert len(map_entry.map.params) == 1
-            assert len(global_map.range.ranges) == 1
-            first_map_start = map_entry.map.range.ranges[0][0]
-            first_map_end = map_entry.map.range.ranges[0][1]
+            for idx in range(len(map_entry.map.range)):
+                # assert len(map_entry.map.range.ranges) == 1
+                # assert len(map_entry.map.params) == 1
+                # assert len(global_map.range.ranges) == 1
+                # can_be_applied checks that all params of all maps to merge are the same -> we can use the params from
+                # the current map
+                map_start = map_entry.map.range.ranges[idx][0]
+                map_end = map_entry.map.range.ranges[idx][1]
 
-            first_edge = InterstateEdge()
-            first_map_param = map_entry.map.params[0]
-            if first_map_start != global_map.range.ranges[0][0]:
-                first_edge.condition = CodeBlock(f"{first_map_param} >= {first_map_start}")
-            if first_map_end != global_map.range.ranges[0][1]:
-                condition_str = f"{first_map_param} < {first_map_end}"
-                if first_edge.condition.as_string != '1':
-                    first_edge.condition = CodeBlock(f"({first_edge.condition}) and {condition_str}")
-                else:
-                    first_edge.condition = CodeBlock(condition_str)
-            if first_edge.condition.as_string != '1':
-                self.add_condition_to_map(graph, sdfg, map_entry, first_edge)
+                edge = InterstateEdge()
+                map_param = map_entry.map.params[idx]
+                if map_start != global_map.range.ranges[idx][0]:
+                    edge.condition = CodeBlock(f"{map_param} >= {map_start}")
+                if map_end != global_map.range.ranges[idx][1]:
+                    condition_str = f"{map_param} < {map_end}"
+                    if edge.condition.as_string != '1':
+                        edge.condition = CodeBlock(f"({edge.condition}) and {condition_str}")
+                    else:
+                        edge.condition = CodeBlock(condition_str)
+                if edge.condition.as_string != '1':
+                    self.add_condition_to_map(graph, sdfg, map_entry, edge)
 
         sdfg.save('subgraph/map_fusion_2_1_after_add_conditions.sdfg')
 
