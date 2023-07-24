@@ -510,6 +510,7 @@ class StateGraphView(object):
                             if (in_edge.data.data == out_edge.data.data and
                                     in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
+                                break
 
                     for e in in_edges:
                         # skip empty memlets
