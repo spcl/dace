@@ -1,4 +1,4 @@
-PROGRAM mwe_map_similar_size_2
+PROGRAM mwe_arrays_vanish_2
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
@@ -9,19 +9,18 @@ PROGRAM mwe_map_similar_size_2
     INTEGER(KIND=JPIM), PARAMETER :: NCLDQL = 4
 
     REAL(KIND=JPRB) INP1(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP2(NBLOCKS, KLEV)
     REAL(KIND=JPRB) INP3(NBLOCKS, KLEV, NCLV)
     REAL(KIND=JPRB) OUT1(NBLOCKS, KLEV)
 
-    CALL mwe_map_similar_size_2_routine(&
+    CALL mwe_arrays_vanish_2_routine(&
         & KLEV, NBLOCKS, NCLV, NCLDQI, NCLDQL, &
-        & INP1, INP2, INP3, OUT1)
+        & INP1, INP3, OUT1)
 
 END PROGRAM
 
-SUBROUTINE mwe_map_similar_size_2_routine(&
+SUBROUTINE mwe_arrays_vanish_2_routine(&
         & KLEV, NBLOCKS, NCLV, NCLDQI, NCLDQL, &
-        & INP1, INP2, INP3, OUT1)
+        & INP1, INP3, OUT1)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
@@ -33,20 +32,18 @@ SUBROUTINE mwe_map_similar_size_2_routine(&
     INTEGER(KIND=JPIM) NCLDQL
 
     REAL(KIND=JPRB) INP1(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP2(NBLOCKS, KLEV)
     REAL(KIND=JPRB) INP3(NBLOCKS, KLEV, NCLV)
     REAL(KIND=JPRB) OUT1(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) TMP1(NBLOCKS, KLEV)
-
+        
     DO JN=1,NBLOCKS
-        CALL inner_loops(KLEV, NCLV, NCLDQI, NCLDQL, INP1(JN, :), INP2(JN, :), INP3(JN, :, :), OUT1(JN, :))
+        CALL inner_loops(KLEV, NCLV, NCLDQI, NCLDQL, INP1(JN, :), INP3(JN, :, :), OUT1(JN, :))
     ENDDO
 
-END SUBROUTINE mwe_map_similar_size_2_routine
+END SUBROUTINE mwe_arrays_vanish_2_routine
 
 SUBROUTINE inner_loops(&
         & KLEV, NCLV, NCLDQI, NCLDQL, &
-        & INP1, INP2, INP3, OUT1)
+        & INP1, INP3, OUT1)
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
@@ -56,16 +53,23 @@ SUBROUTINE inner_loops(&
     INTEGER(KIND=JPIM) NCLDQL
 
     REAL(KIND=JPRB) INP1(KLEV)
-    REAL(KIND=JPRB) INP2(KLEV)
     REAL(KIND=JPRB) INP3(KLEV, NCLV)
     REAL(KIND=JPRB) OUT1(KLEV)
     REAL(KIND=JPRB) TMP1(KLEV)
+    REAL(KIND=JPRB) TMP2(KLEV)
 
-        DO JK=1,KLEV
-            TMP1(JK) = INP1(JK) + INP3(JK, NCLDQI) + INP2(JK)
-        ENDDO
+    TMP1(:) = 0
+    TMP2(:) = 0
 
-        DO JK=2,KLEV
-            OUT1(JK) = INP2(JK) - TMP1(JK)
-        ENDDO
+    DO JK=1,KLEV
+        TMP1(JK) = INP1(JK) + INP3(JK, NCLDQI)
+    ENDDO
+
+    DO JK=1,KLEV
+        TMP2(JK) = INP1(JK) - INP3(JK, NCLDQL)
+    ENDDO
+
+    DO JK=1,KLEV
+        OUT1(JK) = TMP1(JK) + TMP2(JK)
+    ENDDO
 END SUBROUTINE inner_loops
