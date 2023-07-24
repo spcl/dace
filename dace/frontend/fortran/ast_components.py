@@ -574,6 +574,7 @@ class InternalFortranAst:
 
         alloc = False
         symbol = False
+        dimensions = None
         for i in attributes:
             if i.string.lower() == "allocatable":
                 alloc = True
@@ -591,16 +592,30 @@ class InternalFortranAst:
             if len(array_sizes) == 1:
                 array_sizes = array_sizes[0]
                 size = []
+                offset = []
                 for dim in array_sizes.children:
                     #sanity check
                     if isinstance(dim, f03.Explicit_Shape_Spec):
                         dim_expr = [i for i in dim.children if i is not None]
+                        # handle size definition
                         if len(dim_expr) == 1:
                             dim_expr = dim_expr[0]
                             #now to add the dimension to the size list after processing it if necessary
                             size.append(self.create_ast(dim_expr))
+                            offset.append(1)
+                        elif len(dim_expr) == 2:
+                            # extract offets
+                            for expr in dim_expr:
+                                if not isinstance(expr, f03.Int_Literal_Constant):
+                                    raise TypeError("Array offsets must be constant expressions!")
+                            offset.append(int(dim_expr[0].tostr()))
+
+                            fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
+                            fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
+
+                            size.append(self.create_ast(fortran_ast_size))
                         else:
-                            raise TypeError("Array dimension must be a single expression")
+                            raise TypeError("Array dimension must be at most two expressions")
             #handle initializiation
             init = None
 
@@ -637,6 +652,7 @@ class InternalFortranAst:
                                                                     type=testtype,
                                                                     alloc=alloc,
                                                                     sizes=size,
+                                                                    offsets=offset,
                                                                     kind=kind,
                                                                     init=init,
                                                                     line_number=node.item.span))
