@@ -103,11 +103,11 @@ def auto_optimize(sdfg: SDFG,
             save_graph(sdfg, program, "after_loop_to_map")
 
     if k_caching:
-        make_klev_outermost_map(sdfg)
+        make_klev_outermost_map(sdfg, symbols)
         if program is not None:
             save_graph(sdfg, program, "after_make_klev_outermost")
 
-        k_caching_prototype_v1(sdfg, validate, validate_all, device, program)
+        k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
 
     # change_strides(sdfg, ('NBLOCKS', ), symbols)
     # if program is not None:
@@ -229,7 +229,10 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
     sdfg.specialize(known_symbols)
 
 
-def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: bool = False, program: str = None) -> SDFG:
+def loop_to_map_outside_first(sdfg: SDFG,
+                              validate: bool = True,
+                              validate_all: bool = False,
+                              program: str = None) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first
 
@@ -288,28 +291,18 @@ def loop_to_map_outside_first(sdfg: SDFG, validate: bool = True, validate_all: b
     return sdfg
 
 
-def make_klev_outermost_map(sdfg: SDFG):
+def make_klev_outermost_map(sdfg: SDFG, symbols: Dict[str, int]):
     transformed = True
     number_transformed = 0
     while transformed:
         transformations = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapInterchange])]
         transformed = False
         for xform in transformations:
-            if xform.inner_map_entry.range.ranges[0][1] == 137:
+            if xform.inner_map_entry.range.ranges[0][1] == symbols['KLEV']:
                 xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
                 transformed = True
                 number_transformed += 1
     print(f"Applied {number_transformed} transformation to move KLEV-loop outside")
-
-
-def make_klev_loops_again(sdfg: SDFG):
-    # Throws an error
-    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop])]
-    print(f"Number of possible MapToForLoop transformations: {len(xforms)}")
-    for xform in xforms:
-        if isinstance(xform.map_entry, MapEntry) and xform.map_entry.map.range.ranges[0][1] == 137:
-            print(xform.map_entry.map.range)
-            xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
 
 
 def apply_transformation_stepwise(sdfg: SDFG,
@@ -358,7 +351,12 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
     return transformation_class
 
 
-def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, device: dace.DeviceType, program: Optional[str] = None):
+def k_caching_prototype_v1(sdfg: SDFG,
+                           validate: bool,
+                           validate_all: bool,
+                           device: dace.DeviceType,
+                           symbols: Dict[str, int],
+                           program: Optional[str] = None):
     # Force KLEV loop with vertical dependency into a map
     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
     if len(xforms) == 1:
@@ -402,7 +400,7 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, devic
     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
     for xf in xforms:
         # expect that maps only have one dimension, as we did the MapExpansion transformation before
-        if xf.map_entry.map.range.ranges[0][1] == 137:
+        if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
             xf.apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                      sdfg.sdfg_list[xforms[0].sdfg_id])
     if program is not None:
@@ -487,8 +485,8 @@ def change_strides_old(sdfg: dace.SDFG, klev_vals: Tuple[int], symbols: Dict[str
 
             for s in syms_to_add:
                 if s not in sd.parent_nsdfg_node.symbol_mapping:
-                        sd.parent_nsdfg_node.symbol_mapping[s] = s
-                        sd.add_symbol(s, dace.int32)
+                    sd.parent_nsdfg_node.symbol_mapping[s] = s
+                    sd.add_symbol(s, dace.int32)
 
             for nname, ndesc in sd.arrays.items():
 
