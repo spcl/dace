@@ -399,6 +399,15 @@ def k_caching_prototype_v1(sdfg: SDFG, validate: bool, validate_all: bool, devic
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
+    for xf in xforms:
+        # expect that maps only have one dimension, as we did the MapExpansion transformation before
+        if xf.map_entry.map.range.ranges[0][1] == 137:
+            xf.apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
+                     sdfg.sdfg_list[xforms[0].sdfg_id])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_to_for_loop")
+
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> Dict[str, int]:
     # TODO: Add output about how to transform/permute the input
