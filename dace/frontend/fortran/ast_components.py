@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from fparser.two.Fortran2008 import Fortran2008 as f08
+from fparser.two import Fortran2008
 from fparser.two import Fortran2003 as f03
 from fparser.two import symbol_table
 
@@ -523,6 +524,31 @@ class InternalFortranAst:
     def assumed_shape_spec_list(self, node: FASTNode):
         return node
 
+    def parse_shape_specification(self, dim: f03.Explicit_Shape_Spec, size: List[FASTNode], offset: List[int]):
+
+        dim_expr = [i for i in dim.children if i is not None]
+
+        # handle size definition
+        if len(dim_expr) == 1:
+            dim_expr = dim_expr[0]
+            #now to add the dimension to the size list after processing it if necessary
+            size.append(self.create_ast(dim_expr))
+            offset.append(1)
+        # Here we support arrays that have size declaration - with initial offset.
+        elif len(dim_expr) == 2:
+            # extract offets
+            for expr in dim_expr:
+                if not isinstance(expr, f03.Int_Literal_Constant):
+                    raise TypeError("Array offsets must be constant expressions!")
+            offset.append(int(dim_expr[0].tostr()))
+
+            fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
+            fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
+
+            size.append(self.create_ast(fortran_ast_size))
+        else:
+            raise TypeError("Array dimension must be at most two expressions")
+
     def type_declaration_stmt(self, node: FASTNode):
 
         #decide if its a intrinsic variable type or a derived type
@@ -574,18 +600,39 @@ class InternalFortranAst:
 
         alloc = False
         symbol = False
-        dimensions = None
+        attr_size = None
+        attr_offset = None
         for i in attributes:
             if i.string.lower() == "allocatable":
                 alloc = True
             if i.string.lower() == "parameter":
                 symbol = True
 
+            if isinstance(i, Fortran2008.Attr_Spec_List):
+
+                attr_size = []
+                attr_offset = []
+                sizes = get_child(get_child(i, ["Dimension_Attr_Spec"]), ["Explicit_Shape_Spec_List"])
+                
+                for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
+                    print(shape_spec)
+                    self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                print(sizes.children)
+                print(type(sizes))
+                #print(sizes.children)
+
+                #if len(i.children) > 0 and isinstance(i.children[0], f03.Dimension_Attr_Spec):
+                #    print(i, dir(i), type(i.children[0]), dir(i.children[0]))
+
+        #sizes = get_child(attributes, ["Attr_Spec_List"])
+        #print(sizes)
+
         vardecls = []
 
         for var in names:
             #first handle dimensions
             size = None
+            offset = None
             var_components = self.create_children(var)
             array_sizes = get_children(var, "Explicit_Shape_Spec_List")
             actual_name = get_child(var_components, ast_internal_classes.Name_Node)
@@ -596,26 +643,7 @@ class InternalFortranAst:
                 for dim in array_sizes.children:
                     #sanity check
                     if isinstance(dim, f03.Explicit_Shape_Spec):
-                        dim_expr = [i for i in dim.children if i is not None]
-                        # handle size definition
-                        if len(dim_expr) == 1:
-                            dim_expr = dim_expr[0]
-                            #now to add the dimension to the size list after processing it if necessary
-                            size.append(self.create_ast(dim_expr))
-                            offset.append(1)
-                        elif len(dim_expr) == 2:
-                            # extract offets
-                            for expr in dim_expr:
-                                if not isinstance(expr, f03.Int_Literal_Constant):
-                                    raise TypeError("Array offsets must be constant expressions!")
-                            offset.append(int(dim_expr[0].tostr()))
-
-                            fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
-                            fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
-
-                            size.append(self.create_ast(fortran_ast_size))
-                        else:
-                            raise TypeError("Array dimension must be at most two expressions")
+                        self.parse_shape_specification(dim, size, offset)
             #handle initializiation
             init = None
 
@@ -628,17 +656,30 @@ class InternalFortranAst:
                 raw_init = initialization.children[1]
                 init = self.create_ast(raw_init)
 
+            print('t', symbol, size, attr_size)
+            print(offset, attr_offset)
             if symbol == False:
 
-                vardecls.append(
-                    ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                       type=testtype,
-                                                       alloc=alloc,
-                                                       sizes=size,
-                                                       kind=kind,
-                                                       line_number=node.item.span))
+                if attr_size is None:
+                    vardecls.append(
+                        ast_internal_classes.Var_Decl_Node(name=actual_name.name,
+                                                        type=testtype,
+                                                        alloc=alloc,
+                                                        sizes=size,
+                                                        offsets=offset,
+                                                        kind=kind,
+                                                        line_number=node.item.span))
+                else:
+                    vardecls.append(
+                        ast_internal_classes.Var_Decl_Node(name=actual_name.name,
+                                                        type=testtype,
+                                                        alloc=alloc,
+                                                        sizes=attr_size,
+                                                        offsets=attr_offset,
+                                                        kind=kind,
+                                                        line_number=node.item.span))
             else:
-                if size is None:
+                if size is None and attr_size is None:
                     self.symbols[actual_name.name] = init
                     vardecls.append(
                         ast_internal_classes.Symbol_Decl_Node(name=actual_name.name,
@@ -646,6 +687,16 @@ class InternalFortranAst:
                                                               alloc=alloc,
                                                               init=init,
                                                               line_number=node.item.span))
+                elif attr_size is not None:
+                    vardecls.append(
+                        ast_internal_classes.Symbol_Array_Decl_Node(name=actual_name.name,
+                                                                    type=testtype,
+                                                                    alloc=alloc,
+                                                                    sizes=attr_size,
+                                                                    offsets=attr_offset,
+                                                                    kind=kind,
+                                                                    init=init,
+                                                                    line_number=node.item.span))
                 else:
                     vardecls.append(
                         ast_internal_classes.Symbol_Array_Decl_Node(name=actual_name.name,
@@ -656,7 +707,8 @@ class InternalFortranAst:
                                                                     kind=kind,
                                                                     init=init,
                                                                     line_number=node.item.span))
-
+        #print(vardecls[0].sizes)
+        #print(vardecls[0].offsets)
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node: FASTNode):
