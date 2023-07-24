@@ -121,13 +121,13 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                # occurances = [
-                #     (n, s) for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
-                #     ]
-                # if len(occurances) > 1:
-                #     print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected AccesNode "
-                #           f"used somewhere else")
-                #     return False
+                num_occurrences = len([
+                    n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
+                ])
+                if num_occurrences > 1:
+                    print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected AccesNode "
+                          f"{dst.data} used somewhere else")
+                    return False
             else:
                 print(f"[MapFusion::can_be_applied] {first_map_entry} -> {second_map_entry}: Rejected no AccesNode "
                       f"after first map exit")
@@ -284,14 +284,15 @@ class MapFusion(transformation.SingleStateTransformation):
                         return False
 
         # Success
+        print("[MapFusion::can_be_applied] Success")
         return True
 
     def add_condition_to_map(self, graph: SDFGState, sdfg: SDFG, map_entry: nodes.MapEntry, condition_edge: InterstateEdge):
         start_nodes = set(e.dst for e in graph.out_edges(map_entry))
-        assert len(start_nodes) == 1
-        first_node = start_nodes.pop()
 
-        if not isinstance(first_node, nodes.NestedSDFG):
+        if len(start_nodes) == 1 and isinstance(start_nodes[0], nodes.NestedSDFG):
+            nsdfg = start_nodes[0]
+        else:
             contained_graph_view = graph.scope_subgraph(map_entry, include_entry=False, include_exit=False)
             nsdfg = nest_state_subgraph(sdfg, graph, contained_graph_view, full_data=False)
             # Add symbols from outer nsdfg if existing
@@ -300,8 +301,6 @@ class MapFusion(transformation.SingleStateTransformation):
             for itervar in map_entry.map.params:
                 nsdfg.sdfg.add_symbol(itervar, int)
                 nsdfg.symbol_mapping[itervar] = itervar
-        else:
-            nsdfg = first_node
 
         old_start_state = nsdfg.sdfg.start_state
         guard_state = nsdfg.sdfg.add_state(f"guard_{map_entry.map.label}", is_start_state=True)
