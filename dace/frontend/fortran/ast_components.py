@@ -615,17 +615,7 @@ class InternalFortranAst:
                 sizes = get_child(get_child(i, ["Dimension_Attr_Spec"]), ["Explicit_Shape_Spec_List"])
                 
                 for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
-                    print(shape_spec)
                     self.parse_shape_specification(shape_spec, attr_size, attr_offset)
-                print(sizes.children)
-                print(type(sizes))
-                #print(sizes.children)
-
-                #if len(i.children) > 0 and isinstance(i.children[0], f03.Dimension_Attr_Spec):
-                #    print(i, dir(i), type(i.children[0]), dir(i.children[0]))
-
-        #sizes = get_child(attributes, ["Attr_Spec_List"])
-        #print(sizes)
 
         vardecls = []
 
@@ -656,8 +646,6 @@ class InternalFortranAst:
                 raw_init = initialization.children[1]
                 init = self.create_ast(raw_init)
 
-            print('t', symbol, size, attr_size)
-            print(offset, attr_offset)
             if symbol == False:
 
                 if attr_size is None:

@@ -1,24 +1,45 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from fparser.common.readfortran import FortranStringReader
-from fparser.common.readfortran import FortranFileReader
-from fparser.two.parser import ParserFactory
-import sys, os
 import numpy as np
-import pytest
 
-import dace
-from dace import SDFG, SDFGState, instrument, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
-from fparser.two.symbol_table import SymbolTable
-from dace.sdfg import utils as sdutil
 
-import dace.frontend.fortran.ast_components as ast_components
-import dace.frontend.fortran.ast_transforms as ast_transforms
-import dace.frontend.fortran.ast_utils as ast_utils
-import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+def test_fortran_frontend_array_attribute_no_offset():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    double precision, dimension(5) :: d
+                    CALL index_test_function(d)
+                    end
 
-def test_fortran_frontend_index_offset_attributes():
+                    SUBROUTINE index_test_function(d)
+                    double precision, dimension(5) :: d
+
+                    do i=1,5
+                       d(i) = i * 2.0
+                    end do
+
+                    END SUBROUTINE index_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    assert len(sdfg.data('d').shape) == 1
+    assert sdfg.data('d').shape[0] == 5
+    assert len(sdfg.data('d').offset) == 1
+    assert sdfg.data('d').offset[0] == -1
+
+    a = np.full([5], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    for i in range(1,5):
+        # offset -1 is already added
+        assert a[i-1] == i * 2
+
+def test_fortran_frontend_array_attribute_offset():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
     """
@@ -58,7 +79,7 @@ def test_fortran_frontend_index_offset_attributes():
         # offset -1 is already added
         assert a[i-1] == i * 2
 
-def test_fortran_frontend_index_offset():
+def test_fortran_frontend_array_offset():
     """
     Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
     """
@@ -96,5 +117,6 @@ def test_fortran_frontend_index_offset():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_index_offset()
-    test_fortran_frontend_index_offset_attributes()
+    test_fortran_frontend_array_offset()
+    test_fortran_frontend_array_attribute_no_offset()
+    test_fortran_frontend_array_attribute_offset()
