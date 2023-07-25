@@ -17,6 +17,25 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 ##### MPI Communicators
+# a helper function for getting an access node by argument name
+# creates a scalar if it's a number
+def _get_int_arg_node(pv: ProgramVisitor,
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arg_name: Union[str, sp.Expr, Number]
+                    ):
+    if isinstance(arg_name, str) and arg_name in sdfg.arrays.keys():
+        arg_name = arg_name
+        arg_node = state.add_read(arg_name)
+    else:
+        # create a transient scalar and take its name
+        arg_name = _define_local_scalar(pv, sdfg, state, dace.int32)
+        arg_node = state.add_access(arg_name)
+        # every tasklet is in different scope, no need to worry about name confilct
+        color_tasklet = state.add_tasklet(f'_set_{arg_name}_', {}, {'__out'}, f'__out = {arg_name}')
+        state.add_edge(color_tasklet, '__out', arg_node, None, Memlet.simple(arg_node, '0'))
+
+    return arg_name, arg_node
 
 
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Split')
@@ -36,25 +55,8 @@ def _comm_split(pv: 'ProgramVisitor',
 
     comm_split_node = Comm_split(comm_name)
 
-    if isinstance(color, str) and color in sdfg.arrays.keys():
-        color_name = color
-        color_node = state.add_read(color_name)
-    else:
-        # create a transient scalar and take its name
-        color_name = _define_local_scalar(pv, sdfg, state, dace.int32)
-        color_node = state.add_access(color_name)
-        color_tasklet = state.add_tasklet('_set_color_', {}, {'__out'}, '__out = {}'.format(color))
-        state.add_edge(color_tasklet, '__out', color_node, None, Memlet.simple(color_name, '0'))
-
-    if isinstance(key, str) and key in sdfg.arrays.keys():
-        key_name = key
-        key_node = state.add_read(key_name)
-    else:
-        # create a transient scalar and take its name
-        key_name = _define_local_scalar(pv, sdfg, state, dace.int32)
-        key_node = state.add_access(key_name)
-        key_tasklet = state.add_tasklet('_set_key_', {}, {'__out'}, '__out = {}'.format(key))
-        state.add_edge(key_tasklet, '__out', key_node, None, Memlet.simple(key_name, '0'))
+    _, color_node = _get_int_arg_node(pv, sdfg, state, color)
+    _, key_node = _get_int_arg_node(pv, sdfg, state, key)
 
     state.add_edge(color_node, None, comm_split_node, '_color', Memlet.simple(color_node, "0:1", num_accesses=1))
     state.add_edge(key_node, None, comm_split_node, '_key', Memlet.simple(key_node, "0:1", num_accesses=1))
