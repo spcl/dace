@@ -26,15 +26,17 @@ class RunConfig:
     device: dace.DeviceType
     specialise_symbols: bool
     k_caching: bool
+    change_stride: bool
 
     def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
                  device: dace.DeviceType = dace.DeviceType.GPU, specialise_symbols: bool = True,
-                 k_caching: bool = True):
+                 k_caching: bool = False, change_stride: bool = False):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
         self.device = device
         self.specialise_symbols = specialise_symbols
         self.k_caching = k_caching
+        self.change_stride = change_stride
 
     def set_from_args(self, args: Namespace):
         keys = ['pattern', 'use_dace_auto_opt']
@@ -46,6 +48,10 @@ class RunConfig:
             self.specialise_symbols = True
         if 'not_specialise_symbols' in args_dict and args_dict['not_specialise_symbols']:
             self.specialise_symbols = False
+        if 'k_caching' in args_dict and args_dict['k_caching']:
+            self.k_caching = True
+        if 'change_stride' in args_dict and args_dict['change_stride']:
+            self.change_stride = True
 
     def __len__(self):
         return len(self.pattern)
@@ -80,6 +86,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
         if run_config.specialise_symbols:
             add_args['symbols'] = params.get_dict()
         add_args['k_caching'] = run_config.k_caching
+        add_args['change_stride'] = run_config.change_stride
         optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
@@ -146,6 +153,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         if run_config.specialise_symbols:
             additional_args['symbols'] = params.get_dict()
         additional_args['k_caching'] = run_config.k_caching
+        additional_args['change_stride'] = run_config.change_stride
 
         optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
     else:
@@ -190,6 +198,7 @@ def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str
     if run_config.specialise_symbols:
         add_args['symbols'] = params_dict
     add_args['k_caching'] = run_config.k_caching
+    add_args['change_stride'] = run_config.change_stride
     optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer

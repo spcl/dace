@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
     parser.add_argument('--compare-to-fortran', default=False, action='store_true')
     parser.add_argument('--cache', default=False, action='store_true')
+    parser.add_argument('--sdfg-file', type=str, default=None, help='File to read sdfg from')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -41,9 +42,12 @@ def main():
         program_name = programs[args.program]
     else:
         program_name = args.program
-    sdfg = get_sdfg(fsource, program_name)
 
-    optimize_sdfg(sdfg, device_map[args.device], **add_args)
+    if args.sdfg_file is not None:
+        sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_file)
+    else:
+        sdfg = get_sdfg(fsource, program_name)
+        optimize_sdfg(sdfg, device_map[args.device], **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     arguments_dace = generate_arguments_fortran(args.program, f"{program_name}_routine", np.random.default_rng(42), params)
     arguments_original = copy.deepcopy(arguments_dace)

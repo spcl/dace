@@ -109,10 +109,6 @@ def auto_optimize(sdfg: SDFG,
 
         k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
 
-    # change_strides(sdfg, ('NBLOCKS', ), symbols)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_change_strides")
-
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify(verbose=True, validate_all=True)
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
