@@ -34,13 +34,30 @@ def _comm_split(pv: 'ProgramVisitor',
     # fine a new comm world name
     comm_name = sdfg.add_comm()
 
-    color = state.add_read(color)
-    key = state.add_read(key)
-
     comm_split_node = Comm_split(comm_name)
 
-    state.add_edge(color, None, comm_split_node, '_color', Memlet.simple(color, "0:1", num_accesses=1))
-    state.add_edge(key, None, comm_split_node, '_key', Memlet.simple(key, "0:1", num_accesses=1))
+    if isinstance(color, str) and color in sdfg.arrays.keys():
+        color_name = color
+        color_node = state.add_read(color_name)
+    else:
+        # create a transient scalar and take its name
+        color_name = _define_local_scalar(pv, sdfg, state, dace.int32)
+        color_node = state.add_access(color_name)
+        color_tasklet = state.add_tasklet('_set_color_', {}, {'__out'}, '__out = {}'.format(color))
+        state.add_edge(color_tasklet, '__out', color_node, None, Memlet.simple(color_name, '0'))
+
+    if isinstance(key, str) and key in sdfg.arrays.keys():
+        key_name = key
+        key_node = state.add_read(key_name)
+    else:
+        # create a transient scalar and take its name
+        key_name = _define_local_scalar(pv, sdfg, state, dace.int32)
+        key_node = state.add_access(key_name)
+        key_tasklet = state.add_tasklet('_set_key_', {}, {'__out'}, '__out = {}'.format(key))
+        state.add_edge(key_tasklet, '__out', key_node, None, Memlet.simple(key_name, '0'))
+
+    state.add_edge(color_node, None, comm_split_node, '_color', Memlet.simple(color_node, "0:1", num_accesses=1))
+    state.add_edge(key_node, None, comm_split_node, '_key', Memlet.simple(key_node, "0:1", num_accesses=1))
 
     # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
     _, scal = sdfg.add_scalar(comm_name, dace.int32, transient=True)

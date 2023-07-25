@@ -89,8 +89,7 @@ def test_process_comm_split_bcast():
     def comm_split_bcast(rank: dace.int32, A: dace.int32[10]):
         # new_comm = commworld.Split(rank % 2, 0)
         color = np.full((1,), rank % 2, dtype=np.int32)
-        key = np.full((1,), 0, dtype=np.int32)
-        new_comm = commworld.Split(color, key)
+        new_comm = commworld.Split(color, 0)
         new_comm.Bcast(A)
 
     if size < 2:
