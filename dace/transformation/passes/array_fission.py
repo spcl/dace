@@ -4,15 +4,15 @@ from collections import defaultdict
 from typing import Any, Dict, Optional, Set, Tuple, List
 import networkx as nx
 
-from dace.sdfg.graph import Edge
 from dace import SDFG
-from dace.memlet import Memlet
-from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes import analysis as ap
-from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
-from dace.sdfg import SDFGState
 from dace import subsets
+from dace.sdfg import nodes as nd
+from dace.sdfg import SDFGState
+from dace.memlet import Memlet
+from dace.transformation import pass_pipeline as ppl
+from dace.sdfg.graph import Edge
+from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
+from dace.transformation.passes import analysis as ap
 
 
 class ArrayFission(ppl.Pass):
