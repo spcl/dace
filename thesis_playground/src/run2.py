@@ -18,6 +18,28 @@ from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
 
 
+def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 3e5,
+                 nblock_step: Number = 1e5, debug_mode: bool = False):
+    program = 'cloudsc_vert_loop_10'
+    # print("Test with k-caching")
+    # test_program(program, RunConfig())
+    # print("Test without k-caching")
+    # test_program(program, RunConfig(k_caching=False))
+    params_list = []
+    profile_configs = []
+    for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
+        params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
+                                                     'KLON': 1})
+        params_list.append(params)
+    profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
+                                         tot_time_repetitions=2))
+    experiment_desc = "Vertical loop example"
+    profile(profile_configs, RunConfig(k_caching=False), experiment_desc, [('k_caching', "False")], ncu_report=True,
+            debug_mode=debug_mode)
+    profile(profile_configs, RunConfig(k_caching=True), experiment_desc, [('k_caching', "True")], ncu_report=True,
+            debug_mode=debug_mode)
+
+
 def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 7e5,
                       nblock_step: Number = 1e5, debug_mode: bool = False):
     programs = [
@@ -53,7 +75,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
 
 
 base_experiments = {
-    'vert-loop': do_vertical_loops
+    'vert-loop': do_vertical_loops,
+    'k_caching': do_k_caching
 }
 
 
