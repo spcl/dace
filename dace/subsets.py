@@ -60,6 +60,137 @@ class Subset(object):
                 return False
 
             return True
+        
+    def covers_precise(self, other):
+        """ Returns True if self contains all the elements in other. """
+
+        def nng(expr):
+            # When dealing with set sizes, assume symbols are non-negative
+            try:
+                # TODO: Fix in symbol definition, not here
+                for sym in list(expr.free_symbols):
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+                return expr
+            except AttributeError:  # No free_symbols in expr
+                return expr
+
+        symbolic_positive = Config.get('optimizer', 'symbolic_positive')
+
+        if not symbolic_positive:
+            try:
+                bounding_box_cover = all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
+                                                        other.min_element(), other.max_element())])
+                
+                if not bounding_box_cover:
+                    return False
+                
+                # if self is an index no further distinction is needed
+                if isinstance(self, Indices):
+                    return bounding_box_cover
+                
+                # if self is a range there are two cases
+                # - other is a range 
+                # - other is an index
+                elif isinstance(self, Range):
+
+                    # other is an index so we need to check if the step of self is such that other is covered
+                    # self.start % self.step == other.index % self.step
+                    if isinstance(other, Indices):
+                        try: 
+                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                            for start,_,step, i in zip(self.ranges, other.indices)])
+                        except:
+                            return False
+                    
+                    # other is a range so in every dimension self.step has to divide other.step and
+                    # self.start % self.step = other.start % other.step
+                    if isinstance(other, Range):
+                        try: 
+                            self_steps = [r[2] for r in self.ranges]
+                            other_steps = [r[2] for r in other.ranges]
+                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
+                                if not (ostep % step == 0 and 
+                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                                    return False
+                        except:
+                            return False
+                        return True
+                
+                # unknown type   
+                else:
+                    raise TypeError
+
+            except TypeError:
+                return False
+            
+        else:
+            try:
+                # first check if self contains other
+                for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
+                                            other.min_element(), other.max_element()):
+                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
+                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+
+                    # lower bound: first check whether symbolic positive condition applies
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+                            return False
+
+                    # upper bound: first check whether symbolic positive condition applies
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+                            return False
+                                
+                # if self is an index no further distinction is needed
+                if isinstance(self, Indices):
+                    return True
+                
+                # if self is a range there are two cases
+                # - other is a range 
+                # - other is an index
+                elif isinstance(self, Range):
+
+                    # other is an index so we need to check if the step of self is such that other is covered
+                    # self.start % self.step == other.index % self.step
+                    if isinstance(other, Indices):
+                        try: 
+                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                            for start,_,step, i in zip(self.ranges, other.indices)])
+                        except:
+                            return False
+                    
+                    # other is a range so in every dimension self.step has to divide other.step and
+                    # self.start % self.step = other.start % other.step or self.start == other.start
+                    if isinstance(other, Range):
+                        try:
+                            self_steps = [r[2] for r in self.ranges]
+                            other_steps = [r[2] for r in other.ranges]
+                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
+                                if not (ostep % step == 0 and 
+                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                                    return False
+                        except:
+                            return False
+                    return True
+
+                # Unknown subset type
+                else:
+                    raise TypeError
+            except TypeError:
+                return False
+            
+
+
+        return
+
 
     def __repr__(self):
         return '%s (%s)' % (type(self).__name__, self.__str__())
@@ -957,6 +1088,101 @@ class Indices(Subset):
             return self
         return None
 
+class Subsetlist(Subset):
+
+    def __init__(self, subset_list: list[Subset]):
+        self.subset_list: list[Subset] =  [x for x in list(set(subset_list)) if x is not None]
+
+
+    def covers(self, other):
+        """ Returns True if this Subsetlist covers another
+            subset. If other is another SubsetList then self and other will
+            only return true if self is other. If other is a different type of subset
+            true is returned when one of the subsets in self is equal to other """
+
+        if isinstance(other, Subsetlist):
+            for subset in self.subset_list:
+                # check if ther is a subset in self that covers every subset in other
+                if all(subset.covers(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
+        else:
+            return any(s.covers(other) for s in self.subset_list)
+        
+    def covers_precise(self, other):
+        """ Returns True if this Subsetlist covers another
+            subset. If other is another SubsetList then self and other will
+            only return true if self is other. If other is a different type of subset
+            true is returned when one of the subsets in self is equal to other """
+
+        if isinstance(other, Subsetlist):
+            for subset in self.subset_list:
+                # check if ther is a subset in self that covers every subset in other
+                if all(subset.covers_precise(s) for s in other.subset_list):
+                    return True
+            # return False if that's not the case for any of the subsets in self
+            return False
+        else:
+            return any(s.covers_precise(other) for s in self.subset_list)
+
+    def __str__(self):
+        string = ''
+        for subset in self.subset_list:
+            if not string == '':
+                string += " "
+            string += subset.__str__()
+        return string
+    
+    def dims(self):
+        if not self.subset_list:
+            return 0
+        return next(iter(self.subset_list)).dims()
+
+    def offset(self, other, negative, indices=None):
+        raise NotImplementedError
+
+    def offset_new(self, other, negative, indices=None):
+        raise NotImplementedError
+
+    def union(self, other: Subset):
+        """In place union of self with another Subset"""
+        try:
+            if isinstance(other, Subsetlist):
+                self.subset_list += other.subset_list
+            elif isinstance(other, Indices) or isinstance(other, Range):
+                self.subset_list.append(other)
+            else:
+                warnings.warn('Unrecognized Subset type %s in union, degenerating to'
+                            ' bounding box' % type(other).__name__)
+                return None
+        except TypeError:  # cannot determine truth value of Relational
+            return None
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        result = set()
+        for subset in self.subset_list:
+            result |= subset.free_symbols
+        return result
+    
+    def replace(self, repl_dict):
+        for subset in self.subset_list:
+            subset.replace(repl_dict)
+
+    def num_elements(self):
+        # TODO: write something meaningful here
+        min = 0
+        for subset in self.subset_list:
+            try:
+                if subset.num_elements() < min or min ==0:
+                    min = subset.num_elements()
+            except:
+                continue
+            
+        return min
+
+
 
 def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
@@ -1022,6 +1248,8 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     return Range(result)
 
 
+
+
 def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
@@ -1056,6 +1284,31 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     except TypeError:  # cannot determine truth value of Relational
         return None
 
+def list_union(subset_a: Subset, subset_b: Subset)-> Subset:
+    # TODO: Make sure that all the elements in the subset lists have the same dimensions
+    try:
+        if subset_a is not None and subset_b is None:
+            return subset_a
+        elif subset_b is not None and subset_a is None:
+            return subset_b
+        elif subset_a is None and subset_b is None:
+            raise TypeError('Both subsets cannot be None')
+        elif type(subset_a) != type(subset_b):
+            if isinstance(subset_b, Subsetlist):
+                return Subsetlist(subset_b.subset_list_.append(subset_a))
+            else:
+                return Subsetlist(subset_a.subset_list.append(subset_b))
+        elif isinstance(subset_a, Subsetlist):
+            return Subsetlist(subset_a.subset_list + subset_b.subset_list)
+        else:
+            return Subsetlist([subset_a,subset_b])
+
+        # for subset in subset_list_a:
+        #     for other_subset in subset_list_b:
+        #         if subset.
+
+    except TypeError:  # cannot determine truth value of Relational
+        return None
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
     """
