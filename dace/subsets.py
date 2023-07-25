@@ -62,6 +62,7 @@ class Subset(object):
             return True
         
     def covers_precise(self, other):
+        """ Returns True if self contains all the elements in other. """
 
         def nng(expr):
             # When dealing with set sizes, assume symbols are non-negative
@@ -75,16 +76,12 @@ class Subset(object):
 
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
-        # TODO: the following code only checks if the lower bound of self is smaller smaller equal than lower bound of other
-        # and upper bound of self is bigger equal than upper bound of other
-        # to be exact this is only valid if additionally the step size of self divides the step size of other
-        # and self.start % self.step == other.start % other.step
         if not symbolic_positive:
             try:
                 bounding_box_cover = all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                             and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                                        other.min_element_approx(), other.max_element_approx())])
+                            for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
+                                                        other.min_element(), other.max_element())])
                 
                 if not bounding_box_cover:
                     return False
@@ -96,7 +93,7 @@ class Subset(object):
                 # if self is a range there are two cases
                 # - other is a range 
                 # - other is an index
-                if isinstance(self, Range):
+                elif isinstance(self, Range):
 
                     # other is an index so we need to check if the step of self is such that other is covered
                     # self.start % self.step == other.index % self.step
@@ -111,19 +108,29 @@ class Subset(object):
                     # self.start % self.step = other.start % other.step
                     if isinstance(other, Range):
                         try: 
-                            return all([ostep % step == 0 and
-                                (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True
-                            for start,step,ostart,ostep in zip(self.min_element(), self.step, other.min_element(), other.step)])
+                            self_steps = [r[2] for r in self.ranges]
+                            other_steps = [r[2] for r in other.ranges]
+                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
+                                if not (ostep % step == 0 and 
+                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                                    return False
                         except:
                             return False
+                        return True
+                
+                # unknown type   
+                else:
+                    raise TypeError
 
             except TypeError:
                 return False
             
         else:
             try:
-                for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                            other.min_element_approx(), other.max_element_approx()):
+                # first check if self contains other
+                for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
+                                            other.min_element(), other.max_element()):
                     # NOTE: We first test for equality, which always returns True or False. If the equality test returns
                     # False, then we test for less-equal and greater-equal, which may return an expression, leading to
                     # TypeError. This is a workaround for the case where two expressions are the same or equal and
@@ -140,49 +147,46 @@ class Subset(object):
                         if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
                                 symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
+                                
+                # if self is an index no further distinction is needed
+                if isinstance(self, Indices):
+                    return True
+                
+                # if self is a range there are two cases
+                # - other is a range 
+                # - other is an index
+                elif isinstance(self, Range):
+
+                    # other is an index so we need to check if the step of self is such that other is covered
+                    # self.start % self.step == other.index % self.step
+                    if isinstance(other, Indices):
+                        try: 
+                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                            for start,_,step, i in zip(self.ranges, other.indices)])
+                        except:
+                            return False
+                    
+                    # other is a range so in every dimension self.step has to divide other.step and
+                    # self.start % self.step = other.start % other.step or self.start == other.start
+                    if isinstance(other, Range):
+                        try:
+                            self_steps = [r[2] for r in self.ranges]
+                            other_steps = [r[2] for r in other.ranges]
+                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
+                                if not (ostep % step == 0 and 
+                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
+                                    return False
+                        except:
+                            return False
+                    return True
+
+                # Unknown subset type
+                else:
+                    raise TypeError
             except TypeError:
                 return False
             
-                        
-            # if self is an index no further distinction is needed
-            if isinstance(self, Indices):
-                return bounding_box_cover
-            
-            # if self is a range there are two cases
-            # - other is a range 
-            # - other is an index
-            if isinstance(self, Range):
-
-                # other is an index so we need to check if the step of self is such that other is covered
-                # self.start % self.step == other.index % self.step
-                if isinstance(other, Indices):
-                    try: 
-                        return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
-                        for start,_,step, i in zip(self.ranges, other.indices)])
-                    except TypeError:
-                        return False
-                
-                # other is a range so in every dimension self.step has to divide other.step and
-                # self.start % self.step = other.start % other.step or self.start == other.start
-                if isinstance(other, Range):
-                    try: 
-                        self_steps = [r[2] for r in self.ranges]
-                        other_steps = [r[2] for r in other.ranges]
-                        for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
-                            start_mod = sympy.Mod(symbolic.simplify_ext(nng(start)), symbolic.simplify_ext(nng(step))) == sympy.Mod(symbolic.simplify_ext(nng(ostart)), symbolic.simplify_ext(nng(ostep)))
-                            mod1 = sympy.Mod(symbolic.simplify_ext(nng(start)), symbolic.simplify_ext(nng(step)))
-                            mod2 = sympy.Mod(symbolic.simplify_ext(nng(ostart)), symbolic.simplify_ext(nng(ostep)))
-                            if not (ostep % step == 0 and 
-                                    ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                    (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
-                                return False
-                            
-
-                    except TypeError:
-                        return False
-
-
-            return True
 
 
         return
@@ -1169,9 +1173,12 @@ class Subsetlist(Subset):
     def num_elements(self):
         # TODO: write something meaningful here
         min = 0
-        # for subset in self.subset_list:
-        #     if subset.num_elements() < min or min ==0:
-        #         min = subset.num_elements()
+        for subset in self.subset_list:
+            try:
+                if subset.num_elements() < min or min ==0:
+                    min = subset.num_elements()
+            except:
+                continue
             
         return min
 
