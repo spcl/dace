@@ -5,14 +5,14 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union
 import warnings
 
 import numpy as np
 import sympy as sp
 
 from dace import data as dt, dtypes, hooks, symbolic
-from dace.codegen import exceptions as cgx
+from dace.codegen import exceptions as cgx, common
 from dace.config import Config
 from dace.frontend import operations
 
@@ -22,6 +22,7 @@ class ReloadableDLL(object):
     A reloadable shared object (or dynamically linked library), which
     bypasses Python's dynamic library reloading issues.
     """
+
     def __init__(self, library_filename, program_name):
         """
         Creates a new reloadable shared object.
@@ -146,21 +147,20 @@ class ReloadableDLL(object):
         self.unload()
 
 
-def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
+def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
 
     :param array: Array object that implements NumPy's array interface.
-    :param array_type: Data descriptor of the array (used to get storage
-                       location to determine whether it's a host or GPU device
-                       pointer).
+    :param array_type: Storage location of the array, used to determine whether
+                       it is a host or device pointer (e.g. GPU).
     :return: A pointer to the base location of the allocated buffer.
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
-    if array_type.storage == dtypes.StorageType.GPU_Global:
+    if storage == dtypes.StorageType.GPU_Global:
         return array.__cuda_array_interface__['data'][0]
     return array.__array_interface__['data'][0]
 
@@ -181,6 +181,7 @@ class CompiledSDFG(object):
         self._init = lib.get_symbol('__dace_init_{}'.format(sdfg.name))
         self._init.restype = ctypes.c_void_p
         self._exit = lib.get_symbol('__dace_exit_{}'.format(sdfg.name))
+        self._exit.restype = ctypes.c_int
         self._cfunc = lib.get_symbol('__program_{}'.format(sdfg.name))
 
         # Cache SDFG return values
@@ -196,6 +197,20 @@ class CompiledSDFG(object):
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
         self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
+
+        self.has_gpu_code = False
+        self.external_memory_types = set()
+        for _, _, aval in self._sdfg.arrays_recursive():
+            if aval.storage in dtypes.GPU_STORAGES:
+                self.has_gpu_code = True
+                break
+            if aval.lifetime == dtypes.AllocationLifetime.External:
+                self.external_memory_types.add(aval.storage)
+        if not self.has_gpu_code:
+            for node, _ in self._sdfg.all_nodes_recursive():
+                if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
+                    self.has_gpu_code = True
+                    break
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
@@ -258,6 +273,42 @@ class CompiledSDFG(object):
 
         return State
 
+    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+        """
+        Returns the total external memory size to be allocated for this SDFG.
+
+        :return: A dictionary mapping storage types to the number of bytes necessary
+                 to allocate for the SDFG to work properly.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'querying external memory size.')
+
+        result: Dict[dtypes.StorageType, int] = {}
+        for storage in self.external_memory_types:
+            func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            result[storage] = func(self._libhandle, *self._lastargs[1])
+
+        return result
+
+    def set_workspace(self, storage: dtypes.StorageType, workspace: Any):
+        """
+        Sets the workspace for the given storage type to the given buffer.
+
+        :param storage: The storage type to fill.
+        :param workspace: An array-convertible object (through ``__[cuda_]array_interface__``,
+                          see ``_array_interface_ptr``) to use for the workspace.
+        """
+        if not self._initialized:
+            raise ValueError('Compiled SDFG is uninitialized, please call ``initialize`` prior to '
+                             'setting external memory.')
+        if storage not in self.external_memory_types:
+            raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
+
+        func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
+        ptr = _array_interface_ptr(workspace, storage)
+        func(self._libhandle, ctypes.c_void_p(ptr), *self._lastargs[1])
+
     @property
     def filename(self):
         return self._lib._library_filename
@@ -297,8 +348,20 @@ class CompiledSDFG(object):
 
     def finalize(self):
         if self._exit is not None:
-            self._exit(self._libhandle)
+            res: int = self._exit(self._libhandle)
             self._initialized = False
+            if res != 0:
+                raise RuntimeError(
+                    f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(res)}')
+
+    def _get_error_text(self, result: Union[str, int]) -> str:
+        if self.has_gpu_code:
+            if isinstance(result, int):
+                result = common.get_gpu_runtime().get_error_string(result)
+            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
+                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+        else:
+            return result
 
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
@@ -312,10 +375,22 @@ class CompiledSDFG(object):
             if self._initialized is False:
                 self._lib.load()
                 self._initialize(initargtuple)
-            
+
             with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
                 if self.do_not_execute is False:
                     self._cfunc(self._libhandle, *argtuple)
+
+            if self.has_gpu_code:
+                # Optionally get errors from call
+                try:
+                    lasterror = common.get_gpu_runtime().get_last_error_string()
+                except RuntimeError as ex:
+                    warnings.warn(f'Could not get last error from GPU runtime: {ex}')
+                    lasterror = None
+
+                if lasterror is not None:
+                    raise RuntimeError(
+                        f'An error was detected when calling "{self._sdfg.name}": {self._get_error_text(lasterror)}')
 
             return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
@@ -450,7 +525,7 @@ class CompiledSDFG(object):
             for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
+        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)), actype,
                          atype) if dtypes.is_array(arg) else (arg, actype, atype)
                         for arg, actype, atype, _ in callparams)
 
@@ -544,7 +619,6 @@ class CompiledSDFG(object):
                 # Create an array with the properties of the SDFG array
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
-
 
     def _convert_return_values(self):
         # Return the values as they would be from a Python function

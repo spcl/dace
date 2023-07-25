@@ -11,25 +11,25 @@ import numpy as np
 import dace
 import dace.library
 from dace import dtypes
-from dace.codegen import codeobject, targets, compiler, compiled_sdfg
+from dace.codegen import codeobject, targets, compiler, compiled_sdfg, common
+
 
 @pytest.fixture
 def cuda_helper():
     return _cuda_helper()
 
+
 def _cuda_helper():
 
-    helper_code = """
+    helper_code = f"""
     #include <dace/dace.h>
     
-    extern "C" {
-        int host_to_gpu(void* gpu, void* host, size_t size) {
-            auto result = cudaMemcpy(gpu, host, size, cudaMemcpyHostToDevice);
-            DACE_CUDA_CHECK(cudaGetLastError());
-            DACE_CUDA_CHECK(cudaDeviceSynchronize());
+    extern "C" {{
+        DACE_EXPORTED int host_to_gpu(void* gpu, void* host, size_t size) {{
+            auto result = {common.get_gpu_backend()}Memcpy(gpu, host, size, {common.get_gpu_backend()}MemcpyHostToDevice);
             return result;
-        } 
-    } 
+        }}
+    }}
     """
     program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
 
@@ -92,5 +92,6 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
 
     assert np.allclose(result, A @ B)
 
-if __name__ =='__main__':
+
+if __name__ == '__main__':
     test_preallocate_transients_in_state_struct(_cuda_helper())

@@ -149,8 +149,9 @@ DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     return 0;
 }}
 
-DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
+DACE_EXPORTED int __dace_exit_xilinx({sdfg.name}_t *__state) {{
     delete __state->fpga_context;
+    return 0;
 }}
 
 {host_code}""".format(signature=params_comma,
