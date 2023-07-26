@@ -502,13 +502,23 @@ class StateGraphView(object):
             # is read is not counted in the read set
             for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
                 if isinstance(n, nd.AccessNode):
-                    for e in sg.in_edges(n):
+                    in_edges = sg.in_edges(n)
+                    out_edges = sg.out_edges(n)
+                    # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
+                    for out_edge in list(out_edges):
+                        for in_edge in list(in_edges):
+                            if (in_edge.data.data == out_edge.data.data and
+                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                                out_edges.remove(out_edge)
+                                break
+
+                    for e in in_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
-                    for e in sg.out_edges(n):
+                    for e in out_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
