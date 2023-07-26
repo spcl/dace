@@ -1,16 +1,15 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from numbers import Integral, Number
-from typing import Sequence, Tuple, Union
-
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import dtypes, symbolic
-from dace.frontend.common import op_repository as oprepo
-from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState
-
+import itertools
 import sympy as sp
 
+from dace import dtypes, symbolic
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements import _define_local_scalar
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState
+from numbers import Integral, Number
+from typing import Sequence, Tuple, Union
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
@@ -117,40 +116,33 @@ def _pgrid_sub(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, parent_grid: 
     return _cart_sub(pv, sdfg, state, parent_grid, color)
 
 
-@oprepo.replaces_operator('ProcessGrid', 'Eq', otherclass='Comm')
-@oprepo.replaces_operator('ProcessGrid', 'Is', otherclass='Comm')
-def _pgrid_eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
-    from mpi4py import MPI
-    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
-        return False
-    return True
+# TODO: Revisit after discussing how "immutable" mpi4py communicators are during the program's execution.
+for left_cls, right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], repeat=2):
+
+    @oprepo.replaces_operator(left_cls, 'Eq', otherclass=right_cls)
+    def _eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 == op2
+    
+    @oprepo.replaces_operator(left_cls, 'NotEq', otherclass=right_cls)
+    def _noteq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 != op2
+    
+    @oprepo.replaces_operator(left_cls, 'Is', otherclass=right_cls)
+    def _is_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 is op2
+    
+    @oprepo.replaces_operator(left_cls, 'IsNot', otherclass=right_cls)
+    def _isnot_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 is not op2
 
 
-@oprepo.replaces_operator('Comm', 'Eq', otherclass='ProcessGrid')
-@oprepo.replaces_operator('Comm', 'Is', otherclass='ProcessGrid')
-def _comm_eq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
-    from mpi4py import MPI
-    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
-        return False
-    return True
-
-
-@oprepo.replaces_operator('ProcessGrid', 'NotEq', otherclass='Comm')
-@oprepo.replaces_operator('ProcessGrid', 'IsNot', otherclass='Comm')
-def _pgrid_neq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
-    from mpi4py import MPI
-    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
+for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'], ['Eq', 'NotEq', 'Is', 'IsNot']):
+    @oprepo.replaces_operator(cls_a, op, otherclass=cls_b)
+    @oprepo.replaces_operator(cls_b, op, otherclass=cls_a)
+    def _op_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Union[str, 'Comm'], op2: Union[str, 'Comm']):
+        if op in ('Eq', 'Is'):
+            return False
         return True
-    return False
-
-
-@oprepo.replaces_operator('Comm', 'NotEq', otherclass='ProcessGrid')
-@oprepo.replaces_operator('Comm', 'IsNot', otherclass='ProcessGrid')
-def _comm_neq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
-    from mpi4py import MPI
-    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
-        return True
-    return False
 
 
 ##### MPI Collectives
