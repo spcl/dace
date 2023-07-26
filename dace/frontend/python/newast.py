@@ -1304,7 +1304,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(self.sdfg.arrays)
 
         # MPI-related stuff
-        result.update({k: self.sdfg.process_grids[v] for k, v in self.variables.items() if v in self.sdfg.process_grids})
+        result.update(
+            {k: self.sdfg.process_grids[v]
+             for k, v in self.variables.items() if v in self.sdfg.process_grids})
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -5001,7 +5003,7 @@ class ProgramVisitor(ExtNodeVisitor):
             rng = expr.subset
             rng.offset(rng, True)
             return self.sdfg.arrays[array].dtype, rng.size()
-        
+
         if is_read:
             return self._add_read_slice(array, node, expr)
         else:

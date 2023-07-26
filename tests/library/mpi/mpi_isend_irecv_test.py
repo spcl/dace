@@ -109,7 +109,9 @@ def _test_mpi(info, sdfg, dtype):
 def test_mpi():
     _test_mpi("MPI Isend/Irecv", make_sdfg(np.float64), np.float64)
 
+
 ###############################################################################
+
 
 @pytest.mark.mpi
 def test_isend_irecv():
@@ -123,7 +125,7 @@ def test_isend_irecv():
         src = (rank - 1) % size
         dst = (rank + 1) % size
         req = np.empty((2, ), dtype=MPI.Request)
-        sbuf = np.full((1,), rank, dtype=np.int32)
+        sbuf = np.full((1, ), rank, dtype=np.int32)
         req[0] = commworld.Isend(sbuf, dst, tag=0)
         rbuf = np.empty((1, ), dtype=np.int32)
         req[1] = commworld.Irecv(rbuf, src, tag=0)

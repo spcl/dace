@@ -14,8 +14,8 @@ def test_eq_commworld_0():
     @dace.program
     def eq_commworld_0(out: dace.bool[1]):
         out[0] = comm == MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     eq_commworld_0(res)
     assert res[0] == (comm == MPI.COMM_WORLD)
 
@@ -30,8 +30,8 @@ def test_eq_commworld_1():
     @dace.program
     def eq_commworld_1(out: dace.bool[1]):
         out[0] = comm2 == MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     eq_commworld_1(res)
     assert res[0] == (comm2 == MPI.COMM_WORLD)
 
@@ -44,8 +44,8 @@ def test_eq_commworld_2():
     @dace.program
     def eq_commworld_2(out: dace.bool[1]):
         out[0] = MPI.COMM_NULL == MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     eq_commworld_2(res)
     assert res[0] == (MPI.COMM_NULL == MPI.COMM_WORLD)
 
@@ -59,8 +59,8 @@ def test_noteq_commworld_0():
     @dace.program
     def noteq_commworld_0(out: dace.bool[1]):
         out[0] = comm != MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     noteq_commworld_0(res)
     assert res[0] == (comm != MPI.COMM_WORLD)
 
@@ -75,8 +75,8 @@ def test_noteq_commworld_1():
     @dace.program
     def noteq_commworld_1(out: dace.bool[1]):
         out[0] = comm2 != MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     noteq_commworld_1(res)
     assert res[0] == (comm2 != MPI.COMM_WORLD)
 
@@ -89,8 +89,8 @@ def test_noteq_commworld_2():
     @dace.program
     def noteq_commworld_2(out: dace.bool[1]):
         out[0] = MPI.COMM_NULL != MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     noteq_commworld_2(res)
     assert res[0] == (MPI.COMM_NULL != MPI.COMM_WORLD)
 
@@ -104,8 +104,8 @@ def test_is_commworld_0():
     @dace.program
     def is_commworld_0(out: dace.bool[1]):
         out[0] = comm is MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     is_commworld_0(res)
     assert res[0] == (comm is MPI.COMM_WORLD)
 
@@ -120,8 +120,8 @@ def test_is_commworld_1():
     @dace.program
     def is_commworld_1(out: dace.bool[1]):
         out[0] = comm2 is MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     is_commworld_1(res)
     assert res[0] == (comm2 is MPI.COMM_WORLD)
 
@@ -134,8 +134,8 @@ def test_is_commworld_2():
     @dace.program
     def is_commworld_2(out: dace.bool[1]):
         out[0] = MPI.COMM_NULL is MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     is_commworld_2(res)
     assert res[0] == (MPI.COMM_NULL is MPI.COMM_WORLD)
 
@@ -149,8 +149,8 @@ def test_isnot_commworld_0():
     @dace.program
     def isnot_commworld_0(out: dace.bool[1]):
         out[0] = comm is MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     isnot_commworld_0(res)
     assert res[0] == (comm is MPI.COMM_WORLD)
 
@@ -165,8 +165,8 @@ def test_isnot_commworld_1():
     @dace.program
     def isnot_commworld_1(out: dace.bool[1]):
         out[0] = comm2 is not MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     isnot_commworld_1(res)
     assert res[0] == (comm2 is not MPI.COMM_WORLD)
 
@@ -179,8 +179,8 @@ def test_isnot_commworld_2():
     @dace.program
     def isnot_commworld_2(out: dace.bool[1]):
         out[0] = MPI.COMM_NULL is not MPI.COMM_WORLD
-    
-    res = np.zeros((1,), dtype=np.bool_)
+
+    res = np.zeros((1, ), dtype=np.bool_)
     isnot_commworld_2(res)
     assert res[0] == (MPI.COMM_NULL is not MPI.COMM_WORLD)
 

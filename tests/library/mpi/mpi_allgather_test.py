@@ -22,10 +22,7 @@ def make_sdfg(dtype):
     outA = state.add_access("outA")
     allgather_node = mpi.nodes.allgather.Allgather("allgather")
 
-    state.add_memlet_path(inA,
-                          allgather_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inA, "0:n", num_accesses=n))
+    state.add_memlet_path(inA, allgather_node, dst_conn="_inbuffer", memlet=Memlet.simple(inA, "0:n", num_accesses=n))
     state.add_memlet_path(allgather_node,
                           outA,
                           src_conn="_outbuffer",

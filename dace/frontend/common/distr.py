@@ -122,21 +122,23 @@ for left_cls, right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], 
     @oprepo.replaces_operator(left_cls, 'Eq', otherclass=right_cls)
     def _eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 == op2
-    
+
     @oprepo.replaces_operator(left_cls, 'NotEq', otherclass=right_cls)
     def _noteq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 != op2
-    
+
     @oprepo.replaces_operator(left_cls, 'Is', otherclass=right_cls)
     def _is_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 is op2
-    
+
     @oprepo.replaces_operator(left_cls, 'IsNot', otherclass=right_cls)
     def _isnot_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
         return op1 is not op2
 
 
-for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'], ['Eq', 'NotEq', 'Is', 'IsNot']):
+for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'],
+                                          ['Eq', 'NotEq', 'Is', 'IsNot']):
+
     @oprepo.replaces_operator(cls_a, op, otherclass=cls_b)
     @oprepo.replaces_operator(cls_b, op, otherclass=cls_a)
     def _op_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Union[str, 'Comm'], op2: Union[str, 'Comm']):
@@ -469,7 +471,7 @@ def _send(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Intracomm', 'Send')
 def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
-                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                    dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
 
     from mpi4py import MPI
@@ -481,7 +483,7 @@ def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: '
 
 @oprepo.replaces_method('ProcessGrid', 'Send')
 def _pgrid_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`. """
 
     raise NotImplementedError('ProcessGrid.Send is not supported yet.')
@@ -689,7 +691,7 @@ def _recv(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Intracomm', 'Recv')
 def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
-                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                    src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
 
     from mpi4py import MPI

@@ -76,6 +76,7 @@ def test_mpi():
 
 ###############################################################################
 
+
 @dace.program
 def dace_send_recv(rank: dace.int32, size: dace.int32):
     src = np.full([1], (rank - 1) % size, dtype=np.int32)

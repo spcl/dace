@@ -56,14 +56,14 @@ def test_mpi(implementation, dtype):
         comm.Barrier()
 
     size = 128
-    size_per_proc = int(size/commsize)
+    size_per_proc = int(size / commsize)
     A = np.arange(0, size, dtype=np_dtype)
     B = np.full(size, 0, dtype=np_dtype)
     mpi_sdfg(inbuf=A, outbuf=B, n=size)
 
     # now B should be an array of size,
     # containing (size / size_per_proc) repeated chunked_data
-    chunked_data = A[rank * size_per_proc: (rank + 1) * size_per_proc]
+    chunked_data = A[rank * size_per_proc:(rank + 1) * size_per_proc]
     correct_data = np.tile(chunked_data, int(size / size_per_proc))
     if (not np.allclose(B, correct_data)):
         raise (ValueError("The received values are not what I expected on root."))

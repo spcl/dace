@@ -20,7 +20,7 @@ def test_comm_world_bcast():
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
-    
+
     sdfg = None
     if rank == 0:
         sdfg = comm_world_bcast.to_sdfg()
@@ -36,7 +36,7 @@ def test_comm_world_bcast():
     func(A=A)
     comm_world_bcast.f(A_ref)
 
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @pytest.mark.mpi
@@ -55,7 +55,7 @@ def test_external_comm_bcast():
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
-    
+
     sdfg = None
     if rank == 0:
         sdfg = external_comm_bcast.to_sdfg()
@@ -74,7 +74,7 @@ def test_external_comm_bcast():
     func(A=A, new_comm=new_comm.py2f())
     external_comm_bcast.f(A_ref)
 
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @pytest.mark.mpi
@@ -109,7 +109,7 @@ def test_process_grid_bcast():
     func(A=A)
     pgrid_bcast.f(A_ref)
 
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
 @pytest.mark.mpi
@@ -149,12 +149,24 @@ def test_sub_grid_bcast():
     func(A=A, rank=rank)
     subgrid_bcast.f(A_ref, rank)
 
-    assert(np.array_equal(A, A_ref))
+    assert (np.array_equal(A, A_ref))
 
 
-def initialize_3mm(b_NI: int, b_NJ: int, b_NK: int, b_NL: int, b_NM: int,
-                   ts_NI: int, ts_NJ: int, ts_NK, ts_NL: int, ts_NM: int,
-                   NI: int, NJ: int, NK: int, NL: int, NM: int,
+def initialize_3mm(b_NI: int,
+                   b_NJ: int,
+                   b_NK: int,
+                   b_NL: int,
+                   b_NM: int,
+                   ts_NI: int,
+                   ts_NJ: int,
+                   ts_NK,
+                   ts_NL: int,
+                   ts_NM: int,
+                   NI: int,
+                   NJ: int,
+                   NK: int,
+                   NL: int,
+                   NM: int,
                    datatype: type = np.float64):
 
     A = np.fromfunction(lambda i, k: b_NK + k + 1, (ts_NI, ts_NK), dtype=datatype)
@@ -206,16 +218,16 @@ def test_3mm():
             return E
 
     N = 128
-    assert(size <= 128)
-    
-    NI, NJ, NK, NL, NM = (N,) * 5
+    assert (size <= 128)
+
+    NI, NJ, NK, NL, NM = (N, ) * 5
     PNI, PNJ, PNK, PNL, PNM = 1, 2, 1, 1, 1
 
     cart_comm = commworld.Create_cart([1, size, 1])
     cart_rank = cart_comm.Get_rank()
     cart_size = cart_comm.Get_size()
     cart_coords = cart_comm.Get_coords(cart_rank)
-    
+
     ts_NI = int(np.ceil(NI / PNI))
     ts_NJ = int(np.ceil(NJ / PNJ))
     ts_NK = int(np.ceil(NJ / PNK))
@@ -240,7 +252,7 @@ def test_3mm():
     commworld.Barrier()
 
     if E_ref is not None:
-        assert(np.array_equal(E, E_ref))
+        assert (np.array_equal(E, E_ref))
 
 
 @pytest.mark.mpi
@@ -255,7 +267,7 @@ def test_isend_irecv():
         src = (rank - 1) % size
         dst = (rank + 1) % size
         req = np.empty((2, ), dtype=MPI.Request)
-        sbuf = np.full((1,), rank, dtype=np.int32)
+        sbuf = np.full((1, ), rank, dtype=np.int32)
         req[0] = commworld.Isend(sbuf, dst, tag=0)
         rbuf = np.empty((1, ), dtype=np.int32)
         req[1] = commworld.Irecv(rbuf, src, tag=0)
@@ -284,7 +296,7 @@ def test_send_recv():
     def mpi4py_send_recv(rank: dace.int32, size: dace.int32):
         src = np.full([1], (rank - 1) % size, dtype=np.int32)
         dst = np.full([1], (rank + 1) % size, dtype=np.int32)
-        sbuf = np.full((1,), rank, dtype=np.int32)
+        sbuf = np.full((1, ), rank, dtype=np.int32)
         commworld.Send(sbuf, dst, tag=0)
         rbuf = np.empty((1, ), dtype=np.int32)
         commworld.Recv(rbuf, src, tag=0)
@@ -310,7 +322,7 @@ def test_alltoall():
 
     @dace.program
     def mpi4py_alltoall(rank: dace.int32, size: dace.compiletime):
-        sbuf = np.full((size,), rank, dtype=np.int32)
+        sbuf = np.full((size, ), rank, dtype=np.int32)
         rbuf = np.zeros((size, ), dtype=np.int32)
         commworld.Alltoall(sbuf, rbuf)
         return rbuf
