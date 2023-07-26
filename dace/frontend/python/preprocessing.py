@@ -1553,7 +1553,7 @@ class ModuloConverter(ast.NodeTransformer):
         if isinstance(node.op, ast.Mod):
             left = self.generic_visit(node.left)
             right = self.generic_visit(node.right)
-            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=copy.deepcopy(right)), left)
+            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
             node.left = newleft
             return node
         return self.generic_visit(node)
