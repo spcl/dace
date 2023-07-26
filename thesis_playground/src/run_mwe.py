@@ -6,7 +6,7 @@ import copy
 from execute.parameters import ParametersProvider
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import get_programs_data, get_sdfg, read_source, optimize_sdfg, generate_arguments_fortran, \
-                          get_fortran, compare_output_all, use_cache
+                          get_fortran, compare_output_all, use_cache, reset_graph_files
 
 
 def main():
@@ -19,6 +19,10 @@ def main():
     parser.add_argument('--compare-to-fortran', default=False, action='store_true')
     parser.add_argument('--cache', default=False, action='store_true')
     parser.add_argument('--sdfg-file', type=str, default=None, help='File to read sdfg from')
+    parser.add_argument('--verbose-name',
+                        type=str,
+                        default=None,
+                        help='Foldername under which intermediate SDFGs should be stored')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -47,7 +51,11 @@ def main():
         sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_file)
     else:
         sdfg = get_sdfg(fsource, program_name)
-        optimize_sdfg(sdfg, device_map[args.device], **add_args)
+    if args.verbose_name:
+        reset_graph_files(args.verbose_name)
+        add_args['verbose_name'] = args.verbose_name
+
+    optimize_sdfg(sdfg, device_map[args.device], **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     arguments_dace = generate_arguments_fortran(args.program, f"{program_name}_routine", np.random.default_rng(42), params)
     arguments_original = copy.deepcopy(arguments_dace)

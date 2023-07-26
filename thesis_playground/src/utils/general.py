@@ -481,9 +481,11 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
 
-    change_strides(sdfg, ('NBLOCKS', ), symbols)
-    if verbose_name is not None:
-        save_graph(sdfg, verbose_name, "after_change_strides")
+    if change_stride:
+        print("[utils::general::optimize_sdfg] Change strides")
+        change_strides(sdfg, ('NBLOCKS', ), symbols)
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_change_strides")
 
     return sdfg
 
