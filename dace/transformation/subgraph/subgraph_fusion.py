@@ -439,7 +439,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             for eb in out_leaves:
                                 if ea.data.src_subset == eb.data.dst_subset:  # Equal - no data race
                                     continue
-                                print("[SubgraphFusion::can_be_applied] Rejected: Potential data race")
+                                print(f"[SubgraphFusion::can_be_applied] Rejected: Potential data race for {node}")
                                 return False  # Otherwise - potential data race
 
             for (node_data, compressible) in is_compressible.items():
@@ -1038,10 +1038,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         (in_nodes, intermediate_nodes, out_nodes) = node_config
 
-        if self.debug:
-            print("SubgraphFusion::In_nodes", in_nodes)
-            print("SubgraphFusion::Out_nodes", out_nodes)
-            print("SubgraphFusion::Intermediate_nodes", intermediate_nodes)
+        # if self.debug:
+        print("SubgraphFusion::In_nodes", in_nodes)
+        print("SubgraphFusion::Out_nodes", out_nodes)
+        print("SubgraphFusion::Intermediate_nodes", intermediate_nodes)
 
         # all maps are assumed to have the same params and range in order
         global_map = nodes.Map(label="outer_fused", params=maps[0].params, ndrange=subsets.Range(map_base_ranges))
@@ -1490,7 +1490,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # by reconnecting their adjacent edges to nodes outside the subgraph.
         for node in intermediate_nodes:
             # Checking if data are contained in the subgraph
-            if not subgraph_contains_data[node.data]:
+            if not subgraph_contains_data[node.data] and False:
                 # Find existing outer access nodes
                 inode, onode = None, None
                 for e in graph.in_edges(global_map_entry):
@@ -1502,6 +1502,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         onode = e.dst
                         break
 
+                print(f"[SubgraphFusion::apply] remove intermediate nodes, inode: {inode}, onode: {onode}")
                 to_remove = set()
 
                 # Compute the union of all incoming subsets.

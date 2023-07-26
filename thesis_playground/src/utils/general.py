@@ -487,6 +487,8 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
 
+    sdfg.validate()
+
     return sdfg
 
 
