@@ -55,6 +55,8 @@ class ScheduleTreeScope(ScheduleTreeNode):
                 child.parent = self
 
     def as_string(self, indent: int = 0):
+        if not self.children:
+            return (indent + 1) * INDENTATION + 'pass'
         return '\n'.join([child.as_string(indent + 1) for child in self.children])
 
     def preorder_traversal(self) -> Iterator['ScheduleTreeNode']:

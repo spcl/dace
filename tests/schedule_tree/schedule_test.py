@@ -73,7 +73,7 @@ def test_nesting():
         nest1(a[10:15])
         nest1(a[15:])
 
-    sdfg = main.to_sdfg()
+    sdfg = main.to_sdfg(simplify=True)
     stree = as_schedule_tree(sdfg)
 
     # Despite two levels of nesting, immediate children are the 4 for loops
@@ -150,8 +150,10 @@ def test_irreducible_sub_sdfg():
     # Add a loop following general block
     sdfg.add_loop(e, sdfg.add_state(), None, 'i', '0', 'i < 10', 'i + 1')
 
-    # TODO: Missing exit in stateif s2->e
-    # print(as_schedule_tree(sdfg).as_string())
+    stree = as_schedule_tree(sdfg)
+    node_types = [type(n) for n in stree.preorder_traversal()]
+    assert node_types.count(tn.GBlock) == 1  # Only one gblock
+    assert node_types[-1] == tn.ForScope  # Check that loop was detected
 
 
 def test_irreducible_in_loops():
@@ -176,8 +178,10 @@ def test_irreducible_in_loops():
     # Avoiding undefined behavior
     sdfg.edges_between(l3, l4)[0].data.condition.as_string = 'i >= 5'
 
-    # TODO: gblock must cover the greatest common scope its labels are in.
-    # print(as_schedule_tree(sdfg).as_string())
+    stree = as_schedule_tree(sdfg)
+    node_types = [type(n) for n in stree.preorder_traversal()]
+    assert node_types.count(tn.GBlock) == 1
+    assert node_types.count(tn.ForScope) == 2
 
 
 def test_reference():
