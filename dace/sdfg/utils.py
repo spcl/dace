@@ -1797,3 +1797,29 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
         if not sdfg.arrays[name].transient:
             warnings.warn(f'Found thread-local data "{name}" that is not transient.')
     return result
+
+
+def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    src = state.memlet_path(edge)[0].src
+    if isinstance(src, nd.AccessNode) and not sdfg.arrays[src.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.in_edges_by_connector(pnode, src.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_src(psdfg, pstate, pedge)
+    return src
+
+
+def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    dst = state.memlet_path(edge)[-1].dst
+    if isinstance(dst, nd.AccessNode) and not sdfg.arrays[dst.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.out_edges_by_connector(pnode, dst.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_dst(psdfg, pstate, pedge)
+    return dst
