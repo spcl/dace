@@ -29,7 +29,7 @@ class RunConfig:
 
     def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
                  device: dace.DeviceType = dace.DeviceType.GPU, specialise_symbols: bool = True,
-                 k_caching: bool = True):
+                 k_caching: bool = False):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
         self.device = device
