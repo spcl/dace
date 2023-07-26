@@ -20,39 +20,35 @@ def test_comm_free():
         raise ValueError("Please run this test with at least two processes.")
 
     sdfg = dace.SDFG("mpi_free_test")
-    state = sdfg.add_state("start")
+    start_state = sdfg.add_state("start")
 
     sdfg.add_scalar("color", dace.dtypes.int32, transient=False)
     sdfg.add_scalar("key", dace.dtypes.int32, transient=False)
 
-    color = state.add_read("color")
-    key = state.add_read("key")
+    color = start_state.add_read("color")
+    key = start_state.add_read("key")
 
     # color and key needs to be variable
     comm_name = sdfg.add_comm()
     comm_split_node = mpi.nodes.comm_split.Comm_split(comm_name)
 
-    state.add_edge(color, None, comm_split_node, '_color', Memlet.simple(color, "0:1", num_accesses=1))
-    state.add_edge(key, None, comm_split_node, '_key', Memlet.simple(key, "0:1", num_accesses=1))
+    start_state.add_edge(color, None, comm_split_node, '_color', Memlet.simple(color, "0:1", num_accesses=1))
+    start_state.add_edge(key, None, comm_split_node, '_key', Memlet.simple(key, "0:1", num_accesses=1))
 
     # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
     _, scal = sdfg.add_scalar(comm_name, dace.int32, transient=True)
-    wnode = state.add_write(comm_name)
-    state.add_edge(comm_split_node, "_out", wnode, None, Memlet.from_array(comm_name, scal))
+    wnode = start_state.add_write(comm_name)
+    start_state.add_edge(comm_split_node, "_out", wnode, None, Memlet.from_array(comm_name, scal))
 
-    state2 = sdfg.add_state("main")
+    main_state = sdfg.add_state("main")
 
-    sdfg.add_edge(state, state2, dace.InterstateEdge())
+    sdfg.add_edge(start_state, main_state, dace.InterstateEdge())
 
-    tasklet = state2.add_tasklet(
-        "comm_free",
-        {},
-        {},
-        f"MPI_Comm_free(&__state->{comm_name}_comm);",
-        dtypes.Language.CPP)
+    comm_free_node = mpi.nodes.comm_free.Comm_free("_Comm_free_", comm_name)
 
-    # comm_free_node = mpi.nodes.free.Free(comm_name)
-    # state2.add_node(comm_free_node)
+    comm_node = main_state.add_read(comm_name)
+    comm_desc = sdfg.arrays[comm_name]
+    main_state.add_edge(comm_node, None, comm_free_node, "_in", Memlet.from_array(comm_name, comm_desc))
 
     func = utils.distributed_compile(sdfg, comm_world)
 

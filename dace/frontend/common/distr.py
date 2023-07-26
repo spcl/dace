@@ -88,7 +88,7 @@ def _intracomm_comm_split(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessComm', 'Split')
-def _intracomm_comm_split(pv: 'ProgramVisitor',
+def processcomm_comm_split(pv: 'ProgramVisitor',
                      sdfg: SDFG,
                      state: SDFGState,
                      comm: Tuple[str, 'Comm'],
@@ -96,6 +96,27 @@ def _intracomm_comm_split(pv: 'ProgramVisitor',
                      key: Union[str, sp.Expr, Number] = 0):
     """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
     return _comm_split(pv, sdfg, state, color, key, grid=comm)
+
+
+@oprepo.replaces_method('ProcessComm', 'Free')
+def _processcomm_comm_free(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     comm: Tuple[str, 'Comm']):
+
+    from dace.libraries.mpi.nodes.comm_free import Comm_free
+
+    print(comm)
+
+    comm_free_node = Comm_free("_Comm_free_", comm)
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    comm_node = state.add_read(comm)
+    comm_desc = sdfg.arrays[comm]
+    state.add_edge(comm_node, None, comm_free_node, "_in", Memlet.from_array(comm, comm_desc))
+
+    # return value will be the name of this splited communicator
+    return f"{comm}_free"
 
 
 ##### MPI Cartesian Communicators

@@ -14,12 +14,8 @@ class ExpandFreeMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        comm = "MPI_COMM_WORLD"
-        if node.grid:
-            comm = f"__state->{node.grid}_comm"
-
         code = f"""
-            MPI_Comm_free(&{comm});
+            MPI_Comm_free(&__state->{node.grid}_comm);
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -30,7 +26,7 @@ class ExpandFreeMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Free(MPINode):
+class Comm_free(MPINode):
 
     # Global properties
     implementations = {
@@ -38,10 +34,10 @@ class Free(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    grid = dace.properties.Property(dtype=str, allow_none=False, default=None)
 
-    def __init__(self, name, grid=None, *args, **kwargs):
-        super().__init__(name, *args, inputs={}, outputs={}, **kwargs)
+    def __init__(self, name, grid, *args, **kwargs):
+        super().__init__(name, *args, inputs={"_in"}, outputs={}, **kwargs)
         self.grid = grid
 
     def validate(self, sdfg, state):
