@@ -1603,7 +1603,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     
     try:
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    except ModuleNotFoundError:
+    except (ImportError, ModuleNotFoundError):
         pass
     src_ast = ModuloConverter().visit(src_ast)
 
