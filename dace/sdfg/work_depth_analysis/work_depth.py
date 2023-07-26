@@ -89,6 +89,12 @@ def count_work_matmul(node, symbols, state):
     result *= symeval(A_memlet.data.subset.size()[-1], symbols)
     return result
 
+def count_depth_matmul(node, symbols, state):
+    # optimal depth of a matrix multiplication is O(log(size of shared dimension)):
+    A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
+    size_shared_dimension = symeval(A_memlet.data.subset.size()[-1], symbols)
+    return bigo(sp.log(size_shared_dimension))
+
 
 def count_work_reduce(node, symbols, state):
     result = 0
@@ -104,28 +110,17 @@ def count_work_reduce(node, symbols, state):
         result = 0
     return result
 
+def count_depth_reduce(node, symbols, state):
+    # optimal depth of reduction is log of the work
+    return bigo(sp.log(count_work_reduce(node, symbols, state)))
+
 
 LIBNODES_TO_WORK = {
     MatMul: count_work_matmul,
     Transpose: lambda *args: 0,
     Reduce: count_work_reduce,
+    # TODO: include more
 }
-
-
-def count_depth_matmul(node, symbols, state):
-    # For now we set it equal to work: see comments in count_depth_reduce just below
-    return count_work_matmul(node, symbols, state)
-
-
-def count_depth_reduce(node, symbols, state):
-    # depth of reduction is log2 of the work
-    # TODO: Can we actually assume this? Or is it equal to the work?
-    #       Another thing to consider is that we essetially do NOT count wcr edges as operations for now...
-
-    # return sp.ceiling(sp.log(count_work_reduce(node, symbols, state), 2))
-    # set it equal to work for now
-    return count_work_reduce(node, symbols, state)
-
 
 LIBNODES_TO_DEPTH = {
     MatMul: count_depth_matmul,
@@ -457,6 +452,10 @@ def scope_work_depth(state: SDFGState,
         elif isinstance(node, nd.Tasklet):
             # add up work for whole state, but also save work for this node in w_d_map
             t_work, t_depth = analyze_tasklet(node, state)
+            # check if tasklet has any outgoing wcr edges
+            for e in state.out_edges(node):
+                if e.data.wcr is not None:
+                    t_work += count_arithmetic_ops_code(e.data.wcr)
             work += t_work
             w_d_map[get_uuid(node, state)] = (sp.sympify(t_work), sp.sympify(t_depth))
         elif isinstance(node, nd.NestedSDFG):
@@ -510,6 +509,7 @@ def scope_work_depth(state: SDFGState,
                     traversal_q.append((node, sp.sympify(0), None))
         # this map keeps track of the length of the longest path ending at each state so far seen.
         depth_map = {}
+        wcr_depth_map = {}
         while traversal_q:
             node, in_depth, in_edge = traversal_q.popleft()
 
@@ -534,11 +534,24 @@ def scope_work_depth(state: SDFGState,
                     # replace out_edges with the out_edges of the scope exit node
                     out_edges = state.out_edges(exit_node)
                 for oedge in out_edges:
-                    traversal_q.append((oedge.dst, depth_map[node], oedge))
+                    # check for wcr
+                    wcr_depth = 0
+                    if oedge.data.wcr is not None:
+                        wcr_depth = oedge.data.volume
+                        if get_uuid(node, state) in wcr_depth_map:
+                            # max
+                            wcr_depth_map[get_uuid(node, state)] = sp.Max(wcr_depth_map[get_uuid(node, state)], wcr_depth)
+                        else:
+                            wcr_depth_map[get_uuid(node, state)] = wcr_depth
+                    # We do not need to propagate the wcr_depth to MapExits, since else this will result in depth N + 1 for Maps of range N.
+                    # But we only want N, the code line just above this comment will then take care of that.
+                    traversal_q.append((oedge.dst, depth_map[node] + (wcr_depth if not isinstance(oedge.dst, nd.MapExit) else 0), oedge))
             if len(out_edges) == 0 or node == scope_exit:
                 # We have reached an end node --> update max_depth
                 max_depth = sp.Max(max_depth, depth_map[node])
-
+    
+        for uuid in wcr_depth_map:
+            w_d_map[uuid] = (w_d_map[uuid][0], w_d_map[uuid][1] + wcr_depth_map[uuid])
     # summarise work / depth of the whole scope in the dictionary
     scope_result = (sp.simplify(work), sp.simplify(max_depth))
     w_d_map[get_uuid(state)] = scope_result
