@@ -22,17 +22,17 @@ ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 def _get_int_arg_node(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
-                     arg_name: Union[str, sp.Expr, Number]
+                     argument: Union[str, sp.Expr, Number]
                     ):
-    if isinstance(arg_name, str) and arg_name in sdfg.arrays.keys():
-        arg_name = arg_name
+    if isinstance(argument, str) and argument in sdfg.arrays.keys():
+        arg_name = argument
         arg_node = state.add_read(arg_name)
     else:
         # create a transient scalar and take its name
         arg_name = _define_local_scalar(pv, sdfg, state, dace.int32)
         arg_node = state.add_access(arg_name)
         # every tasklet is in different scope, no need to worry about name confilct
-        color_tasklet = state.add_tasklet(f'_set_{arg_name}_', {}, {'__out'}, f'__out = {arg_name}')
+        color_tasklet = state.add_tasklet(f'_set_{arg_name}_', {}, {'__out'}, f'__out = {argument}')
         state.add_edge(color_tasklet, '__out', arg_node, None, Memlet.simple(arg_node, '0'))
 
     return arg_name, arg_node
