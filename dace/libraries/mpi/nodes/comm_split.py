@@ -16,7 +16,11 @@ class ExpandCommSplitMPI(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         color, key = node.validate(parent_sdfg, parent_state)
 
-        comm = "MPI_COMM_WORLD"
+        if node.grid is None:
+            comm = "MPI_COMM_WORLD"
+        else:
+            comm = f"__state->{node.grid}_comm"
+
         comm_name = node.name
 
         node.fields = [

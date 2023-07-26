@@ -44,7 +44,8 @@ def _comm_split(pv: 'ProgramVisitor',
                 sdfg: SDFG,
                 state: SDFGState,
                 color: Union[str, sp.Expr, Number] = 0,
-                key: Union[str, sp.Expr, Number] = 0):
+                key: Union[str, sp.Expr, Number] = 0,
+                grid: str = None):
     """ Splits communicator
     """
 
@@ -53,7 +54,7 @@ def _comm_split(pv: 'ProgramVisitor',
     # fine a new comm world name
     comm_name = sdfg.add_comm()
 
-    comm_split_node = Comm_split(comm_name)
+    comm_split_node = Comm_split(comm_name, grid)
 
     _, color_node = _get_int_arg_node(pv, sdfg, state, color)
     _, key_node = _get_int_arg_node(pv, sdfg, state, key)
@@ -79,12 +80,22 @@ def _intracomm_comm_split(pv: 'ProgramVisitor',
                      color: Union[str, sp.Expr, Number] = 0,
                      key: Union[str, sp.Expr, Number] = 0):
     """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
-    # print("intracomm")
     from mpi4py import MPI
     comm_name, comm_obj = comm
     if comm_obj == MPI.COMM_WORLD:
         return _comm_split(pv, sdfg, state, color, key)
     raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+
+
+@oprepo.replaces_method('ProcessComm', 'Split')
+def _intracomm_comm_split(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     comm: Tuple[str, 'Comm'],
+                     color: Union[str, sp.Expr, Number] = 0,
+                     key: Union[str, sp.Expr, Number] = 0):
+    """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
+    return _comm_split(pv, sdfg, state, color, key, grid=comm)
 
 
 ##### MPI Cartesian Communicators

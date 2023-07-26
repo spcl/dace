@@ -119,6 +119,52 @@ def test_process_comm_split_bcast():
 
 
 @pytest.mark.mpi
+def test_nested_process_comm_split_bcast():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def nested_comm_split_bcast(rank: dace.int32, A: dace.int32[10]):
+        # from commworld to new_comm rank assignment
+        # 0 2 4 6 -> 0 1 2 3
+        # 1 3 5 7 -> 0 1 2 3
+        color = np.full((1,), rank % 2, dtype=np.int32)
+        new_comm = commworld.Split(color, rank)
+
+        # from commworld to new_comm to new_comm2 rank assignment
+        # (0,1) (4,5) -> 0 2 -> 0 1
+        # (2,3) (6,7) -> 1 3 -> 0 1
+        color2 = np.full((1,), (rank // 2) % 2, dtype=np.int32)
+        new_comm2 = new_comm.Split(color2, rank)
+        new_comm2.Bcast(A)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = nested_comm_split_bcast.to_sdfg()
+        # disable openMP section for split completeness
+        sdfg.openmp_sections = False
+    func = utils.distributed_compile(sdfg, commworld)
+
+    if rank < 4:
+        A = np.arange(rank * 10, (rank + 1) * 10, dtype=np.int32)
+        A_ref = A.copy()
+    else:
+        A = np.zeros((10, ), dtype=np.int32)
+        A_ref = A.copy()
+
+    func(rank=rank, A=A)
+    nested_comm_split_bcast.f(rank, A_ref)
+
+    assert(np.array_equal(A, A_ref))
+
+
+@pytest.mark.mpi
 def test_process_grid_bcast():
 
     from mpi4py import MPI
@@ -402,6 +448,7 @@ if __name__ == "__main__":
     test_comm_world_bcast()
     test_external_comm_bcast()
     test_process_comm_split_bcast()
+    test_nested_process_comm_split_bcast()
     test_process_grid_bcast()
     test_sub_grid_bcast()
     test_3mm()
