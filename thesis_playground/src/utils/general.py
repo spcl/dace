@@ -387,9 +387,9 @@ def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = T
         if not local_same and print_if_differ:
             print(f"Variable {key} differs")
             np.set_printoptions(precision=4)
-            print(output_a[key])
+            print(output_a[key][:,2:4,2:4,:])
             print()
-            print(output_b[key])
+            print(output_b[key][:,2:4,2:4,:])
     return same
 
 
@@ -428,7 +428,7 @@ def enable_debug_flags():
 
 def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
                   verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None,
-                  k_caching: bool = False):
+                  k_caching: bool = False, change_stride: bool = False):
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -442,11 +442,14 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
     None
     :type verbose_name: Optional[str]
+    :type symbols: Optional[Dict[str, Number]]
     :param symbols: Dictionary of key, value pairs defining symbols which can be set to const, defaults to None
     :param k_caching: If k-caching should be performed on the SDFG, only works if use_my_auto_opt=True, defaults to
     False
-    :type k_caching: boll
-    :type symbols: Optional[Dict[str, Number]]
+    :type k_caching: bool
+    :param change_stride: If the stride should be changed to favour GPU parallelisation of NBLOCKS
+    False
+    :type change_stride: bool
     """
 
     if device == dace.DeviceType.GPU:
@@ -457,7 +460,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_auto_opt")
     # avoid cyclic dependency
-    from execute.my_auto_opt import auto_optimize as my_auto_optimize
+    from execute.my_auto_opt import auto_optimize as my_auto_optimize, change_strides
     additional_args = {}
     if symbols:
         additional_args['symbols'] = symbols
@@ -477,6 +480,13 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     sdfg.apply_transformations_repeated(TrivialMapElimination)
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
+
+    if change_stride:
+        print("[utils::general::optimize_sdfg] Change strides")
+        change_strides(sdfg, ('NBLOCKS', ), symbols)
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_change_strides")
+
     return sdfg
 
 

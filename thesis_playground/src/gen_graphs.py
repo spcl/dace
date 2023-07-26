@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--debug', action='store_true', default=False, help="Configure for debug build")
     parser.add_argument('--not-specialise', action='store_true', help='Do not specialise symbols')
     parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
+    parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
     add_cloudsc_size_arguments(parser)
 
     device = dace.DeviceType.GPU
@@ -43,6 +44,7 @@ def main():
         add_args['symbols'] = params.get_dict()
 
     add_args['k_caching'] = args.k_caching
+    add_args['change_stride'] = args.change_stride
     optimize_sdfg(sdfg, device, verbose_name=args.program, **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     if not args.only_graph:

@@ -53,6 +53,8 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
+    print(f"[my_auto_opt::auto_opt] device: {device}, program: {program}, validate: {validate}, "
+          f"validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
 
     if symbols:
         specialise_symbols(sdfg, symbols)
@@ -84,8 +86,8 @@ def auto_optimize(sdfg: SDFG,
     #     if program is not None:
     #         save_graph(sdfg, program, "after_swap_loop_order")
 
-    if device == dace.DeviceType.GPU:
-        loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
+    # if device == dace.DeviceType.GPU:
+    loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         if program is not None:
@@ -108,10 +110,6 @@ def auto_optimize(sdfg: SDFG,
             save_graph(sdfg, program, "after_make_klev_outermost")
 
         k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
-
-    # change_strides(sdfg, ('NBLOCKS', ), symbols)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_change_strides")
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify(verbose=True, validate_all=True)
