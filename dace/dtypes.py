@@ -768,13 +768,12 @@ class struct(typeclass):
         return self._data
 
     def to_json(self):
+        sorted_keys = sorted(self._data.keys())
         return {
             'type': 'struct',
             'name': self.name,
-            'data': {k: v.to_json()
-                     for k, v in self._data.items()},
-            'length': {k: v
-                       for k, v in self._length.items()},
+            'data': [(k, self._data[k].to_json()) for k in sorted_keys],
+            'length': [(k, self._length[k]) for k in sorted_keys if k in self._length],
             'bytes': self.bytes
         }
 
@@ -786,8 +785,8 @@ class struct(typeclass):
         import dace.serialize  # Avoid import loop
 
         ret = struct(json_obj['name'])
-        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data'].items()}
-        ret._length = {k: v for k, v in json_obj['length'].items()}
+        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
+        ret._length = {k: v for k, v in json_obj['length']}
         ret.bytes = json_obj['bytes']
 
         return ret

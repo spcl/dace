@@ -344,13 +344,14 @@ class Data:
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
-    return {k: serialize.to_json(v) for k, v in arrays.items()}
+    sorted_keys = sorted(arrays.keys())
+    return [(k, serialize.to_json(arrays[k])) for k in sorted_keys]
 
 
 def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
-    return {k: serialize.from_json(v, context) for k, v in obj.items()}
+    return {k: serialize.from_json(v, context) for k, v in obj}
 
 
 @make_properties
