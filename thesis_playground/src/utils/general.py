@@ -456,9 +456,18 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         for k, v in sdfg.arrays.items():
             if not v.transient and type(v) == dace.data.Array:
                 v.storage = dace.dtypes.StorageType.GPU_Global
-
     if verbose_name is not None:
-        save_graph(sdfg, verbose_name, "before_auto_opt")
+        save_graph(sdfg, verbose_name, "before_optimize_sdfg")
+
+    replace_symbols_by_values(sdfg, {
+        'NCLV': '10',
+        'NCLDQI': '3',
+        'NCLDQL': '4',
+        'NCLDQS': '6',
+        'NCLDQV': '7'})
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
+
     # avoid cyclic dependency
     from execute.my_auto_opt import auto_optimize as my_auto_optimize, change_strides
     additional_args = {}
@@ -490,6 +499,32 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     sdfg.validate()
 
     return sdfg
+
+
+def replace_symbols_by_values(sdfg: SDFG, symbols_to_replace: Dict[str, str]):
+    # Promote/replace symbols
+    for sd in sdfg.all_sdfgs_recursive():
+        sd.replace_dict(symbols_to_replace)
+        if sd.parent_nsdfg_node is not None:
+            for k in symbols_to_replace.keys():
+                if k in sd.parent_nsdfg_node.symbol_mapping:
+                    del sd.parent_nsdfg_node.symbol_mapping[k]
+        for k in symbols_to_replace.keys():
+            if k in sd.symbols:
+                del sd.symbols[k]
+
+    # Verify promotion/replacement
+    for sd in sdfg.all_sdfgs_recursive():
+        assert not any(k in sd.symbols for k in symbols_to_replace.keys())
+        assert not any(k in str(s) for s in sd.free_symbols for k in symbols_to_replace.keys())
+        for state in sd.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.Tasklet):
+                    assert not any(k in node.code.as_string for k in symbols_to_replace.keys())
+                elif isinstance(node, dace.nodes.NestedSDFG):
+                    for s, m in node.symbol_mapping.items():
+                        assert not any(k in str(s) for k in symbols_to_replace.keys())
+                        assert not any(k in str(s) for s in m.free_symbols for k in symbols_to_replace.keys())
 
 
 def convert_to_seconds(value: Number, unit: str) -> float:

@@ -21,7 +21,7 @@ from dace.sdfg.utils import consolidate_edges_scope, get_view_node
 from dace.transformation.helpers import find_contiguous_subsets, nest_state_subgraph
 
 from copy import deepcopy as dcpy
-from typing import List, Union, Tuple, Optional
+from typing import List, Union, Tuple, Optional, Callable
 import warnings
 from sympy import S
 
@@ -84,6 +84,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                    desc="Changes arraysizes even if it is initialised outside the current state. "
                                         "Experimental",
                                    default=False)
+    is_map_sequential = Property(
+        dtype=Callable,
+        desc="Function to call which returns if the map should be treated as a sequential map",
+        default=lambda _: False)
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
@@ -422,25 +426,27 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # NOTE: Is it valid for a MapExit to be an output node? (empty memlet maybe?)
             outputs = set(n.data for n in out_nodes if isinstance(n, nodes.AccessNode))
             from dace.transformation.interstate import StateFusion
-            for node in in_nodes:
-                if isinstance(node, nodes.AccessNode) and node.data in outputs:
-                    matching_outputs = [n for n in out_nodes if n.data == node.data]
-                    # Overall ranges overlap: potential data race
-                    if StateFusion.memlets_intersect(graph, [node], True, graph, matching_outputs, False):
-                        # Check memlet leaves in more detail
-                        in_leaves = [l for e in graph.out_edges(node) for l in graph.memlet_tree(e).leaves()]
-                        out_leaves = [
-                            l for n in matching_outputs for e in graph.in_edges(n)
-                            for l in graph.memlet_tree(e).leaves()
-                        ]
-                        # All-pairs check. If memlets are equal then there are no races.
-                        # If they are not, and we cannot know whether they intersect or they do, we do not match.
-                        for ea in in_leaves:
-                            for eb in out_leaves:
-                                if ea.data.src_subset == eb.data.dst_subset:  # Equal - no data race
-                                    continue
-                                print(f"[SubgraphFusion::can_be_applied] Rejected: Potential data race for {node}")
-                                return False  # Otherwise - potential data race
+            # Ignore this for sequential maps.
+            if not all(self.is_map_sequential(map) for m in maps):
+                for node in in_nodes:
+                    if isinstance(node, nodes.AccessNode) and node.data in outputs:
+                        matching_outputs = [n for n in out_nodes if n.data == node.data]
+                        # Overall ranges overlap: potential data race
+                        if StateFusion.memlets_intersect(graph, [node], True, graph, matching_outputs, False):
+                            # Check memlet leaves in more detail
+                            in_leaves = [l for e in graph.out_edges(node) for l in graph.memlet_tree(e).leaves()]
+                            out_leaves = [
+                                l for n in matching_outputs for e in graph.in_edges(n)
+                                for l in graph.memlet_tree(e).leaves()
+                            ]
+                            # All-pairs check. If memlets are equal then there are no races.
+                            # If they are not, and we cannot know whether they intersect or they do, we do not match.
+                            for ea in in_leaves:
+                                for eb in out_leaves:
+                                    if ea.data.src_subset == eb.data.dst_subset:  # Equal - no data race
+                                        continue
+                                    print(f"[SubgraphFusion::can_be_applied] Rejected: Potential data race for {node}")
+                                    return False  # Otherwise - potential data race
 
             for (node_data, compressible) in is_compressible.items():
                 # we only care about disjoint subsets...
