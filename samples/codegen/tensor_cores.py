@@ -96,6 +96,8 @@ class TensorCoreCodegen(TargetCodeGenerator):
                 mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
             declaration_stream.write(f'{ctype} {name};', sdfg, state_id, node)
             
+        # Add the ctype to defined_vars so that the codegen can properly pass
+        # fragments to functions as an object reference.
         self._dispatcher.defined_vars.add(name, DefinedType.Stream, ctype)
 
     def deallocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, node: nodes.AccessNode,
