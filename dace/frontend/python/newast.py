@@ -3655,6 +3655,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     # If the symbol is a callback, but is not used in the nested SDFG, skip it
                     continue
 
+                # NOTE: Is it possible that an array in the SDFG's closure is not in the SDFG?
+                # NOTE: Perhaps its use was simplified/optimized away?
+                if aname not in sdfg.arrays:
+                    continue
+
                 # First, we do an inverse lookup on the already added closure arrays for `arr`.
                 is_new_arr = True
                 for k, v in self.nested_closure_arrays.items():
@@ -3831,6 +3836,12 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in argdict.items() if self._is_outputnode(sdfg, k)
         }
 
+        # If an argument does not register as input nor as output, put it in the inputs.
+        # This may happen with input arguments that are used to set a promoted scalar.
+        for k, v in argdict.items():
+            if k not in inputs.keys() and k not in outputs.keys():
+                inputs[k] = v
+
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
             if arrname not in names_to_replace:
@@ -3842,13 +3853,6 @@ class ProgramVisitor(ExtNodeVisitor):
             if narrname in outputs:
                 self.outputs[arrname] = (state, outputs[narrname], [])
 
-        # If an argument does not register as input nor as output,
-        # put it in the inputs.
-        # This may happen with input argument that are used to set
-        # a promoted scalar.
-        for k, v in argdict.items():
-            if k not in inputs.keys() and k not in outputs.keys():
-                inputs[k] = v
         # Unset parent inputs/read accesses that
         # turn out to be outputs/write accesses.
         for memlet in outputs.values():
