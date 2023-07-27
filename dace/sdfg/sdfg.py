@@ -710,7 +710,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if replace_in_graph:
             # Replace in inter-state edges
             for edge in self.edges():
-                edge.data.replace_dict(repldict)
+                edge.data.replace_dict(repldict, replace_keys=replace_keys)
 
             # Replace in states
             for state in self.nodes():

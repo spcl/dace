@@ -147,6 +147,7 @@ def test_edgecase_symbol_mapping():
     nsdfg.add_symbol('N', dace.int64)
     nsdfg.add_symbol('k', dace.int64)
     nstate = nsdfg.add_state()
+    nstate.add_tasklet('dosomething', {}, {}, 'print(k)', side_effects=True)
     nstate2 = nsdfg.add_state()
     nstate3 = nsdfg.add_state()
     nsdfg.add_edge(nstate, nstate2, dace.InterstateEdge(assignments={'k': 'M + 1'}))
@@ -157,13 +158,15 @@ def test_edgecase_symbol_mapping():
     stree = as_schedule_tree(sdfg)
 
     # k is reassigned internally, so that should be preserved
-    assert len(stree.children) == 2
-    assert isinstance(stree.children[0], tn.AssignNode)
-    assert stree.children[0].name == 'k'
-    assert stree.children[0].value.as_string == '(N + 1)'
+    assert len(stree.children) == 3
+    assert isinstance(stree.children[0], tn.TaskletNode)
+    assert 'M + 1' in stree.children[0].node.code.as_string
     assert isinstance(stree.children[1], tn.AssignNode)
-    assert stree.children[1].name == 'l'
-    assert stree.children[1].value.as_string in ('k', '(N + 1)')
+    assert stree.children[1].name == 'k'
+    assert stree.children[1].value.as_string == '(N + 1)'
+    assert isinstance(stree.children[2], tn.AssignNode)
+    assert stree.children[2].name == 'l'
+    assert stree.children[2].value.as_string in ('k', '(N + 1)')
 
 
 def test_clash_iteration_symbols():

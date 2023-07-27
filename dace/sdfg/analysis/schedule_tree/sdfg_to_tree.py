@@ -233,6 +233,34 @@ def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_
                        view_desc=sdfg.arrays[view_name])
 
 
+def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
+    """
+    Replaces symbol values in a nested SDFG until their value has been reset. This is used for matching symbol
+    namespaces between an SDFG and a nested SDFG.
+    """
+    from collections import defaultdict
+    from dace.transformation.passes.analysis import StateReachability
+
+    mapping = nsdfg.symbol_mapping
+    sdfg = nsdfg.sdfg
+    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]
+    redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
+
+    # Collect redefined symbols
+    for e in sdfg.edges():
+        redefined = e.data.assignments.keys()
+        redefined_symbols[e.dst] |= redefined
+        for reachable in reachable_states[e.dst]:
+            redefined_symbols[reachable] |= redefined
+
+    # Replace everything but the redefined symbols
+    for state in sdfg.nodes():
+        per_state_mapping = {k: v for k, v in mapping.items() if k not in redefined_symbols[state]}
+        symbolic.safe_replace(per_state_mapping, state.replace_dict)
+        for e in sdfg.out_edges(state):
+            symbolic.safe_replace(per_state_mapping, lambda d: e.data.replace_dict(d, replace_keys=False))
+
+
 def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
@@ -363,8 +391,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             nested_array_mapping = {}
 
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
-            # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-            symbolic.safe_replace(node.symbol_mapping, node.sdfg.replace_dict)
+            replace_symbols_until_set(node)
 
             # Create memlets for nested SDFG mapping, or nview schedule nodes if slice cannot be determined
             for e in state.all_edges(node):
