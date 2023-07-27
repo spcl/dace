@@ -124,6 +124,29 @@ def test_dealias_nested_call():
         b[:] = a
 
     @dace.program
+    def tester(a: dace.float64[40], b: dace.float64[40]):
+        nester(b[1:21], a[10:30])
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.apply_transformations_repeated(RemoveSliceView)
+
+    stree = as_schedule_tree(sdfg)
+    assert len(stree.children) == 1
+    copy = stree.children[0]
+    assert isinstance(copy, tn.CopyNode)
+    assert copy.target == 'a'
+    assert copy.memlet.data == 'b'
+    assert str(copy.memlet.src_subset) == '1:21'
+    assert str(copy.memlet.dst_subset) == '10:30'
+
+
+def test_dealias_nested_call_samearray():
+
+    @dace.program
+    def nester(a, b):
+        b[:] = a
+
+    @dace.program
     def tester(a: dace.float64[40]):
         nester(a[1:21], a[10:30])
 
@@ -136,8 +159,8 @@ def test_dealias_nested_call():
     assert isinstance(copy, tn.CopyNode)
     assert copy.target == 'a'
     assert copy.memlet.data == 'a'
-    assert str(copy.memlet.src_subset) == '10:30'
-    assert str(copy.memlet.dst_subset) == '1:21'
+    assert str(copy.memlet.src_subset) == '1:21'
+    assert str(copy.memlet.dst_subset) == '10:30'
 
 
 @pytest.mark.parametrize('simplify', (False, True))
@@ -207,5 +230,6 @@ if __name__ == '__main__':
     test_stree_copy_different_scope(False)
     test_stree_copy_different_scope(True)
     test_dealias_nested_call()
+    test_dealias_nested_call_samearray()
     test_dealias_memlet_composition()
     test_dealias_interstate_edge()
