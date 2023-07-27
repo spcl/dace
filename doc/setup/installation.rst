@@ -21,7 +21,8 @@ however, it requires two more runtime dependencies to be installed and available
 **GPU**: For NVIDIA GPUs, the CUDA toolkit is also required, and AMD GPUs require HIP. :ref:`See more information on how to configure DaCe to use AMD GPUs <amd>`.
 You may (optionally) want to install `CuPy <https://cupy.dev/>`_ for easy integration of GPU arrays in Python.
 
-**FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed.
+**FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed. 
+Note that DaCe has been tested with Intel FPGA SDK for OpenCL *Pro* edition (v19.1). It may partially support the *standard* edition of the SDK.
 
 **Distributed Computing**: If using multiple nodes, MPI has to be installed and available.
 
