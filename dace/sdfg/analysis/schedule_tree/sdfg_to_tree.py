@@ -1,4 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import defaultdict
 import copy
 from typing import Dict, List, Set
 import dace
@@ -7,8 +8,10 @@ from dace.codegen import control_flow as cf
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import utils as sdutil, graph as gr
+from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
+from dace.transformation.passes.analysis import StateReachability
 from dace.transformation.helpers import unsqueeze_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
@@ -88,7 +91,7 @@ def dealias_sdfg(sdfg: SDFG):
                             e.data.other_subset = subsets.Range.from_array(parent_arr)
 
         if replacements:
-            nsdfg.replace_dict(replacements)
+            symbolic.safe_replace(replacements, lambda d: replace_datadesc_names(nsdfg, d), value_as_string=True)
             parent_node.in_connectors = {
                 replacements[c] if c in replacements else c: t
                 for c, t in parent_node.in_connectors.items()
@@ -238,9 +241,6 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
     Replaces symbol values in a nested SDFG until their value has been reset. This is used for matching symbol
     namespaces between an SDFG and a nested SDFG.
     """
-    from collections import defaultdict
-    from dace.transformation.passes.analysis import StateReachability
-
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
     reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]

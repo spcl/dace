@@ -193,6 +193,9 @@ def test_dealias_interstate_edge():
     sdfg.validate()
     stree = as_schedule_tree(sdfg)
     nodes = list(stree.preorder_traversal())[1:]
+    assert [type(n) for n in nodes] == [tn.StateIfScope, tn.GotoNode, tn.AssignNode]
+    assert 'A[2]' in nodes[0].condition.as_string
+    assert 'B[4]' in nodes[-1].value.as_string
 
 
 if __name__ == '__main__':
