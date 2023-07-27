@@ -179,16 +179,16 @@ def remove_name_collisions(sdfg: SDFG):
         parent_node = nsdfg.parent_nsdfg_node
 
         # Preserve top-level SDFG names
+        do_not_replace = False
         if not parent_node:
-            continue
+            do_not_replace = True
 
         # Rename duplicate data containers
         for name, desc in nsdfg.arrays.items():
-
-            if not desc.transient:
-                continue
-
             if name in identifiers_seen:
+                if not desc.transient or do_not_replace:
+                    continue
+
                 new_name = data.find_new_name(name, identifiers_seen)
                 replacements[name] = new_name
                 name = new_name
@@ -200,7 +200,7 @@ def remove_name_collisions(sdfg: SDFG):
             if parent_node is not None and name in parent_node.symbol_mapping:
                 continue
 
-            if name in identifiers_seen:
+            if name in identifiers_seen and not do_not_replace:
                 new_name = data.find_new_name(name, identifiers_seen)
                 replacements[name] = new_name
                 name = new_name
@@ -208,7 +208,7 @@ def remove_name_collisions(sdfg: SDFG):
 
         # Rename duplicate constants
         for name in nsdfg.constants_prop.keys():
-            if name in identifiers_seen:
+            if name in identifiers_seen and not do_not_replace:
                 new_name = data.find_new_name(name, identifiers_seen)
                 replacements[name] = new_name
                 name = new_name
