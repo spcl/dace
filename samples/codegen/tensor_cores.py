@@ -27,6 +27,7 @@ from dace.transformation.interstate import GPUTransformSDFG
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.dispatcher import DefinedType
 from typing import Any, List
 
 # Other imports
@@ -85,14 +86,14 @@ class TensorCoreCodegen(TargetCodeGenerator):
 
         # Write a fragment based on the storage type
         if nodedesc.storage == dace.StorageType.TensorCore_Accumulator:
-            declaration_stream.write('wmma::fragment<wmma::accumulator, '
-                                     '16, 16, 16, float> {};'.format(name), sdfg, state_id, node)
+            ctype = 'wmma::fragment<wmma::accumulator, 16, 16, 16, float>'
+            declaration_stream.write(f'{ctype} {name};', sdfg, state_id, node)
         else:
-            declaration_stream.write(
-                'wmma::fragment<wmma::matrix_{mat}, '
-                '16, 16, 16, half, wmma::{maj}_major> '
-                '{name};'.format(mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj, name=name), sdfg,
-                state_id, node)
+            ctype = 'wmma::fragment<wmma::matrix_{mat}, 16, 16, 16, half, wmma::{maj}_major>'.format(
+                mat=('a' if 'A' in nodedesc.storage.name else 'b'), maj=maj)
+            declaration_stream.write(f'{ctype} {name};', sdfg, state_id, node)
+            
+        self._dispatcher.defined_vars.add(name, DefinedType.Stream, ctype)
 
     def deallocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, node: nodes.AccessNode,
                          nodedesc: dt.Array, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
