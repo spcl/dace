@@ -140,7 +140,8 @@ def test_dealias_nested_call():
     assert str(copy.memlet.dst_subset) == '1:21'
 
 
-def test_dealias_memlet_composition():
+@pytest.mark.parametrize('simplify', (False, True))
+def test_dealias_memlet_composition(simplify):
 
     def nester2(c):
         c[2] = 1
@@ -152,12 +153,11 @@ def test_dealias_memlet_composition():
     def tester(a: dace.float64[N, N]):
         nester1(a[:, 1])
 
-    # Simplifying yields a different SDFG due to views, so testing is slightly different
-    simplified = dace.Config.get_bool('optimizer', 'automatic_simplification')
-
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=simplify)
     stree = as_schedule_tree(sdfg)
-    if simplified:
+
+    # Simplifying yields a different SDFG due to views, so testing is slightly different
+    if simplify:
         assert len(stree.children) == 1
         tasklet = stree.children[0]
         assert isinstance(tasklet, tn.TaskletNode)
