@@ -77,6 +77,9 @@ class TensorCoreCodegen(TargetCodeGenerator):
     def allocate_array(self, sdfg: dace.SDFG, dfg: StateSubgraphView, state_id: int, node: nodes.AccessNode,
                        nodedesc: dt.Array, function_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream):
+        # Make sure the codegen includes the appropriate header files
+        _include_mma(sdfg)
+
         name = node.data
 
         # Based on the hardware, the total size must be 16^2
@@ -188,50 +191,29 @@ using namespace nvcuda;
         sdfg.append_global_code(global_code, 'cuda')
 
 
-@replaces('frag_fill')
-def frag_fill(pv: ProgramVisitor, sdfg: dace.SDFG, state: dace.SDFGState, frag: str, fill: Any) -> List[str]:
-    # Replacement functions receive the SDFG and the current state as the first
-    # two arguments, followed by all the other arguments. Here we treat them as
-    # two strings representing the array name to fill and what to fill it with.
+def frag_fill(frag, fill):
+    # Define a tasklet with the appropriate input and output connectors.
+    # Then we can directly emit CUDA for the tasklet.
+    with dace.tasklet(dace.Language.CPP):
+        val << fill
+        out >> frag
+        """
+        wmma::fill_fragment(out, val);
+        """
 
-    # NOTE: If a slice is used in the `frag` argument, the Python frontend
-    # automatically creates a new array for it, and uses the correct string as
-    # the argument.
-    wnode = state.add_write(frag)
-    tasklet = state.add_tasklet('fill',
-                                set(), {'out'},
-                                '''
-      wmma::fill_fragment(out, %s);''' % fill,
-                                language=dace.Language.CPP)
-
-    state.add_edge(tasklet, 'out', wnode, None, dace.Memlet.from_array(frag, wnode.desc(sdfg)))
-
-    _include_mma(sdfg)
-
-    # Function has no return value
-    return []
-
-
-@replaces('wmma')
-def wmma(pv: ProgramVisitor, sdfg: dace.SDFG, state: dace.SDFGState, a_frag: str, b_frag: str,
-         c_frag: str) -> List[str]:
-    # Implemented similarly to `frag_fill`, but with inputs and outputs.
-    anode = state.add_read(a_frag)
-    bnode = state.add_read(b_frag)
-    cnode = state.add_write(c_frag)
-    tasklet = state.add_tasklet('wmma', {'afrag', 'bfrag'}, {'cfrag'},
-                                '''
-      wmma::mma_sync(cfrag, afrag, bfrag, cfrag);''',
-                                language=dace.Language.CPP)
-
-    state.add_edge(anode, None, tasklet, 'afrag', dace.Memlet.from_array(a_frag, anode.desc(sdfg)))
-    state.add_edge(bnode, None, tasklet, 'bfrag', dace.Memlet.from_array(b_frag, bnode.desc(sdfg)))
-    state.add_edge(tasklet, 'cfrag', cnode, None, dace.Memlet.from_array(c_frag, cnode.desc(sdfg)))
-
-    _include_mma(sdfg)
-
-    # Function has no return value
-    return []
+def wmma(a_frag, b_frag, c_frag):
+    # We do the same here as we did with frag_fill. Since c_frag is used
+    # as both an input and an output, we specify two separate variables
+    # to be passed to mma_sync and declare c_frag as an input to one and
+    # an output to the other. This ensures proper dataflow.
+    with dace.tasklet(dace.Language.CPP):
+        afrag << a_frag
+        bfrag << b_frag
+        cfrag << c_frag
+        dfrag >> c_frag
+        """
+        wmma::mma_sync(dfrag, afrag, bfrag, cfrag);
+        """
 
 
 ############################################################################
