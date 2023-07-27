@@ -148,15 +148,22 @@ def test_edgecase_symbol_mapping():
     nsdfg.add_symbol('k', dace.int64)
     nstate = nsdfg.add_state()
     nstate2 = nsdfg.add_state()
+    nstate3 = nsdfg.add_state()
     nsdfg.add_edge(nstate, nstate2, dace.InterstateEdge(assignments={'k': 'M + 1'}))
+    nsdfg.add_edge(nstate2, nstate3, dace.InterstateEdge(assignments={'l': 'k'}))
 
     state2.add_nested_sdfg(nsdfg, None, {}, {}, {'N': 'M', 'M': 'N', 'k': 'M + 1'})
 
     stree = as_schedule_tree(sdfg)
-    assert len(stree.children) == 1
+
+    # k is reassigned internally, so that should be preserved
+    assert len(stree.children) == 2
     assert isinstance(stree.children[0], tn.AssignNode)
-    # TODO: "assign M + 1 = (N + 1)", target should stay "k"
-    assert str(stree.children[0].name) == 'k'
+    assert stree.children[0].name == 'k'
+    assert stree.children[0].value.as_string == '(N + 1)'
+    assert isinstance(stree.children[1], tn.AssignNode)
+    assert stree.children[1].name == 'l'
+    assert stree.children[1].value.as_string in ('k', '(N + 1)')
 
 
 def test_clash_iteration_symbols():
