@@ -362,7 +362,6 @@ class Structure(Data):
                        desc="Dictionary of structure members",
                        from_json=_arrays_from_json,
                        to_json=_arrays_to_json)
-    order = ListProperty(element_type=str, desc="Order of structure members")
     name = Property(dtype=str, desc="Structure name")
 
     def __init__(self,
@@ -375,12 +374,12 @@ class Structure(Data):
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  debuginfo: dtypes.DebugInfo = None):
 
-        self.order = order or list(members.keys())
-        if set(members.keys()) != set(self.order):
+        order = order or list(members.keys())
+        if set(members.keys()) != set(order):
             raise ValueError('Order must contain all members of the structure.')
         
         # TODO: Should we make a deep-copy here?
-        self.members = OrderedDict((k, members[k]) for k in self.order)
+        self.members = OrderedDict((k, members[k]) for k in order)
 
         for k, v in self.members.items():
             v.transient = transient
