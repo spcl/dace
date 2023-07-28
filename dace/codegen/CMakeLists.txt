@@ -106,14 +106,17 @@ include_directories(${DACE_RUNTIME_DIR}/include)
 # Global DaCe external dependencies
 find_package(Threads REQUIRED)
 find_package(OpenMP REQUIRED COMPONENTS CXX)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+
+list(APPEND DACE_LIBS Threads::Threads)
+list(APPEND DACE_LIBS OpenMP::OpenMP_CXX)
+
 add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
-set(DACE_LIBS ${DACE_LIBS} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
+
 if(DACE_ENABLE_MPI)
   find_package(MPI REQUIRED)
-  include_directories(${MPI_CXX_INCLUDE_PATH})
-  set(DACE_LIBS ${DACE_LIBS} ${MPI_CXX_LIBRARIES})
+  list(APPEND DACE_LIBS mpi)
 endif()
+
 if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
@@ -606,7 +609,7 @@ endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} ${CMAKE_THREAD_LIBS_INIT} ${OpenMP_CXX_LIBRARIES})
+target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
 
 # Windows-specific fixes
 if (MSVC_IDE)
