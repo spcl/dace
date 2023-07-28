@@ -9,6 +9,9 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(HLSLIB_PART_NAME "${DACE_XILINX_PART_NAME}")
 
+# CUDA
+set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
+
 # FPGA specific
 set(DACE_FPGA_AUTOBUILD_BITSTREAM OFF CACHE STRING "Automatically build bitstreams if they are not present.")
 
@@ -118,6 +121,19 @@ if(DACE_ENABLE_CUDA)
   set(CMAKE_CUDA_STANDARD 14)
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
+  # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
+  if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
+      execute_process(COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" "--run"
+                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
+                      OUTPUT_VARIABLE _local_arch RESULT_VARIABLE _arch_res)
+
+    if(_arch_res EQUAL 0)
+      set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
+      message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
+    else()
+      set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
+      message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+    endif()
   endif()
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
