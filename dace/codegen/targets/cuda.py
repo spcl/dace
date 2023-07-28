@@ -491,7 +491,8 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
             flags += ' ' + ' '.join('-gencode arch=compute_{arch},code=sm_{arch}'.format(arch=arch)
                                     for arch in cuda_arch)
 
-            options.append("-DCUDA_NVCC_FLAGS=\"{}\"".format(flags))
+            flags = Config.get("compiler", "cuda", "args")
+            options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
             hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')

@@ -280,8 +280,8 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-std=c++14 -O3 --use_fast_math'
+                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
                         type: str

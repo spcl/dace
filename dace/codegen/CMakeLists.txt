@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.17)
 project(dace_program)
 
 # General options
@@ -60,7 +60,7 @@ foreach(DACE_FILE ${DACE_FILES})
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
     else()
       set(DACE_ENABLE_CUDA ON)
-      set(DACE_CUDA_FILES ${DACE_CUDA_FILES} ${DACE_FILE})
+      set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
     endif()
   elseif(${DACE_FILE_TARGET} STREQUAL "xilinx")
     set(DACE_ENABLE_XILINX ON)
@@ -112,15 +112,17 @@ if(DACE_ENABLE_MPI)
   set(DACE_LIBS ${DACE_LIBS} ${MPI_CXX_LIBRARIES})
 endif()
 if(DACE_ENABLE_CUDA)
-  find_package(CUDA REQUIRED)
-  set(CUDA_PROPAGATE_HOST_FLAGS OFF)
-  include_directories(${CUDA_INCLUDE_DIRS})
-  if (MSVC_IDE)
-    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib/x64)
-  else()
-    link_directories(${CUDA_TOOLKIT_ROOT_DIR}/lib64)
+  set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
+
+  find_package(CUDAToolkit REQUIRED)
+  set(CMAKE_CUDA_STANDARD 14)
+  set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+
   endif()
-  set(DACE_LIBS ${DACE_LIBS} ${CUDA_LIBRARIES})
+
+  set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
+  enable_language(CUDA)
+  list(APPEND DACE_LIBS CUDA::cudart)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
@@ -241,38 +243,6 @@ if (DACE_ENABLE_RTL AND DACE_ENABLE_XILINX)
   set(DACE_RTLLIB_DIR ${CMAKE_SOURCE_DIR}/../external/rtllib)
   include ("${DACE_RTLLIB_DIR}/cmake/rtl_target.cmake")
 endif()
-
-# Create CUDA object files
-if(DACE_ENABLE_CUDA)
-  # Get local CUDA architectures
-  if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
-      execute_process(COMMAND "${CUDA_NVCC_EXECUTABLE}" "-ccbin" "${CMAKE_CXX_COMPILER}" "--run"
-                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
-                      OUTPUT_VARIABLE _arch_out RESULT_VARIABLE _arch_res
-                      ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-
-      if(_arch_res EQUAL 0)
-        string(REGEX REPLACE "\n" ";" _arch_out "${_arch_out}")
-        list(GET _arch_out -1 _local_arch)
-        string(REGEX REPLACE " " ";" _local_arch "${_local_arch}")
-        set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
-        message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
-      else()
-        set(LOCAL_CUDA_ARCHITECTURES "" CACHE STRING "Detected local GPUs for compilation")
-        message(STATUS "No local CUDA-capable GPUs found")
-      endif()
-  endif()
-
-  # Add flags to compile for local CUDA architectures
-  foreach(var ${LOCAL_CUDA_ARCHITECTURES})
-    list(APPEND CUDA_NVCC_FLAGS -gencode arch=compute_${var},code=sm_${var})
-  endforeach()
-
-  cuda_include_directories(${DACE_RUNTIME_DIR}/include)
-  cuda_compile(DACE_CUDA_OBJECTS ${DACE_CUDA_FILES})
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_CUDA_OBJECTS})
-endif() # DACE_ENABLE_CUDA
-
 
 # Create HIP object files
 if(DACE_ENABLE_HIP)
@@ -580,7 +550,7 @@ include("targets/mlir/mlir.cmake")
 
 # Create DaCe library file
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
-target_link_libraries(${DACE_PROGRAM_NAME} ${DACE_LIBS})
+target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
 # Add additional required files
 if(DACE_ENABLE_INTELFPGA)
@@ -599,6 +569,7 @@ if(DACE_ENABLE_INTELFPGA)
                         DEPENDS ${DACE_PROGRAM_NAME}_hardware.aocx)
   endif()
 endif()
+
 if(DACE_ENABLE_XILINX)
   if(DACE_XILINX_MODE STREQUAL "software_emulation" AND DACE_FPGA_AUTOBUILD_BITSTREAM)
     add_custom_target(autobuild_bitstream ALL
