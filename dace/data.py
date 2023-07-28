@@ -3,8 +3,9 @@ import copy as cp
 import ctypes
 import functools
 
+from collections import OrderedDict
 from numbers import Number
-from typing import Any, Dict, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy
 import sympy as sp
@@ -344,40 +345,47 @@ class Data:
 def _arrays_to_json(arrays):
     if arrays is None:
         return None
-    sorted_keys = sorted(arrays.keys())
-    return [(k, serialize.to_json(arrays[k])) for k in sorted_keys]
+    return [(k, serialize.to_json(v)) for k, v in arrays.items()]
 
 
 def _arrays_from_json(obj, context=None):
     if obj is None:
         return {}
-    return {k: serialize.from_json(v, context) for k, v in obj}
+    return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
 
 
 @make_properties
 class Structure(Data):
     """ Base class for structures. """
 
-    members = Property(dtype=dict,
+    members = Property(dtype=OrderedDict,
                        desc="Dictionary of structure members",
                        from_json=_arrays_from_json,
                        to_json=_arrays_to_json)
+    order = ListProperty(element_type=str, desc="Order of structure members")
     name = Property(dtype=str, desc="Structure name")
 
     def __init__(self,
                  members: Dict[str, Data],
+                 order: List[str] = None,
                  name: str = 'Structure',
                  transient: bool = False,
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  debuginfo: dtypes.DebugInfo = None):
+
+        self.order = order or list(members.keys())
+        if set(members.keys()) != set(self.order):
+            raise ValueError('Order must contain all members of the structure.')
+        
         # TODO: Should we make a deep-copy here?
-        self.members = members or {}
+        self.members = OrderedDict((k, members[k]) for k in self.order)
+
         for k, v in self.members.items():
             v.transient = transient
         self.name = name
-        fields_and_types = dict()
+        fields_and_types = OrderedDict()
         symbols = set()
         for k, v in members.items():
             if isinstance(v, Structure):
@@ -396,13 +404,17 @@ class Structure(Data):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:
                 raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
-        for s in symbols:
-            if str(s) in fields_and_types:
-                continue
-            if hasattr(s, "dtype"):
-                fields_and_types[str(s)] = s.dtype
-            else:
-                fields_and_types[str(s)] = dtypes.int32
+        
+        # NOTE: We will not store symbols in the dtype for now, but leaving it as a comment to investigate later.
+        # NOTE: See discussion about data/object symbols.
+        # for s in symbols:
+        #     if str(s) in fields_and_types:
+        #         continue
+        #     if hasattr(s, "dtype"):
+        #         fields_and_types[str(s)] = s.dtype
+        #     else:
+        #         fields_and_types[str(s)] = dtypes.int32
+
         dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
         shape = (1,)
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)

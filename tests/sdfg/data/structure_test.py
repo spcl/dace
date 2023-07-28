@@ -12,6 +12,7 @@ def test_read_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
 
     sdfg = dace.SDFG('csr_to_dense')
@@ -68,6 +69,7 @@ def test_write_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
 
     sdfg = dace.SDFG('dense_to_csr')
@@ -145,8 +147,10 @@ def test_local_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
     tmp_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix',
                                   transient=True)
 
@@ -254,6 +258,7 @@ def test_local_structure():
 def test_read_nested_structure():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
     wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 
@@ -315,6 +320,7 @@ def test_write_nested_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
     wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 
@@ -396,6 +402,7 @@ def test_direct_read_structure():
 
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
 
     sdfg = dace.SDFG('csr_to_dense_direct')
@@ -446,6 +453,7 @@ def test_direct_read_structure():
 def test_direct_read_nested_structure():
     M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
     wrapper_obj = dace.data.Structure(dict(csr=csr_obj), name='Wrapper')
 

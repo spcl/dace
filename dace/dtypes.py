@@ -7,6 +7,7 @@ import inspect
 import itertools
 import numpy
 import re
+from collections import OrderedDict
 from functools import wraps
 from typing import Any
 from dace.config import Config
@@ -768,12 +769,11 @@ class struct(typeclass):
         return self._data
 
     def to_json(self):
-        sorted_keys = sorted(self._data.keys())
         return {
             'type': 'struct',
             'name': self.name,
-            'data': [(k, self._data[k].to_json()) for k in sorted_keys],
-            'length': [(k, self._length[k]) for k in sorted_keys if k in self._length],
+            'data': [(k, v.to_json()) for k, v in self._data.items()],
+            'length': [(k, v) for k, v in self._length.items()],
             'bytes': self.bytes
         }
 
@@ -792,19 +792,21 @@ class struct(typeclass):
         return ret
 
     def _parse_field_and_types(self, **fields_and_types):
-        from dace.symbolic import pystr_to_symbolic
-        self._data = dict()
-        self._length = dict()
+        # from dace.symbolic import pystr_to_symbolic
+        self._data = OrderedDict()
+        self._length = OrderedDict()
         self.bytes = 0
         for k, v in fields_and_types.items():
             if isinstance(v, tuple):
                 t, l = v
                 if not isinstance(t, pointer):
                     raise TypeError("Only pointer types may have a length.")
-                sym_tokens = pystr_to_symbolic(l).free_symbols
-                for sym in sym_tokens:
-                    if str(sym) not in fields_and_types.keys():
-                        raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
+                # TODO: Do we need the free symbols of the length in the struct?
+                # NOTE: It is needed for the old use of dtype.struct. Are we deprecating that?
+                # sym_tokens = pystr_to_symbolic(l).free_symbols
+                # for sym in sym_tokens:
+                #     if str(sym) not in fields_and_types.keys():
+                #         raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
                 self._data[k] = t
                 self._length[k] = l
                 self.bytes += t.bytes
@@ -830,7 +832,7 @@ class struct(typeclass):
                 fields.append((k, v.as_ctypes()))
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
-        fields = sorted(fields, key=lambda f: f[0])
+        # fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
         struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
         _FFI_CTYPES[self] = struct_class
@@ -844,7 +846,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
+            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
         )
 
 
