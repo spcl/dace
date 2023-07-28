@@ -1,7 +1,7 @@
 aenum==3.1.12
 astunparse==1.6.3
 blinker==1.6.2
-certifi==2023.5.7
+certifi==2023.7.22
 charset-normalizer==3.1.0
 click==8.1.3
 dill==0.3.6
