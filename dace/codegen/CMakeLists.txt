@@ -114,7 +114,7 @@ add_definitions(-DDACE_BINARY_DIR=\"${CMAKE_BINARY_DIR}\")
 
 if(DACE_ENABLE_MPI)
   find_package(MPI REQUIRED)
-  list(APPEND DACE_LIBS mpi)
+  list(APPEND DACE_LIBS MPI::MPI_CXX)
 endif()
 
 if(DACE_ENABLE_CUDA)
