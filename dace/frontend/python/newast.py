@@ -40,6 +40,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
+import dace.frontend.python.numpy_replacements
 from dace.frontend.python.replacements import _sym_type, _broadcast_to
 
 # Type hints

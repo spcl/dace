@@ -73,6 +73,8 @@ class ExpandDotOpenBLAS(ExpandTransformation):
 
         try:
             func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+            if func.lower() in ('c', 'z'):
+                raise TypeError
         except TypeError as ex:
             warnings.warn(f'{ex}. Falling back to pure expansion')
             return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)

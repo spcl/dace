@@ -48,8 +48,10 @@ class ExpandGemvPure(ExpandTransformation):
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
+        # TODO: Should check if storages are compatible
         if outer_array_a.storage != outer_array_x.storage:
-            raise ValueError("Input matrices must have same storage")
+            # raise ValueError("Input matrices must have same storage")
+            warnings.warn("Input matrices must have same storage")
         storage = outer_array_a.storage
 
         _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=storage)
@@ -765,8 +767,22 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         func = func.lower() + 'gemv'
 
-        code = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {node.alpha}, _A, {lda},
-                                _x, {strides_x[0]}, {node.beta}, _y, {strides_y[0]});"""
+        alpha = f'{dtype.ctype}({node.alpha})'
+        beta = f'{dtype.ctype}({node.beta})'
+        code = ''
+        if dtype in (dace.complex64, dace.complex128):
+            code = f'''
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            alphastr = '&alpha'
+            betastr = '&beta'
+        else:
+            alphastr = alpha
+            betastr = beta
+
+        code += f"""cblas_{func}({layout}, {trans}, {m}, {n}, {alphastr}, _A, {lda},
+                                _x, {strides_x[0]}, {betastr}, _y, {strides_y[0]});"""
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

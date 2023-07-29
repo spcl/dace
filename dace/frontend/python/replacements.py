@@ -644,9 +644,9 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
 
 
 def _complex_to_scalar(complex_type: dace.typeclass):
-    if complex_type is dace.complex64:
+    if complex_type == dace.complex64:
         return dace.float32
-    elif complex_type is dace.complex128:
+    elif complex_type == dace.complex128:
         return dace.float64
     else:
         return complex_type

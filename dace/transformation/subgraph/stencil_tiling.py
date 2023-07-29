@@ -113,7 +113,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             if e.data.data not in exit_coverage:
                 exit_coverage[e.data.data] = rng
             else:
-                old_coverage = exit_coverage[e.data]
+                old_coverage = exit_coverage[e.data.data]
                 exit_coverage[e.data.data] = subsets.union(old_coverage, rng)
 
         # return both coverages as a tuple

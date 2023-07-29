@@ -109,7 +109,7 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bout = state.add_access('_aout')
 
     _, _, mx = state.add_mapped_tasklet('_eye_',
-                                        dict(i="0:n", j="0:n"), {},
+                                        dict(i=f"0:{n}", j=f"0:{n}"), {},
                                         '_out = (i == j) ? 1 : 0;',
                                         dict(_out=Memlet.simple(bin_name, 'i, j')),
                                         language=dace.dtypes.Language.CPP,

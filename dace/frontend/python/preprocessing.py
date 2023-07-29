@@ -261,6 +261,71 @@ class DeadCodeEliminator(ast.NodeTransformer):
         return node
 
 
+class FindConstants(ast.NodeVisitor):
+    """ Finds constants defined in the given AST. """
+
+    def __init__(self):
+        super().__init__()
+        self.constants = dict()
+        self.invalids = set()
+
+    
+    def visit_Assign(self, node: ast.Assign):
+        targets = []
+        for target in node.targets:
+            if isinstance(target, (ast.Tuple, ast.List)):
+                targets.extend(target.elts)
+            else:
+                targets.append(target)
+        results = []
+        if isinstance(node.value, (ast.Tuple, ast.List)):
+                results.extend(node.value.elts)
+        else:
+            results.append(node.value)
+        for target, result in zip(targets, results):
+            if isinstance(target, ast.Name):
+                if target.id not in self.constants and isinstance(result, ast.Constant):
+                    self.constants[target.id] = result.value
+                elif target.id in self.constants:
+                    self.invalids.add(target.id)
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        return self.visit_Assign(node)
+
+
+class ReplaceConstants(ast.NodeTransformer):
+    """ Replaces constants in the given AST. """
+
+    def __init__(self, constants: Dict[str, Any]):
+        super().__init__()
+        self.constants: dict[str, Any] = constants
+    
+    def visit_Assign(self, node: ast.Assign) -> Union[ast.Assign, ast.AnnAssign]:
+        indices = []
+        for i, target in enumerate(node.targets):
+            if isinstance(target, ast.Name):
+                if target.id in self.constants:
+                    indices.append(i)
+        for i in reversed(indices):
+            del node.targets[i]
+            if isinstance(node.value, (ast.Tuple, ast.List)):
+                del node.value.elts[i]
+            else:
+                del node.value
+        node = self.generic_visit(node)
+        if len(node.targets) > 0:
+            return node
+        return None
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+        return self.visit_Assign(node)
+    
+    def visit_Name(self, node: ast.Name):
+        if node.id in self.constants:
+            return ast.Constant(value=self.constants[node.id], kind=None)
+        return node          
+
+
 def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node: Optional[ast.AST] = None) -> bool:
     """
     Returns True if the function/operator replacement repository
@@ -1568,6 +1633,12 @@ def preprocess_dace_program(f: Callable[..., Any],
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
+    
+    # constant_finder = FindConstants()
+    # constant_finder.visit(src_ast)
+    # constants = {k: v for k, v in constant_finder.constants.items() if k not in constant_finder.invalids}
+    # src_ast = ReplaceConstants(constants).visit(src_ast)
+    # print(astutils.unparse(src_ast))
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:

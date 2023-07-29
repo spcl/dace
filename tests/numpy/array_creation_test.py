@@ -149,6 +149,26 @@ def test_arange_5():
 def test_arange_6():
     return np.arange(2.5, 10, 3)
 
+@compare_numpy_output(check_dtype=True)
+def test_linspace_0():
+    return np.linspace(0, 9, 10)
+
+@compare_numpy_output(check_dtype=True)
+def test_linspace_1():
+    return np.linspace(0, 9, 10, dtype=np.int32)
+
+@compare_numpy_output(check_dtype=True)
+def test_linspace_2():
+    return np.linspace(0, 10, 10)
+
+@compare_numpy_output(check_dtype=True)
+def test_linspace_3():
+    return np.linspace(0, 10, 10, endpoint=False)
+
+@compare_numpy_output(check_dtype=True)
+def test_linspace_4():
+    return np.linspace(0, 10, 10, dtype=np.int16)
+
 
 if __name__ == "__main__":
     test_empty()
@@ -173,3 +193,8 @@ if __name__ == "__main__":
     test_arange_4()
     test_arange_5()
     test_arange_6()
+    test_linspace_0()
+    test_linspace_1()
+    test_linspace_2()
+    test_linspace_3()
+    test_linspace_4()
