@@ -247,9 +247,10 @@ class Data:
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
         result = set()
-        for s in self.shape:
-            if isinstance(s, sp.Basic):
-                result |= set(s.free_symbols)
+        if self.transient:
+            for s in self.shape:
+                if isinstance(s, sp.Basic):
+                    result |= set(s.free_symbols)
         return result
 
     def __repr__(self):
@@ -695,11 +696,12 @@ class Array(Data):
         for s in self.strides:
             if isinstance(s, sp.Expr):
                 result |= set(s.free_symbols)
-        if isinstance(self.total_size, sp.Expr):
-            result |= set(self.total_size.free_symbols)
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
+        if self.transient:
+            if isinstance(self.total_size, sp.Expr):
+                result |= set(self.total_size.free_symbols)
 
         return result
 

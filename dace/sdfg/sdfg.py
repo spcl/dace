@@ -293,7 +293,7 @@ class InterstateEdge(object):
             alltypes = symbols
 
         inferred_lhs_symbols = {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
-    
+
         # Symbols in assignment keys are candidate newly defined symbols
         lhs_symbols = set()
         # Symbols already defined
@@ -303,7 +303,7 @@ class InterstateEdge(object):
             # Only add LHS to the set of candidate newly defined symbols if it has not been defined yet
             if lhs not in rhs_symbols:
                 lhs_symbols.add(lhs)
-        
+
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
     def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
@@ -593,6 +593,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         """
+
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1290,13 +1291,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         defined_syms = set()
         free_syms = set()
 
-        # Start with the set of SDFG free symbols
-        free_syms |= set(self.symbols.keys())
-
-        # Exclude data descriptor names and constants
+        # Exclude data descriptor names, constants, and shapes of global data descriptors
+        not_strictly_necessary_global_symbols = set()
         for name, desc in self.arrays.items():
             defined_syms.add(name)
+            if not desc.transient:
+                if symbolic.issymbolic(desc.total_size):
+                    not_strictly_necessary_global_symbols |= set(map(str, desc.total_size.free_symbols))
+                for s in desc.shape:
+                    if symbolic.issymbolic(s):
+                        not_strictly_necessary_global_symbols |= set(map(str, s.free_symbols))
+
         defined_syms |= set(self.constants_prop.keys())
+
+        # Start with the set of SDFG free symbols
+        free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
 
         # Add free state symbols
         used_before_assignment = set()
