@@ -134,31 +134,56 @@ def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEd
     memlet.data = data
     memlet.subset = new_subset
     memlet.other_subset = new_osubset
+    memlet._is_data_src = True
     return memlet
 
 
-def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
+def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping: Dict[str, Memlet]):
     """
     Replaces all uses of data containers in memlets and interstate edges in an SDFG.
     :param sdfg: The SDFG.
-    :param array_mapping: A mapping from internal data descriptor names to external memlets.
+    :param input_mapping: A mapping from internal data descriptor names to external input memlets.
+    :param output_mapping: A mapping from internal data descriptor names to external output memlets.
     """
     # TODO: Support Interstate edges
     for state in sdfg.states():
         for e in state.edges():
-            if e.data.data in array_mapping:
-                e.data = unsqueeze_memlet(e.data, array_mapping[e.data.data])
+            mpath = state.memlet_path(e)
+            src = mpath[0].src
+            dst = mpath[-1].dst
+            memlet = e.data
+            if isinstance(src, dace.nodes.AccessNode) and src.data in input_mapping:
+                memlet = unsqueeze_memlet(memlet, input_mapping[src.data], use_src_subset=True)
+            if isinstance(dst, dace.nodes.AccessNode) and dst.data in output_mapping:
+                memlet = unsqueeze_memlet(memlet, output_mapping[dst.data], use_dst_subset=True)
+
+            # Other cases
+            if memlet is e.data:
+                if e.data.data in input_mapping:
+                    memlet = unsqueeze_memlet(memlet, input_mapping[e.data.data])
+                elif e.data.data in output_mapping:
+                    memlet = unsqueeze_memlet(memlet, output_mapping[e.data.data])
+
+            e.data = memlet
+
     for e in sdfg.edges():
         repl_dict = dict()
         syms = e.data.read_symbols()
         for memlet in e.data.get_read_memlets(sdfg.arrays):
-            if memlet.data in array_mapping:
-                repl_dict[str(memlet)] = unsqueeze_memlet(memlet, array_mapping[memlet.data])
+            if memlet.data in input_mapping or memlet.data in output_mapping:
+                # If array name is both in the input connectors and output connectors with different
+                # memlets, this is undefined behavior. Prefer output
+                if memlet.data in input_mapping:
+                    mapping = input_mapping
+                if memlet.data in output_mapping:
+                    mapping = output_mapping
+
+                repl_dict[str(memlet)] = unsqueeze_memlet(memlet, mapping[memlet.data])
                 if memlet.data in syms:
                     syms.remove(memlet.data)
         for s in syms:
-            if s in array_mapping:
-                repl_dict[s] = str(array_mapping[s])
+            if s in input_mapping:
+                repl_dict[s] = str(input_mapping[s])
         e.data.replace_dict(repl_dict)
 
 
@@ -388,7 +413,8 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
         elif isinstance(node, dace.nodes.NestedSDFG):
-            nested_array_mapping = {}
+            nested_array_mapping_input = {}
+            nested_array_mapping_output = {}
 
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
             replace_symbols_until_set(node)
@@ -407,7 +433,10 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                     if expanded:  # "newaxis" slices will be seen as views (for now)
                         no_mapping = True
                     else:
-                        nested_array_mapping[conn] = e.data
+                        if e.dst is node:
+                            nested_array_mapping_input[conn] = e.data
+                        else:
+                            nested_array_mapping_output[conn] = e.data
 
                 if no_mapping:  # Must use view (nview = nested SDFG view)
                     result.append(
@@ -417,7 +446,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                                  src_desc=sdfg.arrays[e.data.data],
                                  view_desc=node.sdfg.arrays[conn]))
 
-            replace_memlets(node.sdfg, nested_array_mapping)
+            replace_memlets(node.sdfg, nested_array_mapping_input, nested_array_mapping_output)
 
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
