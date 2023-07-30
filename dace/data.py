@@ -243,15 +243,26 @@ class Data:
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
-    @property
-    def free_symbols(self) -> Set[symbolic.SymbolicType]:
-        """ Returns a set of undefined symbols in this data descriptor. """
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        """
+        Returns a set of symbols that are used by this data descriptor.
+
+        :param all_symbols: Include not-strictly-free symbols that are used by this data descriptor,
+                            e.g., shape and size of a global array.
+        :return: A set of symbols that are used by this data descriptor. NOTE: The results are symbolic
+                 rather than a set of strings.
+        """
         result = set()
-        if self.transient:
+        if self.transient or all_symbols:
             for s in self.shape:
                 if isinstance(s, sp.Basic):
                     result |= set(s.free_symbols)
         return result
+
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """ Returns a set of undefined symbols in this data descriptor. """
+        return self.used_symbols(all_symbols=False)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -690,20 +701,22 @@ class Array(Data):
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
-    @property
-    def free_symbols(self):
-        result = super().free_symbols
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        result = super().used_symbols(all_symbols)
         for s in self.strides:
             if isinstance(s, sp.Expr):
                 result |= set(s.free_symbols)
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
-        if self.transient:
+        if self.transient or all_symbols:
             if isinstance(self.total_size, sp.Expr):
                 result |= set(self.total_size.free_symbols)
-
         return result
+
+    @property
+    def free_symbols(self):
+        return self.used_symbols(all_symbols=False)
 
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
@@ -892,16 +905,19 @@ class Stream(Data):
 
         return True
 
-    @property
-    def free_symbols(self):
-        result = super().free_symbols
-        if isinstance(self.buffer_size, sp.Expr):
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        result = super().used_symbols(all_symbols)
+        if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
             result |= set(self.buffer_size.free_symbols)
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
 
         return result
+
+    @property
+    def free_symbols(self):
+        return self.used_symbols(all_symbols=False)
 
 
 @make_properties

@@ -1977,8 +1977,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
         self._arrays[name] = datadesc
 
-        # Add free symbols to the SDFG global symbol storage
-        for sym in datadesc.free_symbols:
+        # Add all used symbols to the SDFG global symbol storage, if not already set
+        for sym in datadesc.used_symbols(all_symbols=True):
             if sym.name not in self.symbols:
                 self.add_symbol(sym.name, sym.dtype)
 
