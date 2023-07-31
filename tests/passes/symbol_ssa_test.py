@@ -120,10 +120,10 @@ def test_loop_iter_symbol_reused_split():
     assert 'i_1' in loop_2_inc_edge.assignments['i_1']
     assert set(loop_2_inc_edge.assignments.keys()) == {'i_1'}
 
-    assert loop_1_1.free_symbols == {'i_0', 'N'}
-    assert loop_1_2.free_symbols == {'i_0', 'N'}
-    assert loop_2_1.free_symbols == {'i_1', 'N'}
-    assert loop_2_2.free_symbols == {'i_1', 'N'}
+    assert loop_1_1.free_symbols == {'i_0'}
+    assert loop_1_2.free_symbols == {'i_0'}
+    assert loop_2_1.free_symbols == {'i_1'}
+    assert loop_2_2.free_symbols == {'i_1'}
 
 
 def test_loop_iter_symbol_reused_fused():
@@ -235,10 +235,10 @@ def test_loop_iter_symbol_reused_fused():
     assert 'i_1' in loop_2_inc_edge.assignments['i_1']
     assert set(loop_2_inc_edge.assignments.keys()) == {'i_1'}
 
-    assert loop_1_1.free_symbols == {'i_0', 'N'}
-    assert loop_1_2.free_symbols == {'i_0', 'N'}
-    assert loop_2_1.free_symbols == {'i_1', 'N'}
-    assert loop_2_2.free_symbols == {'i_1', 'N'}
+    assert loop_1_1.free_symbols == {'i_0'}
+    assert loop_1_2.free_symbols == {'i_0'}
+    assert loop_2_1.free_symbols == {'i_1'}
+    assert loop_2_2.free_symbols == {'i_1'}
 
 
 def test_branch_subscope_nofission():
