@@ -44,9 +44,11 @@ def get_composite_fusion(k_caching_args: Optional[Dict[str, int]] = None):
     """
     cf = CompositeFusion()
     if k_caching_args is not None:
-        cf.max_difference_end = k_caching_args['max_difference_end']
-        cf.max_difference_start = k_caching_args['max_difference_start']
+        cf.subgraph_fusion_properties = {}
+        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential']:
+            cf.subgraph_fusion_properties[key] = k_caching_args[key]
         cf.change_init_outside = True
+
     return cf
 
 

@@ -105,10 +105,6 @@ def auto_optimize(sdfg: SDFG,
             save_graph(sdfg, program, "after_loop_to_map")
 
     if k_caching:
-        make_klev_outermost_map(sdfg, symbols)
-        if program is not None:
-            save_graph(sdfg, program, "after_make_klev_outermost")
-
         k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
 
     # Collapse maps and eliminate trivial dimensions
@@ -320,7 +316,7 @@ def apply_transformation_stepwise(sdfg: SDFG,
     :return: Number of transformations applied
     :rtype: int
     """
-    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations, permissive=True)]
+    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations)]
     count = 0
     while len(xforms) > 1:
         count += 1
@@ -328,7 +324,7 @@ def apply_transformation_stepwise(sdfg: SDFG,
         xforms[0].apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                         sdfg.sdfg_list[xforms[0].sdfg_id])
         save_graph(sdfg, program, f"after_{description}")
-        xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations, permissive=True)]
+        xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations)]
         sdfg.validate()
     return count
 
@@ -349,6 +345,14 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
     return transformation_class
 
 
+def make_klev_maps_sequential(sdfg: SDFG, symbols: Dict[str, int]):
+    # Leads to invalid SDFG with cycles (but which are empty)???
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            if node.map.range.ranges[0][1] == symbols['KLEV'] or str(node.map.range.ranges[0][1]) == 'KLEV':
+                node.map.schedule = dtypes.ScheduleType.Sequential
+
+
 def k_caching_prototype_v1(sdfg: SDFG,
                            validate: bool,
                            validate_all: bool,
@@ -362,6 +366,14 @@ def k_caching_prototype_v1(sdfg: SDFG,
         xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
     if program is not None:
         save_graph(sdfg, program, "after_force_klev_to_map")
+
+    make_klev_outermost_map(sdfg, symbols)
+    if program is not None:
+        save_graph(sdfg, program, "after_make_klev_outermost")
+
+    # make_klev_maps_sequential(sdfg, symbols)
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_make_klev_sequential")
 
     # Before MapCollapse first to allow MapFusion to work correctly
     sdfg.apply_transformations_repeated([MapCollapse])
@@ -381,8 +393,13 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_map_expansion")
 
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={'max_difference_start': 1,
-                                                                                'max_difference_end': 1})
+    greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
+        'max_difference_start': 1,
+        'max_difference_end': 1,
+        'is_map_sequential': lambda map: (str(map.range.ranges[0][1]) == 'KLEV' or map.range.ranges[0][1] ==
+                                          symbols['KLEV'])
+    })
+
     if program is not None:
         save_graph(sdfg, program, "after_greedy_fuse")
 

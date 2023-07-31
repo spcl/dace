@@ -16,6 +16,7 @@ from dace.properties import EnumProperty, make_properties, Property, ShapeProper
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
+from typing import Dict
 import copy
 import warnings
 
@@ -47,12 +48,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
     stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Stencil tile stride")
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
-    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=0)
-    max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=0)
-    change_init_outside = Property(dtype=int,
-                                   desc="Changes arraysizes even if it is initialised outside the current state. "
-                                        "Experimental",
-                                   default=False)
+    subgraph_fusion_properties = Property(
+            dtype=Dict,
+            desc="Dictionary with properties to be added to every created SubgraphFusion instance",
+            default={})
 
     def get_subgraph_fusion(self) -> SubgraphFusion:
         """
@@ -62,9 +61,8 @@ class CompositeFusion(transformation.SubgraphTransformation):
         :rtype: SubgraphFusion
         """
         sf = SubgraphFusion()
-        sf.max_difference_start = self.max_difference_start
-        sf.max_difference_end = self.max_difference_end
-        sf.change_init_outside = self.change_init_outside
+        for key, value in self.subgraph_fusion_properties.items():
+            setattr(sf, key, value)
         return sf
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
@@ -140,6 +138,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
+                sdfg.save('subgraph/after_expansion.sdfg')
 
         sf = self.get_subgraph_fusion()
         sf.setup_match(subgraph, self.sdfg_id, self.state_id)
