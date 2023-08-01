@@ -56,6 +56,11 @@ class RunConfig:
     def __len__(self):
         return len(self.pattern)
 
+    def __str__(self):
+        return f"RunConfig(pattern: {self.pattern}, use_dace_auto_opt: {self.use_dace_auto_opt}, " \
+               f"device: {self.device}, specialise_symbols: {self.specialise_symbols}, " \
+               f"k_caching: {self.k_caching}, change_stride: {self.change_stride})"
+
 
 # Copied and adapted from tests/fortran/cloudsc.py
 def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] = None) -> bool:
@@ -73,6 +78,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     :rtype: bool
     """
     assert run_config.device == dace.DeviceType.GPU
+    print(run_config)
 
     programs_data = get_programs_data()
     params = ParametersProvider(program, testing=True)

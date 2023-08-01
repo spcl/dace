@@ -34,13 +34,13 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5
     profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
                                          tot_time_repetitions=2))
     experiment_desc = "Vertical loop example"
-    profile(profile_configs, RunConfig(k_caching=False), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
             [('k_caching', "False"), ('change_strides', 'False')], ncu_report=True,
             debug_mode=debug_mode)
-    profile(profile_configs, RunConfig(k_caching=True), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=True, change_stride=False), experiment_desc,
             [('k_caching', "True"), ('change_strides', 'False')], ncu_report=True,
             debug_mode=debug_mode)
-    profile(profile_configs, RunConfig(k_caching=True, change_strides=True), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=True, change_stride=True), experiment_desc,
             [('k_caching', "True"), ('change_strides', 'True')], ncu_report=True,
             debug_mode=debug_mode)
 
