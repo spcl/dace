@@ -23,6 +23,7 @@ def main():
                         type=str,
                         default=None,
                         help='Foldername under which intermediate SDFGs should be stored')
+    parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -36,6 +37,7 @@ def main():
         add_args['symbols'] = params.get_dict()
 
     add_args['k_caching'] = args.k_caching
+    add_args['change_stride'] = args.change_stride
 
     if args.cache:
         use_cache(args.program)
@@ -55,10 +57,11 @@ def main():
         reset_graph_files(args.verbose_name)
         add_args['verbose_name'] = args.verbose_name
 
-    optimize_sdfg(sdfg, device_map[args.device], **add_args)
+    sdfg = optimize_sdfg(sdfg, device_map[args.device], **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     arguments_dace = generate_arguments_fortran(args.program, f"{program_name}_routine", np.random.default_rng(42), params)
     arguments_original = copy.deepcopy(arguments_dace)
+    print(sdfg.build_folder)
 
     if args.compare_to_fortran:
         print("Compare to fortran")

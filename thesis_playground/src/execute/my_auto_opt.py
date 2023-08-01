@@ -8,12 +8,13 @@ from dace.data import _prod
 from dace.sdfg import utils as sdutil
 from dace.sdfg import SDFG, nodes, infer_types, SDFGState
 from dace.transformation.optimizer import Optimizer
+from dace.memlet import Memlet
 
 from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_fast_implementations,\
                                                    move_small_arrays_to_stack, make_transients_persistent
 
 # Transformations
-from dace.sdfg.nodes import MapEntry
+from dace.sdfg.nodes import MapEntry, AccessNode
 from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop, \
                                          MapExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf, SwapLoopOrder
@@ -422,10 +423,55 @@ def k_caching_prototype_v1(sdfg: SDFG,
         save_graph(sdfg, program, "after_map_to_for_loop")
 
 
-def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> Dict[str, int]:
+def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> SDFG:
     # TODO: Add output about how to transform/permute the input
-    premutation = dict()
+    permutation = dict()
 
+    # Effort to try to rename all arrays, not quite working
+    # transform_state = sdfg.add_state_before(sdfg.start_state, "transform_data")
+    # original_arrays = copy.deepcopy(sdfg.arrays)
+    # # Dictionary mapping original to flipped names
+    # flipped_names_dict = {}
+    # for name, desc in original_arrays.items():
+    #     if not desc.transient:
+    #         flipped_name = f"{name}_flipped"
+    #         flipped_names_dict[name] = flipped_name
+    #         sdfg.add_array(flipped_name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
+    #                        desc.offset)
+    #         # transform_state.add_tasklet(f"flipp_{name}", name, flipped_name)
+
+    # for node, state in sdfg.all_nodes_recursive():
+    #     if isinstance(node, AccessNode) and node.data in flipped_names_dict:
+    #         print(f"change data of {node}: {node.data} -> {flipped_names_dict[node.data]}")
+    #         node.data = flipped_names_dict[node.data]
+    #         for io_edge in [*state.out_edges(node), *state.in_edges(node)]:
+    #             for e in state.memlet_tree(io_edge):
+    #                 e.data.data = node.data
+
+    # Effort to try nesting everything else inside a nsdf
+
+    # Create new SDFG and copy constants and symbols
+    original_name = sdfg.name
+    sdfg.name = "changed_strides"
+    new_sdfg = SDFG(original_name)
+    for name, value in sdfg.constants.items():
+        new_sdfg.add_constant(name, value)
+    for name, stype in sdfg.symbols.items():
+        new_sdfg.add_symbol(name, stype)
+
+    changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_state=True)
+    inputs, outputs = sdfg.read_and_write_sets()
+    nsdfg = changed_stride_state.add_nested_sdfg(sdfg, new_sdfg, inputs=inputs, outputs=outputs)
+    transform_state = new_sdfg.add_state_before(changed_stride_state, label="transform_data", is_start_state=True)
+    transform_state_back = new_sdfg.add_state_after(changed_stride_state, "transform_data_back", is_start_state=False)
+
+    # copy arrays
+    for name, desc in sdfg.arrays.items():
+        if not desc.transient:
+            new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
+                               desc.offset)
+
+    new_order = {}
     for _, name, desc in sdfg.arrays_recursive():
         shape_str = [str(s) for s in desc.shape]
         # Get index of the dimension we want to have stride 1
@@ -438,6 +484,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                 break
 
         if stride_one_idx is not None:
+            new_order[name] = [stride_one_idx]
 
             # Do I need to check if it is fortran?
             new_strides = list(desc.strides)
@@ -447,11 +494,65 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
             previous_stride = sympy.S.One
             for i in range(len(new_strides)):
                 if i != stride_one_idx:
+                    new_order[name].append(i)
                     new_strides[i] = previous_size * previous_stride
                     previous_size = desc.shape[i]
                     previous_stride = new_strides[i]
 
             desc.strides = tuple(new_strides)
+
+    # Add new flipped arrays for every non-transient array
+    flipped_names_map = {}
+    for name, desc in sdfg.arrays.items():
+        if not desc.transient:
+            flipped_name = f"{name}_flipped"
+            flipped_names_map[name] = flipped_name
+            new_sdfg.add_array(flipped_name, desc.shape, desc.dtype,
+                               desc.storage, desc.location, True,
+                               desc.strides, desc.offset)
+
+    # Deal with the inputs: Create tasklet to flip them and connect via memlets
+    for input in inputs:
+        if input in new_order:
+            flipped_data = flipped_names_map[input]
+            changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data), nsdfg,
+                                                 dst_conn=input, memlet=Memlet(data=flipped_data))
+            order = [str(i) for i in new_order[input]]
+            # TODO: What code to put here, this does result in invalid C++ code
+            tasklet = transform_state.add_tasklet(f"flipp_{input}", inputs=set((input, )), outputs=set((flipped_data, )),
+                                                  code=f"import numpy as np\n{flipped_data} = np.ndarray({input}).transpose({', '.join(order)}).copy()")
+                                                  # code=f"{flipped_data} = {input}")
+            transform_state.add_memlet_path(transform_state.add_access(input), tasklet,
+                                            dst_conn=input, memlet=Memlet(data=input))
+            transform_state.add_memlet_path(tasklet, transform_state.add_access(flipped_data),
+                                            src_conn=flipped_data, memlet=Memlet(data=flipped_data))
+    # Do the same for the outputs
+    for output in outputs:
+        if output in new_order:
+            flipped_data = flipped_names_map[output]
+            changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(flipped_data),
+                                                 src_conn=output, memlet=Memlet(data=flipped_data))
+            reverse_order = [str(new_order[output].index(i)) for i in range(len(new_order[output]))]
+            # TODO: Same problem with invalid code here, copy it for now to have valid code
+            tasklet = transform_state_back.add_tasklet(f"flipp_{output}", inputs=set((flipped_data, )), outputs=set((output, )),
+                                                       # code=f"{output} = {flipped_data}.transpose({', '.join(reverse_order)})")
+                                                       code=f"{output} = {flipped_data}")
+            transform_state_back.add_memlet_path(transform_state_back.add_access(flipped_data), tasklet,
+                                                 dst_conn=flipped_data, memlet=Memlet(data=flipped_data))
+            transform_state_back.add_memlet_path(tasklet, transform_state_back.add_access(output),
+                                                 src_conn=output, memlet=Memlet(data=output))
+    # Deal with any arrays which have not been flipped (should only be scalars). Connect them directly
+    for name, desc in sdfg.arrays.items():
+        if not desc.transient and name not in new_order:
+            if name in inputs:
+                changed_stride_state.add_memlet_path(changed_stride_state.add_access(name), nsdfg, dst_conn=name,
+                                                     memlet=Memlet(data=name))
+            if name in outputs:
+                changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(name), src_conn=name,
+                                                     memlet=Memlet(data=name))
+
+    return new_sdfg
+
 
 # Copied and apdated from the microbenchmark my Alex and Lex
 def change_strides_old(sdfg: dace.SDFG, klev_vals: Tuple[int], symbols: Dict[str, int],

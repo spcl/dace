@@ -164,7 +164,7 @@ def action_test(args):
         arguments = {k: arguments[k] for k in arguments_device}
 
         sdfg = dace_f.to_sdfg(validate=True, simplify=True)
-        optimize_sdfg(sdfg, device=dace.DeviceType.GPU, use_my_auto_opt=not args.use_dace_auto_opt)
+        sdfg = optimize_sdfg(sdfg, device=dace.DeviceType.GPU, use_my_auto_opt=not args.use_dace_auto_opt)
         csdfg = sdfg.compile()
         csdfg(**arguments_device, **symbols)
 

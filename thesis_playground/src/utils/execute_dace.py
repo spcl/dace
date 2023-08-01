@@ -93,7 +93,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
             add_args['symbols'] = params.get_dict()
         add_args['k_caching'] = run_config.k_caching
         add_args['change_stride'] = run_config.change_stride
-        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
+        sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
@@ -161,7 +161,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         additional_args['k_caching'] = run_config.k_caching
         additional_args['change_stride'] = run_config.change_stride
 
-        optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
+        sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
@@ -205,7 +205,7 @@ def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str
         add_args['symbols'] = params_dict
     add_args['k_caching'] = run_config.k_caching
     add_args['change_stride'] = run_config.change_stride
-    optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
+    sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer
     sdfg.compile()

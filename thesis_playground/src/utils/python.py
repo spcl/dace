@@ -189,5 +189,5 @@ def generate_sdfg(f: dace.frontend.python.parser.DaceProgram, symbols: Dict[str,
     if use_dace_auto_opt:
         additional_args['use_my_auto_opt'] = False
 
-    optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
+    sdfg = optimize_sdfg(sdfg, device=dace.DeviceType.GPU, **additional_args)
     return sdfg
