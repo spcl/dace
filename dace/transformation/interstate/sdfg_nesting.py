@@ -814,7 +814,8 @@ class InlineTransients(transformation.SingleStateTransformation):
         # Not every schedule is supported
         if not permissive:
             if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.GPU_Device):
+                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
+                                      dtypes.ScheduleType.GPU_Device):
                 return False
 
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
