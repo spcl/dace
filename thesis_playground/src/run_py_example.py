@@ -61,7 +61,7 @@ def main():
         out_dev = cp.asarray(out.copy())
 
         sdfg = kernel1.to_sdfg(simplity=True)
-        optimize_sdfg(sdfg, device=dace.DeviceType.GPU)
+        sdfg = optimize_sdfg(sdfg, device=dace.DeviceType.GPU)
 
         this_inputs_dev = {}
         this_inputs = {}

@@ -45,7 +45,7 @@ def main():
 
     add_args['k_caching'] = args.k_caching
     add_args['change_stride'] = args.change_stride
-    optimize_sdfg(sdfg, device, verbose_name=args.program, **add_args)
+    sdfg = optimize_sdfg(sdfg, device, verbose_name=args.program, **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     if not args.only_graph:
         sdfg.compile()

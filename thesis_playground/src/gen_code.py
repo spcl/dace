@@ -19,6 +19,8 @@ def main():
             file.write(code_object.clean_code)
             print(f"Saved code into {filename}")
 
+    print(f"Signature of SDFG: {sdfg.signature()}")
+
 
 if __name__ == '__main__':
     main()

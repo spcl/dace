@@ -387,9 +387,9 @@ def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = T
         if not local_same and print_if_differ:
             print(f"Variable {key} differs")
             np.set_printoptions(precision=4)
-            print(output_a[key][:,2:4,2:4,:])
+            print(output_a[key])
             print()
-            print(output_b[key][:,2:4,2:4,:])
+            print(output_b[key])
     return same
 
 
@@ -428,7 +428,7 @@ def enable_debug_flags():
 
 def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
                   verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None,
-                  k_caching: bool = False, change_stride: bool = False):
+                  k_caching: bool = False, change_stride: bool = False) -> SDFG:
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -450,6 +450,8 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :param change_stride: If the stride should be changed to favour GPU parallelisation of NBLOCKS
     False
     :type change_stride: bool
+    :return: Optimized SDFG
+    :rtype: SDFG
     """
 
     if device == dace.DeviceType.GPU:
@@ -492,7 +494,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
     if change_stride:
         print("[utils::general::optimize_sdfg] Change strides")
-        change_strides(sdfg, ('NBLOCKS', ), symbols)
+        sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
 

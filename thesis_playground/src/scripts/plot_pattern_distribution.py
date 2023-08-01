@@ -51,7 +51,7 @@ class PlotPatternDistribution(Script):
                     inputs = copy_to_device(inputs)
                     outputs = copy_to_device(outputs)
                     sdfg = get_sdfg(fsource, program_name)
-                    optimize_sdfg(sdfg, dace.DeviceType.GPU, use_my_auto_opt=True, symbols=params.get_dict())
+                    sdfg = optimize_sdfg(sdfg, dace.DeviceType.GPU, use_my_auto_opt=True, symbols=params.get_dict())
                     sdfg(**inputs, **outputs)
                     # this_nnz_data = {'program': program, 'pattern': pattern}
                     for var_name in outputs:

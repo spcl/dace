@@ -59,10 +59,17 @@ SUBROUTINE inner_loops(&
     REAL(KIND=JPRB) INP1(KLON, KLEV)
     REAL(KIND=JPRB) INP3(KLON, KLEV, NCLV)
     REAL(KIND=JPRB) OUT1(KLON, KLEV)
+    REAL(KIND=JPRB) TMP(KLON, KLEV)
 
     DO JK=1,KLEV
         DO JL=1,KLON
-            OUT1(JL, JK) = INP1(JL, JK) + INP3(JL, JK, NCLDQL)
+            TMP(JL, JK) = INP1(JL, JK) + INP3(JL, JK, NCLDQL)
+        ENDDO
+    ENDDO
+
+    DO JK=1,KLEV
+        DO JL=1,KLON
+            OUT1(JL, JK) = TMP(JL, JK) - INP3(JL, JK, NCLDQL)
         ENDDO
     ENDDO
 
