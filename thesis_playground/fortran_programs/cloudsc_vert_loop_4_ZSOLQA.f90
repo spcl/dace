@@ -32,7 +32,7 @@ PROGRAM vert_loop_4_ZSOLQA
     ! This could be different in memory
     REAL(KIND=JPRB) PSUPSAT(KLON, KLEV, NBLOCKS)
     REAL(KIND=JPRB) PT(KLON, KLEV, NBLOCKS)
-    REAL(KIND=JPRB) tendency_tmp_T(KLON, KLEV, NBLOCKS)
+    REAL(KIND=JPRB) TENDENCY_TMP_T(KLON, KLEV, NBLOCKS)
 
     ! in and output
     REAL(KIND=JPRB) ZSOLQA(KLON, NCLV, NCLV, NBLOCKS)
@@ -42,20 +42,21 @@ PROGRAM vert_loop_4_ZSOLQA
 
     CALL vert_loop_4_zsolqa_routine(&
         & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, NBLOCKS, &
-        & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH, PSUPSAT, PT, tendency_tmp_T, &
+        & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH, PSUPSAT, PT, TENDENCY_TMP_T, &
         & ZSOLQA, PLUDE)
 
 END PROGRAM
 ! Base on lines 1096 to 1120 and others
 SUBROUTINE vert_loop_4_zsolqa_routine(&
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, NBLOCKS, &
-    & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH_N, PSUPSAT_N, PT_N, tendency_tmp_t_N, &
+    & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH_N, PSUPSAT_N, PT_N, TENDENCY_TMP_T_N, &
     & ZSOLQA_N, PLUDE)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
     INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
 
     ! Parameters
+    INTEGER(KIND=JPIM) KLON
     INTEGER(KIND=JPIM) KLEV
     INTEGER(KIND=JPIM) NCLV
     INTEGER(KIND=JPIM) KIDIA 
@@ -83,7 +84,7 @@ SUBROUTINE vert_loop_4_zsolqa_routine(&
     ! This could be different in memory
     REAL(KIND=JPRB) PSUPSAT_N(KLON, KLEV, NBLOCKS)
     REAL(KIND=JPRB) PT_N(KLON, KLEV, NBLOCKS)
-    REAL(KIND=JPRB) tendency_tmp_t_N(KLON, KLEV, NBLOCKS)
+    REAL(KIND=JPRB) TENDENCY_TMP_T_N(KLON, KLEV, NBLOCKS)
 
     ! in and output
     REAL(KIND=JPRB) ZSOLQA_N(KLON, NCLV, NCLV, NBLOCKS)
@@ -94,7 +95,7 @@ SUBROUTINE vert_loop_4_zsolqa_routine(&
         CALL inner_loops(&
             & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
             & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU(:,:,JN), LDCUM(:,JN), PSNDE(:,:,JN), PAPH_N(:,:,JN), &
-            & PSUPSAT_N(:,:,JN), PT_N(:,:,JN), tendency_tmp_t_N(:,:,JN), &
+            & PSUPSAT_N(:,:,JN), PT_N(:,:,JN), TENDENCY_TMP_T_N(:,:,JN), &
             & ZSOLQA_N(:,:,:,JN), PLUDE(:,:,JN))
 
     ENDDO
@@ -103,7 +104,7 @@ END SUBROUTINE vert_loop_4_zsolqa_routine
 
 SUBROUTINE inner_loops(&
     & KLON, KLEV, NCLV, KIDIA, KFDIA, NCLDQS, NCLDQI, NCLDQL, NCLDTOP, &
-    & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH_N, PSUPSAT_N, PT_N, tendency_tmp_t_N, &
+    & PTSPHY, RLMIN, ZEPSEC, RG, RTHOMO, ZALFAW, PLU, LDCUM, PSNDE, PAPH_N, PSUPSAT_N, PT_N, TENDENCY_TMP_T_N, &
     & ZSOLQA, PLUDE)
 
     INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
@@ -117,13 +118,13 @@ SUBROUTINE inner_loops(&
     REAL(KIND=JPRB) ZALFAW
     REAL(KIND=JPRB) RTHOMO
     REAL(KIND=JPRB) PLU(KLON, KLEV)
-    LOGICAL LDCUM(KLON)
+    INTEGER LDCUM(KLON)
     REAL(KIND=JPRB) PSNDE(KLON, KLEV)
     REAL(KIND=JPRB) PAPH_N(KLON, KLEV+1)
     ! This could be different in memory
     REAL(KIND=JPRB) PSUPSAT_N(KLON, KLEV)
     REAL(KIND=JPRB) PT_N(KLON, KLEV)
-    REAL(KIND=JPRB) tendency_tmp_t_N(KLON, KLEV)
+    REAL(KIND=JPRB) TENDENCY_TMP_T_N(KLON, KLEV)
 
     ! in and output
     REAL(KIND=JPRB) ZSOLQA(KLON, NCLV, NCLV)
@@ -149,7 +150,7 @@ SUBROUTINE inner_loops(&
     ! Loop from line 657
     DO JK=1,KLEV
         DO JL=KIDIA,KFDIA
-            ZTP1(JL,JK)        = PT_N(JL,JK)+PTSPHY*tendency_tmp_t_N(JL,JK)
+            ZTP1(JL,JK)        = PT_N(JL,JK)+PTSPHY*TENDENCY_TMP_T_N(JL,JK)
         ENDDO
     ENDDO
     ! To line 665
@@ -180,7 +181,7 @@ SUBROUTINE inner_loops(&
 
                 PLUDE(JL,JK)=PLUDE(JL,JK)*ZDTGDP(JL)
 
-                IF(LDCUM(JL).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
+                IF((LDCUM(JL) > 0.5).AND.PLUDE(JL,JK) > RLMIN.AND.PLU(JL,JK+1)> ZEPSEC) THEN
                     ZCONVSRCE(JL,NCLDQL) = ZALFAW*PLUDE(JL,JK)
                     ZCONVSRCE(JL,NCLDQI) = (1.0 - ZALFAW)*PLUDE(JL,JK)
                     ZSOLQA(JL,NCLDQL,NCLDQL) = ZSOLQA(JL,NCLDQL,NCLDQL)+ZCONVSRCE(JL,NCLDQL)
@@ -191,7 +192,7 @@ SUBROUTINE inner_loops(&
 
                 ENDIF
                 ! *convective snow detrainment source
-                IF (LDCUM(JL)) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
+                IF (LDCUM(JL)>0.5) ZSOLQA(JL,NCLDQS,NCLDQS) = ZSOLQA(JL,NCLDQS,NCLDQS) + PSNDE(JL,JK)*ZDTGDP(JL)
             ENDDO
         ENDIF
     ENDDO ! on vertical level JK
