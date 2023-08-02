@@ -212,8 +212,7 @@ class InterstateEdge(object):
 
         return result
 
-    @property
-    def free_symbols(self) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
         # NOTE: The former algorithm for computing an edge's free symbols was:
         #       `self.read_symbols() - set(self.assignments.keys())`
@@ -240,6 +239,11 @@ class InterstateEdge(object):
                 lhs_symbols.add(lhs)
         # Return the set of candidate free symbols minus the set of candidate defined symbols
         return (cond_symbols | rhs_symbols) - lhs_symbols
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this edge's properties. """
+        return self.used_symbols(all_symbols=True)
 
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
@@ -1278,15 +1282,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    @property
-    def free_symbols(self) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
         """
         Returns a set of symbol names that are used by the SDFG, but not
         defined within it. This property is used to determine the symbolic
-        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
+        parameters of the SDFG.
 
-        :note: Assumes that the graph is valid (i.e., without undefined or
-               overlapping symbols).
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
         """
         defined_syms = set()
         free_syms = set()
@@ -1295,17 +1298,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         not_strictly_necessary_global_symbols = set()
         for name, desc in self.arrays.items():
             defined_syms.add(name)
-            if not desc.transient:
-                if symbolic.issymbolic(desc.total_size):
-                    not_strictly_necessary_global_symbols |= set(map(str, desc.total_size.free_symbols))
-                for s in desc.shape:
-                    if symbolic.issymbolic(s):
-                        not_strictly_necessary_global_symbols |= set(map(str, s.free_symbols))
+
+            used_desc_symbols = desc.used_symbols(all_symbols)
+            if not all_symbols:
+                not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
+                not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
+            free_syms.update(set(map(str, used_desc_symbols)))
 
         defined_syms |= set(self.constants_prop.keys())
 
         # Start with the set of SDFG free symbols
-        free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
+        if all_symbols:
+            free_syms |= set(self.symbols.keys())
+        else:
+            free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
 
         # Add free state symbols
         used_before_assignment = set()
@@ -1316,14 +1322,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             ordered_states = self.nodes()
 
         for state in ordered_states:
-            free_syms |= state.free_symbols
+            free_syms |= state.used_symbols(all_symbols)
 
             # Add free inter-state symbols
             for e in self.out_edges(state):
                 # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
                 # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
                 # compute the symbols that are used before being assigned.
-                efsyms = e.data.free_symbols
+                efsyms = e.data.used_symbols(all_symbols)
                 defined_syms |= set(e.data.assignments.keys()) - efsyms
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
@@ -1333,6 +1339,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """
+        Returns a set of symbol names that are used by the SDFG, but not
+        defined within it. This property is used to determine the symbolic
+        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
+
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        return self.used_symbols(all_symbols=True)
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
@@ -1382,8 +1400,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if not v.transient and isinstance(v, dt.Scalar) and not k.startswith('__dace')
         }
 
-        # Add global free symbols to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.free_symbols
+        # Add global free symbols used in the generated code to scalar arguments
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary

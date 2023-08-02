@@ -262,7 +262,7 @@ class Data:
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        return self.used_symbols(all_symbols=False)
+        return self.used_symbols(all_symbols=True)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -716,7 +716,7 @@ class Array(Data):
 
     @property
     def free_symbols(self):
-        return self.used_symbols(all_symbols=False)
+        return self.used_symbols(all_symbols=True)
 
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
@@ -917,7 +917,7 @@ class Stream(Data):
 
     @property
     def free_symbols(self):
-        return self.used_symbols(all_symbols=False)
+        return self.used_symbols(all_symbols=True)
 
 
 @make_properties
