@@ -4,6 +4,7 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 import dace
+import sympy
 
 from utils.print import print_with_time
 from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_performance, get_achieved_work, \
@@ -27,6 +28,7 @@ class ProfileConfig:
     sizes: List[ParametersProvider]
     set_heap_limit: bool
     heap_limit_str: str
+    heap_limit_expr: Optional[sympy.core.expr.Expr]
     tot_time_repetitions: int
     ncu_repetitions: int
     ignore_action_re: Optional[str]
@@ -34,6 +36,7 @@ class ProfileConfig:
 
     def __init__(self, program: str, sizes: List[ParametersProvider], size_identifiers: List[str],
                  set_heap_limit: bool = False, heap_limit_str: str = '',
+                 heap_limit_expr: Optional[sympy.core.expr.Expr] = None,
                  tot_time_repetitions: int = 5, ncu_repetitions: int = 3,
                  ignore_action_re: Optional[str] = None):
         """
@@ -50,6 +53,9 @@ class ProfileConfig:
         :type set_heap_limit: bool, optional
         :param heap_limit_str: If heap limit is set, string describing it size, defaults to ''
         :type heap_limit_str: str, optional
+        :param heap_limit_expr: Sympy expression for the heap limit, can be given as an alternative to the string,
+        defaults to None
+        :type heap_limit_expr: Optional[sympy.core.expr.Expr]
         :param tot_time_repetitions: Number of repetitions for total runtime, defaults to 5
         :type tot_time_repetitions: int, optional
         :param ncu_repetitions: Number of repetitions for ncu measurements, defaults to 3
@@ -62,6 +68,7 @@ class ProfileConfig:
         self.size_identifiers = size_identifiers
         self.set_heap_limit = set_heap_limit
         self.heap_limit_str = heap_limit_str
+        self.heap_limit_expr = heap_limit_expr
         self.tot_time_repetitions = tot_time_repetitions
         self.ncu_repetitions = ncu_repetitions
         self.ignore_action_re = ignore_action_re
@@ -113,7 +120,9 @@ class ProfileConfig:
     def compile(self, params: ParametersProvider, run_config: RunConfig,
                 specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
         """
-        Compiles the program for the given parameters and run config
+        Compiles the program for the given parameters and run config. If heap_limit_str or heap_limit_expr is set and
+        set_heap_limit is True, will insert the heap_limit_str into the code. If heap_limit_expr is given the
+        heap_limit_str will be set to the evaluated expression given the parameters dict.
 
         :param params: The Parameters to use
         :type params: ParametersProvider
@@ -135,10 +144,12 @@ class ProfileConfig:
                 del params_dict[symbol]
         sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
-            if self.heap_limit_str == "":
-                print("WARNING: Should set heap string, but it is empty")
+            if self.heap_limit_str == "" and self.heap_limit_expr is None:
+                print("WARNING: Should set heap string or expression, but both are empty")
             else:
                 programs = get_programs_data()['programs']
+                if self.heap_limit_expr is not None:
+                    self.heap_limit_str = self.heap_limit_expr.evalf(subs=params.get_dict())
                 insert_heap_size_limit(f"{programs[self.program]}_routine", self.heap_limit_str,
                                        debug_prints=debug_mode)
             use_cache(self.program)
