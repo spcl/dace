@@ -1800,6 +1800,14 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
 
 
 def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global source node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global source node for.
+    :return: The global source node of the edge.
+    """
     src = state.memlet_path(edge)[0].src
     if isinstance(src, nd.AccessNode) and not sdfg.arrays[src.data].transient and sdfg.parent is not None:
         psdfg = sdfg.parent_sdfg
@@ -1813,6 +1821,14 @@ def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
 
 
 def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global destination node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global destination node for.
+    :return: The global destination node of the edge.
+    """
     dst = state.memlet_path(edge)[-1].dst
     if isinstance(dst, nd.AccessNode) and not sdfg.arrays[dst.data].transient and sdfg.parent is not None:
         psdfg = sdfg.parent_sdfg
