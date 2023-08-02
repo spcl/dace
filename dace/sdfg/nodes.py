@@ -628,8 +628,8 @@ class NestedSDFG(CodeNode):
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).
-            if isinstance(desc, data.Scalar):
-                continue
+            # if isinstance(desc, data.Scalar):
+            #     continue
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
