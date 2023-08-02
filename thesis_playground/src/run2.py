@@ -8,6 +8,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import json
+import sympy
 
 from utils.print import print_dataframe, print_with_time
 from utils.execute_dace import RunConfig, test_program
@@ -72,8 +73,9 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
             debug_mode=debug_mode)
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
-        profile_config.heap_limit_str = "(KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) +" + \
-                                        "KLON * (KLEV - 1) + 4 * KLON"
+        KLON, NCLV, KLEV = sympy.symbols("KLON NCLV KLEV")
+        profile_config.heap_limit_expr = (KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) + \
+            KLON * (KLEV - 1) + 4 * KLON
     print_with_time("[run2::do_vertical_loops] run heap profile")
     profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc, [('temp allocation', 'heap')],
             ncu_report=True, debug_mode=debug_mode)
