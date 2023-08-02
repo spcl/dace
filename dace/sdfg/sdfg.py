@@ -1299,11 +1299,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for name, desc in self.arrays.items():
             defined_syms.add(name)
 
-            used_desc_symbols = desc.used_symbols(all_symbols)
             if not all_symbols:
+                used_desc_symbols = desc.used_symbols(all_symbols)
                 not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
                 not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
-            free_syms.update(set(map(str, used_desc_symbols)))
 
         defined_syms |= set(self.constants_prop.keys())
 
