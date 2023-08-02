@@ -98,7 +98,7 @@ def test_refine_interstate():
     assert np.allclose(B, lower.T + lower - diag)
 
 
-def test_free_sybmols_only_by_indices():
+def test_free_symbols_only_by_indices():
     i = dace.symbol('i')
     idx_a = dace.symbol('idx_a')
     idx_b = dace.symbol('idx_b')
@@ -132,4 +132,4 @@ def test_free_sybmols_only_by_indices():
 if __name__ == '__main__':
     test_refine_dataflow()
     test_refine_interstate()
-    test_free_sybmols_only_by_indices()
+    test_free_symbols_only_by_indices()
