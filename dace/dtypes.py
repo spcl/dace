@@ -1203,6 +1203,7 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
+MPI_Request = opaque('MPI_Request')
 
 
 @undefined_safe_enum
