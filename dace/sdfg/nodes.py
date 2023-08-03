@@ -634,6 +634,24 @@ class NestedSDFG(CodeNode):
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+        
+        # Validate inout connectors
+        from dace.sdfg import utils  # Avoids circular import
+        inout_connectors = self.in_connectors.keys() & self.out_connectors.keys()
+        for conn in inout_connectors:
+            inputs = set()
+            outputs = set()
+            for edge in state.in_edges_by_connector(self, conn):
+                src = utils.get_global_memlet_path_src(sdfg, state, edge)
+                if isinstance(src, AccessNode):
+                    inputs.add(src.data)
+            for edge in state.out_edges_by_connector(self, conn):
+                dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
+                if isinstance(dst, AccessNode):
+                    outputs.add(dst.data)
+            if len(inputs - outputs) > 0:
+                raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
+                                 f"output ({outputs}) arrays")
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
