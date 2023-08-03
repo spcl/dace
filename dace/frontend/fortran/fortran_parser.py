@@ -463,6 +463,7 @@ class AST_translator:
                                 if i.type == "ALL":
                                     shape.append(array.shape[indices])
                                     mysize = mysize * array.shape[indices]
+                                    index_list.append(None)
                                 else:
                                     raise NotImplementedError("Index in ParDecl should be ALL")
                             else:
@@ -492,7 +493,8 @@ class AST_translator:
                                                            offset=offsets_zero)
                             from dace import subsets
 
-                            all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
+                            # all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
+                            all_indices = index_list
                             subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
                                                     for i, s in zip(all_indices, array.shape)])
                             smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
