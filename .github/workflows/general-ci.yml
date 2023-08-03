@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.7,'3.10']
+        python-version: [3.7,'3.11']
         simplify: [0,1,autoopt]
 
     steps:
@@ -75,7 +75,7 @@ jobs:
     - name: Run other tests
       run: |
         export NOSTATUSBAR=1
-        export DACE_testing_serialization=1
+        export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}

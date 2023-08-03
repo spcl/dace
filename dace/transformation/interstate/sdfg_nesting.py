@@ -249,8 +249,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
-        if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
-            infer_types.set_default_schedule_and_storage_types(nsdfg, nsdfg_node.schedule)
+        if nsdfg_node.schedule != dtypes.ScheduleType.Default:
+            infer_types.set_default_schedule_and_storage_types(nsdfg, [nsdfg_node.schedule])
 
         nsdfg_scope_entry = state.entry_node(nsdfg_node)
         nsdfg_scope_exit = (state.exit_node(nsdfg_scope_entry) if nsdfg_scope_entry is not None else None)
@@ -773,8 +773,8 @@ class InlineTransients(transformation.SingleStateTransformation):
             if not desc.transient:
                 continue
             # Needs to be allocated in "Scope" or "Persistent" lifetime
-            if (desc.lifetime != dtypes.AllocationLifetime.Scope
-                    and desc.lifetime != dtypes.AllocationLifetime.Persistent):
+            if (desc.lifetime not in (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.Persistent,
+                                      dtypes.AllocationLifetime.External)):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now

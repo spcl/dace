@@ -563,8 +563,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     parent_object = value.__self__
 
                 # If it is a callable object
+                # NumPy array dispatchers have an _implementation field and are NOT regarded as functions by Python
                 if (not inspect.isfunction(value) and not inspect.ismethod(value) and not inspect.isbuiltin(value)
-                        and hasattr(value, '__call__')):
+                        and hasattr(value, '__call__') and not hasattr(value, '_implementation')):
                     parent_object = value
                     value = value.__call__
 
@@ -878,6 +879,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         self.globals: Dict[str, Any] = globals
         self.filename = filename
         self.resolver = closure_resolver
+        self.names: Set[str] = set()
 
     def _visit_node_with_body(self, node):
         node = self.generic_visit_filtered(node, {'body'})
@@ -936,9 +938,10 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
                                  'evaluatable context managers are supported.')
 
             # Create manager as part of closure
-            mgr_name = f'__with_{node.lineno}_{i}' if len(node.items) > 1 else f'__with_{node.lineno}'
+            mgr_name = data.find_new_name(f'__with_{item.context_expr.qualname if hasattr(item.context_expr, "qualname") else item.context_expr.id}', self.names)
             mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
             ctx_mgr_names.append((mgr.id, ctxmgr))
+            self.names.add(mgr_name)
 
             # Call __enter__
             enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)

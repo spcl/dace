@@ -692,6 +692,13 @@ def _log(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
 
+@oprepo.replaces('log10')
+@oprepo.replaces('dace.log10')
+@oprepo.replaces('math.log10')
+def _log10(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
+    return _simple_call(sdfg, state, input, 'log10')
+
+
 @oprepo.replaces('math.floor')
 def _floor(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'floor', restype=dtypes.typeclass(int))

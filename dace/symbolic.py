@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -358,6 +358,14 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
             sval.get() if isinstance(sval, symbol) else sval
             for sname, sval in symbols.items()}
+
+    # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
+    syms = {
+        k: v
+        for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
+    }
+    # Convert strings to SymPy symbols (for SymPy 1.12)
+    syms = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in syms.items()}
 
     return expr.subs(syms)
 

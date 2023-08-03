@@ -270,7 +270,7 @@ bfs.validate()
 def test_persistent_fusion():
     sdfg = bfs
 
-    sdfg.apply_gpu_transformations()
+    sdfg.apply_gpu_transformations(validate=False, simplify=False)  # Only validate after fusion
 
     # All nodes but copy-in, copy-out, and init
     content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0], s_init}
@@ -319,7 +319,6 @@ def test_persistent_fusion():
     sdfg(row_index=G_row, col_index=G_col, result=depth, root=srcnode, N=V, nnz=E)
 
     assert np.allclose(depth, reference), "Result doesn't match!"
-    print("Complete.")
 
 
 # Actual execution
