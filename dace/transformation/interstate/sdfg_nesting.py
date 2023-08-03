@@ -595,7 +595,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
-
+        
         sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
     def _modify_access_to_access(self,
@@ -934,12 +934,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # For now we only detect one element
-                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
-                    if e.data.data not in write_set:
-                        # Skip data which is not in the read and write set of the state -> there also won't be a
-                        # connector
-                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
@@ -955,10 +950,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
-                    if e.data.data not in read_set:
-                        # Skip data which is not in the read and write set of the state -> there also won't be a
-                        # connector
-                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
@@ -974,21 +965,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # Check read memlets in interstate edges for candidates
-        for e in nsdfg.sdfg.edges():
-            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
-                # If more than one unique element detected, remove from candidates
-                if m.data in in_candidates:
-                    memlet, ns, indices = in_candidates[m.data]
-                    # Try to find dimensions in which there is a mismatch and remove them from list
-                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
-                        if s1 != s2 and i in indices:
-                            indices.remove(i)
-                    if len(indices) == 0:
-                        ignore.add(m.data)
-                    in_candidates[m.data] = (memlet, ns, indices)
-                    continue
-                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
+        # TODO: Check in_candidates in interstate edges as well
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
@@ -1018,7 +995,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if nstate is not None and len(nstate.ranges) > 0:
+                if len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
@@ -1040,7 +1017,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1063,7 +1040,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
-        print(f"[RefineNestedAccess::apply] {nsdfg_node.label}, in: {torefine_in}, out: {torefine_out}")
 
         refined = set()
 
@@ -1112,8 +1088,14 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges
+        if nsdfg.label == 'loop_body_14':
+            sdfg.save('refine_nested_access/0_before_offset_refine_in.sdfg')
         _offset_refine(torefine_in, state.in_edges_by_connector)
+        if nsdfg.label == 'loop_body_14':
+            sdfg.save('refine_nested_access/10_after_offset_refine_in.sdfg')
         _offset_refine(torefine_out, state.out_edges_by_connector)
+        if nsdfg.label == 'loop_body_14':
+            sdfg.save('refine_nested_access/20_after_offset_refine_out.sdfg')
 
         # Propagate the State Memlets
         propagation.propagate_memlets_state(sdfg, state)
