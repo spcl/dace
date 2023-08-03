@@ -26,20 +26,20 @@ ntype = np.float64
 
 @dace.program
 def map_loop(inp: dtype[NBLOCKS, KLEV], out: dtype[NBLOCKS, KLEV]):
-    tmp = np.zeros(([NBLOCKS, KLEV]), dtype=ntype)
-    # tmp = dace.define_local([NBLOCKS, KLEV], dtype)
+    # tmp = np.zeros(([NBLOCKS, KLEV]), dtype=ntype)
+    tmp = np.zeros(([NBLOCKS, 3]), dtype=ntype)
     for i in dace.map[0:NBLOCKS]:
         # tmp[i, 0] = inp[i, 0]
         # tmp[i, 1] = (inp[i, 0] + inp[i, 1]) * 2
         for j in range(2, KLEV):
-            tmp[i, j] = (inp[i, j] + inp[i, j - 1] + inp[i, j - 2]) * 3
-            out[i, j] = (tmp[i, j] + tmp[i, j - 1] + tmp[i, j - 2]) * 3
+            tmp[i, j % 3] = (inp[i, j] + inp[i, j - 1] + inp[i, j - 2]) * 3
+            out[i, j] = (tmp[i, j % 3] + tmp[i, (j - 1) % 3] + tmp[i, (j - 2) %3]) * 3
 
 
 @dace.program
 def map_loop2(inp: dtype[KLEV, NBLOCKS], out: dtype[KLEV, NBLOCKS]):
+    # tmp = np.zeros(([KLEV, NBLOCKS]), dtype=ntype)
     tmp = np.zeros(([3, NBLOCKS]), dtype=ntype)
-    # tmp = dace.define_local([KLEV, NBLOCKS], dtype)
     for i in dace.map[0:NBLOCKS]:
         # tmp[0, i] = inp[0, i]
         # tmp[1, i] = (inp[0, i] + inp[1, i]) * 2
@@ -248,8 +248,12 @@ if __name__ == "__main__":
 
     sdfg3 = map_loop.to_sdfg(simplify=True)
     sdfg3.name = 'map_loop3'
+<<<<<<< HEAD
     perm = change_strides(sdfg3, (KLEV, KLEV+1))
     print(f"change strides: {perm}")
+=======
+    perm = change_strides(sdfg3, (3, KLEV, KLEV+1))
+>>>>>>> upstream/fortran_frontend_candidate_2
     sdfg3.arrays['inp'].storage = dace.StorageType.GPU_Global
     sdfg3.arrays['tmp'].storage = dace.StorageType.GPU_Global
     sdfg3.arrays['out'].storage = dace.StorageType.GPU_Global
@@ -280,7 +284,11 @@ if __name__ == "__main__":
         # print(f"Transposed result: \n{val2_dev}\n")
         # print(f"Result: \n{val_dev}\n")
 
+<<<<<<< HEAD
         assert cp.allclose(ref_dev, val3)
+=======
+    # assert cp.allclose(ref_dev, val3)
+>>>>>>> upstream/fortran_frontend_candidate_2
 
     # Benchmark
     def func(*args):
