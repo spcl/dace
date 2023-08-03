@@ -580,12 +580,22 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        free_syms = set().union(*(map(str,
+                                      pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
+                                *(map(str,
+                                      pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+
+        # Filter out unused internal symbols from symbol mapping
+        if not all_symbols:
+            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            free_syms &= internally_used_symbols
+        
+        return free_syms
+
     @property
     def free_symbols(self) -> Set[str]:
-        return set().union(*(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
-                           *(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+        return self.used_symbols(all_symbols=True)
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
@@ -673,6 +683,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -683,6 +694,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -696,6 +708,7 @@ class MapEntry(EntryNode):
         
         :see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -772,6 +785,7 @@ class MapExit(ExitNode):
         
         :see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -851,17 +865,20 @@ class Map(object):
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
                                optional=True,
-                               optional_condition=lambda m: m.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                               optional_condition=lambda m: m.schedule in
+                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 optional=True,
-                                optional_condition=lambda m: m.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                                optional_condition=lambda m: m.schedule in
+                                (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
                               optional=True,
-                              optional_condition=lambda m: m.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+                              optional_condition=lambda m: m.schedule in
+                              (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
@@ -928,6 +945,7 @@ class ConsumeEntry(EntryNode):
         
         :see: Consume
     """
+
     def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -1006,6 +1024,7 @@ class ConsumeExit(ExitNode):
         
         :see: Consume
     """
+
     def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1117,6 +1136,7 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
+
     @staticmethod
     def map_type():
         return PipelineScope
@@ -1149,6 +1169,7 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
+
     @staticmethod
     def map_type():
         return PipelineScope
