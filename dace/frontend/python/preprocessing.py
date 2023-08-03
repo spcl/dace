@@ -1503,6 +1503,62 @@ def find_disallowed_statements(node: ast.AST):
     return None
 
 
+class MPIResolver(ast.NodeTransformer):
+    """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
+    def __init__(self, globals: Dict[str, Any]):
+        from mpi4py import MPI
+        self.globals = globals
+        self.MPI = MPI
+        self.parent = None
+    
+    def visit(self, node):
+        node.parent = self.parent
+        self.parent = node
+        node = super().visit(node)
+        if isinstance(node, ast.AST):
+            self.parent = node.parent
+        return node
+    
+    def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
+        self.generic_visit(node)
+        if node.id in self.globals:
+            obj = self.globals[node.id]
+            if isinstance(obj, self.MPI.Comm):
+                lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
+                if obj is self.MPI.COMM_NULL:
+                    newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
+                    newnode.parent = node.parent
+                    return newnode
+        return node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+        self.generic_visit(node)
+        if isinstance(node.attr, str) and node.attr == 'Request':
+            try:
+                val = astutils.evalnode(node, self.globals)
+                if val is self.MPI.Request and not isinstance(node.parent, ast.Attribute):
+                    newnode = ast.copy_location(
+                        ast.Attribute(value=ast.Name(id='dace', ctx=ast.Load), attr='MPI_Request'), node)
+                    newnode.parent = node.parent
+                    return newnode
+            except SyntaxError:
+                pass
+        return node
+
+
+class ModuloConverter(ast.NodeTransformer):
+    """ Converts a % b expressions to (a + b) % b for C/C++ compatibility. """
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
+        if isinstance(node.op, ast.Mod):
+            left = self.generic_visit(node.left)
+            right = self.generic_visit(node.right)
+            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
+            node.left = newleft
+            return node
+        return self.generic_visit(node)
+
+
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
@@ -1544,6 +1600,12 @@ def preprocess_dace_program(f: Callable[..., Any],
         newmod = global_vars[mod]
         #del global_vars[mod]
         global_vars[modval] = newmod
+    
+    try:
+        src_ast = MPIResolver(global_vars).visit(src_ast)
+    except (ImportError, ModuleNotFoundError):
+        pass
+    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names

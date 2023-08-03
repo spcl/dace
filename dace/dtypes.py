@@ -62,7 +62,8 @@ class ScheduleType(aenum.AutoNumberEnum):
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
-    CPU_Multicore = ()  #: OpenMP
+    CPU_Multicore = ()  #: OpenMP parallel for loop
+    CPU_Persistent = ()  #: OpenMP parallel region
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
@@ -189,6 +190,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
     ScheduleType.CPU_Multicore: StorageType.Register,
+    ScheduleType.CPU_Persistent: StorageType.CPU_Heap,
     ScheduleType.GPU_Default: StorageType.GPU_Global,
     ScheduleType.GPU_Persistent: StorageType.GPU_Global,
     ScheduleType.GPU_Device: StorageType.GPU_Shared,
@@ -206,6 +208,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
     ScheduleType.CPU_Multicore: ScheduleType.Sequential,
+    ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
     ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
     ScheduleType.GPU_Persistent: ScheduleType.GPU_Device,
@@ -1214,6 +1217,7 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
+MPI_Request = opaque('MPI_Request')
 
 
 @undefined_safe_enum
@@ -1446,7 +1450,7 @@ def can_access(schedule: ScheduleType, storage: StorageType):
             ScheduleType.GPU_Default,
     ]:
         return storage in [StorageType.GPU_Global, StorageType.GPU_Shared, StorageType.CPU_Pinned]
-    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore]:
+    elif schedule in [ScheduleType.Default, ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent]:
         return storage in [
             StorageType.Default, StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal
         ]
@@ -1474,19 +1478,19 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
         ]
 
     # FPGA-global memory
     if storage is StorageType.FPGA_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device,
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device,
             ScheduleType.GPU_Default
         ]
 
