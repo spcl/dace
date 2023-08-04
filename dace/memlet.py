@@ -512,22 +512,45 @@ class Memlet(object):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
         """
         Returns a set of symbols used in this edge's properties. 
         
         :param all_symbols: If False, only returns the set of symbols that will be used
                             in the generated code and are needed as arguments.
+        :param edge: If given, provides richer context-based tests for the case
+                     of ``all_symbols=False``.
         """
         # Symbolic properties are in volume, and the two subsets
         result = set()
+        view_edge = False
         if all_symbols:
             result |= set(map(str, self.volume.free_symbols))
-        if self.src_subset:
-            result |= self.src_subset.free_symbols
+        elif edge is not None:  # Not all symbols are requested, and an edge is given
+            view_edge = False
+            from dace.sdfg import nodes
+            if isinstance(edge.dst, nodes.CodeNode) or isinstance(edge.src, nodes.CodeNode):
+                view_edge = True
+            elif edge.dst_conn == 'views' and isinstance(edge.dst, nodes.AccessNode):
+                view_edge = True
+            elif edge.src_conn == 'views' and isinstance(edge.src, nodes.AccessNode):
+                view_edge = True
 
-        if self.dst_subset:
-            result |= self.dst_subset.free_symbols
+        if not view_edge:
+            if self.src_subset:
+                result |= self.src_subset.free_symbols
+
+            if self.dst_subset:
+                result |= self.dst_subset.free_symbols
+        else:
+            # View edges do not require the end of the range nor strides
+            if self.src_subset:
+                for rb, _, _ in self.src_subset:
+                    result |= set(map(str, rb.free_symbols))
+
+            if self.dst_subset:
+                for rb, _, _ in self.dst_subset:
+                    result |= set(map(str, rb.free_symbols))
 
         return result
 

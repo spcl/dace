@@ -1294,23 +1294,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         defined_syms = set()
         free_syms = set()
 
-        # Exclude data descriptor names, constants, and shapes of global data descriptors
-        not_strictly_necessary_global_symbols = set()
+        # Exclude data descriptor names and constants
         for name, desc in self.arrays.items():
             defined_syms.add(name)
-
-            if not all_symbols:
-                used_desc_symbols = desc.used_symbols(all_symbols)
-                not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
-                not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
 
         defined_syms |= set(self.constants_prop.keys())
 
         # Start with the set of SDFG free symbols
         if all_symbols:
             free_syms |= set(self.symbols.keys())
-        else:
-            free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
+            # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
 
         # Add free state symbols
         used_before_assignment = set()

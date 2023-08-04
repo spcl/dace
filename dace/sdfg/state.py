@@ -435,6 +435,10 @@ class StateGraphView(object):
                         if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
                                 and astnode.func.id in sdfg.symbols):
                             freesyms.add(astnode.func.id)
+            elif (not all_symbols and isinstance(n, nd.Tasklet) and n.language != dtypes.Language.Python):
+                # If a non-Python tasklet, conservatively assume all SDFG global symbols are used for now
+                # See SDFG.used_symbols for more information
+                freesyms |= set(sdfg.symbols.keys())
 
             if hasattr(n, 'used_symbols'):
                 freesyms |= n.used_symbols(all_symbols)
@@ -454,7 +458,7 @@ class StateGraphView(object):
             if not all_symbols and not _is_leaf_memlet(e):
                 continue
 
-            freesyms |= e.data.used_symbols(all_symbols)
+            freesyms |= e.data.used_symbols(all_symbols, e)
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
