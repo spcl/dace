@@ -449,8 +449,8 @@ class CompiledSDFG(object):
                     raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
                                     (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                # GPU scalars are pointers, so this is fine
-                if atype.storage != dtypes.StorageType.GPU_Global:
+                # GPU scalars and return values are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
             elif not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dtypes.callback) and not isinstance(
                     arg,
