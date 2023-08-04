@@ -1228,7 +1228,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
         def_type, _ = self._dispatcher.defined_vars.get(ptrname)
 
-        if def_type in [DefinedType.Stream, DefinedType.StreamArray]:
+        if def_type in [DefinedType.Stream, DefinedType.Object, DefinedType.StreamArray]:
             return self.memlet_stream_ctor(sdfg, memlet)
 
         elif def_type in [DefinedType.Pointer, DefinedType.Scalar]:
