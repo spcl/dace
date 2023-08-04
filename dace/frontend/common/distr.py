@@ -106,8 +106,6 @@ def _processcomm_comm_free(pv: 'ProgramVisitor',
 
     from dace.libraries.mpi.nodes.comm_free import Comm_free
 
-    print(comm)
-
     comm_free_node = Comm_free("_Comm_free_", comm)
 
     # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
