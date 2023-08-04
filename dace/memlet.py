@@ -545,12 +545,14 @@ class Memlet(object):
         else:
             # View edges do not require the end of the range nor strides
             if self.src_subset:
-                for rb, _, _ in self.src_subset:
-                    result |= set(map(str, rb.free_symbols))
+                for rb, _, _ in self.src_subset.ndrange():
+                    if symbolic.issymbolic(rb):
+                        result |= set(map(str, rb.free_symbols))
 
             if self.dst_subset:
-                for rb, _, _ in self.dst_subset:
-                    result |= set(map(str, rb.free_symbols))
+                for rb, _, _ in self.dst_subset.ndrange():
+                    if symbolic.issymbolic(rb):
+                        result |= set(map(str, rb.free_symbols))
 
         return result
 
