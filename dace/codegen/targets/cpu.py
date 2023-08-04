@@ -1469,9 +1469,10 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
+        fsyms = self._frame.free_symbols(node.sdfg)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname not in sdfg.constants and aname in fsyms
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
@@ -1480,9 +1481,10 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ['__state']
+        fsyms = self._frame.free_symbols(node.sdfg)
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items()) if symname not in sdfg.constants
+            for symname, symval in sorted(node.symbol_mapping.items()) if symname not in sdfg.constants and symname in fsyms
         ])
         return f'{sdfg_label}({args});'
 
@@ -1766,11 +1768,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Find if bounds are used within the scope
             scope = state_dfg.scope_subgraph(node, False, False)
-            fsyms = scope.free_symbols
+            fsyms = self._frame.free_symbols(scope)
             # Include external edges
             for n in scope.nodes():
                 for e in state_dfg.all_edges(n):
-                    fsyms |= e.data.free_symbols
+                    fsyms |= self._frame.free_symbols(e.data)
             fsyms = set(map(str, fsyms))
 
             ntid_is_used = '__omp_num_threads' in fsyms
