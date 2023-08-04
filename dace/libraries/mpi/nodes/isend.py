@@ -97,10 +97,8 @@ class Isend(MPINode):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
 
-        # if dest.dtype.base_type != dace.dtypes.int32:
-        #     raise ValueError("Destination must be an integer!")
-        # if tag.dtype.base_type != dace.dtypes.int32:
-        #     raise ValueError("Tag must be an integer!")
+        # TODO: Should we expect any integer type for dst/tag and cast to int32 later?.
+        # TODO: Investigate further in the future.
 
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):

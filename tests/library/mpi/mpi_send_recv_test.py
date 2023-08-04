@@ -76,6 +76,7 @@ def test_mpi():
 
 ###############################################################################
 
+
 @dace.program
 def dace_send_recv(rank: dace.int32, size: dace.int32):
     src = np.full([1], (rank - 1) % size, dtype=np.int32)
@@ -103,7 +104,7 @@ def test_dace_send_recv():
     sdfg = None
     if rank == 0:
         sdfg = dace_send_recv.to_sdfg(simplify=True)
-        # disable openMP section for blocking
+        # Disable OpenMP section to allow blocking
         sdfg.openmp_sections = False
     mpi_sdfg = utils.distributed_compile(sdfg, comm)
 

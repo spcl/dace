@@ -1,16 +1,15 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from numbers import Integral, Number
-from typing import Sequence, Tuple, Union
-
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import dtypes, symbolic
-from dace.frontend.common import op_repository as oprepo
-from dace.memlet import Memlet
-from dace.sdfg import SDFG, SDFGState
-
+import itertools
 import sympy as sp
 
+from dace import dtypes, symbolic
+from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.replacements import _define_local_scalar
+from dace.memlet import Memlet
+from dace.sdfg import SDFG, SDFGState
+from numbers import Integral, Number
+from typing import Sequence, Tuple, Union
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
@@ -218,46 +217,41 @@ def _pgrid_sub(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, parent_grid: 
     return _cart_sub(pv, sdfg, state, parent_grid, color)
 
 
-@oprepo.replaces_operator('ProcessGrid', 'Eq', otherclass='Comm')
-@oprepo.replaces_operator('ProcessGrid', 'Is', otherclass='Comm')
-def _pgrid_eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
-    from mpi4py import MPI
-    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
-        return False
-    return True
+# TODO: Revisit after discussing how "immutable" mpi4py communicators are during the program's execution.
+for left_cls, right_cls in itertools.product(['Comm', 'Cartcomm', 'Intracomm'], repeat=2):
+
+    @oprepo.replaces_operator(left_cls, 'Eq', otherclass=right_cls)
+    def _eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 == op2
+
+    @oprepo.replaces_operator(left_cls, 'NotEq', otherclass=right_cls)
+    def _noteq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 != op2
+
+    @oprepo.replaces_operator(left_cls, 'Is', otherclass=right_cls)
+    def _is_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 is op2
+
+    @oprepo.replaces_operator(left_cls, 'IsNot', otherclass=right_cls)
+    def _isnot_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'Comm'):
+        return op1 is not op2
 
 
-@oprepo.replaces_operator('Comm', 'Eq', otherclass='ProcessGrid')
-@oprepo.replaces_operator('Comm', 'Is', otherclass='ProcessGrid')
-def _comm_eq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
-    from mpi4py import MPI
-    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
-        return False
-    return True
+for cls_a, cls_b, op in itertools.product(['ProcessGrid'], ['Comm', 'Cartcomm', 'Intracomm'],
+                                          ['Eq', 'NotEq', 'Is', 'IsNot']):
 
-
-@oprepo.replaces_operator('ProcessGrid', 'NotEq', otherclass='Comm')
-@oprepo.replaces_operator('ProcessGrid', 'IsNot', otherclass='Comm')
-def _pgrid_neq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
-    from mpi4py import MPI
-    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
+    @oprepo.replaces_operator(cls_a, op, otherclass=cls_b)
+    @oprepo.replaces_operator(cls_b, op, otherclass=cls_a)
+    def _op_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Union[str, 'Comm'], op2: Union[str, 'Comm']):
+        if op in ('Eq', 'Is'):
+            return False
         return True
-    return False
-
-
-@oprepo.replaces_operator('Comm', 'NotEq', otherclass='ProcessGrid')
-@oprepo.replaces_operator('Comm', 'IsNot', otherclass='ProcessGrid')
-def _comm_neq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
-    from mpi4py import MPI
-    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
-        return True
-    return False
 
 
 ##### MPI Collectives
 
 
-# @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
 @oprepo.replaces('dace.comm.Bcast')
 def _bcast(pv: ProgramVisitor,
            sdfg: SDFG,
@@ -331,6 +325,7 @@ def _mpi4py_to_MPI(MPI, op):
     raise NotImplementedError
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Reduce')
 @oprepo.replaces('dace.comm.Reduce')
 def _Reduce(pv: ProgramVisitor,
             sdfg: SDFG,
@@ -361,6 +356,7 @@ def _Reduce(pv: ProgramVisitor,
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Alltoall')
 @oprepo.replaces('dace.comm.Alltoall')
 def _alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inbuffer: str, outbuffer: str, grid: str = None):
 
@@ -398,6 +394,7 @@ def _pgrid_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: s
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer, grid=pgrid)
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
 def _allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
 
@@ -442,6 +439,7 @@ def _pgrid_allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: 
     return _allreduce(pv, sdfg, state, out_buffer, op, grid=pgrid)
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Scatter')
 @oprepo.replaces('dace.comm.Scatter')
 def _scatter(pv: ProgramVisitor,
              sdfg: SDFG,
@@ -472,6 +470,7 @@ def _scatter(pv: ProgramVisitor,
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Gather')
 @oprepo.replaces('dace.comm.Gather')
 def _gather(pv: ProgramVisitor,
             sdfg: SDFG,
@@ -505,6 +504,7 @@ def _gather(pv: ProgramVisitor,
 ##### Point-To-Point Communication
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Send')
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: ProgramVisitor,
           sdfg: SDFG,
@@ -579,7 +579,7 @@ def _send(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Intracomm', 'Send')
 def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
-                     dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                    dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.end(buffer, dst, tag)`. """
 
     from mpi4py import MPI
@@ -591,13 +591,14 @@ def _intracomm_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: '
 
 @oprepo.replaces_method('ProcessGrid', 'Send')
 def _pgrid_send(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, buffer: str,
-                 dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Send(buffer, dst, tag, grid=pgrid)`. """
 
     raise NotImplementedError('ProcessGrid.Send is not supported yet.')
     # return _send(pv, sdfg, state, buffer, dst, tag, grid=pgrid)
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Isend')
 @oprepo.replaces('dace.comm.Isend')
 def _isend(pv: ProgramVisitor,
            sdfg: SDFG,
@@ -723,6 +724,7 @@ def _pgrid_isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str,
     return req
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Recv')
 @oprepo.replaces('dace.comm.Recv')
 def _recv(pv: ProgramVisitor,
           sdfg: SDFG,
@@ -797,7 +799,7 @@ def _recv(pv: ProgramVisitor,
 
 @oprepo.replaces_method('Intracomm', 'Recv')
 def _intracomm_Recv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', buffer: str,
-                     src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
+                    src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr, Number]):
     """ Equivalent to `dace.comm.Recv(buffer, src, tagq)`. """
 
     from mpi4py import MPI
@@ -816,6 +818,7 @@ def _pgrid_irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str,
     # return _recv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Irecv')
 @oprepo.replaces('dace.comm.Irecv')
 def _irecv(pv: ProgramVisitor,
            sdfg: SDFG,
@@ -997,79 +1000,6 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     state.add_edge(req_node, None, libnode, '_request', req_mem)
 
     return None
-
-
-@oprepo.replaces('dace.comm.Cart_create')
-def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeType):
-    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
-
-        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
-        :return: Name of the new process-grid descriptor.
-    """
-    pgrid_name = sdfg.add_pgrid(dims)
-
-    # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{len(dims)}];',
-        f'int {pgrid_name}_dims[{len(dims)}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
-
-    state.add_node(tasklet)
-
-    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
-
-    return pgrid_name
-
-
-@oprepo.replaces('dace.comm.Cart_sub')
-def _cart_sub(pv: ProgramVisitor,
-              sdfg: SDFG,
-              state: SDFGState,
-              parent_grid: str,
-              color: Sequence[Union[Integral, bool]],
-              exact_grid: RankType = None):
-    """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
-        The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
-
-        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
-        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
-        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
-        :return: Name of the new sub-grid descriptor.
-    """
-    pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
-
-    # Count sub-grid dimensions.
-    pgrid_ndims = sum([bool(c) for c in color])
-
-    # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{pgrid_ndims}];',
-        f'int {pgrid_name}_dims[{pgrid_ndims}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
-
-    state.add_node(tasklet)
-
-    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
-
-    return pgrid_name
 
 
 @oprepo.replaces('dace.comm.Subarray')

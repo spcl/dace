@@ -1337,3 +1337,27 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
         # We subtract and compare to zero according to the SymPy documentation
         # (https://docs.sympy.org/latest/tutorial/gotchas.html).
         return (a - b).simplify() != 0
+
+
+def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[bool, None]:
+    """
+    Compares 2 symbolic expressions and returns True if they are equal, False if they are inequal,
+    and None if the comparison is inconclusive.
+
+    :param a: First symbolic expression.
+    :param b: Second symbolic expression.
+    :param is_length: If True, the assumptions that a, b are integers and positive are made.
+    """
+
+    args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+
+    if any([args is None for args in args]):
+        return False
+
+    facts = []
+    if is_length:
+        for arg in args:
+            facts += [sympy.Q.integer(arg), sympy.Q.positive(arg)]
+    
+    with sympy.assuming(*facts):
+        return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))

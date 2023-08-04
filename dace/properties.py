@@ -888,17 +888,28 @@ class SetProperty(Property):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
     def to_json(self, l):
+        if l is None:
+            return None
         return list(sorted(l))
 
     def from_json(self, l, sdfg=None):
+        if l is None:
+            return None
         return set(l)
 
     def __get__(self, obj, objtype=None):
+        val = super(SetProperty, self).__get__(obj, objtype)
+        if val is None:
+            return val
+        
         # Copy to avoid changes in the set at callee to be reflected in
         # the node directly
-        return set(super(SetProperty, self).__get__(obj, objtype))
+        return set(val)
 
     def __set__(self, obj, val):
+        if val is None:
+            return super(SetProperty, self).__set__(obj, val)
+        
         # Check for uniqueness
         if len(val) != len(set(val)):
             dups = set([x for x in val if val.count(x) > 1])
