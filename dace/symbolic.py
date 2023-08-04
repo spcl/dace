@@ -658,6 +658,21 @@ class AND(sympy.Function):
     def _eval_is_boolean(self):
         return True
 
+class IfExpr(sympy.Function):
+
+    @classmethod
+    def eval(cls, x, y, z):
+        """
+        Evaluates a ternary operator.
+
+        :param x: Predicate.
+        :param y: If true return this.
+        :param z: If false return this.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Boolean:
+            return (y if x else z)
+
 
 class BitwiseAnd(sympy.Function):
     pass
@@ -968,6 +983,9 @@ class SympyBooleanConverter(ast.NodeTransformer):
     def visit_NameConstant(self, node):
         return self.visit_Constant(node)
 
+    def visit_IfExp(self, node):
+        new_node = ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load), args=[node.test, node.body, node.orelse], keywords=[])
+        return ast.copy_location(new_node, node)
 
 class BitwiseOpConverter(ast.NodeTransformer):
     """ 
@@ -1050,6 +1068,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'RightShift': RightShift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
+        'IfExpr': IfExpr,
         'Mod': sympy.Mod,
     }
     # _clash1 enables all one-letter variables like N as symbols
@@ -1059,7 +1078,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     if isinstance(expr, str):
         # Sympy processes "not/and/or" as direct evaluation. Replace with
         # And/Or(x, y), Not(x)
-        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
+        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b', expr):
             expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
         # NOTE: If the expression contains bitwise operations, replace them with user-functions.
