@@ -21,7 +21,8 @@ class ExpandFreeMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         return tasklet
 
 
