@@ -67,15 +67,11 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
-        print()
-        print(f"[CompositeFusion::can_be_applied] allow expansion: {self.allow_expansion}")
         if self.allow_expansion == True:
             subgraph_fusion = self.get_subgraph_fusion()
             subgraph_fusion.setup_match(subgraph)
-            print("[CompositeFusion::can_be_applied] Try SubgraphFusion without copy")
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 # try w/o copy first
-                print("[CompositeFusion::can_be_applied] successfull without copy")
                 return True
 
             expansion = MultiExpansion()
@@ -83,7 +79,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
             expansion.setup_match(subgraph)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
-                print("[CompositeFusion::can_be_applied] Apply Expansion")
                 # deepcopy
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
@@ -99,13 +94,11 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
                 subgraph_fusion = self.get_subgraph_fusion()
                 subgraph_fusion.setup_match(subgraph_copy)
-                print("[CompositeFusion::can_be_applied] Check SubgraphFusion again")
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
 
                 stencil_tiling = StencilTiling()
                 stencil_tiling.setup_match(subgraph_copy)
-                print("[CompositeFusion::can_be_applied] Check StencilTiling")
                 if self.allow_tiling and stencil_tiling.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
 
@@ -129,7 +122,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
         scope_dict = graph.scope_dict()
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
         first_entry = next(iter(map_entries))
-        print(f"[CompositeFusion::apply] {map_entries}")
 
         if self.allow_expansion:
             expansion = MultiExpansion()
