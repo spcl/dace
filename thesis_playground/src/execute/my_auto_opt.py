@@ -4,7 +4,7 @@ import sympy
 
 import dace
 from dace import dtypes
-from dace.data import _prod
+from dace.data import _prod, Array, Scalar
 from dace.sdfg import utils as sdutil
 from dace.sdfg import SDFG, nodes, infer_types, SDFGState
 from dace.transformation.optimizer import Optimizer
@@ -54,14 +54,20 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    print(f"[my_auto_opt::auto_opt] device: {device}, program: {program}, validate: {validate}, "
-          f"validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
+    # Fix for full cloudsc
+    if sdfg.name == 'CLOUDSCOUTER':
+        cloudsc_state = sdfg.find_state('stateCLOUDSC')
+        for node in cloudsc_state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                node.sdfg.remove_symbol('_for_it_49')
+                node.sdfg.remove_symbol('_for_it_62')
+                node.sdfg.remove_symbol('_for_it_65')
 
+    sdfg.validate()
     if symbols:
         specialise_symbols(sdfg, symbols)
     # Simplification and loop parallelization
     transformed = True
-    # print(f"Free symbols in graph: {sdfg.free_symbols}")
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
@@ -72,20 +78,6 @@ def auto_optimize(sdfg: SDFG,
 
     if program is not None:
         save_graph(sdfg, program, "after_map_interchange")
-
-    # My not working attempt at switching loop order on the for-loop-level (before they get transformed to maps)
-    # while transformed:
-    #     sdfg.simplify(validate=False, validate_all=validate_all)
-    #     if program is not None:
-    #         save_graph(sdfg, program, "after_simplify")
-    #     for s in sdfg.sdfg_list:
-    #         xfh.split_interstate_edges(s)
-    #     if program is not None:
-    #         save_graph(sdfg, program, "after_splitting_interstate_edges")
-    #     transformed = sdfg.apply_transformations_repeated(SwapLoopOrder, validate=validate, validate_all=validate_all) > 0
-    #     transformed = False
-    #     if program is not None:
-    #         save_graph(sdfg, program, "after_swap_loop_order")
 
     # if device == dace.DeviceType.GPU:
     loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
@@ -468,11 +460,28 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
     # copy arrays
     for name, desc in sdfg.arrays.items():
         if not desc.transient:
-            new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
-                               desc.offset)
+            if isinstance(desc, Array):
+                new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
+                                   desc.offset)
+            elif isinstance(desc, Scalar):
+                new_sdfg.add_scalar(name, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
 
     new_order = {}
-    for _, name, desc in sdfg.arrays_recursive():
+    new_strides_map = {}
+
+    # Map of array names in the nested sdfg:  key: array name in parent sdfg (this sdfg), value: name in the nsdfg
+    # Assumes that name changes only appear in the first level of nsdfg nesting
+    array_names_map = {}
+    for graph in sdfg.sdfg_list:
+        if graph.parent_nsdfg_node is not None:
+            if graph.parent_sdfg == sdfg:
+                for connector in graph.parent_nsdfg_node.in_connectors:
+                    for in_edge in graph.parent.in_edges_by_connector(graph.parent_nsdfg_node, connector):
+                        print(f"{graph.name}: {in_edge.data.data} -> {connector}")
+                        array_names_map[str(connector)] = in_edge.data.data
+
+    for containing_sdfg, name, desc in sdfg.arrays_recursive():
+        print(containing_sdfg.name, name, desc.shape, desc.strides)
         shape_str = [str(s) for s in desc.shape]
         # Get index of the dimension we want to have stride 1
         stride_one_idx = None
@@ -499,7 +508,20 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                     previous_size = desc.shape[i]
                     previous_stride = new_strides[i]
 
+            new_strides_map[name] = {}
+            # Create a map entry for this data linking old strides to new strides. This assumes that each entry in
+            # strides is unique which is given as otherwise there would be two dimension i, j where a[i, j] would point
+            # to the same address as a[j, i]
+            for new_stride, old_stride in zip(new_strides, desc.strides):
+                new_strides_map[name][old_stride] = new_stride
             desc.strides = tuple(new_strides)
+        else:
+            parent_name = array_names_map[name] if name in array_names_map else name
+            if parent_name in new_strides_map:
+                new_strides = []
+                for stride in desc.strides:
+                    new_strides.append(new_strides_map[parent_name][stride])
+                desc.strides = new_strides
 
     # Add new flipped arrays for every non-transient array
     flipped_names_map = {}
@@ -512,35 +534,41 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                                desc.strides, desc.offset)
 
     # Deal with the inputs: Create tasklet to flip them and connect via memlets
-    for input in inputs:
+    # for input in inputs:
+    for input in set([*inputs, *outputs]):
         if input in new_order:
             flipped_data = flipped_names_map[input]
-            changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data), nsdfg,
-                                                 dst_conn=input, memlet=Memlet(data=flipped_data))
-            order = [str(i) for i in new_order[input]]
-            # TODO: What code to put here, this does result in invalid C++ code
-            tasklet = transform_state.add_tasklet(f"flipp_{input}", inputs=set((input, )), outputs=set((flipped_data, )),
-                                                  code=f"import numpy as np\n{flipped_data} = np.ndarray({input}).transpose({', '.join(order)}).copy()")
-                                                  # code=f"{flipped_data} = {input}")
-            transform_state.add_memlet_path(transform_state.add_access(input), tasklet,
-                                            dst_conn=input, memlet=Memlet(data=input))
-            transform_state.add_memlet_path(tasklet, transform_state.add_access(flipped_data),
-                                            src_conn=flipped_data, memlet=Memlet(data=flipped_data))
+            if input in inputs:
+                changed_stride_state.add_memlet_path(changed_stride_state.add_access(flipped_data), nsdfg,
+                                                     dst_conn=input, memlet=Memlet(data=flipped_data))
+            # Simply need to copy the data, the different strides take care of the transposing
+            arr = sdfg.arrays[input]
+            tasklet, map_entry, map_exit = transform_state.add_mapped_tasklet(
+                    name=f"tranpose_{input}",
+                    map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
+                    inputs={'_in': Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                    code='_out = _in',
+                    outputs={'_out': Memlet(data=flipped_data,
+                                            subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                    external_edges=True
+                    )
     # Do the same for the outputs
     for output in outputs:
         if output in new_order:
             flipped_data = flipped_names_map[output]
             changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(flipped_data),
                                                  src_conn=output, memlet=Memlet(data=flipped_data))
-            reverse_order = [str(new_order[output].index(i)) for i in range(len(new_order[output]))]
-            # TODO: Same problem with invalid code here, copy it for now to have valid code
-            tasklet = transform_state_back.add_tasklet(f"flipp_{output}", inputs=set((flipped_data, )), outputs=set((output, )),
-                                                       # code=f"{output} = {flipped_data}.transpose({', '.join(reverse_order)})")
-                                                       code=f"{output} = {flipped_data}")
-            transform_state_back.add_memlet_path(transform_state_back.add_access(flipped_data), tasklet,
-                                                 dst_conn=flipped_data, memlet=Memlet(data=flipped_data))
-            transform_state_back.add_memlet_path(tasklet, transform_state_back.add_access(output),
-                                                 src_conn=output, memlet=Memlet(data=output))
+            # Simply need to copy the data, the different strides take care of the transposing
+            arr = sdfg.arrays[output]
+            tasklet, map_entry, map_exit = transform_state_back.add_mapped_tasklet(
+                    name=f"tranpose_{output}",
+                    map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
+                    inputs={'_in': Memlet(data=flipped_data,
+                                          subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                    code='_out = _in',
+                    outputs={'_out': Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
+                    external_edges=True
+                    )
     # Deal with any arrays which have not been flipped (should only be scalars). Connect them directly
     for name, desc in sdfg.arrays.items():
         if not desc.transient and name not in new_order:
