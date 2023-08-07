@@ -74,7 +74,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
         # next, get all the maps by obtaining a copy (for potential offsets)
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
-        print(f"[MultiExpansion::can_be_applied] map_entries {map_entries}")
         ranges = [dcpy(map_entry.range) for map_entry in map_entries]
         # offset if option is toggled
         if self.allow_offset == True:
@@ -84,20 +83,16 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
         # more than one outermost scoped map entry has to be availble
         if len(map_entries) <= 1:
-            print("[MultiExpansion::can_be_applied] Rejected: Only one map entry")
             return False
 
         # check whether any parameters are in common
         if len(brng) == 0:
-            print(f"[MultiExpansion::can_be_applied] Rejected: No parameter in common. Ranges {ranges}")
             return False
 
         # if option enabled, return false if any splits are introduced
         if self.permutation_only == True:
             for map_entry in map_entries:
                 if len(map_entry.params) != len(brng):
-                    print(f"[MultiExpansion::can_be_applied] Rejected: Permutation only and splits introduced"
-                          f"map_entry.params {map_entry.params} base_ranges: {brng}")
                     return False
 
         # if option enabled, check contiguity in the last contiguous dimension
@@ -116,10 +111,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
-                                print("[MultiExpansion::can_be_applied] Rejected: Contiguity fusion violation detected")
                                 return False
 
-        print("[MultiExpansion::can_be_applied] Success")
         return True
 
     def apply(self, sdfg, map_base_variables=None):
@@ -154,7 +147,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
         """
 
         maps = [entry.map for entry in map_entries]
-        print(f"[MultiExpansion::apply] maps: {maps}")
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
         if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
