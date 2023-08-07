@@ -56,6 +56,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 (2) generate tasklet->out
                 (3) generate tasklet
             """
+            callsite_stream.write('{', sdfg, state_id, dfg.node_id(node))
             # generate code to handle data input to the tasklet
             for edge in dfg.in_edges(node):
                 # find input array
@@ -72,6 +73,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                                                            callsite_stream)
             # generate tasklet code
             self.unparse_tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            callsite_stream.write('}', sdfg, state_id, dfg.node_id(node))
         else:
             raise RuntimeError(
                 "Only tasklets are handled here, not {}. This should have been filtered by the predicate".format(

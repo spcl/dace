@@ -24,9 +24,6 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
     Yield all direct child nodes of *node*, that is, all fields that are nodes
     and all items of fields that are lists of nodes.
     """
-    #print("CLASS: ",node.__class__)
-    #if isinstance(node,DeclRefExpr):
-    #print("NAME: ", node.name)
 
     for name, field in iter_fields(node):
         #print("NASME:",name)
@@ -39,6 +36,12 @@ def iter_child_nodes(node: ast_internal_classes.FNode):
 
 
 class NodeVisitor(object):
+    """
+    A base node visitor class for Fortran ASTs.
+    Subclass it and define your own visit_XXX methods, where
+    XXX is the class name you want to visit with these
+    methods.
+    """
     def visit(self, node: ast_internal_classes.FNode):
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
@@ -56,6 +59,12 @@ class NodeVisitor(object):
 
 
 class NodeTransformer(NodeVisitor):
+    """
+    A base node visitor that walks the abstract syntax tree and allows
+    modification of nodes.
+    The `NodeTransformer` will walk the AST and use the return value of the
+    visitor methods to replace old nodes. 
+    """
     def as_list(self, x):
         if isinstance(x, list):
             return x
@@ -87,6 +96,10 @@ class NodeTransformer(NodeVisitor):
 
 
 class FindFunctionAndSubroutines(NodeVisitor):
+    """
+    Finds all function and subroutine names in the AST
+    :return: List of names
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -98,6 +111,10 @@ class FindFunctionAndSubroutines(NodeVisitor):
 
 
 class FindInputs(NodeVisitor):
+    """
+    Finds all inputs (reads) in the AST node and its children
+    :return: List of names
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -123,6 +140,10 @@ class FindInputs(NodeVisitor):
 
 
 class FindOutputs(NodeVisitor):
+    """
+    Finds all outputs (writes) in the AST node and its children
+    :return: List of names
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -136,6 +157,10 @@ class FindOutputs(NodeVisitor):
 
 
 class FindFunctionCalls(NodeVisitor):
+    """
+    Finds all function calls in the AST node and its children
+    :return: List of names
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
@@ -146,6 +171,12 @@ class FindFunctionCalls(NodeVisitor):
 
 
 class CallToArray(NodeTransformer):
+    """
+    Fortran does not differentiate between arrays and functions.
+    We need to go over and convert all function calls to arrays.
+    So, we create a closure of all math and defined functions and 
+    create array expressions for the others.
+    """
     def __init__(self, funcs=None):
         if funcs is None:
             funcs = []
@@ -170,6 +201,9 @@ class CallToArray(NodeTransformer):
 
 
 class CallExtractorNodeLister(NodeVisitor):
+    """
+    Finds all function calls in the AST node and its children that have to be extracted into independent expressions
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
 
@@ -192,6 +226,11 @@ class CallExtractorNodeLister(NodeVisitor):
 
 
 class CallExtractor(NodeTransformer):
+    """
+    Uses the CallExtractorNodeLister to find all function calls
+    in the AST node and its children that have to be extracted into independent expressions
+    It then creates a new temporary variable for each of them and replaces the call with the variable.
+    """
     def __init__(self, count=0):
         self.count = count
 
@@ -273,6 +312,9 @@ class CallExtractor(NodeTransformer):
 
 
 class IndexExtractorNodeLister(NodeVisitor):
+    """
+    Finds all array subscript expressions in the AST node and its children that have to be extracted into independent expressions
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
 
@@ -290,6 +332,11 @@ class IndexExtractorNodeLister(NodeVisitor):
 
 
 class IndexExtractor(NodeTransformer):
+    """
+    Uses the IndexExtractorNodeLister to find all array subscript expressions
+    in the AST node and its children that have to be extracted into independent expressions
+    It then creates a new temporary variable for each of them and replaces the index expression with the variable.
+    """
     def __init__(self, count=0):
         self.count = count
 
@@ -310,10 +357,7 @@ class IndexExtractor(NodeTransformer):
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
-        return ast_internal_classes.Array_Subscript_Node(
-            name=node.name,
-            indices=new_indices,
-        )
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -354,6 +398,9 @@ class IndexExtractor(NodeTransformer):
 
 
 class SignToIf(NodeTransformer):
+    """
+    Transforms all sign expressions into if statements
+    """
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node) and node.rval.name.name == "__dace_sign":
             args = node.rval.args
@@ -395,6 +442,10 @@ class SignToIf(NodeTransformer):
 
 
 class RenameArguments(NodeTransformer):
+    """
+    Renames all arguments of a function to the names of the arguments of the function call
+    Used when eliminating function statements
+    """
     def __init__(self, node_args: list, call_args: list):
         self.node_args = node_args
         self.call_args = call_args
@@ -407,6 +458,9 @@ class RenameArguments(NodeTransformer):
 
 
 class ReplaceFunctionStatement(NodeTransformer):
+    """
+    Replaces a function statement with its content, similar to propagating a macro
+    """
     def __init__(self, statement, replacement):
         self.name = statement.name
         self.content = replacement
@@ -419,6 +473,9 @@ class ReplaceFunctionStatement(NodeTransformer):
 
 
 class ReplaceFunctionStatementPass(NodeTransformer):
+    """
+    Replaces a function statement with its content, similar to propagating a macro
+    """
     def __init__(self, statefunc: list):
         self.funcs = statefunc
 
@@ -440,6 +497,12 @@ class ReplaceFunctionStatementPass(NodeTransformer):
 
 
 def functionStatementEliminator(node=ast_internal_classes.Program_Node):
+    """
+    Eliminates function statements from the AST
+    :param node: The AST to be transformed
+    :return: The transformed AST
+    :note Should only be used on the program node
+    """
     main_program = localFunctionStatementEliminator(node.main_program)
     function_definitions = [localFunctionStatementEliminator(i) for i in node.function_definitions]
     subroutine_definitions = [localFunctionStatementEliminator(i) for i in node.subroutine_definitions]
@@ -461,6 +524,11 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
 
 
 def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
+    """
+    Eliminates function statements from the AST
+    :param node: The AST to be transformed
+    :return: The transformed AST
+    """
     spec = node.specification_part.specifications
     exec = node.execution_part.execution
     new_exec = exec.copy()
@@ -472,7 +540,10 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         i.lval, ast_internal_classes.Structure_Constructor_Node):
                     function_statement_name = i.lval.name
                     is_actually_function_statement = False
-                    #In Fortran, function statement are defined as scalar values, but called as arrays, so by identifiying that it is called as a call_expr or structure_constructor, we also need to match the specification part and see that it is scalar rather than an array.
+                    # In Fortran, function statement are defined as scalar values,
+                    # but called as arrays, so by identifiying that it is called as
+                    # a call_expr or structure_constructor, we also need to match
+                    # the specification part and see that it is scalar rather than an array.
                     found = False
                     for j in spec:
                         if found:
@@ -488,9 +559,9 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                     if is_actually_function_statement:
                         to_change.append([i.lval, i.rval])
                         new_exec.remove(i)
-                        print("Function statement found and removed: ", function_statement_name)
+
                     else:
-                        #There are no function statements after the first one that isn't
+                        #There are no function statements after the first one that isn't a function statement
                         break
     still_changing = True
     while still_changing:
@@ -522,6 +593,9 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
 
 
 class ArrayLoopNodeLister(NodeVisitor):
+    """
+    Finds all array operations that have to be transformed to loops in the AST
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.FNode] = []
         self.range_nodes: List[ast_internal_classes.FNode] = []
@@ -551,6 +625,9 @@ class ArrayLoopNodeLister(NodeVisitor):
 
 
 class SumLoopNodeLister(NodeVisitor):
+    """
+    Finds all sum operations that have to be transformed to loops in the AST
+    """
     def __init__(self):
         self.nodes: List[ast_internal_classes.FNode] = []
 
@@ -571,6 +648,17 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           newbody: list,
                           declaration=True,
                           is_sum_to_loop=False):
+    """
+    Helper function for the transformation of array operations and sums to loops
+    :param node: The AST to be transformed
+    :param ranges: The ranges of the loop
+    :param rangepos: The positions of the ranges
+    :param count: The current count of the loop
+    :param newbody: The new basic block that will contain the loop
+    :param declaration: Whether the declaration of the loop variable is needed
+    :param is_sum_to_loop: Whether the transformation is for a sum to loop
+    :return: Ranges, rangepos, newbody
+    """
 
     currentindex = 0
     indices = []
@@ -585,14 +673,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                                                          pos=currentindex)
                 ])
             else:
-                """ ranges.append([
-                    ast_internal_classes.BinOp_Node(op="-",
-                                                    lval=i.range[0],
-                                                    rval=ast_internal_classes.Int_Literal_Node(value="1")),
-                    ast_internal_classes.BinOp_Node(op="-",
-                                                    lval=i.range[1],
-                                                    rval=ast_internal_classes.Int_Literal_Node(value="1"))
-                ]) """
                 ranges.append([i.range[0], i.range[1]])
             rangepos.append(currentindex)
             if declaration:
@@ -603,19 +683,16 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     ]))
             indices.append(ast_internal_classes.Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
         else:
-            #if is_sum_to_loop:
             indices.append(i)
-        #else:
-        #    indices.append(
-        #        ast_internal_classes.BinOp_Node(op="-",
-        #                                        lval=i,
-        #                                        rval=ast_internal_classes.Int_Literal_Node(value="1")))
         currentindex += 1
 
     node.indices = indices
 
 
 class ArrayToLoop(NodeTransformer):
+    """
+    Transforms the AST by removing array expressions and replacing them with loops
+    """
     def __init__(self):
         self.count = 0
 
@@ -711,6 +788,9 @@ def mywalk(node):
 
 
 class SumToLoop(NodeTransformer):
+    """
+    Transforms the AST by removing array sums and replacing them with loops
+    """
     def __init__(self):
         self.count = 0
 
@@ -790,6 +870,9 @@ class RenameVar(NodeTransformer):
 
 
 class ForDeclarer(NodeTransformer):
+    """
+    Ensures that each loop iterator is unique by extracting the actual iterator and assigning it to a uniquely named local variable
+    """
     def __init__(self):
         self.count = 0
 
@@ -813,8 +896,6 @@ class ForDeclarer(NodeTransformer):
                 self.count += 1
                 newfor = self.visit(newfor)
                 newbody.append(newfor)
-                # Only needed if we require iterator to have the final value when the loop ends
-                #newbody.append(final_assign)
 
             else:
                 newbody.append(self.visit(child))

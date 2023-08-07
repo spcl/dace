@@ -539,6 +539,10 @@ def make_transients_persistent(sdfg: SDFG,
                         not_persistent.add(dnode.data)
                         continue
 
+                if desc.lifetime == dtypes.AllocationLifetime.External:
+                    not_persistent.add(dnode.data)
+                    continue
+
                 persistent.add(dnode.data)
 
         for aname in (persistent - not_persistent):
@@ -680,7 +684,7 @@ def auto_optimize(sdfg: SDFG,
             if s in sdfg.free_symbols:
                 if isinstance(v, (int, float)):
                     known_symbols[s] = v
-                if isinstance(v, sympy.core.numbers.Integer):
+                if isinstance(v, sympy.Integer):
                     try:
                         known_symbols[s] = int(v)
                     except TypeError:

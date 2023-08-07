@@ -549,7 +549,7 @@ class NestedSDFG(CodeNode):
         self.symbol_mapping = symbol_mapping or {}
         self.schedule = schedule
         self.debuginfo = debuginfo
-    
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
@@ -603,7 +603,7 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None, **context: bool):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -612,6 +612,13 @@ class NestedSDFG(CodeNode):
         for out_conn in self.out_connectors:
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
+        if self.sdfg.parent_nsdfg_node is not self:
+            raise ValueError('Parent nested SDFG node not properly set')
+        if self.sdfg.parent is not state:
+            raise ValueError('Parent state not properly set for nested SDFG node')
+        if self.sdfg.parent_sdfg is not sdfg:
+            raise ValueError('Parent SDFG not properly set for nested SDFG node')
+
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
         for conn in connectors:
             if conn not in self.sdfg.arrays:
@@ -656,7 +663,7 @@ class NestedSDFG(CodeNode):
             warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
-        self.sdfg.validate(references)
+        self.sdfg.validate(references, **context)
 
 
 # ------------------------------------------------------------------------------
@@ -665,7 +672,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -676,7 +682,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -690,7 +695,6 @@ class MapEntry(EntryNode):
         
         :see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -767,7 +771,6 @@ class MapExit(ExitNode):
         
         :see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -866,6 +869,14 @@ class Map(object):
                                   optional=True,
                                   optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
+    gpu_launch_bounds = Property(dtype=str,
+                                 default="0",
+                                 desc="GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) "
+                                 "enables the statement if block size is not symbolic, and any other value "
+                                 "(including tuples) sets it explicitly.",
+                                 optional=True,
+                                 optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     def __init__(self,
                  label,
                  params,
@@ -916,7 +927,6 @@ class ConsumeEntry(EntryNode):
         
         :see: Consume
     """
-
     def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -995,7 +1005,6 @@ class ConsumeExit(ExitNode):
         
         :see: Consume
     """
-
     def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1107,7 +1116,6 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
-
     @staticmethod
     def map_type():
         return PipelineScope
@@ -1140,7 +1148,6 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
-
     @staticmethod
     def map_type():
         return PipelineScope
@@ -1349,7 +1356,7 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
-    
+
     @property
     def free_symbols(self) -> Set[str]:
         fsyms = super(LibraryNode, self).free_symbols

@@ -2,7 +2,7 @@
 """ This module initializes the inter-state transformations package."""
 
 from .state_fusion import StateFusion
-from .lex_state_fusion import StateFusionLex
+from .state_fusion_with_happens_before import StateFusionExtended
 from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,
                                 SymbolAliasPromotion, HoistState)
 from .fpga_transform_state import FPGATransformState

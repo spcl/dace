@@ -1501,13 +1501,19 @@ def is_fpga_kernel(sdfg, state):
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
+    at_least_one_fpga_array = False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+        desc = n.desc(sdfg)
+        if desc.storage in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                            dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            at_least_one_fpga_array = True
+        if isinstance(desc, dt.Scalar):
+            continue
+        if desc.storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
-    return True
+
+    return at_least_one_fpga_array
 
 
 def postdominators(
@@ -1745,7 +1751,10 @@ def make_dynamic_map_inputs_unique(sdfg: SDFG):
                             else:
                                 dynamic_map_inputs.add(e.dst_conn)
                     if repl_dict:
-                        in_connectors = {repl_dict[n] if n in repl_dict else n: t for n, t in node.in_connectors.items()}
+                        in_connectors = {
+                            repl_dict[n] if n in repl_dict else n: t
+                            for n, t in node.in_connectors.items()
+                        }
                         node.in_connectors = in_connectors
                         node.map.range.replace(repl_dict)
                         state.scope_subgraph(node).replace_dict(repl_dict)
@@ -1782,7 +1791,7 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
                     # ... if we have seen the data before, but in a different scope, remove it from the candidates
                     elif data_to_check[node.data] != scope_dict[node]:
                         del data_to_check[node.data]
-    
+
     result = list(data_to_check.keys())
     for name in result:
         if not sdfg.arrays[name].transient:

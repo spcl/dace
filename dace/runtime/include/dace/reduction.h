@@ -9,11 +9,15 @@
 #include "math.h"  // for ::min, ::max
 
 #ifdef __CUDACC__
+#if __has_include(<cub/cub.cuh>)
+    #include <cub/cub.cuh>
+#else
     #include "../../../external/cub/cub/device/device_segmented_reduce.cuh"
     #include "../../../external/cub/cub/device/device_reduce.cuh"
     #include "../../../external/cub/cub/block/block_reduce.cuh"
     #include "../../../external/cub/cub/iterator/counting_input_iterator.cuh"
     #include "../../../external/cub/cub/iterator/transform_input_iterator.cuh"
+#endif
 #endif
 
 #ifdef __HIPCC__

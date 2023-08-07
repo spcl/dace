@@ -369,6 +369,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     to_visit.append(dst)
             states.add(state)
 
+        nsdfg = None
+
         # Nest loop-body states
         if len(states) > 1:
 
@@ -689,3 +691,15 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         for sym in symbols_to_remove:
             if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)
+
+        # Reset all nested SDFG parent pointers
+        if nsdfg is not None:
+            if isinstance(nsdfg, nodes.NestedSDFG):
+                nsdfg = nsdfg.sdfg
+
+            for nstate in nsdfg.nodes():
+                for nnode in nstate.nodes():
+                    if isinstance(nnode, nodes.NestedSDFG):
+                        nnode.sdfg.parent_nsdfg_node = nnode
+                        nnode.sdfg.parent = nstate
+                        nnode.sdfg.parent_sdfg = nsdfg
