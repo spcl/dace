@@ -24,6 +24,7 @@ from copy import deepcopy as dcpy
 from typing import List, Union, Tuple, Optional, Callable
 import warnings
 from sympy import S
+import sympy
 
 import dace.libraries.standard as stdlib
 
@@ -172,13 +173,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # Compute difference, in what is not covered
             diff_start = upper_rng[0] - lower_rng[0]
             diff_end = lower_rng[1] - upper_rng[1]
-            # make our lives easy for now, assume range has volume 1
-            # and that step is equal
-            # if lower_rng[0] != lower_rng[1] or upper_rng[0] != upper_rng[1] or lower_rng[2] != upper_rng[2]:
-            #     return None
-
-            if (out_range.ranges[index][0] - in_range.ranges[index][0] < diff_start and
-                in_range.ranges[index][1] - out_range.ranges[index][1] < diff_end):
+            diff_start = out_range.ranges[index][0] - in_range.ranges[index][0]
+            diff_end = out_range.ranges[index][1] - in_range.ranges[index][1]
+            if isinstance(diff_start, sympy.core.expr.Expr):
+                diff_start = diff_start.evalf()
+            if isinstance(diff_end, sympy.core.expr.Expr):
+                diff_end = diff_end.evalf()
+            if (abs(diff_start) < diff_start and abs(diff_end) < diff_end):
                 return None
             else:
                 differences[index] = max(diff_start, diff_end)
@@ -994,7 +995,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for itervar in map_entry.map.params:
             if itervar not in nsdfg.free_symbols:
-                nsdfg.sdfg.add_symbol(itervar, int)
+                if itervar not in nsdfg.sdfg.symbols:
+                    nsdfg.sdfg.add_symbol(itervar, int)
                 nsdfg.symbol_mapping[itervar] = itervar
 
         old_start_state = nsdfg.sdfg.start_state
