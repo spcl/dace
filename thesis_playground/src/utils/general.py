@@ -82,6 +82,7 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> 
     if normalize_offsets:
         utils.normalize_offsets(sdfg)
 
+    sdfg.validate()
     return sdfg
 
 
@@ -379,17 +380,48 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
     return same
 
 
-def compare_output_all(output_a: Dict, output_b: Dict, print_if_differ: bool = True) -> bool:
+def compare_output_all(output_a: Dict,
+                       output_b: Dict,
+                       print_if_differ: bool = True,
+                       name_a: Optional[str] = None,
+                       name_b: Optional[str] = None,
+                       ) -> bool:
+    """
+    Compare all arrays stored in the two different dicts. Assumes the dicts have the same keys. Compares full
+    arrays/matrices
+
+    :param output_a: Dict A to compare
+    :type output_a: Dict
+    :param output_b: Dict B to compare
+    :type output_b: Dict
+    :param print_if_differ: If the two differing matrices should be printed, defaults to True
+    :type print_if_differ: bool, optional
+    :param name_a: Name of Dict A, defaults to None
+    :type name_a: Optional[str], optional
+    :param name_b: Name of Dict B, defaults to None
+    :type name_b: Optional[str], optional
+    :return: True if all matrices are the same, False otherwise
+    :rtype: bool
+    """
     same = True
     for key in output_a.keys():
         local_same = np.allclose(output_a[key], output_b[key])
         same = same and local_same
         if not local_same and print_if_differ:
-            print(f"Variable {key} differs")
+            print(f"Variable {key} differs", end="")
+            if name_a is not None and name_b is not None:
+                print(f" {name_a} vs. {name_b}")
+            else:
+                print()
             np.set_printoptions(precision=4)
-            print(output_a[key])
-            print()
-            print(output_b[key])
+            # if name_a is not None:
+            #     print(name_a)
+            # print(output_a[key])
+            # print()
+            # if name_b is not None:
+            #     print(name_b)
+            # print(output_b[key])
+            print_compare_matrix(output_a[key], output_b[key], [slice(0, dim) for dim in output_a[key].shape])
     return same
 
 
@@ -461,6 +493,8 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_optimize_sdfg")
 
+    print(f"[utils::general::optimize_sdfg] device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
+          f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
     replace_symbols_by_values(sdfg, {
         'NCLV': '10',
         'NCLDQI': '3',
