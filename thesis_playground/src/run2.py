@@ -12,7 +12,8 @@ import sympy
 
 from utils.print import print_dataframe, print_with_time
 from utils.execute_dace import RunConfig, test_program
-from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file
+from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file, \
+                        create_if_not_exist
 from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
 from measurements.profile_config import ProfileConfig
@@ -44,6 +45,9 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5
     profile(profile_configs, RunConfig(k_caching=True, change_stride=True), experiment_desc,
             [('k_caching', "True"), ('change_strides', 'True')], ncu_report=True,
             debug_mode=debug_mode)
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=True), experiment_desc,
+            [('k_caching', "False"), ('change_strides', 'True')], ncu_report=True,
+            debug_mode=debug_mode)
 
 
 def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 7e5,
@@ -62,8 +66,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
             params = ParametersProvider(program,
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
-        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
-                                             tot_time_repetitions=2))
+        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=3,
+                                             tot_time_repetitions=3))
 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
@@ -152,9 +156,11 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         # additional_args['sdfg_path'] = sdfg_path
         additional_args['debug_mode'] = debug_mode
         if ncu_report:
-            additional_args['ncu_report_path'] = f"{program_config.program}_{new_experiment_id}_" + \
-                                                 '_'.join(additional_columns_values) + \
-                                                 ".ncu-rep"
+            create_if_not_exist(os.path.join(get_results_2_folder(), "ncu_reports"))
+            additional_args['ncu_report_path'] = os.path.join(get_results_2_folder(), "ncu_reports",
+                                                              f"{program_config.program}_{new_experiment_id}_" +
+                                                              '_'.join(additional_columns_values) +
+                                                              ".ncu-rep")
         program_config.profile(run_config, **additional_args).to_csv(os.path.join(experiment_folder, 'results.csv'))
         for index, params in enumerate(program_config.sizes):
             with open(os.path.join(experiment_folder, f"{index}_params.json"), 'w') as file:
