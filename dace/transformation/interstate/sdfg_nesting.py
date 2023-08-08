@@ -132,7 +132,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
             nstate = nested_sdfg.sdfg.node(0)
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
-                    # TODO: Is the following correct?
                     if (node.data in out_connectors and nstate.out_degree(node) > 0
                             and (node.data not in in_connectors or nstate.in_degree(node) > 0)):
                         return False
@@ -508,18 +507,14 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_dst_subset(e, state):
-                                    internal_offset = state.parent.arrays[e.data.data].offset
-                                    external_offset = state.parent.arrays[outer_edge.data.data].offset
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True, internal_offset=internal_offset, external_offset=external_offset)
+                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_dst_subset=True)
                                     e._data.dst_subset = new_memlet.subset
                     # NOTE: Node is source
                     for edge in state.out_edges(node):
                         if (edge not in modified_edges and edge.data.data == node.data):
                             for e in state.memlet_tree(edge):
                                 if e._data.get_src_subset(e, state):
-                                    internal_offset = state.parent.arrays[e.data.data].offset
-                                    external_offset = state.parent.arrays[outer_edge.data.data].offset
-                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True, internal_offset=internal_offset, external_offset=external_offset)
+                                    new_memlet = helpers.unsqueeze_memlet(e.data, outer_edge.data, use_src_subset=True)
                                     e._data.src_subset = new_memlet.subset
 
         # If source/sink node is not connected to a source/destination access
@@ -595,7 +590,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         for dnode in state.data_nodes():
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
-        
+
         sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
     def _modify_access_to_access(self,
@@ -692,9 +687,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    internal_offset = state.parent.arrays[inner_edge.data.data].offset
-                    external_offset = state.parent.arrays[top_edge.data.data].offset
-                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data, internal_offset=internal_offset, external_offset=external_offset)
+                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data, top_edge.data)
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
                         dst = inner_to_outer[inner_edge.dst]
@@ -715,9 +708,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 # Modify all memlets going forward/backward
                 def traverse(mtree_node):
                     result.add(mtree_node.edge)
-                    internal_offset = state.parent.arrays[mtree_node.edge.data.data].offset
-                    external_offset = state.parent.arrays[top_edge.data.data].offset
-                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data, top_edge.data, internal_offset=internal_offset, external_offset=external_offset)
+                    mtree_node.edge._data = helpers.unsqueeze_memlet(mtree_node.edge.data, top_edge.data)
                     for child in mtree_node.children:
                         traverse(child)
 
@@ -823,7 +814,8 @@ class InlineTransients(transformation.SingleStateTransformation):
         # Not every schedule is supported
         if not permissive:
             if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.GPU_Device):
+                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
+                                      dtypes.ScheduleType.GPU_Device):
                 return False
 
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
@@ -934,7 +926,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # For now we only detect one element
+                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
+                    if e.data.data not in write_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
@@ -950,6 +947,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
+                    if e.data.data not in read_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
@@ -965,7 +966,21 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
-        # TODO: Check in_candidates in interstate edges as well
+        # Check read memlets in interstate edges for candidates
+        for e in nsdfg.sdfg.edges():
+            for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
+                # If more than one unique element detected, remove from candidates
+                if m.data in in_candidates:
+                    memlet, ns, indices = in_candidates[m.data]
+                    # Try to find dimensions in which there is a mismatch and remove them from list
+                    for i, (s1, s2) in enumerate(zip(m.subset, memlet.subset)):
+                        if s1 != s2 and i in indices:
+                            indices.remove(i)
+                    if len(indices) == 0:
+                        ignore.add(m.data)
+                    in_candidates[m.data] = (memlet, ns, indices)
+                    continue
+                in_candidates[m.data] = (m, None, set(range(len(m.subset))))
 
         # Check in/out candidates
         for cand in in_candidates.keys() & out_candidates.keys():
@@ -995,7 +1010,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if len(nstate.ranges) > 0:
+                if nstate is not None and len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
@@ -1017,7 +1032,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue
@@ -1074,28 +1089,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     if isedge.data.condition.language is dtypes.Language.Python:
                         for i, stmt in enumerate(isedge.data.condition.code):
                             isedge.data.condition.code[i] = refiner.visit(stmt)
-                        isedge.data._cond_sympy = None
                     else:
                         raise NotImplementedError
-                # Refine descriptor
-                desc = nsdfg.arrays[aname]
-                if isinstance(desc, data.Array):
-                    subset_shape = refine.subset.size()
-                    desc.shape = [s if i in indices else d for i, (s, d) in enumerate(zip(subset_shape, desc.shape))]
-                    # desc.total_size = sum(((shp - 1) * s for shp, s in zip(desc.shape, desc.strides))) + 1
-                    desc.total_size = data._prod(desc.shape)
-                # NOTE: We leave strides as-is. What about total_size? Is the above correct?
                 refined.add(aname)
 
         # Proceed symmetrically on incoming and outgoing edges
-        if nsdfg.label == 'loop_body_14':
-            sdfg.save('refine_nested_access/0_before_offset_refine_in.sdfg')
         _offset_refine(torefine_in, state.in_edges_by_connector)
-        if nsdfg.label == 'loop_body_14':
-            sdfg.save('refine_nested_access/10_after_offset_refine_in.sdfg')
         _offset_refine(torefine_out, state.out_edges_by_connector)
-        if nsdfg.label == 'loop_body_14':
-            sdfg.save('refine_nested_access/20_after_offset_refine_out.sdfg')
 
         # Propagate the State Memlets
         propagation.propagate_memlets_state(sdfg, state)
