@@ -29,7 +29,7 @@ PROGRAM vert_loop_10
     ! was a temporary scalar before, to complicated to include whole computation here
     REAL(KIND=JPRB) ZALFAW
     REAL(KIND=JPRB) RTHOMO
-    REAL(KIND=JPRB) PLU(KLON, KLEV, NBLOCKS)
+    REAL(KIND=JPRB) PLU(KLON, KLEV+1, NBLOCKS)
     INTEGER(KIND=JPIM) LDCUM(KLON, NBLOCKS)
     REAL(KIND=JPRB) PSNDE(KLON, KLEV, NBLOCKS)
     REAL(KIND=JPRB) PAPH(KLON, KLEV+1, NBLOCKS)
@@ -85,7 +85,7 @@ SUBROUTINE vert_loop_10_routine(&
     ! was a temporary scalar before, to complicated to include whole computation here
     REAL(KIND=JPRB) ZALFAW
     REAL(KIND=JPRB) RTHOMO
-    REAL(KIND=JPRB) PLU(KLON, KLEV, NBLOCKS)
+    REAL(KIND=JPRB) PLU(KLON, KLEV+1, NBLOCKS)
     INTEGER LDCUM(KLON, NBLOCKS)
     REAL(KIND=JPRB) PSNDE(KLON, KLEV, NBLOCKS)
     REAL(KIND=JPRB) PAPH_N(KLON, KLEV+1, NBLOCKS)
@@ -141,7 +141,7 @@ SUBROUTINE inner_loops(&
     ! was a temporary scalar before, to complicated to include whole computation here
     REAL(KIND=JPRB) ZALFAW
     REAL(KIND=JPRB) RTHOMO
-    REAL(KIND=JPRB) PLU(KLON, KLEV)
+    REAL(KIND=JPRB) PLU(KLON, KLEV+1)
     INTEGER LDCUM(KLON)
     REAL(KIND=JPRB) PSNDE(KLON, KLEV)
     REAL(KIND=JPRB) PAPH_N(KLON, KLEV+1)
@@ -155,7 +155,7 @@ SUBROUTINE inner_loops(&
     ! in and output
     REAL(KIND=JPRB) ZSOLQA(KLON, NCLV, NCLV)
     ! output
-    REAL(KIND=JPRB) PLUDE(KLON, KLEV)
+    REAL(KIND=JPRB) PLUDE(KLON, KLEV+1)
 
     ! temporary scalars
     ! temporary arrays

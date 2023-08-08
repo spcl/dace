@@ -684,6 +684,11 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # it might have had
         sdfg.add_edge(body, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
 
+        # If removed this leads to an error in some graphs, somehow the save has a sideeffect:
+        # WARNING: LoopToMap::can_be_applied triggered a AttributeError exception: 'NoneType' object has no attribute 'covers'
+        # Interestingly it does not seem to have an impact on the resulting SDFG
+        sdfg.save('/tmp/graph.sdfg')
+
         # If this had made the iteration variable a free symbol, we can remove
         # it from the SDFG symbols
         if itervar in sdfg.free_symbols:

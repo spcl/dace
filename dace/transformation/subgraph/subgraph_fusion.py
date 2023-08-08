@@ -154,7 +154,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         :type union_upper: subsets.Range
         :return: None if not possible to transform, other list the sizes the array needs to be bigger than 1 for
         buffering. Index in list gives dimension index.
-        :rtype: Union[dace.symbolic.symbol, bool]
+        :rtype: Optional[List[dace.symbolic.symbol]]
         """
         # Assume lower and upper subset are a range with possible multiple dimensions.
         incoming_maps = set([e.src for e in graph.in_edges(node)])
@@ -171,18 +171,18 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for index, (lower_rng, upper_rng) in enumerate(zip(lower_subset, union_upper)):
             # Compute difference, in what is not covered
-            diff_start = upper_rng[0] - lower_rng[0]
-            diff_end = lower_rng[1] - upper_rng[1]
-            diff_start = out_range.ranges[index][0] - in_range.ranges[index][0]
-            diff_end = out_range.ranges[index][1] - in_range.ranges[index][1]
-            if isinstance(diff_start, sympy.core.expr.Expr):
-                diff_start = diff_start.evalf()
-            if isinstance(diff_end, sympy.core.expr.Expr):
-                diff_end = diff_end.evalf()
-            if (abs(diff_start) < diff_start and abs(diff_end) < diff_end):
+            diff_start_rng = upper_rng[0] - lower_rng[0]
+            diff_end_rng = lower_rng[1] - upper_rng[1]
+            diff_start_map = out_range.ranges[index][0] - in_range.ranges[index][0]
+            diff_end_map = out_range.ranges[index][1] - in_range.ranges[index][1]
+            if isinstance(diff_start_map, sympy.core.expr.Expr):
+                diff_start_map = diff_start_map.evalf()
+            if isinstance(diff_end_map, sympy.core.expr.Expr):
+                diff_end_map = diff_end_map.evalf()
+            if (abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng):
                 return None
             else:
-                differences[index] = max(diff_start, diff_end)
+                differences[index] = max(diff_start_rng, diff_end_rng)
 
         return differences
 

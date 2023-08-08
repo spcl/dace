@@ -416,32 +416,6 @@ def k_caching_prototype_v1(sdfg: SDFG,
 
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> SDFG:
-    # TODO: Add output about how to transform/permute the input
-    permutation = dict()
-
-    # Effort to try to rename all arrays, not quite working
-    # transform_state = sdfg.add_state_before(sdfg.start_state, "transform_data")
-    # original_arrays = copy.deepcopy(sdfg.arrays)
-    # # Dictionary mapping original to flipped names
-    # flipped_names_dict = {}
-    # for name, desc in original_arrays.items():
-    #     if not desc.transient:
-    #         flipped_name = f"{name}_flipped"
-    #         flipped_names_dict[name] = flipped_name
-    #         sdfg.add_array(flipped_name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
-    #                        desc.offset)
-    #         # transform_state.add_tasklet(f"flipp_{name}", name, flipped_name)
-
-    # for node, state in sdfg.all_nodes_recursive():
-    #     if isinstance(node, AccessNode) and node.data in flipped_names_dict:
-    #         print(f"change data of {node}: {node.data} -> {flipped_names_dict[node.data]}")
-    #         node.data = flipped_names_dict[node.data]
-    #         for io_edge in [*state.out_edges(node), *state.in_edges(node)]:
-    #             for e in state.memlet_tree(io_edge):
-    #                 e.data.data = node.data
-
-    # Effort to try nesting everything else inside a nsdf
-
     # Create new SDFG and copy constants and symbols
     original_name = sdfg.name
     sdfg.name = "changed_strides"
@@ -477,11 +451,9 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
             if graph.parent_sdfg == sdfg:
                 for connector in graph.parent_nsdfg_node.in_connectors:
                     for in_edge in graph.parent.in_edges_by_connector(graph.parent_nsdfg_node, connector):
-                        print(f"{graph.name}: {in_edge.data.data} -> {connector}")
                         array_names_map[str(connector)] = in_edge.data.data
 
     for containing_sdfg, name, desc in sdfg.arrays_recursive():
-        print(containing_sdfg.name, name, desc.shape, desc.strides)
         shape_str = [str(s) for s in desc.shape]
         # Get index of the dimension we want to have stride 1
         stride_one_idx = None

@@ -341,7 +341,7 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                                     f" circular buffer as edge {edge.src} -> {edge.dst} ({edge.data}) has a dimension"
                                     f" where neither the full size of dimension or just one index is used ({index}-th "
                                     f"dimension)", file=sys.stderr)
-                                print(f"rng[1]-rng[0] + 1={rng[1]-rng[0]+S.One.evalf(subs=graph.parent.constants)}, "
+                                print(f"rng[1]-rng[0] + 1={(rng[1]-rng[0]+S.One).evalf(subs=graph.parent.constants)}, "
                                       f"dim_size: {dim_size.evalf(subs=graph.parent.constants)}")
                                 assert False
                             if edge.data.data == data_name:
