@@ -1,7 +1,7 @@
 from argparse import ArgumentParser
 
 from utils.paths import get_default_sdfg_file
-from utils.general import use_cache, enable_debug_flags, remove_build_folder
+from utils.general import use_cache, enable_debug_flags, remove_build_folder, reset_graph_files
 from utils.execute_dace import RunConfig, run_program, test_program
 from execute.parameters import ParametersProvider
 
@@ -26,6 +26,11 @@ def main():
     parser.add_argument('--sdfg-file', type=str, default=None, help='File to read sdfg from')
     parser.add_argument('--not-specialise-symbols', action='store_true', default=False)
     parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
+    parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
+    parser.add_argument('--verbose-name',
+                        type=str,
+                        default=None,
+                        help='Foldername under which intermediate SDFGs should be stored')
 
     args = parser.parse_args()
     run_config = RunConfig()
@@ -44,11 +49,15 @@ def main():
         remove_build_folder(args.program)
 
     additional_args = {}
+    if args.verbose_name:
+        reset_graph_files(args.verbose_name)
+        additional_args['verbose_name'] = args.verbose_name
     if args.read_sdfg:
         if args.sdfg_file is not None:
             additional_args['sdfg_file'] = args.sdfg_file
         else:
             additional_args['sdfg_file'] = get_default_sdfg_file(args.program)
+
     if args.only_test:
         test_program(args.program, run_config, **additional_args)
     else:

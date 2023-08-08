@@ -63,7 +63,8 @@ class RunConfig:
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] = None) -> bool:
+def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] = None,
+                 verbose_name: Optional[str] = None) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -74,6 +75,9 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     :type run_config: RunConfig
     :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
     :type sdfg_file: str, optional
+    :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
+    None
+    :type verbose_name: Optional[str]
     :return: True if test passes, False otherwise
     :rtype: bool
     """
@@ -93,6 +97,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
             add_args['symbols'] = params.get_dict()
         add_args['k_caching'] = run_config.k_caching
         add_args['change_stride'] = run_config.change_stride
+        add_args['verbose_name'] = verbose_name
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
         print(f"Reading SDFG from {sdfg_file} and compile it")
@@ -134,7 +139,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
 
 
 def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
-                sdfg_file: Optional[str] = None):
+                sdfg_file: Optional[str] = None, verbose_name: Optional[str] = None):
     """
     Runs Programs
 
@@ -148,6 +153,9 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     :type repetitions: int, optional
     :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
     :type sdfg_file: str, optional
+    :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
+    None
+    :type verbose_name: Optional[str]
     """
     programs = get_programs_data()['programs']
     print(f"Run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
@@ -160,6 +168,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
             additional_args['symbols'] = params.get_dict()
         additional_args['k_caching'] = run_config.k_caching
         additional_args['change_stride'] = run_config.change_stride
+        additional_args['verbose_name'] = verbose_name
 
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **additional_args)
     else:
