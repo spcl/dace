@@ -1039,6 +1039,9 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
         _check_cand(in_candidates, state.in_edges_by_connector)
         _check_cand(out_candidates, state.out_edges_by_connector)
+        # This pervents the following errormessage for some SDFGs are nsdfg.sdfg.save seems to have sideeffects:
+        # WARNING: RefineNestedAccess::can_be_applied triggered a AttributeError exception: 'NoneType' object has no attribute 'covers'
+        nsdfg.sdfg.save('/tmp/graph.sdfg')
 
         # Return result, filtering out the states
         return ({k: (dc(v), ind)
