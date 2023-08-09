@@ -298,8 +298,8 @@ class Data_Component_Def_Stmt_Node(FNode):
 
 
 class Data_Ref_Node(FNode):
-    _attributes = ( )
-    _fields = ('parent', 'part_ref')    
+    _attributes = ()
+    _fields = ('parent', 'part_ref')
 
 
 class Array_Constructor_Node(FNode):
@@ -314,6 +314,11 @@ class Ac_Value_List_Node(FNode):
 
 class Section_Subscript_List_Node(FNode):
     _fields = ('list')
+
+
+class Pointer_Assignment_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('name_pointer', 'name_target')
 
 
 class For_Stmt_Node(FNode):

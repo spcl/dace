@@ -299,16 +299,16 @@ class InternalFortranAst:
 
     def data_ref(self, node: FASTNode):
         children = self.create_children(node)
-        parent=children[0]
-        part_ref=children[1]
+        parent = children[0]
+        part_ref = children[1]
         return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref)
 
     def end_type_stmt(self, node: FASTNode):
         return None
-    
+
     def derived_type_def(self, node: FASTNode):
         children = self.create_children(node)
-        name = get_child(children, ast_internal_classes.Type_Name_Node)
+        name = children[0].name
         component_part = get_child(children, ast_internal_classes.Component_Part_Node)
         return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
 
@@ -481,14 +481,46 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         if name.name == "__dace_selected_int_kind":
             import math
+            if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
+                arg0 = args.args[0].value
+            elif isinstance(args.args[0], ast_internal_classes.Name_Node):
+                if args.args[0].name in self.symbols:
+                    arg0 = self.symbols[args.args[0].name].value
+                else:
+                    raise ValueError("Only symbols can be names in selector")
+            else:
+                raise ValueError("Only literals or symbols can be arguments in selector")
+
             return ast_internal_classes.Int_Literal_Node(value=str(
-                math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
+                math.ceil((math.log2(math.pow(10, int(arg0))) + 1) / 8)),
                                                          line_number=line)
         # This selects the smallest kind that can hold the given number of digits (fp64,fp32 or fp16)
         elif name.name == "__dace_selected_real_kind":
-            if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
+            if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
+                arg0 = args.args[0].value
+            elif isinstance(args.args[0], ast_internal_classes.Name_Node):
+                if args.args[0].name in self.symbols:
+                    arg0 = self.symbols[args.args[0].name].value
+                else:
+                    raise ValueError("Only symbols can be names in selector")
+            else:
+                raise ValueError("Only literals or symbols can be arguments in selector")
+            if len(args.args) == 2:
+                if isinstance(args.args[1], ast_internal_classes.Int_Literal_Node):
+                    arg1 = args.args[1].value
+                elif isinstance(args.args[1], ast_internal_classes.Name_Node):
+                    if args.args[1].name in self.symbols:
+                        arg1 = self.symbols[args.args[1].name].value
+                    else:
+                        raise ValueError("Only symbols can be names in selector")
+                else:
+                    raise ValueError("Only literals or symbols can be arguments in selector")
+            else:
+                arg1 = 0
+
+            if int(arg0) >= 9 or int(arg1) > 126:
                 return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-            elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
+            elif int(arg0) >= 3 or int(arg1) > 14:
                 return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
             else:
                 return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
@@ -637,6 +669,8 @@ class InternalFortranAst:
                 alloc = True
             if i.string.lower() == "parameter":
                 symbol = True
+            if i.string.lower() == "pointer":
+                alloc = True
 
         vardecls = []
 
@@ -769,6 +803,7 @@ class InternalFortranAst:
         return node
 
     def pointer_stmt(self, node: FASTNode):
+        raise NotImplementedError("Pointer stmt is not supported yet")
         return node
 
     def protected_stmt(self, node: FASTNode):
@@ -814,7 +849,11 @@ class InternalFortranAst:
             return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line)
 
     def pointer_assignment_stmt(self, node: FASTNode):
-        return node
+        children = self.create_children(node)
+        line = get_line(node)
+        return ast_internal_classes.Pointer_Assignment_Stmt_Node(name_pointer=children[0],
+                                                                 name_target=children[2],
+                                                                 line_number=line)
 
     def where_stmt(self, node: FASTNode):
         return node
@@ -1054,7 +1093,10 @@ class InternalFortranAst:
 
         uses = [self.create_ast(i) for i in node.children if isinstance(i, f08.Use_Stmt)]
         tmp = [self.create_ast(i) for i in node.children]
-        typedecls = [i for i in tmp if isinstance(i, ast_internal_classes.Type_Decl_Node)]
+        typedecls = [
+            i for i in tmp if isinstance(i, ast_internal_classes.Type_Decl_Node)
+            or isinstance(i, ast_internal_classes.Derived_Type_Def_Node)
+        ]
         symbols = []
         for i in others:
             if isinstance(i, list):

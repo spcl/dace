@@ -27,7 +27,6 @@ fortrantypes2dacetypes = {
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
     "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
-    
 }
 
 
@@ -119,6 +118,7 @@ class TaskletWriter:
             ast_internal_classes.Parenthesis_Expr_Node: self.parenthesis2string,
             ast_internal_classes.Call_Expr_Node: self.call2string,
             ast_internal_classes.ParDecl_Node: self.pardecl2string,
+            ast_internal_classes.Data_Ref_Node: self.dataref2string,
         }
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
@@ -146,6 +146,9 @@ class TaskletWriter:
             return node
         else:
             raise NameError("Error in code generation" + node.__class__.__name__)
+
+    def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
+        return self.write_code(node.parent) + "." + self.write_code(node.part_ref)
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
         str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])
@@ -319,6 +322,51 @@ class ProcessedWriter(TaskletWriter):
             return name
         else:
             return self.name2string(node)
+
+
+
+class UseModuleLister:
+    def __init__(self):
+        self.list_of_modules = []
+        self.objects_in_use={}
+
+    def get_used_modules(self, node):
+        if node is None:
+            return
+        if not hasattr(node, "children"):
+            return
+        for i in node.children:
+            if i.__class__.__name__ == "Use_Stmt":
+                if i.children[0] is not None:
+                    if i.children[0].string.lower()=="intrinsic":
+                        continue
+                for j in i.children:
+                    if j.__class__.__name__ == "Name":
+                        self.list_of_modules.append(j.string)
+                        for k in i.children:
+                            if k.__class__.__name__ == "Only_List":
+                                self.objects_in_use[j.string] = k
+
+            else:
+                self.get_used_modules(i)
+
+
+class DefModuleLister:
+    def __init__(self):
+        self.list_of_modules = []
+
+    def get_defined_modules(self, node):
+        if node is None:
+            return
+        if not hasattr(node, "children"):
+            return
+        for i in node.children:
+            if i.__class__.__name__ == "Module_Stmt":
+                for j in i.children:
+                    if j.__class__.__name__ == "Name":
+                        self.list_of_modules.append(j.string)
+            else:
+                self.get_defined_modules(i)
 
 
 class Context:

@@ -3,7 +3,7 @@
 from venv import create
 import warnings
 
-from dace.data import Scalar
+from dace.data import Scalar, Structure
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
@@ -23,6 +23,8 @@ from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
+import networkx as nx
+
 
 class AST_translator:
     """  
@@ -33,7 +35,7 @@ class AST_translator:
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
         """
-        self.registered_types={}
+        self.registered_types = {}
         self.tables = ast.tables
         self.top_level = None
         self.globalsdfg = None
@@ -67,6 +69,8 @@ class AST_translator:
             ast_internal_classes.Program_Node: self.ast2sdfg,
             ast_internal_classes.Write_Stmt_Node: self.write2sdfg,
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
+            ast_internal_classes.Derived_Type_Def_Node: self.derivedtypedef2sdfg,
+            ast_internal_classes.Pointer_Assignment_Stmt_Node: self.pointerassignment2sdfg,
         }
 
     def get_dace_type(self, type):
@@ -75,7 +79,12 @@ class AST_translator:
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
         if isinstance(type, str):
-            return ast_utils.fortrantypes2dacetypes[type]
+            if type in ast_utils.fortrantypes2dacetypes:
+                return ast_utils.fortrantypes2dacetypes[type]
+            elif type in self.registered_types:
+                return self.registered_types[type]
+            else:
+                raise ValueError("Unknown type " + type)
 
     def get_name_mapping_in_context(self, sdfg: SDFG):
         """
@@ -168,6 +177,60 @@ class AST_translator:
             self.translate(i, sdfg)
         self.translate(node.main_program.execution_part.execution, sdfg)
 
+    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
+        """
+        This function is responsible for translating Fortran pointer assignments into a SDFG.
+        :param node: The node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        """
+        if node.name_target.name not in self.name_mapping[sdfg]:
+            raise ValueError("Unknown variable " + node.name_target.name)
+        found = False
+        for i in self.unallocated_arrays:
+            if i[0] == node.name_pointer.name:
+                if found:
+                    raise ValueError("Multiple unallocated arrays with the same name")
+                fount = True
+                self.unallocated_arrays.remove(i)
+        self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
+
+    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
+        """
+        This function is responsible for registering Fortran derived type declarations into a SDFG as nested data types.
+        :param node: The node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        """
+        name = node.name.name
+        components = node.component_part.component_def_stmts
+        dict_setup = {}
+        for i in components:
+            j = i.vars
+            for k in j.vardecl:
+
+                datatype = self.get_dace_type(k.type)
+                if k.sizes is not None:
+                    sizes = []
+                    offset = []
+                    offset_value = -1
+                    for i in k.sizes:
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        text = tw.write_code(i)
+                        sizes.append(sym.pystr_to_symbolic(text))
+                        offset.append(offset_value)
+                    strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
+                    dict_setup[k.name] = dat.Array(
+                        datatype,
+                        sizes,
+                        strides=strides,
+                        offset=offset,
+                    )
+
+                else:
+                    dict_setup[k.name] = dat.Scalar(datatype)
+
+        structure_obj = Structure(dict_setup)
+        self.registered_types[name] = structure_obj
+
     def basicblock2sdfg(self, node: ast_internal_classes.Execution_Part_Node, sdfg: SDFG):
         """
         This function is responsible for translating Fortran basic blocks into a SDFG.
@@ -213,7 +276,6 @@ class AST_translator:
                                    offset=offset,
                                    strides=strides,
                                    transient=transient)
-
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG):
         #TODO implement
@@ -999,7 +1061,10 @@ class AST_translator:
         self.name_mapping[sdfg][node.name] = sdfg._find_new_name(node.name)
 
         if sizes is None:
-            sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
+            if isinstance(datatype, Structure):
+                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype)
+            else:
+                sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
             sdfg.add_array(self.name_mapping[sdfg][node.name],
@@ -1095,8 +1160,84 @@ def create_sdfg_from_fortran_file(source_string: str):
     return sdfg
 
 
+def recursive_ast_improver(ast,
+                           source_list,
+                           include_list,
+                           parser,
+                           exclude_list=[],
+                           missing_modules=[],
+                           dep_graph=nx.DiGraph(),
+                           asts={}):
+    dfl = ast_utils.DefModuleLister()
+    dfl.get_defined_modules(ast)
+    defined_modules = dfl.list_of_modules
+    if len(defined_modules) != 1:
+        print("Defined modules: ", defined_modules)
+        print("Assumption failed: Only one module per file")
+    ufl = ast_utils.UseModuleLister()
+    ufl.get_used_modules(ast)
+    objects_in_modules = ufl.objects_in_use
+    used_modules = ufl.list_of_modules
+    parent_module = defined_modules[0]
+    for i in defined_modules:
+        if i not in exclude_list:
+            exclude_list.append(i)
+        if i not in dep_graph.nodes:
+            dep_graph.add_node(i)
+    for i in used_modules:
+        if i not in dep_graph.nodes:
+            dep_graph.add_node(i)
+        weight = None
+        if i in objects_in_modules:
+            weight = objects_in_modules[i]
+        dep_graph.add_edge(parent_module, i, obj_list=weight)
 
-def create_sdfg_from_fortran_file_with_options(source_string: str,source_list,include_list):
+    print("It's turtles all the way down: ", len(exclude_list))
+    modules_to_parse = []
+    for i in used_modules:
+        if i not in defined_modules and i not in exclude_list:
+            print("Module " + i + " not defined")
+            modules_to_parse.append(i)
+    added_modules = []
+    for i in modules_to_parse:
+        found = False
+        for j in source_list:
+            if i in j:
+                fname = j.split("/")
+                fname = fname[len(fname) - 1]
+                if fname == i + ".f90":
+                    found = True
+                    next_file = j
+                    break
+
+        if not found:
+            print("Module " + i + " not found in source list! This is bad!")
+            if i not in missing_modules:
+                missing_modules.append(i)
+            #raise Exception("Module " + i + " not found in source list")
+            continue
+        next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+        next_ast = parser(next_reader)
+        next_ast = recursive_ast_improver(next_ast,
+                                          source_list,
+                                          include_list,
+                                          parser,
+                                          exclude_list=exclude_list,
+                                          missing_modules=missing_modules,
+                                          dep_graph=dep_graph,
+                                          asts=asts)
+        for mod in next_ast.children:
+            added_modules.append(mod)
+            if mod.children[0].children[1].string not in exclude_list:
+                exclude_list.append(mod.children[0].children[1].string)
+
+    for i in added_modules:
+        ast.children.append(i)
+        asts[i.children[0].children[1].string] = i
+    return ast
+
+
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -1104,9 +1245,39 @@ def create_sdfg_from_fortran_file_with_options(source_string: str,source_list,in
 
     """
     parser = pf().create(std="f2008")
-    reader = ffr(file_candidate=source_string,include_dirs=include_list,source_only=source_list)
+    reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
     ast = parser(reader)
+    exclude_list = []
+    missing_modules = []
+    dep_graph = nx.DiGraph()
+    asts = {}
+    ast = recursive_ast_improver(ast,
+                                 source_list,
+                                 include_list,
+                                 parser,
+                                 exclude_list=exclude_list,
+                                 missing_modules=missing_modules,
+                                 dep_graph=dep_graph,
+                                 asts=asts)
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+
+    name_dict = {}
+    for i in parse_order:
+        edges = list(dep_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = dep_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list'].children:
+                    if k.string not in names:
+                        names.append(k.string)
+        name_dict[i] = names
     tables = SymbolTable
+    for i in parse_order:
+        local_ast = ast_components.InternalFortranAst(asts[i], tables)
+        locl_program = local_ast.create_ast(asts[i])
+        print("Parsing module: ", i)
+
     own_ast = ast_components.InternalFortranAst(ast, tables)
     program = own_ast.create_ast(ast)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
@@ -1127,4 +1298,3 @@ def create_sdfg_from_fortran_file_with_options(source_string: str,source_list,in
     ast2sdfg.translate(program, sdfg)
 
     return sdfg
-
