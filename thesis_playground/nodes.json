@@ -8,6 +8,9 @@
         },
         "ault23": {
             "GPU": "V100"
+        },
+        "ault25": {
+            "GPU": "A100"
         }
     },
     "GPUs": {
@@ -25,6 +28,10 @@
             "global_memory_clock": 870000000,
             "sources": ["https://images.nvidia.com/content/technologies/volta/pdf/tesla-volta-v100-datasheet-letter-fnl-web.pdf", "https://arxiv.org/pdf/1804.06826.pdf"]
 
+        },
+        "A100": {
+            "sources": ["https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf"]
         }
+
     }
 }
