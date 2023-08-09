@@ -37,11 +37,12 @@ def plot_speedup_array_order(avg_data: pd.DataFrame, folder: str, title: str, le
 
     size_vs_y_plot(ax, 'Speedup', 'Speedup of kernel runtime achieved using different array layouts compared to original', speedups,
                    size_var_name='NBLOCKS')
-    sns.lineplot(data=speedups, x='NBLOCKS', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order)
-    program_names_map = get_program_infos()['full description'].to_dict()
+    sns.lineplot(data=speedups, x='NBLOCKS', y='runtime', hue='program', ax=ax, marker='o', hue_order=hue_order,
+                 style='program')
+    program_names_map = get_program_infos()['variant description'].to_dict()
     if legend_on_line:
-        legend_on_lines(ax, ((300000, 1.2), (250000, 6.3), (350000, 7.5)), [program_names_map[p] for p in hue_order[1:]],
-                        rotations=[0, -12, -15], color_palette_offset=1)
+        legend_on_lines(ax, ((4e5, 2), (4.5e5, 15), (4.5e5, 7)), [program_names_map[p] for p in hue_order[1:]],
+                        rotations=[0, -8, -5], color_palette_offset=1)
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     figure.suptitle(title)
@@ -72,10 +73,10 @@ def plot_speedup_temp_allocation(avg_data: pd.DataFrame, folder: str, title: str
 
     sns.lineplot(data=speedups, hue='program', x='NBLOCKS', y='runtime', ax=ax, marker='o', hue_order=hue_order)
     size_vs_y_plot(ax, 'Speedup', 'Speedup of kernel runtime stack allocation vs heap allocation', speedups, size_var_name='NBLOCKS')
-    program_names_map = get_program_infos()['full description'].to_dict()
+    program_names_map = get_program_infos()['variant description'].to_dict()
     if legend_on_line:
-        legend_on_lines(ax, ((1.5e5, 30), (4e5, 350), ((4e5, 120), (4.5e5, 45)), ((3e5, 200), (2e5, 85))),
-                        [program_names_map[p] for p in hue_order], rotations=[-3, -10, 0, 0])
+        legend_on_lines(ax, ((1.5e5, 190), (4.3e5, 550), ((5.5e5, 250), (5.5e5, 40)), (3.5e5, 180)),
+                        [program_names_map[p] for p in hue_order], rotations=[-3, -13, 0, 0])
     else:
         replace_legend_names(ax.get_legend(), program_names_map)
     save_plot(os.path.join(folder, 'speedup_temp_allocation.pdf'))

@@ -117,6 +117,8 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
 
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     inputs_device = copy_to_device(inputs)
+    sdfg.save('/tmp/graph.sdfg')
+    sdfg = dace.sdfg.sdfg.SDFG.from_file('/tmp/graph.sdfg')
     sdfg(**inputs_device, **outputs_d_device)
 
     print_with_time(f"{program} ({program_name}) on {run_config.device}")
@@ -184,6 +186,8 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     if run_config.pattern is not None:
         set_input_pattern(inputs, outputs, params, program, run_config.pattern)
 
+    sdfg.save('/tmp/graph.sdfg')
+    sdfg = dace.sdfg.sdfg.SDFG.from_file('/tmp/graph.sdfg')
     for _ in range(repetitions):
         sdfg(**inputs, **outputs)
 
@@ -217,6 +221,8 @@ def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str
     sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer
+    sdfg.save('/tmp/graph.sdfg')
+    sdfg = dace.sdfg.sdfg.SDFG.from_file('/tmp/graph.sdfg')
     sdfg.compile()
     return sdfg
 

@@ -11,7 +11,7 @@ from utils.paths import get_plots_2_folder
 from utils.plot import get_node_gpu_map
 
 
-def plot_vert_loop(experiment_ids: List[int], folder_name: str = 'vert-loop'):
+def plot_vert_loop(experiment_ids: List[int], folder_name: str = 'vert-loop', legend_on_line: bool = False):
     folder = os.path.join(get_plots_2_folder(), folder_name)
     os.makedirs(folder, exist_ok=True)
 
@@ -36,14 +36,14 @@ def plot_vert_loop(experiment_ids: List[int], folder_name: str = 'vert-loop'):
     else:
         run_count_str = f"between {run_counts.min()} and {run_counts.max()}"
     title = f"Vertical Loop Programs un on {node} using NVIDIA {gpu} averaging {run_count_str} runs"
-    plot_speedup_array_order(avg_data.copy(), folder, title)
-    plot_speedup_temp_allocation(avg_data.copy(), folder, title)
-    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='stack')
-    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='heap')
-    plot_runtime(data.copy(), folder, title)
-    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='stack')
-    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='heap')
-    plot_memory_transfers(data.copy(), folder, title)
+    plot_speedup_array_order(avg_data.copy(), folder, title, legend_on_line=legend_on_line)
+    plot_speedup_temp_allocation(avg_data.copy(), folder, title, legend_on_line=legend_on_line)
+    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='stack', legend_on_line=legend_on_line)
+    plot_runtime(data.copy(), folder, title, limit_temp_allocation_to='heap', legend_on_line=legend_on_line)
+    plot_runtime(data.copy(), folder, title, legend_on_line=legend_on_line)
+    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='stack', legend_on_line=legend_on_line)
+    plot_memory_transfers(data.copy(), folder, title, limit_temp_allocation_to='heap', legend_on_line=legend_on_line)
+    plot_memory_transfers(data.copy(), folder, title, legend_on_line=legend_on_line)
 
 
 def action_script(args):
@@ -52,6 +52,10 @@ def action_script(args):
                                            'folder_name': 'vert-loop'}),
             'vert-loop-trivial-elimination': (plot_vert_loop, {'experiment_ids': [13, 14],
                                                                'folder_name': 'vert-loop-trivial-elimination'}),
+
+            'vert-loop-ampere': (plot_vert_loop, {'experiment_ids': [62, 63],
+                                                  'folder_name': 'vert-loop-ampere',
+                                                  'legend_on_line': True}),
     }
     function, func_args = scripts[args.script_name]
     additional_args = json.loads(args.args)

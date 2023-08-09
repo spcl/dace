@@ -20,8 +20,8 @@ from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
 
 
-def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 3e5,
-                 nblock_step: Number = 1e5, debug_mode: bool = False):
+def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 2.5e5,
+                 nblock_step: Number = 5e4, debug_mode: bool = False):
     program = 'cloudsc_vert_loop_10'
     # print("Test with k-caching")
     test_program(program, RunConfig(k_caching=True))
@@ -34,7 +34,7 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5
                                                      'KLON': 1})
         params_list.append(params)
     profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
-                                         tot_time_repetitions=2))
+                                         tot_time_repetitions=2, ignore_action_re=r"transpose_[\w]_map_[0-9_]*"))
     experiment_desc = "Vertical loop example"
     profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
             [('k_caching', "False"), ('change_strides', 'False')], ncu_report=True,

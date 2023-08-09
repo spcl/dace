@@ -11,6 +11,8 @@ def main():
     args = parser.parse_args()
 
     sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_path)
+    csdfg = sdfg.compile()
+    print(csdfg.filename)
     for code_object in sdfg.generate_code():
         filename = os.path.join(get_sdfg_gen_code_folder(), args.sdfg_path.split('.')[0],
                                 f"{code_object.name}.{code_object.language}")
