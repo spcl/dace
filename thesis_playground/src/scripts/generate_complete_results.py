@@ -9,7 +9,8 @@ from numbers import Number
 from measurements.data import MeasurementRun, ProgramMeasurement
 from measurements.flop_computation import FlopCount, read_roofline_data
 from utils.paths import get_complete_results_dir, get_thesis_playground_root_dir
-from utils.plot import update_min_max, draw_program_points, draw_roofline, draw_ncu_points
+from utils.plot import update_min_max, draw_program_points, draw_roofline
+from utils.plot_ncu import draw_ncu_points
 from utils.ncu import get_all_actions_filtered
 from scripts import Script
 

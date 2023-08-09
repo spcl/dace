@@ -7,7 +7,8 @@ import matplotlib.lines as mlines
 from typing import Optional, List, Tuple
 
 from utils.paths import get_complete_results_dir
-from utils.plot import update_min_max, draw_program_points, draw_roofline, draw_ncu_points
+from utils.plot import update_min_max, draw_program_points, draw_roofline
+from utils.plot_ncu import draw_ncu_points
 from utils.ncu import get_all_actions_filtered, get_peak_performance
 from scripts import Script
 from scripts.generate_complete_results import CompleteData

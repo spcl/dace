@@ -4,7 +4,8 @@ from os import path
 import matplotlib.pyplot as plt
 
 from utils.paths import get_results_dir
-from utils.plot import plot_roofline_cycles, plot_roofline_seconds
+from utils.plot import plot_roofline_cycles
+from utils.plot_ncu import plot_roofline_seconds
 from measurements.data import MeasurementRun
 from measurements.flop_computation import read_roofline_data
 

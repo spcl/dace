@@ -12,8 +12,6 @@ import pandas as pd
 from utils.general import convert_to_seconds
 from measurements.data import MeasurementRun, Measurement
 from measurements.flop_computation import FlopCount
-from utils.ncu import get_achieved_bytes, get_achieved_work, get_runtime
-from utils.ncu_report import IAction
 
 
 def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwidth: float, max_bandwidth_unit: str,
@@ -34,35 +32,6 @@ def draw_roofline(ax: matplotlib.axis.Axis, peak_performance: float, max_bandwid
     ax.text(min_intensity, max_bandwidth*min_intensity, text, rotation=angle,
             rotation_mode='anchor', transform_rotates_text=False, color=color)
     ax.grid()
-
-
-def draw_ncu_points(action: IAction, label: str, ax: matplotlib.axis.Axis, program: Optional[str] = None,
-                    marker: str = "x"):
-    """
-    Draws points onto the given axis. Uses the Q, W and T data from the given ncu_report action object
-
-    :param action: The ncu action object
-    :type action: Action
-    :param label: The label of the measurement
-    :type label: str
-    :param ax: The axis
-    :type ax: matplotlib.axis.Axis
-    :param program: Name of the program of the measurement. If given will color all points of the same program in the
-    same color
-    :type program: Optional[str]
-    :param marker: Marker for the points as passed to matplotlib, defaults to "x"
-    :type marker: str
-    """
-    bytes_count = get_achieved_bytes(action)
-    flop = get_achieved_work(action)['dW']
-    time = get_runtime(action)
-    performance = flop / time
-    intensity = flop / bytes_count
-    if program is None:
-        ax.scatter(intensity, performance, label=label, marker=marker)
-    else:
-        ax.scatter(intensity, performance, label=label, marker=marker, color=get_color_from_program_name(program))
-    return intensity
 
 
 def draw_program_points(measurement: Measurement, label: str, ax: matplotlib.axis.Axis,
@@ -239,33 +208,6 @@ def draw_rooflines_seconds(ax: matplotlib.axis.Axis, hardware_data: Dict, min_in
                   bandwidth_label="L1, Measured")
 
 
-def plot_roofline_seconds(run_data: MeasurementRun, roofline_data: Dict[str, Tuple[FlopCount, Number]],
-                          hardware_data: Dict, ax: matplotlib.axis.Axis, points_only: bool = False,
-                          actions: Optional[Dict[str, IAction]] = None):
-
-    ax.set_xlabel("Operational Intensity")
-    ax.set_ylabel("Performance [flop/seconds]")
-
-    min_intensity = None
-    max_intensity = None
-    for program_measurement in run_data.data:
-        program = program_measurement.program
-        label = f"{program} using {run_data.description}"
-        for measurement in program_measurement.measurements['Kernel Time']:
-            min_intensity, max_intensity = update_min_max(
-                    draw_program_points(measurement, label, ax, *roofline_data[program]), min_intensity,
-                    max_intensity)
-            if actions is not None:
-                min_intensity, max_intensity = update_min_max(draw_ncu_points(actions[program], label, ax),
-                                                              min_intensity, max_intensity)
-
-    if not points_only:
-        draw_rooflines_seconds()
-
-    ax.legend()
-    ax.grid()
-
-
 def save_plot(path: str):
     """
     Saves the current plot into the given filepath. Makes sure that all folders are created and prints a message where
@@ -402,7 +344,7 @@ def legend_on_lines(ax: matplotlib.axis.Axis,
                 horizontalalignment='center', verticalalignment='center', rotation=angle)
 
 
-def legend_on_lines_dict( ax: matplotlib.axis.Axis, positions: Dict[str, Dict[str, Union(int, float]]):
+def legend_on_lines_dict( ax: matplotlib.axis.Axis, positions: Dict[str, Dict[str, Union[int, float]]]):
     if ax.get_legend() is not None:
         ax.get_legend().remove()
 
@@ -425,18 +367,18 @@ def legend_on_lines_dict( ax: matplotlib.axis.Axis, positions: Dict[str, Dict[st
 
 
 
-# def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
-#     """
-#     Replace the program names in the legend by more discriptive ones
+def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
+    """
+    Replace the program names in the legend by more discriptive ones
 
-#     :param legend: The legend object where the labels should be changed
-#     :type legend: matplotlib.legend.Leged
-#     :param names_map: Dictionay mapping the names/labels to change.
-#     :type names_map: Dict[str, str]
-#     """
-#     for text in legend.get_texts():
-#         if text.get_text() in names_map:
-#             text.set(text=names_map[text.get_text()])
+    :param legend: The legend object where the labels should be changed
+    :type legend: matplotlib.legend.Leged
+    :param names_map: Dictionay mapping the names/labels to change.
+    :type names_map: Dict[str, str]
+    """
+    for text in legend.get_texts():
+        if text.get_text() in names_map:
+            text.set(text=names_map[text.get_text()])
 
 
 def get_node_gpu_map() -> Dict[str, str]:
