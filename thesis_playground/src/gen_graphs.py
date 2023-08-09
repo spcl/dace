@@ -18,10 +18,12 @@ def main():
     parser.add_argument('--not-specialise', action='store_true', help='Do not specialise symbols')
     parser.add_argument('--k-caching', action='store_true', default=False, help="use k-caching")
     parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
+    parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
     add_cloudsc_size_arguments(parser)
 
-    device = dace.DeviceType.GPU
     args = parser.parse_args()
+    device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
+    device = device_map[args.device]
 
     if args.debug:
         enable_debug_flags()
