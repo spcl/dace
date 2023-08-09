@@ -33,7 +33,6 @@ def main():
     params = ParametersProvider(args.program)
     params.update_from_args(args)
     if not args.not_specialise:
-        print(f"Use {params} for specialisation")
         add_args['symbols'] = params.get_dict()
 
     add_args['k_caching'] = args.k_caching
@@ -52,12 +51,12 @@ def main():
     if args.sdfg_file is not None:
         sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_file)
     else:
+        if args.verbose_name:
+            reset_graph_files(args.verbose_name)
+            add_args['verbose_name'] = args.verbose_name
         sdfg = get_sdfg(fsource, program_name)
-    if args.verbose_name:
-        reset_graph_files(args.verbose_name)
-        add_args['verbose_name'] = args.verbose_name
+        sdfg = optimize_sdfg(sdfg, device_map[args.device], **add_args)
 
-    sdfg = optimize_sdfg(sdfg, device_map[args.device], **add_args)
     sdfg.instrument = dace.InstrumentationType.Timer
     arguments_dace = generate_arguments_fortran(args.program, f"{program_name}_routine", np.random.default_rng(42), params)
     arguments_original = copy.deepcopy(arguments_dace)
@@ -83,7 +82,7 @@ def main():
         print("WARNING: DaCe arguments did not change at all")
 
     if args.compare_to_fortran:
-        result = compare_output_all(arguments_fortran, arguments_dace)
+        result = compare_output_all(arguments_fortran, arguments_dace, name_a='Fortran', name_b='DaCe')
         if result:
             print("SUCCESS")
 
