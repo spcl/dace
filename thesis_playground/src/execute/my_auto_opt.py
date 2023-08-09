@@ -54,6 +54,8 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
+    print(f"[my_auto_opt::auto_optimize] sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
+          f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
     # Fix for full cloudsc
     if sdfg.name == 'CLOUDSCOUTER':
         cloudsc_state = sdfg.find_state('stateCLOUDSC')
@@ -124,6 +126,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
+        print(f"Apply GPU transformations")
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 

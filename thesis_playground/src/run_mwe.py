@@ -76,6 +76,8 @@ def main():
         from utils.gpu_general import copy_to_device
         arguments_dace = copy_to_device(arguments_dace)
 
+    sdfg.save('/tmp/graph.sdfg')
+    sdfg = dace.sdfg.sdfg.SDFG.from_file('/tmp/graph.sdfg')
     csdfg = sdfg.compile()
     print(f"Arguments: {list(arguments_dace.keys())}")
     csdfg(**{k.upper(): v for k, v in arguments_dace.items()})
