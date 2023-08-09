@@ -388,12 +388,12 @@ def legend_on_lines(ax: matplotlib.axis.Axis,
     for index, (pos, program) in enumerate(zip(positions, program_names)):
         angle = 0
         if rotations is not None:
-            if isinstance(rotations, List[float]):
+            if isinstance(rotations, List):
                 angle = rotations[index]
-            elif isinstance(rotations, Dict[str, float]):
+            elif isinstance(rotations, Dict):
                 angle = rotations[program]
         text_pos = pos
-        if isinstance(pos, Tuple[Tuple[float, float], Tuple[float, float]]):
+        if isinstance(pos[0], Tuple):
             text_pos = pos[0]
             ax.annotate('', xytext=text_pos, xy=pos[1],
                         arrowprops=get_arrowprops({'color': sns.color_palette()[index + color_palette_offset]}))
@@ -402,18 +402,41 @@ def legend_on_lines(ax: matplotlib.axis.Axis,
                 horizontalalignment='center', verticalalignment='center', rotation=angle)
 
 
-def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
-    """
-    Replace the program names in the legend by more discriptive ones
+def legend_on_lines_dict( ax: matplotlib.axis.Axis, positions: Dict[str, Dict[str, Union(int, float]]):
+    if ax.get_legend() is not None:
+        ax.get_legend().remove()
 
-    :param legend: The legend object where the labels should be changed
-    :type legend: matplotlib.legend.Leged
-    :param names_map: Dictionay mapping the names/labels to change.
-    :type names_map: Dict[str, str]
-    """
-    for text in legend.get_texts():
-        if text.get_text() in names_map:
-            text.set(text=names_map[text.get_text()])
+    for program, pos_data in positions.items():
+        angle = 0
+        if rotations is not None:
+            if isinstance(rotations, List):
+                angle = rotations[index]
+            elif isinstance(rotations, Dict):
+                angle = rotations[program]
+        text_pos = pos
+        if isinstance(pos[0], Tuple):
+            text_pos = pos[0]
+            ax.annotate('', xytext=text_pos, xy=pos[1],
+                        arrowprops=get_arrowprops({'color': sns.color_palette()[index + color_palette_offset]}))
+
+        ax.text(text_pos[0], text_pos[1], program, color=sns.color_palette()[index + color_palette_offset],
+                horizontalalignment='center', verticalalignment='center', rotation=angle)
+
+
+
+
+# def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
+#     """
+#     Replace the program names in the legend by more discriptive ones
+
+#     :param legend: The legend object where the labels should be changed
+#     :type legend: matplotlib.legend.Leged
+#     :param names_map: Dictionay mapping the names/labels to change.
+#     :type names_map: Dict[str, str]
+#     """
+#     for text in legend.get_texts():
+#         if text.get_text() in names_map:
+#             text.set(text=names_map[text.get_text()])
 
 
 def get_node_gpu_map() -> Dict[str, str]:
