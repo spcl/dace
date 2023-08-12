@@ -1,14 +1,16 @@
 from typing import List
 import copy
-from typing import Optional
+from typing import Optional, Dict, Union
 import pandas as pd
 import numpy as np
 import dace
 import sympy
+from dace.sdfg import SDFG
 
 from utils.print import print_with_time
 from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_performance, get_achieved_work, \
-                      get_achieved_bytes, get_achieved_performance, get_runtime, get_cycles, get_all_actions
+                      get_achieved_bytes, get_achieved_performance, get_runtime, get_cycles, get_all_actions, \
+                      get_all_actions_matching_re, SummedIAction
 from utils.ncu_report import IAction
 from utils.general import get_programs_data, remove_build_folder, insert_heap_size_limit, get_inputs, \
                           get_outputs, use_cache, enable_debug_flags
@@ -33,12 +35,13 @@ class ProfileConfig:
     ncu_repetitions: int
     ignore_action_re: Optional[str]
     size_identifiers: List[str]
+    ncu_kernels: Dict[str, str]
 
     def __init__(self, program: str, sizes: List[ParametersProvider], size_identifiers: List[str],
                  set_heap_limit: bool = False, heap_limit_str: str = '',
                  heap_limit_expr: Optional[sympy.core.expr.Expr] = None,
                  tot_time_repetitions: int = 5, ncu_repetitions: int = 3,
-                 ignore_action_re: Optional[str] = None):
+                 ignore_action_re: Optional[str] = None, ncu_kernels: Optional[Dict[str, str]] = None):
         """
         Constructor
 
@@ -62,6 +65,10 @@ class ProfileConfig:
         :type ncu_repetitions: int, optional
         :param ignore_action_re: Regex for any ncu actions to ignore, defaults to None
         :type ignore_action_re: Optional[str], optional
+        :param ncu_kernels: Dictionary of kernels to take from ncu. Key is kernel name to save, value is regex for
+        kernel name as given by ncu, optional. If not given will take the kernel as specified by ignore_action_re. If
+        there are multiple kernels per regex takes sum.
+        type ncu_kernels: Optional[Dict[str, str]]
         """
         self.program = program
         self.sizes = sizes
@@ -72,6 +79,7 @@ class ProfileConfig:
         self.tot_time_repetitions = tot_time_repetitions
         self.ncu_repetitions = ncu_repetitions
         self.ignore_action_re = ignore_action_re
+        self.ncu_kernels = ncu_kernels
 
     def get_program_command_line_arguments(self, params: ParametersProvider, run_config: RunConfig) -> List[str]:
         """
@@ -117,6 +125,20 @@ class ProfileConfig:
             print(f"WARNING: Found more than one actions, there are {len(actions)}, taking the first ({action})")
         return action
 
+    @staticmethod
+    def add_ncu_action_data(data: pd.DataFrame, action: IAction, metadata: Dict[str, Union[str, int]]):
+        data.append({'measurement': 'gpu frequency', 'value': get_frequencies(action)[0], **metadata})
+        data.append({'measurement': 'memory frequency', 'value': get_frequencies(action)[1], **metadata})
+        data.append({'measurement': 'peak performance', 'value': get_peak_performance(action)[0], **metadata})
+        data.append({'measurement': 'peak bandwidth', 'value': get_peak_performance(action)[1], **metadata})
+        for key, value in get_achieved_work(action).items():
+            data.append({'measurement': key, 'value': value, **metadata})
+        data.append({'measurement': 'measured bytes', 'value': get_achieved_bytes(action), **metadata})
+        data.append({'measurement': 'measured performance', 'value': get_achieved_performance(action)[0], **metadata})
+        data.append({'measurement': 'measured bandwidth', 'value': get_achieved_performance(action)[1], **metadata})
+        data.append({'measurement': 'runtime', 'value': get_runtime(action), **metadata})
+        data.append({'measurement': 'cycles', 'value': get_cycles(action), **metadata})
+
     def compile(self, params: ParametersProvider, run_config: RunConfig,
                 specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
         """
@@ -155,6 +177,111 @@ class ProfileConfig:
             use_cache(self.program)
         return sdfg
 
+    def get_size_data_for_dataframe(self, params: ParametersProvider) -> Dict[str, Union[int, float]]:
+        """
+        Get dictionary of values of the provided parameters to be saved into the results dataframe.
+        self.size_identifiers list the values to take.
+
+        :param params: The parameters
+        :type params: ParametersProvider
+        :return: Dictionary, key is name of parameter, value its value
+        :rtype: Dict[str, Union[int, float]]
+        """
+        size_data = {}
+        for param in self.size_identifiers:
+            size_data.update({param: params[param]})
+        return size_data
+
+    def profile_total_runtime(
+            self,
+            sdfg: SDFG,
+            params: ParametersProvider,
+            run_config: RunConfig) -> List[Dict[str, Union[str, float, int]]]:
+        """
+        Profile the total runtime of the given SDFG using the given parameters and run config
+
+        :param sdfg: The SDFG to profile
+        :type sdfg: SDFG
+        :param params: The parameters to use, specifying input sizes
+        :type params: ParametersProvider
+        :param run_config: The run configuration to use
+        :type run_config: RunConfig
+        :return: List of dictionaries. Each dict is one total runtime measurement for one size.
+        :rtype: List[Dict[str, Union[str, float, int]]]
+        """
+        programs = get_programs_data()['programs']
+        routine_name = f"{programs[self.program]}_routine"
+        rng = np.random.default_rng(RNG_SEED)
+        inputs = get_inputs(self.program, rng, params)
+        outputs = get_outputs(self.program, rng, params)
+
+        if run_config.pattern is not None:
+            set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
+
+        sdfg.clear_instrumentation_reports()
+        print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.tot_time_repetitions} times to measure "
+                        f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+                        f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
+        inputs_device = copy_to_device(copy.deepcopy(inputs))
+        outputs_device = copy_to_device(copy.deepcopy(outputs))
+        for i in range(self.tot_time_repetitions):
+            print_with_time(f"[ProfileConfig::profile] Starting run {i} for total time")
+            sdfg(**inputs_device, **outputs_device)
+
+        reports = sdfg.get_instrumentation_reports()
+        size_data = self.get_size_data_for_dataframe(params)
+        data = []
+        for index, report in enumerate(reports):
+            keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
+            key = keys[0]
+            if len(keys) > 1:
+                print(f"WARNING: Report has more than one key, taking only the first one. keys: {keys}")
+            this_data = {
+                'program': self.program,
+                'run number': index,
+                'measurement': 'Total time',
+                'value': report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0],
+                **size_data}
+            data.append(this_data)
+        print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.ncu_repetitions} times with ncu "
+                        f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+                        f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
+        return data
+
+    def profile_ncu(
+            self,
+            sdfg_path: str,
+            ncu_report_path: str,
+            params: ParametersProvider,
+            run_config: RunConfig) -> List[Dict[str, Union[str, float, int]]]:
+
+        data = []
+        for index in range(self.ncu_repetitions):
+            program_args = self.get_program_command_line_arguments(params, run_config)
+            program_args.extend(['--sdfg-file', sdfg_path])
+            gen_ncu_report(self.program, ncu_report_path, run_config,
+                           program_args=program_args,
+                           ncu_args=['--set', 'full'])
+            size_data = self.get_size_data_for_dataframe(params)
+            metadata = {'program': self.program, 'run_number': index, **size_data}
+            if self.ncu_kernels is None:
+                metadata['scope'] = 'Total'
+                metadata['num_kernels'] = 0
+                action = self.get_action(ncu_report_path)
+                ProfileConfig.add_ncu_action_data(data, action, metadata)
+            else:
+                for name, kernel_re in self.ncu_kernels.items():
+                    actions = get_all_actions_matching_re(ncu_report_path, kernel_re)
+                    # print(f"name: {name}, kernel_re: {kernel_re}, found actions: {[str(a) for a in actions]} all actions: "
+                    #       f"{[str(a) for a in get_all_actions(ncu_report_path)]}")
+                    action = SummedIAction(actions)
+                    if len(action) == 0:
+                        continue
+                    metadata['scope'] = name
+                    metadata['num_kernels'] = len(action)
+                    ProfileConfig.add_ncu_action_data(data, action, metadata)
+        return data
+
     def profile(self, run_config: RunConfig, ncu_report_path: Optional[str] = None,
                 sdfg_path: Optional[str] = None, debug_mode: bool = False) -> pd.DataFrame:
         """
@@ -172,89 +299,19 @@ class ProfileConfig:
         :rtype: pd.DataFrame
         """
         data = []
-        programs = get_programs_data()['programs']
-        routine_name = f"{programs[self.program]}_routine"
         ncu_report_path = '/tmp/profile.ncu-rep' if ncu_report_path is None else ncu_report_path
-
-        # if sdfg_path is None:
-        #     print_with_time("[ProfileConfig::profile] Compile unfixed SDFG for profiling")
-        #     sdfg = self.compile(self.sizes[0], run_config)
-        #     sdfg.save('/tmp/sdfg.sdfg')
-        #     sdfg_path = '/tmp/sdfg.sdfg'
-        # else:
-        #     print_with_time(f"[ProfileConfig::profile] Read SDFG from {sdfg_path} for profiling")
-        #     sdfg = SDFG.from_file(sdfg_path)
 
         for params in self.sizes:
             sdfg = self.compile(params, run_config, debug_mode=debug_mode)
-            sdfg.save('/tmp/sdfg.sdfg')
             sdfg_path = '/tmp/sdfg.sdfg'
-            # if run_config.specialise_symbols:
-            #     specialise_symbols(sdfg, params.get_dict())
+            sdfg.save(sdfg_path)
 
-            rng = np.random.default_rng(RNG_SEED)
-            inputs = get_inputs(self.program, rng, params)
-            outputs = get_outputs(self.program, rng, params)
-            if run_config.pattern is not None:
-                set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
+            if self.tot_time_repetitions > 0:
+                data.extend(self.profile_total_runtime(sdfg, params, run_config))
+            if self.ncu_repetitions > 0:
+                data.extend(self.profile_ncu(sdfg_path, ncu_report_path, params, run_config))
 
-            sdfg.clear_instrumentation_reports()
-            print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.tot_time_repetitions} times to measure "
-                            f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
-                            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
-            inputs_device = copy_to_device(copy.deepcopy(inputs))
-            outputs_device = copy_to_device(copy.deepcopy(outputs))
-            for i in range(self.tot_time_repetitions):
-                print_with_time(f"[ProfileConfig::profile] Starting run {i} for total time")
-                sdfg(**inputs_device, **outputs_device)
-
-            reports = sdfg.get_instrumentation_reports()
-            size_data = {}
-            for param in self.size_identifiers:
-                size_data.update({param: params[param]})
-            for index, report in enumerate(reports):
-                keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
-                key = keys[0]
-                if len(keys) > 1:
-                    print(f"WARNING: Report has more than one key, taking only the first one. keys: {keys}")
-                this_data = {
-                    'program': self.program,
-                    'run number': index,
-                    'measurement': 'Total time',
-                    'value': report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0],
-                    **size_data}
-                data.append(this_data)
-            print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.ncu_repetitions} times with ncu "
-                            f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
-                            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
-            for index in range(self.ncu_repetitions):
-                program_args = self.get_program_command_line_arguments(params, run_config)
-                program_args.extend(['--sdfg-file', sdfg_path])
-                gen_ncu_report(self.program, ncu_report_path, run_config,
-                               program_args=program_args,
-                               ncu_args=['--set', 'full'])
-                action = self.get_action(ncu_report_path)
-                data.append({'program': self.program, 'run number': index, 'measurement': 'gpu frequency',
-                             'value': get_frequencies(action)[0], **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'memory frequency',
-                             'value': get_frequencies(action)[1], **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'peak performance',
-                             'value': get_peak_performance(action)[0], **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'peak bandwidth',
-                             'value': get_peak_performance(action)[1], **size_data})
-                for key, value in get_achieved_work(action).items():
-                    data.append({'program': self.program, 'run number': index, 'measurement': key, 'value': value,
-                                 **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'measured bytes',
-                             'value': get_achieved_bytes(action), **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'measured performance',
-                             'value': get_achieved_performance(action)[0], **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'measured bandwidth',
-                             'value': get_achieved_performance(action)[1], **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'runtime',
-                             'value': get_runtime(action), **size_data})
-                data.append({'program': self.program, 'run number': index, 'measurement': 'cycles',
-                             'value': get_cycles(action), **size_data})
+            size_data = self.get_size_data_for_dataframe(params)
             theoretical_bytes = get_number_of_bytes_2(params, self.program)
             theoretical_bytes_temp = get_number_of_bytes_2(params, self.program, True)
             if theoretical_bytes is None:

@@ -318,10 +318,12 @@ def gen_ncu_report(program: str, report_filename: str, run_config: RunConfig, nc
     :return: True if ncu report was successfully created, False otherwise
     :rtype: bool
     """
-    print_with_time(f"Create ncu report and save it into {report_filename}")
+    print_with_time(f"[utils::execute_dace::gen_ncu_report] Create ncu report and save it into {report_filename}")
     command_program = get_command_args_single_run(program, run_config)
     command_program.extend(program_args)
     ncu_command = ['ncu', '--force-overwrite', '--export', report_filename, *ncu_args]
+    print_with_time(f"[utils::execute_dace::gen_ncu_report] Using nuc command: {ncu_command} "
+                    f"and program: {command_program}")
     ncu_output = run([*ncu_command, *command_program], capture_output=True)
     if ncu_output.returncode != 0:
         print("Failed to run the program with ncu")

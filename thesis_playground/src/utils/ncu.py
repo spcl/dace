@@ -1,7 +1,46 @@
 from typing import Tuple, Dict, List
-from .ncu_report import IAction, load_report
+from .ncu_report import IAction, load_report, IMetric
 from math import isnan
 import re
+
+
+class MyMetric(IMetric):
+    def __init__(self, value):
+        self.value = value
+
+    def as_double(self) -> float:
+        return self.value
+
+    def as_uint64(self) -> int:
+        return self.value
+
+
+class SummedIAction(IAction):
+    """
+    Class overwriting metric_by_name returning the summed value of all actions
+    """
+    actions: List[IAction]
+
+    def __init__(self, actions: List[IAction]):
+        """
+        Construct class overwriting metric_by_name returing the summed value of all given actions
+
+        :param actions: The actions to sum over
+        :type actions: List[IAction]
+        """
+        self.actions = actions
+
+    def metric_by_name(self, name: str):
+        value = 0
+        for action in self.actions:
+            value += action.metric_by_name(name).as_double()
+        return MyMetric(value)
+
+    def __str__(self) -> str:
+        return f"SummedIAction with actions {self.actions}"
+
+    def __len__(self) -> int:
+        return len(self.actions)
 
 
 def get_action(filename: str) -> IAction:

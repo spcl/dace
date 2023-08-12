@@ -20,21 +20,29 @@ from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
 
 
-def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1e5-2, nblock_max: Number = 2.5e5,
+def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 5.0e5,
                  nblock_step: Number = 5e4, debug_mode: bool = False):
     program = 'cloudsc_vert_loop_10'
-    # print("Test with k-caching")
-    test_program(program, RunConfig(k_caching=True))
-    # print("Test without k-caching")
-    test_program(program, RunConfig(k_caching=False))
-    params_list = []
+    test_program(program, RunConfig(k_caching=True, change_stride=True))
+    test_program(program, RunConfig(k_caching=True, change_stride=False))
+    test_program(program, RunConfig(k_caching=False, change_stride=True))
+    test_program(program, RunConfig(k_caching=False, change_stride=False))
+    params_list_small = []
+    params_list_big = []
     profile_configs = []
-    for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
+    for nblock in np.arange(1.5e5, nblock_min, -nblock_step):
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
-        params_list.append(params)
-    profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
-                                         tot_time_repetitions=2, ignore_action_re=r"transpose_[\w]_map_[0-9_]*"))
+        params_list_small.append(params)
+    for nblock in np.arange(nblock_max, 1.5e5, -nblock_step):
+        params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
+                                                     'KLON': 1})
+        params_list_big.append(params)
+    profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=1,
+                           tot_time_repetitions=0,
+                           ncu_kernels={'work': r'stateinner_loops_[\w_0-9]*', 'transpose': r'transpose_[\w_0-9]*'}))
+    profile_configs.append(ProfileConfig(program, params_list_big, ['NBLOCKS'], ncu_repetitions=0,
+                                         tot_time_repetitions=10))
     experiment_desc = "Vertical loop example"
     profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
             [('k_caching', "False"), ('change_strides', 'False')], ncu_report=True,
@@ -178,9 +186,12 @@ def action_print(args):
             'node': ('Node', None),
             'program': ('Program', None),
             'NBLOCKS': ('NBLOCKS', ','),
-            'runtime': ('T [s]', '.3e'),
-            'measured bytes': ('D [b]', '.3e'),
-            'theoretical bytes total': ('Q [b]', '.3e')
+            'runtime': ('Kernel T [s]', '.3e'),
+            # 'Total time': ('tot T [s]', '.3e'),
+            # 'measured bytes': ('D [b]', '.3e'),
+            # 'theoretical bytes total': ('Q [b]', '.3e')
+            'k_caching': ('K-caching', None),
+            'change_strides': ('change strides', None),
     }
 
     df = get_data_wideformat(args.experiment_ids).dropna()
