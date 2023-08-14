@@ -14,6 +14,7 @@ from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_f
                                                    move_small_arrays_to_stack, make_transients_persistent
 
 # Transformations
+from dace.dtypes import ScheduleType
 from dace.sdfg.nodes import MapEntry, AccessNode
 from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop, \
                                          MapExpansion
@@ -420,7 +421,7 @@ def k_caching_prototype_v1(sdfg: SDFG,
         save_graph(sdfg, program, "after_map_to_for_loop")
 
 
-def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int]) -> SDFG:
+def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int], schedule: ScheduleType) -> SDFG:
     # Create new SDFG and copy constants and symbols
     original_name = sdfg.name
     sdfg.name = "changed_strides"
@@ -527,7 +528,8 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                     code='_out = _in',
                     outputs={'_out': Memlet(data=flipped_data,
                                             subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    external_edges=True
+                    external_edges=True,
+                    schedule=schedule,
                     )
     # Do the same for the outputs
     for output in outputs:
@@ -544,7 +546,8 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                                           subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
                     code='_out = _in',
                     outputs={'_out': Memlet(data=output, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
-                    external_edges=True
+                    external_edges=True,
+                    schedule=schedule,
                     )
     # Deal with any arrays which have not been flipped (should only be scalars). Connect them directly
     for name, desc in sdfg.arrays.items():

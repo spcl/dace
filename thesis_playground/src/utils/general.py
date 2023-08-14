@@ -17,6 +17,7 @@ from sympy.parsing.sympy_parser import parse_expr
 import re
 
 import dace
+from dace.dtypes import ScheduleType
 from dace.config import Config
 from dace.frontend.fortran import fortran_parser
 from dace.sdfg import utils, SDFG, nodes
@@ -523,19 +524,23 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
 
     if change_stride:
+        schedule = ScheduleType.GPU_Device if device == dace.DeviceType.GPU else ScheduleType.Default
         log(f"{component}::optimize_sdfg", "Change strides")
-        sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols)
-        sdfg.apply_gpu_transformations()
-        sdfg.simplify()
-
-        log(f"{component}::optimize_sdfg", "Set gpu block size to (32, 1, 1)")
-        for state in sdfg.states():
-            for node, state in state.all_nodes_recursive():
-                if isinstance(node, nodes.MapEntry):
-                    node.map.gpu_block_size = (32, 1, 1)
-
+        sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols, schedule)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
+        sdfg.apply_gpu_transformations()
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_gpu_transform")
+        sdfg.simplify()
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_simplify")
+
+    # log(f"{component}::optimize_sdfg", "Set gpu block size to (32, 1, 1)")
+    # for state in sdfg.states():
+    #     for node, state in state.all_nodes_recursive():
+    #         if isinstance(node, nodes.MapEntry):
+    #             node.map.gpu_block_size = (32, 1, 1)
 
     sdfg.validate()
 
