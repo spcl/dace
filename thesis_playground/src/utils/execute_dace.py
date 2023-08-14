@@ -104,6 +104,9 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
         add_args['k_caching'] = run_config.k_caching
         add_args['change_stride'] = run_config.change_stride
         add_args['verbose_name'] = verbose_name
+        add_args['outside_first'] = run_config.outside_loop_first
+        add_args['move_assignments_outside'] = run_config.move_assignment_outside
+
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
         log(f"{component}::test_program", f"Reading SDFG from {sdfg_file} and compile it")
@@ -177,6 +180,8 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         additional_args['k_caching'] = run_config.k_caching
         additional_args['change_stride'] = run_config.change_stride
         additional_args['verbose_name'] = verbose_name
+        additional_args['outside_first'] = run_config.outside_loop_first
+        additional_args['move_assignments_outside'] = run_config.move_assignment_outside
 
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt,
                              **additional_args)
@@ -224,6 +229,8 @@ def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str
         add_args['symbols'] = params_dict
     add_args['k_caching'] = run_config.k_caching
     add_args['change_stride'] = run_config.change_stride
+    add_args['outside_first'] = run_config.outside_loop_first
+    add_args['move_assignments_outside'] = run_config.move_assignment_outside
     sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer
