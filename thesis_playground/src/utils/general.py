@@ -483,10 +483,6 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :rtype: SDFG
     """
 
-    if device == dace.DeviceType.GPU:
-        for k, v in sdfg.arrays.items():
-            if not v.transient and type(v) == dace.data.Array:
-                v.storage = dace.dtypes.StorageType.GPU_Global
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_optimize_sdfg")
 

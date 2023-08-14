@@ -135,6 +135,11 @@ def auto_optimize(sdfg: SDFG,
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
+        if device == dace.DeviceType.GPU:
+            for k, v in sdfg.arrays.items():
+                if not v.transient and type(v) == dace.data.Array:
+                    v.storage = dace.dtypes.StorageType.GPU_Global
+
         log(f"{component}::auto_opt", f"Apply GPU transformations")
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
