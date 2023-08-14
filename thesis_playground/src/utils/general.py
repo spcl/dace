@@ -19,7 +19,7 @@ import re
 import dace
 from dace.config import Config
 from dace.frontend.fortran import fortran_parser
-from dace.sdfg import utils, SDFG
+from dace.sdfg import utils, SDFG, nodes
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
@@ -525,6 +525,15 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if change_stride:
         log(f"{component}::optimize_sdfg", "Change strides")
         sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols)
+        sdfg.apply_gpu_transformations()
+        sdfg.simplify()
+
+        log(f"{component}::optimize_sdfg", "Set gpu block size to (32, 1, 1)")
+        for state in sdfg.states():
+            for node, state in state.all_nodes_recursive():
+                if isinstance(node, nodes.MapEntry):
+                    node.map.gpu_block_size = (32, 1, 1)
+
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
 
