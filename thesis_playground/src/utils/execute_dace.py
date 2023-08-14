@@ -176,7 +176,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt,
                              **additional_args)
     else:
-        log(f"{component::run_program}", f"Reading SDFG from {sdfg_file} and compile it")
+        log(f"{component}::run_program", f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
         sdfg.compile()
 
@@ -324,8 +324,7 @@ def gen_ncu_report(program: str, report_filename: str, run_config: RunConfig, nc
     command_program.extend(program_args)
     ncu_command = ['ncu', '--force-overwrite', '--export', report_filename, *ncu_args]
     log(f"{component}::gen_ncu_report",
-        f"[utils::execute_dace::gen_ncu_report] Using nuc command: {ncu_command} "
-                    f"and program: {command_program}")
+        f"[utils::execute_dace::gen_ncu_report] command: {' '.join(ncu_command)} {' '.join(command_program)}")
     ncu_output = run([*ncu_command, *command_program], capture_output=True)
     if ncu_output.returncode != 0:
         log(f"{component}::gen_ncu_report", "Failed to run the program with ncu")
