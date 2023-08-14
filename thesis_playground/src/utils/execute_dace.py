@@ -28,16 +28,21 @@ class RunConfig:
     specialise_symbols: bool
     k_caching: bool
     change_stride: bool
+    outside_loop_first: bool
+    move_assignment_outside: bool
 
     def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
                  device: dace.DeviceType = dace.DeviceType.GPU, specialise_symbols: bool = True,
-                 k_caching: bool = False, change_stride: bool = False):
+                 k_caching: bool = False, change_stride: bool = False, outside_loop_first: bool = True,
+                 move_assignment_outside: bool = True):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
         self.device = device
         self.specialise_symbols = specialise_symbols
         self.k_caching = k_caching
         self.change_stride = change_stride
+        self.outside_loop_first = outside_loop_first
+        self.move_assignment_outside = move_assignment_outside
 
     def set_from_args(self, args: Namespace):
         keys = ['pattern', 'use_dace_auto_opt']
