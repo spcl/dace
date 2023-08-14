@@ -57,10 +57,12 @@ def auto_optimize(sdfg: SDFG,
     print(f"[my_auto_opt::auto_optimize] sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
           f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
     # Fix for full cloudsc
+    sdfg.validate()
     if sdfg.name == 'CLOUDSCOUTER':
         cloudsc_state = sdfg.find_state('stateCLOUDSC')
         for node in cloudsc_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
+                print(f"[my_auto_opt::auto_optimizes] remove symbols in {node}")
                 node.sdfg.remove_symbol('_for_it_49')
                 node.sdfg.remove_symbol('_for_it_62')
                 node.sdfg.remove_symbol('_for_it_65')
@@ -221,7 +223,7 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
 
 def loop_to_map_outside_first(sdfg: SDFG,
                               validate: bool = True,
-                              validate_all: bool = False,
+                              validate_all: bool = True,
                               program: str = None) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first
@@ -231,7 +233,7 @@ def loop_to_map_outside_first(sdfg: SDFG,
     :param validate: If True, validates the SDFG after all transformations
                      have been applied, defaults to True
     :type validate: bool, optional
-    :param validate_all: If True, validates the SDFG after every step, defaults to False
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
     :type validate_all: bool, optional
     :param program: The name of the program, used for debug saving graphs, is Optional. If not given will not save
     graphs
@@ -271,9 +273,19 @@ def loop_to_map_outside_first(sdfg: SDFG,
         if len(outside_loop_transformations) > 0:
             xform = outside_loop_transformations[0]
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
+            print(f"[my_auto_opt::loop_to_map_outside_first] apply LoopToMap to guard: {xform.loop_guard}, begin: "
+                  f"{xform.loop_begin} on sdfg: {sdfg.sdfg_list[xform.sdfg_id].label}")
+            print(f"[my_auto_opt::loop_to_map_outside_first] before free symbols: "
+                  f"{sdfg.sdfg_list[xform.sdfg_id].free_symbols}")
+            if sdfg.sdfg_list[xform.sdfg_id].parent_nsdfg_node is not None:
+                print(f"[my_auto_opt::loop_to_map_outside_first] before symol mapping:"
+                      f"{sdfg.sdfg_list[xform.sdfg_id].parent_nsdfg_node.symbol_mapping}")
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
+            # xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
             if program is not None:
                 save_graph(sdfg, program, "after_outer_loop_to_map")
+            print()
+            sdfg.validate()
             sdfg.apply_transformations_repeated([RefineNestedAccess], validate=validate, validate_all=validate_all)
             if program is not None:
                 save_graph(sdfg, program, "after_outer_refine_nested_access")
