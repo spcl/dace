@@ -529,19 +529,16 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols, schedule)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
-        sdfg.apply_gpu_transformations()
-        if verbose_name is not None:
-            save_graph(sdfg, verbose_name, "after_gpu_transform")
-        sdfg.simplify()
-        if verbose_name is not None:
-            save_graph(sdfg, verbose_name, "after_simplify")
 
-    # log(f"{component}::optimize_sdfg", "Set gpu block size to (32, 1, 1)")
-    # for state in sdfg.states():
-    #     for node, state in state.all_nodes_recursive():
-    #         if isinstance(node, nodes.MapEntry):
-    #             node.map.gpu_block_size = (32, 1, 1)
-
+    if device == dace.DeviceType.GPU:
+        log(f"{component}::optimize_sdfg", "Set gpu block size to (32, 1, 1)")
+        for state in sdfg.states():
+            for node, state in state.all_nodes_recursive():
+                if isinstance(node, nodes.MapEntry):
+                    log(f"{component}::optimize_sdfg", f"Set block size for {node}")
+                    node.map.gpu_block_size = (32, 1, 1)
+    sdfg.save('/tmp/sdfg.sdfg')
+    sdfg = dace.sdfg.SDFG.from_file('/tmp/sdfg.sdfg')
     sdfg.validate()
 
     return sdfg
