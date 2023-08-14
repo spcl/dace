@@ -610,9 +610,13 @@ class InternalFortranAst:
 
             if isinstance(i, Fortran2008.Attr_Spec_List):
 
+                dimension_spec = get_children(i, "Dimension_Attr_Spec")
+                if len(dimension_spec) == 0:
+                    continue
+
                 attr_size = []
                 attr_offset = []
-                sizes = get_child(get_child(i, ["Dimension_Attr_Spec"]), ["Explicit_Shape_Spec_List"])
+                sizes = get_child(dimension_spec[0], ["Explicit_Shape_Spec_List"])
                 
                 for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                     self.parse_shape_specification(shape_spec, attr_size, attr_offset)
