@@ -23,6 +23,44 @@ from measurements.data2 import get_data_wideformat, average_data
 component = "run2"
 
 
+def do_classes(additional_desc: Optional[str] = None):
+    class1 = ['cloudsc_class1_2783', 'cloudsc_class1_2857', 'cloudsc_class1_658', 'cloudsc_class1_670']
+    class2 = ['cloudsc_class2_1001', 'cloudsc_class2_1516', 'cloudsc_class2_1762', 'cloudsc_class2_781']
+    class3 = ['cloudsc_class3_1985', 'cloudsc_class3_2120', 'cloudsc_class3_691', 'cloudsc_class3_965']
+    profile_configs = []
+    klev_value = 1000
+    klon_start = 5000
+    klon_end = 15000
+    for program in class1:
+        params = []
+        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
+        profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10))
+
+    for program in class2:
+        params = []
+        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
+        profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
+                                             ncu_repetitions=2))
+    for program in class3:
+        params = []
+        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
+        profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
+                                             ncu_repetitions=2))
+
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=False,
+                                       move_assignments_outside=False),
+            "Class 1-3 Baseline", [('outside_first', 'False'), ('move_assignments_outside', 'False')], ncu_report=False)
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=True,
+                                       move_assignments_outside=False),
+            "Class 1-3 outside map first", [('outside_first', 'True'), ('move_assignments_outside', 'False')], ncu_report=False)
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=True,
+                                       move_assignments_outside=True),
+            "Class 1-3 both improvements", [('outside_first', 'True'), ('move_assignments_outside', 'True')], ncu_report=False)
+
+
 def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 5.0e5,
                  nblock_step: Number = 5e4, debug_mode: bool = False):
     program = 'cloudsc_vert_loop_10'
@@ -98,7 +136,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
 
 base_experiments = {
     'vert-loop': do_vertical_loops,
-    'k_caching': do_k_caching
+    'k_caching': do_k_caching,
+    'classes': do_classes
 }
 
 
