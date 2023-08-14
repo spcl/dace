@@ -41,8 +41,8 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
         params_list_big.append(params)
-    profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=1,
-                           tot_time_repetitions=0,
+    profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=2,
+                           tot_time_repetitions=10,
                            ncu_kernels={'work': r'stateinner_loops_[\w_0-9]*', 'transpose': r'transpose_[\w_0-9]*'}))
     profile_configs.append(ProfileConfig(program, params_list_big, ['NBLOCKS'], ncu_repetitions=0,
                                          tot_time_repetitions=10))
