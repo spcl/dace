@@ -34,7 +34,7 @@ def auto_optimize(sdfg: SDFG,
                   validate_all: bool = True,
                   symbols: Dict[str, int] = None,
                   k_caching: bool = False,
-                  loop_to_map_outside_first: bool = True,
+                  outside_first: bool = True,
                   move_assignments_outside: bool = True
                   ) -> SDFG:
     """
@@ -90,7 +90,7 @@ def auto_optimize(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_map_interchange")
 
-    if loop_to_map_outside_first:
+    if outside_first:
         loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
