@@ -24,8 +24,11 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 
+from utils.log import log
 from execute.data import ParametersProvider, get_iteration_ranges, get_data
 from utils.paths import get_dacecache, get_verbose_graphs_dir
+
+component = "utils::general"
 
 
 # Copied from tests/fortran/cloudsc.py as well as the functions/dicts below
@@ -56,7 +59,7 @@ def get_sdfg(source: str, program_name: str, normalize_offsets: bool = True) -> 
 
     intial_sdfg = fortran_parser.create_sdfg_from_string(source, program_name)
     if not normalize_offsets:
-        print("WARNING: Not normalizing offsets")
+        log(f"{component}::get_sdfg", "WARNING: Not normalizing offsets")
 
     # Find first NestedSDFG
     sdfg = None
@@ -110,11 +113,11 @@ def generate_arguments_fortran(
         os.chdir(tmp_dir)
         process = f2py.compile(source, modulename=routine_name, verbose=False, extension='.f90', full_output=True)
         if process.returncode != 0:
-            print("ERROR: Fortran compilation for reading the arguments failed")
-            print("stdout")
-            print(process.stdout.decode('UTF-8'))
-            print("stderr")
-            print(process.stderr.decode('UTF-8'))
+            log(f"{component}::generate_arguments_fortran", "ERROR: Fortran compilation for reading the arguments failed")
+            log(f"{component}::generate_arguments_fortran", "stdout")
+            log(f"{component}::generate_arguments_fortran", process.stdout.decode('UTF-8'))
+            log(f"{component}::generate_arguments_fortran", "stderr")
+            log(f"{component}::generate_arguments_fortran", process.stderr.decode('UTF-8'))
             exit(1)
 
         sys.path.append(tmp_dir)
@@ -138,7 +141,7 @@ def generate_arguments_fortran(
                     type_str = 'int' if matches.group(1) == 'i' else 'float'
                     arguments[arg_name] = (type_str, size_str.split(','))
                 else:
-                    print(f"WARNING: not matches for bounds found for line '{line}'")
+                    log(f"{component}::generate_arguments_fortran", f"WARNING: not matches for bounds found for line '{line}'")
 
         fortran_arguments = {}
         for arg_name, (arg_type, arg_dim) in arguments.items():
@@ -260,7 +263,7 @@ def save_graph(sdfg: SDFG, program: str, name: str, prefix=""):
         os.mkdir(os.path.join(get_verbose_graphs_dir(), program))
     filename = os.path.join(get_verbose_graphs_dir(), program, f"{prefix}{counter}_{name}.sdfg")
     sdfg.save(filename)
-    print(f"Saved graph to {filename}")
+    log(f"{component}::save_graph", f"Saved graph to {filename}")
     counter = counter + 1
 
 
@@ -285,15 +288,15 @@ def use_cache(program: Optional[str] = None, dacecache_folder: Optional[str] = N
     programs = get_programs_data()['programs']
     os.environ['DACE_compiler_use_cache'] = '1'
     os.putenv('DACE_compiler_use_cache', '1')
-    print("Build it without regenerating the code")
+    log(f"{component}::use_cache", "Build it without regenerating the code")
     program_name = programs[program] if program in programs else program
     dacecache_folder = f"{program_name}_routine" if dacecache_folder is None else dacecache_folder
     build = run(['make'],
                 cwd=os.path.join(get_dacecache(), dacecache_folder, 'build'),
                 capture_output=True)
     if build.returncode != 0:
-        print("ERROR: Error encountered while building")
-        print(build.stderr.decode('UTF-8'))
+        log(f"{component}::use_cache", "ERROR: Error encountered while building")
+        log(f"{component}::use_cache", build.stderr.decode('UTF-8'))
         return False
     return True
 
@@ -313,10 +316,10 @@ def remove_build_folder(program: Optional[str] = None, dacecache_folder: Optiona
     dacecache_folder = f"{programs[program]}_routine" if dacecache_folder is None else dacecache_folder
     dacecache_folder = os.path.join(get_dacecache(), dacecache_folder)
     if os.path.exists(dacecache_folder):
-        print(f"Remove folder {dacecache_folder}")
+        log(f"{component}::remove_build_folder", f"Remove folder {dacecache_folder}")
         shutil.rmtree(dacecache_folder)
     else:
-        print(f"Folder {dacecache_folder} does not exist")
+        log(f"{component}::remove_build_folder", f"Folder {dacecache_folder} does not exist")
 
 
 def disable_cache():
@@ -350,8 +353,8 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
         range_keys.extend(range['variables'])
         for key in range['variables']:
             if key not in output_a or key not in output_b:
-                print(f"WARNING: {key} given in range for {program} but not found in its outputs: "
-                      f"{list(output_a.keys())} and {list(output_b.keys())}")
+                log(f"{component}::compare_output", f"WARNING: {key} given in range for {program} but not found in its outputs: "
+                    f"{list(output_a.keys())} and {list(output_b.keys())}")
             selection = []
             for start, stop in zip(range['start'], range['end']):
                 if stop is not None:
@@ -366,16 +369,16 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
                     output_b[key][selection],
                     atol=10e-5)
             if not this_same:
-                print(f"{key} is not the same for range {selection}")
+                log(f"{component}::compare_output", f"{key} is not the same for range {selection}")
                 print_compare_matrix(output_a[key][selection], output_b[key][selection], selection)
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
     set_b_keys = set(output_b.keys())
     if set_range_keys != set_a_keys:
-        print(f"WARNING: Keys don't match. Range: {set_range_keys}, output_a: {set_a_keys}")
+        log(f"{component}::compare_output", f"WARNING: Keys don't match. Range: {set_range_keys}, output_a: {set_a_keys}")
     if set_range_keys != set_b_keys:
-        print(f"WARNING: Keys don't match. Range: {set_range_keys}, output_b: {set_b_keys}")
+        log(f"{component}::compare_output", f"WARNING: Keys don't match. Range: {set_range_keys}, output_b: {set_b_keys}")
 
     return same
 
@@ -408,19 +411,12 @@ def compare_output_all(output_a: Dict,
         local_same = np.allclose(output_a[key], output_b[key])
         same = same and local_same
         if not local_same and print_if_differ:
-            print(f"Variable {key} differs", end="")
+            log(f"{component}::compare_output_all", f"Variable {key} differs", end="")
             if name_a is not None and name_b is not None:
-                print(f" {name_a} vs. {name_b}")
+                log(f"{component}::compare_ouput_all", f" {name_a} vs. {name_b}")
             else:
-                print()
+                log(f"{component}::compare_ouput_all", )
             np.set_printoptions(precision=4)
-            # if name_a is not None:
-            #     print(name_a)
-            # print(output_a[key])
-            # print()
-            # if name_b is not None:
-            #     print(name_b)
-            # print(output_b[key])
             print_compare_matrix(output_a[key], output_b[key], [slice(0, dim) for dim in output_a[key].shape])
     return same
 
@@ -451,7 +447,7 @@ def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: 
 
 
 def enable_debug_flags():
-    print("Configure for debugging")
+    log(f"{component}::enable_debug_flags", "Configure for debugging")
     Config.set('compiler', 'build_type', value='Debug')
     Config.set('compiler', 'cuda', 'syncdebug', value=True)
     nvcc_args = Config.get('compiler', 'cuda', 'args')
@@ -493,8 +489,8 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_optimize_sdfg")
 
-    print(f"[utils::general::optimize_sdfg] device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
-          f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
+    log(f"{component}::optimize_sdfg", f"device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
+        f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
     replace_symbols_by_values(sdfg, {
         'NCLV': '10',
         'NCLDQI': '3',
@@ -527,7 +523,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         save_graph(sdfg, verbose_name, "after_trivial_map_elimination")
 
     if change_stride:
-        print("[utils::general::optimize_sdfg] Change strides")
+        log(f"{component}::optimize_sdfg", "Change strides")
         sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
@@ -585,7 +581,7 @@ def convert_to_seconds(value: Number, unit: str) -> float:
     if unit in factors:
         return float(value) / float(factors[unit])
     else:
-        print(f"ERROR: No factor recorded for {unit}")
+        log(f"{component}::convert_to_seconds", f"ERROR: No factor recorded for {unit}")
         return None
 
 
@@ -612,17 +608,17 @@ def convert_to_bytes(value: Number, unit: str) -> float:
     if unit in factors:
         return float(value) * float(factors[unit])
     else:
+        log(f"{component}::convert_to_bytes", f"ERROR: No factor recorded for {unit}")
         return None
-        print(f"ERROR: No factor recorded for {unit}")
 
 
 def insert_heap_size_limit(dacecache_folder_name: str, limit: str, debug_prints: bool = False):
     src_dir = os.path.join(get_dacecache(), dacecache_folder_name, 'src', 'cuda')
     src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
     if len(os.listdir(src_dir)) > 1:
-        print(f"WARNING: More than one files in {src_dir}")
-    print(f"Source file exists: {os.path.exists(src_file)}")
-    print(f"Adding heap limit of {limit} to {src_file}")
+        log(f"{component}::insert_heap_size_limit", f"WARNING: More than one files in {src_dir}")
+    log(f"{component}::insert_heap_size_limit", f"Source file exists: {os.path.exists(src_file)}")
+    log(f"{component}::insert_heap_size_limit", f"Adding heap limit of {limit} to {src_file}")
 
     lines = run(['grep', '-rn', 'cudaLaunchKernel', src_file], capture_output=True).stdout.decode('UTF-8')
     last_line = lines.split('\n')[-2]

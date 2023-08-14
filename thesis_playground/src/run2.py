@@ -10,7 +10,8 @@ import pandas as pd
 import json
 import sympy
 
-from utils.print import print_dataframe, print_with_time
+from utils.print import print_dataframe
+from utils.log import log, set_logfile, write_log
 from utils.execute_dace import RunConfig, test_program
 from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file, \
                         create_if_not_exist
@@ -18,6 +19,8 @@ from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
 from measurements.profile_config import ProfileConfig
 from measurements.data2 import get_data_wideformat, average_data
+
+component = "run2"
 
 
 def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 5.0e5,
@@ -80,7 +83,7 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
         experiment_desc += f" with {additional_desc}"
-    print_with_time("[run2::do_vertical_loops] run stack profile")
+    log(f"{component}::do_vertical_loops", "run stack profile")
     profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')], ncu_report=True,
             debug_mode=debug_mode)
     for profile_config in profile_configs:
@@ -88,7 +91,7 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
         KLON, NCLV, KLEV = sympy.symbols("KLON NCLV KLEV")
         profile_config.heap_limit_expr = (KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) + \
             KLON * (KLEV - 1) + 4 * KLON
-    print_with_time("[run2::do_vertical_loops] run heap profile")
+    log(f"{component}::do_vertical_loops", "run heap profile")
     profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc, [('temp allocation', 'heap')],
             ncu_report=True, debug_mode=debug_mode)
 
@@ -149,7 +152,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         experiment_list_df.to_csv(get_experiments_2_file())
 
     for program_config in program_configs:
-        print_with_time(f"\n[run2::profile] Run {program_config.program} with experiment id {new_experiment_id}")
+        log(f"{component}::profile", f"Run {program_config.program} with experiment id {new_experiment_id}")
         experiment_folder = os.path.join(get_results_2_folder(), program_config.program, str(new_experiment_id))
         os.makedirs(experiment_folder, exist_ok=True)
         additional_columns_values = [col[1] for col in additional_columns]
@@ -176,8 +179,14 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
 
 
 def action_profile(args):
+    if args.logfile is None:
+        set_logfile(os.path.join(get_results_2_folder(),
+                    f"profile_{datetime.now().strftime('%Y-%m%-d-%H-%M-%S')}.log"))
+    else:
+        set_logfile(os.path.join(get_results_2_folder(), args.logfile))
     function_args = json.loads(args.args)
     base_experiments[args.base_exp](**function_args)
+    write_log()
 
 
 def action_print(args):
@@ -237,6 +246,7 @@ def main():
                                 help='Name of the base experiment to use')
     profile_parser.add_argument('--args', type=str, default='{}',
                                 help='Additional arguments passed to the base experiment function as a json-dictionary')
+    profile_parser.add_argument('--logfile', type=str, default=None, help='Name of logfile')
     profile_parser.set_defaults(func=action_profile)
 
     print_parser = subparsers.add_parser('print', description='Print selected data')

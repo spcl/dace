@@ -21,6 +21,9 @@ from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAs
 from dace.transformation import helpers as xfh
 
 from utils.general import save_graph
+from utils.log import log
+
+component = "execute::my_auto_opt"
 
 
 def auto_optimize(sdfg: SDFG,
@@ -54,8 +57,8 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    print(f"[my_auto_opt::auto_optimize] sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
-          f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
+    log(f"{component}::auto_opt", f"sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
+        f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
     # Fix for full cloudsc
     if sdfg.name == 'CLOUDSCOUTER':
         cloudsc_state = sdfg.find_state('stateCLOUDSC')
@@ -126,7 +129,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
-        print(f"Apply GPU transformations")
+        log(f"{component}::auto_opt", f"Apply GPU transformations")
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 
@@ -203,7 +206,6 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
     # Specialize for all known symbols
     known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
     known_symbols = {}
-    # print(f"Free symbols in graph: {sdfg.free_symbols}")
     for (s, v) in symbols.items():
         if s in sdfg.free_symbols:
             if isinstance(v, (int, float)):
@@ -215,7 +217,7 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
                     pass
 
     if debugprint and len(known_symbols) > 0:
-        print("Specializing the SDFG for symbols", known_symbols)
+        log(f"{component}::specialise_symbols", f"Specializing the SDFG for symbols {known_symbols}")
     sdfg.specialize(known_symbols)
 
 
@@ -292,7 +294,7 @@ def make_klev_outermost_map(sdfg: SDFG, symbols: Dict[str, int]):
                 xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
                 transformed = True
                 number_transformed += 1
-    print(f"Applied {number_transformed} transformation to move KLEV-loop outside")
+    log(f"{component}::make_klev_outermost_map", f"Applied {number_transformed} transformation to move KLEV-loop outside")
 
 
 def apply_transformation_stepwise(sdfg: SDFG,
@@ -316,7 +318,7 @@ def apply_transformation_stepwise(sdfg: SDFG,
     count = 0
     while len(xforms) > 1:
         count += 1
-        print(f"[my_auto_opt::apply_transformation_stepwise] apply {xforms[0]}")
+        log(f"{component}::apply_transformation_stepwise", f"apply {xforms[0]}")
         xforms[0].apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                         sdfg.sdfg_list[xforms[0].sdfg_id])
         save_graph(sdfg, program, f"after_{description}")

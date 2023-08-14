@@ -2,8 +2,10 @@ from typing import Dict, Union, Tuple, List
 import numpy as np
 from numbers import Number
 
-from utils.print import print_with_time
+from utils.log import log
 from execute.parameters import ParametersProvider
+
+component = "utils::execute::data"
 
 
 def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
@@ -514,15 +516,16 @@ def set_input_pattern(
     :param pattern: The pattern name
     :type pattern: str
     """
-    print_with_time(f"Set input pattern {pattern} for {program}")
+    log(f"{component}::set_input_pattern", f"Set input pattern {pattern} for {program}")
     if pattern == 'const':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 10.0
         elif program == 'cloudsc_class2_1762':
             inputs['ZEPSEC'] = 10.0
         elif program == 'cloudsc_class2_1516':
-            print(f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516 for first loop, only possible for "
-                  f"second")
+            log(f"{component}::set_input_pattern",
+                f"WARNING: Pattern {pattern} not possible for cloudsc_class2_1516 for first loop, only possible for "
+                f"second")
             inputs['RTT'] = 0.0
             inputs['RLMIN'] = 10.0
         elif program == 'my_test_routine':
@@ -538,7 +541,7 @@ def set_input_pattern(
         elif program == 'cloudsc_class3_2120':
             inputs['ZEPSEC'] = 10.0
         else:
-            print(f"ERROR: Pattern {pattern} does not exists for {program}")
+            log(f"{component}::set_input_pattern", f"ERROR: Pattern {pattern} does not exists for {program}")
     elif pattern == 'formula':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 0.0
@@ -561,7 +564,7 @@ def set_input_pattern(
             inputs['ZEPSEC'] = 0.0
             inputs['RPRECRHMAX'] = 10000.0
         else:
-            print(f"ERROR: Pattern {pattern} does not exists for {program}")
+            log(f"{component}::set_input_pattern", f"ERROR: Pattern {pattern} does not exists for {program}")
     elif pattern == 'worst':
         if program == 'cloudsc_class2_781':
             inputs['RLMIN'] = 1.0
@@ -587,6 +590,6 @@ def set_input_pattern(
             inputs['ZQX'] = np.ones_like(inputs['ZQX'])
             inputs['ZQX'][0::2] = 0.0
         else:
-            print(f"ERROR: Pattern {pattern} does not exists for {program}")
+            log(f"{component}::set_input_pattern", f"ERROR: Pattern {pattern} does not exists for {program}")
     else:
-        print(f"ERROR: Unknown pattern {pattern}")
+        log(f"{component}::set_input_pattern", f"ERROR: Unknown pattern {pattern}")

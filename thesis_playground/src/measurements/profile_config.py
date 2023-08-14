@@ -7,7 +7,7 @@ import dace
 import sympy
 from dace.sdfg import SDFG
 
-from utils.print import print_with_time
+from utils.log import log
 from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_performance, get_achieved_work, \
                       get_achieved_bytes, get_achieved_performance, get_runtime, get_cycles, get_all_actions, \
                       get_all_actions_matching_re, SummedIAction
@@ -20,6 +20,8 @@ from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
 from execute.my_auto_opt import specialise_symbols
 from measurements.flop_computation import get_number_of_bytes_2
+
+component = "utils::ProfileConfig"
 
 
 class ProfileConfig:
@@ -122,7 +124,7 @@ class ProfileConfig:
             actions = get_all_actions_filtered(ncu_report_path, self.ignore_action_re)
         action = actions[0]
         if len(actions) > 1:
-            print(f"WARNING: Found more than one actions, there are {len(actions)}, taking the first ({action})")
+            log(f"{component}::get_action", f"WARNING: Found more than one actions, there are {len(actions)}, taking the first ({action})")
         return action
 
     @staticmethod
@@ -167,7 +169,7 @@ class ProfileConfig:
         sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
             if self.heap_limit_str == "" and self.heap_limit_expr is None:
-                print("WARNING: Should set heap string or expression, but both are empty")
+                log(f"{component}::compile", "WARNING: Should set heap string or expression, but both are empty")
             else:
                 programs = get_programs_data()['programs']
                 if self.heap_limit_expr is not None:
@@ -219,13 +221,14 @@ class ProfileConfig:
             set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
 
         sdfg.clear_instrumentation_reports()
-        print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.tot_time_repetitions} times to measure "
-                        f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
-                        f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
+        log(f"{component}::profile_total_runtime",
+            f"Run {self.program} {self.tot_time_repetitions} times to measure "
+            f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
         inputs_device = copy_to_device(copy.deepcopy(inputs))
         outputs_device = copy_to_device(copy.deepcopy(outputs))
         for i in range(self.tot_time_repetitions):
-            print_with_time(f"[ProfileConfig::profile] Starting run {i} for total time")
+            log(f"{component}::set_input_pattern", f"Starting run {i} for total time")
             sdfg(**inputs_device, **outputs_device)
 
         reports = sdfg.get_instrumentation_reports()
@@ -235,7 +238,8 @@ class ProfileConfig:
             keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
             key = keys[0]
             if len(keys) > 1:
-                print(f"WARNING: Report has more than one key, taking only the first one. keys: {keys}")
+                log(f"{component}::profile_total_runtime",
+                    f"WARNING: Report has more than one key, taking only the first one. keys: {keys}")
             this_data = {
                 'program': self.program,
                 'run number': index,
@@ -243,9 +247,10 @@ class ProfileConfig:
                 'value': report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0],
                 **size_data}
             data.append(this_data)
-        print_with_time(f"[ProfileConfig::profile] Run {self.program} {self.ncu_repetitions} times with ncu "
-                        f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
-                        f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
+        log(f"{component}::profile_total_runtime",
+            f"Run {self.program} {self.ncu_repetitions} times with ncu "
+            f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
         return data
 
     def profile_ncu(
@@ -272,8 +277,6 @@ class ProfileConfig:
             else:
                 for name, kernel_re in self.ncu_kernels.items():
                     actions = get_all_actions_matching_re(ncu_report_path, kernel_re)
-                    # print(f"name: {name}, kernel_re: {kernel_re}, found actions: {[str(a) for a in actions]} all actions: "
-                    #       f"{[str(a) for a in get_all_actions(ncu_report_path)]}")
                     action = SummedIAction(actions)
                     if len(action) == 0:
                         continue
