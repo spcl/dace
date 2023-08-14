@@ -47,16 +47,11 @@ def test_fortran_frontend_array_attribute_offset():
                     PROGRAM index_offset_test
                     implicit none
                     double precision, dimension(50:54) :: d
-                    !double precision, dimension(5) :: d
-                    !double precision d(50:54)
                     CALL index_test_function(d)
                     end
 
                     SUBROUTINE index_test_function(d)
-                    !double precision d(50:54)
-                    !double precision d(5)
                     double precision, dimension(50:54) :: d
-                    !double precision, intent(inout) :: d(50:54)
 
                     do i=50,54
                        d(i) = i * 2.0

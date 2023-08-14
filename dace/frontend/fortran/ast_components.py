@@ -695,8 +695,6 @@ class InternalFortranAst:
                                                                     kind=kind,
                                                                     init=init,
                                                                     line_number=node.item.span))
-        #print(vardecls[0].sizes)
-        #print(vardecls[0].offsets)
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node: FASTNode):
