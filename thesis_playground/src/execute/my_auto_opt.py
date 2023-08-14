@@ -33,7 +33,10 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = True,
                   symbols: Dict[str, int] = None,
-                  k_caching: bool = False) -> SDFG:
+                  k_caching: bool = False,
+                  loop_to_map_outside_first: bool = True,
+                  move_assignments_outside: bool = True
+                  ) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -87,8 +90,8 @@ def auto_optimize(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_map_interchange")
 
-    # if device == dace.DeviceType.GPU:
-    loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
+    if loop_to_map_outside_first:
+        loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         if program is not None:
@@ -155,7 +158,8 @@ def auto_optimize(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_map_colapse")
 
-    sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
+    if move_assignments_outside:
+        sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
     if program is not None:
         save_graph(sdfg, program, "after_move_assignment_outside_if")
 
