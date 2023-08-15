@@ -30,7 +30,7 @@ def write_log():
     global logfile
     global log_messages
     if logfile is not None:
-        with open(logfile, 'w') as file:
+        with open(logfile, 'a') as file:
             for msg in log_messages:
                 file.write(f"{msg}\n")
             log_messages = []

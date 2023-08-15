@@ -457,7 +457,8 @@ def enable_debug_flags():
 
 def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = True,
                   verbose_name: Optional[str] = None, symbols: Optional[Dict[str, Number]] = None,
-                  k_caching: bool = False, change_stride: bool = False) -> SDFG:
+                  k_caching: bool = False, change_stride: bool = False,
+                  outside_first: bool = True, move_assignments_outside: bool = True) -> SDFG:
     """
     Optimizes the given SDFG for the given device using auto_optimize. Will use DaCe or my version based on the given
     flag
@@ -479,6 +480,10 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     :param change_stride: If the stride should be changed to favour GPU parallelisation of NBLOCKS
     False
     :type change_stride: bool
+    :param outside_first: If the outside loops should be transformed to maps first
+    :type outside_first: True
+    :param move_assignmnets_outside: If the MoveAssignmentOutsideIf transformation should be applied, defaults to True
+    :type move_assignmets_outside: True
     :return: Optimized SDFG
     :rtype: SDFG
     """
@@ -506,6 +511,9 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         if verbose_name is not None:
             additional_args['program'] = verbose_name
         additional_args['k_caching'] = k_caching
+        additional_args['outside_first'] = outside_first
+        additional_args['move_assignments_outside'] = move_assignments_outside
+
         my_auto_optimize(sdfg, device, **additional_args)
     else:
         dace_auto_optimize(sdfg, device, **additional_args)
