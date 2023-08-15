@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from typing import List
+from typing import List, Tuple
 
 from utils.paths import get_results_2_folder
 from utils.experiments2 import get_experiment_list_df
@@ -78,3 +78,17 @@ def get_full_averaged_data_wideformat(experiments_ids: List[int]) -> pd.DataFram
     df = average_data(get_data_wideformat(experiments_ids).dropna())
     df = df.join(get_experiment_list_df(), on='experiment id')
     return df
+
+
+def add_column_if_not_exist(df: pd.DataFrame, columns: List[Tuple]):
+    """
+    Adds columns with default values if they don't exist in the given dataframe
+
+    :param df: The dataframe to alter
+    :type df: pd.DataFrame
+    :param columns: List of columns with the default values. First entry in tuple is column name second is default value
+    :type columns: List[Tuple]
+    """
+    for column, default in columns:
+        if column not in df:
+            df[column] = default
