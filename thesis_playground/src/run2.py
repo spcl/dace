@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
 import os
-import shutil
 from subprocess import check_output
 from numbers import Number
 from typing import Optional, Union, List, Tuple
@@ -10,7 +9,6 @@ import pandas as pd
 import json
 import sympy
 
-from utils.print import print_dataframe
 from utils.log import log, set_logfile, write_log
 from utils.execute_dace import RunConfig, test_program
 from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file, \
@@ -18,7 +16,6 @@ from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, ge
 from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
 from measurements.profile_config import ProfileConfig
-from measurements.data2 import get_data_wideformat, average_data
 
 component = "run2"
 
@@ -229,52 +226,6 @@ def action_profile(args):
     write_log()
 
 
-def action_print(args):
-    columns = {
-            'experiment id': ('Exp ID', ','),
-            'node': ('Node', None),
-            'program': ('Program', None),
-            'NBLOCKS': ('NBLOCKS', ','),
-            'runtime': ('Kernel T [s]', '.3e'),
-            # 'Total time': ('tot T [s]', '.3e'),
-            # 'measured bytes': ('D [b]', '.3e'),
-            # 'theoretical bytes total': ('Q [b]', '.3e')
-            'k_caching': ('K-caching', None),
-            'change_strides': ('change strides', None),
-    }
-
-    df = get_data_wideformat(args.experiment_ids).dropna()
-    df = average_data(df).reset_index().join(get_experiment_list_df(), on='experiment id')
-    print_dataframe(columns, df.reset_index(), args.tablefmt)
-
-
-def action_list_experiments(args):
-    columns = {
-            'experiment id': ('Exp ID', ','),
-            'description': ('Description', None),
-            'node': ('Node', None),
-            'datetime': ('Date', None)
-            }
-    print_dataframe(columns, get_experiment_list_df().reset_index(), args.tablefmt)
-
-
-def action_remove_experiment(args):
-    experiment_ids = []
-    if args.all_to is None:
-        experiment_ids = [args.experiment_id]
-    else:
-        experiment_ids = np.arange(args.experiment_id, args.all_to+1)
-    for experiment_id in experiment_ids:
-        for program_dir in os.listdir(get_results_2_folder()):
-            program_dir = os.path.join(get_results_2_folder(), program_dir)
-            exp_dir = os.path.join(program_dir, str(experiment_id))
-            if os.path.exists(exp_dir):
-                print(f"Remove {exp_dir}")
-                shutil.rmtree(exp_dir)
-        experiments = get_experiment_list_df().drop(int(experiment_id), axis='index')
-        experiments.to_csv(get_experiments_2_file())
-
-
 def main():
     parser = ArgumentParser()
     subparsers = parser.add_subparsers(
@@ -288,21 +239,6 @@ def main():
                                 help='Additional arguments passed to the base experiment function as a json-dictionary')
     profile_parser.add_argument('--logfile', type=str, default=None, help='Name of logfile')
     profile_parser.set_defaults(func=action_profile)
-
-    print_parser = subparsers.add_parser('print', description='Print selected data')
-    print_parser.add_argument('experiment_ids', nargs='+', help='Ids of experiments to print')
-    print_parser.add_argument('--tablefmt', default='plain', help='Table format for tabulate')
-    print_parser.set_defaults(func=action_print)
-
-    list_experiments_parser = subparsers.add_parser('list-experiments', description='List experiments')
-    list_experiments_parser.add_argument('--tablefmt', default='plain', help='Table format for tabulate')
-    list_experiments_parser.set_defaults(func=action_list_experiments)
-
-    remove_experiment_parser = subparsers.add_parser('remove-experiment', description='Remove experiment')
-    remove_experiment_parser.add_argument('experiment_id', type=int)
-    remove_experiment_parser.add_argument('--all-to', type=int, default=None,
-                                          help="Delete all experiment ids from the first given to (inlcuding) this")
-    remove_experiment_parser.set_defaults(func=action_remove_experiment)
 
     args = parser.parse_args()
     args.func(args)
