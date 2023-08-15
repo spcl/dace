@@ -1260,7 +1260,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  dep_graph=dep_graph,
                                  asts=asts)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
-
+    top_level_ast = parse_order.pop()
     name_dict = {}
     for i in parse_order:
         edges = list(dep_graph.in_edges(i))
@@ -1271,18 +1271,24 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 for k in list_dict['obj_list'].children:
                     if k.string not in names:
                         names.append(k.string)
+
         name_dict[i] = names
     tables = SymbolTable
+    partial_ast = ast_components.InternalFortranAst()
+    partial_modules = []
+    partial_ast.symbols["c_int"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_signed_char"]=ast_internal_classes.Int_Literal_Node(value=1)
     for i in parse_order:
-        local_ast = ast_components.InternalFortranAst(asts[i], tables)
-        locl_program = local_ast.create_ast(asts[i])
+        if i in ["mtime","ISO_C_BINDING"]:
+            continue
+        partial_ast.add_name_list_for_module(i, name_dict[i])
+        partial_modules.append(partial_ast.create_ast(asts[i]))
         print("Parsing module: ", i)
 
-    own_ast = ast_components.InternalFortranAst(ast, tables)
-    program = own_ast.create_ast(ast)
+    program = partial_ast.create_ast(ast)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)

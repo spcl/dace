@@ -268,6 +268,9 @@ class Char_Literal_Node(Literal):
     _attributes = ()
     _fields = ()
 
+class Suffix_Node(FNode):
+    _attributes = ()
+    _fields = ('name')
 
 class Call_Expr_Node(FNode):
     _attributes = ('type', 'subroutine')
@@ -399,7 +402,7 @@ class Structure_Constructor_Node(FNode):
 
 
 class Use_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name','list_all' )
     _fields = ('list', )
 
 
