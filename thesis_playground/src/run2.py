@@ -26,24 +26,25 @@ def do_classes(additional_desc: Optional[str] = None):
     class3 = ['cloudsc_class3_1985', 'cloudsc_class3_2120', 'cloudsc_class3_691', 'cloudsc_class3_965']
     profile_configs = []
     klev_value = 1000
-    klon_start = 5000
-    klon_end = 10000
+    klon_start = 1000
+    klon_end = 5000
+    klon_step = 1000
     for program in class1:
         params = []
-        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+        for klon_value in np.arange(klon_start, klon_end+1, klon_step):
             params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
         profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
                                ncu_repetitions=0))
 
     for program in class2:
         params = []
-        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+        for klon_value in np.arange(klon_start, klon_end+1, klon_step):
             params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
         profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
                                              ncu_repetitions=2))
     for program in class3:
         params = []
-        for klon_value in np.arange(klon_start, klon_end+1, 5000):
+        for klon_value in np.arange(klon_start, klon_end+1, klon_step):
             params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
         profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
                                              ncu_repetitions=2))
@@ -216,9 +217,10 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
 
 
 def action_profile(args):
+    node = check_output(['uname', '-a']).decode('UTF-8').split(' ')[1].split('.')[0]
     if args.logfile is None:
         set_logfile(os.path.join(get_results_2_folder(),
-                    f"profile_{datetime.now().strftime('%Y-%m%-d-%H-%M-%S')}.log"))
+                    f"profile_{node}_{datetime.now().strftime('%Y-%m%-%d-%H-%M-%S')}.log"))
     else:
         set_logfile(os.path.join(get_results_2_folder(), args.logfile))
     function_args = json.loads(args.args)
