@@ -40,6 +40,10 @@ def range_eq_with_difference(this_range: Tuple[int, int, int],
     :return: If both ranges are "equal"
     :rtype: bool
     """
+    print(f"[subgraph::helpers::range_eq_with_difference] this_range: {this_range}, other_range: {other_range}")
+    if any(type(trng) != type(orng) for trng, orng in zip(this_range, other_range)):
+        print("f[subgraph::helpers::range_eq_with_difference] types don't match")
+        return False
     return abs(this_range[0] - other_range[0]) <= max_difference_start \
         and abs(this_range[1] - other_range[1]) <= max_difference_end \
         and this_range[2] == other_range[2]
