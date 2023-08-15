@@ -25,44 +25,45 @@ component = "run2"
 
 def do_classes(additional_desc: Optional[str] = None):
     class1 = ['cloudsc_class1_2783', 'cloudsc_class1_2857', 'cloudsc_class1_658', 'cloudsc_class1_670']
-    class2 = ['cloudsc_class2_1001', 'cloudsc_class2_1516', 'cloudsc_class2_1762', 'cloudsc_class2_781']
+    class2 = ['cloudsc_class2_1516', 'cloudsc_class2_1762', 'cloudsc_class2_781']
     class3 = ['cloudsc_class3_1985', 'cloudsc_class3_2120', 'cloudsc_class3_691', 'cloudsc_class3_965']
     profile_configs = []
     klev_value = 1000
     klon_start = 5000
-    klon_end = 15000
+    klon_end = 10000
     for program in class1:
         params = []
         for klon_value in np.arange(klon_start, klon_end+1, 5000):
-            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
-        profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10))
+            params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
+        profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
+                               ncu_repetitions=0))
 
     for program in class2:
         params = []
         for klon_value in np.arange(klon_start, klon_end+1, 5000):
-            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
+            params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
         profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
                                              ncu_repetitions=2))
     for program in class3:
         params = []
         for klon_value in np.arange(klon_start, klon_end+1, 5000):
-            params.append(ParametersProvider(program, update={'KLON': klon_value, 'KLEV': klev_value}))
+            params.append(ParametersProvider(program, update={'KLON': int(klon_value), 'KLEV': int(klev_value)}))
         profile_configs.append(ProfileConfig(program, params, ['KLON', 'KLEV'], tot_time_repetitions=10,
                                              ncu_repetitions=2))
 
-    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=False,
-                                       move_assignments_outside=False),
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, outside_loop_first=False,
+                                       move_assignment_outside=False),
             "Class 1-3 Baseline", [('outside_first', 'False'), ('move_assignments_outside', 'False')], ncu_report=False)
-    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=True,
-                                       move_assignments_outside=False),
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, outside_loop_first=True,
+                                       move_assignment_outside=False),
             "Class 1-3 outside map first", [('outside_first', 'True'), ('move_assignments_outside', 'False')], ncu_report=False)
-    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, loop_to_map_outside_first=True,
-                                       move_assignments_outside=True),
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False, outside_loop_first=True,
+                                       move_assignment_outside=True),
             "Class 1-3 both improvements", [('outside_first', 'True'), ('move_assignments_outside', 'True')], ncu_report=False)
 
 
-def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 5.0e5,
-                 nblock_step: Number = 5e4, debug_mode: bool = False):
+def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 4.5e5,
+                 nblock_step: Number = 5e4, debug_mode: bool = False, nblock_split: Number = 1.5e5):
     program = 'cloudsc_vert_loop_10'
     test_program(program, RunConfig(k_caching=True, change_stride=True))
     test_program(program, RunConfig(k_caching=True, change_stride=False))
@@ -71,11 +72,11 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0
     params_list_small = []
     params_list_big = []
     profile_configs = []
-    for nblock in np.arange(1.5e5, nblock_min, -nblock_step):
+    for nblock in np.arange(nblock_split, nblock_min, -nblock_step):
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
         params_list_small.append(params)
-    for nblock in np.arange(nblock_max, 1.5e5, -nblock_step):
+    for nblock in np.arange(nblock_max, nblock_split, -nblock_step):
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
         params_list_big.append(params)
@@ -85,17 +86,17 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0
     profile_configs.append(ProfileConfig(program, params_list_big, ['NBLOCKS'], ncu_repetitions=0,
                                          tot_time_repetitions=10))
     experiment_desc = "Vertical loop example"
-    profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc+" baseline",
             [('k_caching', "False"), ('change_strides', 'False')], ncu_report=True,
             debug_mode=debug_mode)
-    profile(profile_configs, RunConfig(k_caching=True, change_stride=False), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=True, change_stride=False), experiment_desc+" k_caching",
             [('k_caching', "True"), ('change_strides', 'False')], ncu_report=True,
             debug_mode=debug_mode)
-    profile(profile_configs, RunConfig(k_caching=True, change_stride=True), experiment_desc,
+    profile(profile_configs, RunConfig(k_caching=True, change_stride=True), experiment_desc+" both",
             [('k_caching', "True"), ('change_strides', 'True')], ncu_report=True,
             debug_mode=debug_mode)
-    profile(profile_configs, RunConfig(k_caching=False, change_stride=True), experiment_desc,
-            [('k_caching', "False"), ('change_strides', 'True')], ncu_report=True,
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=True), experiment_desc+" change stride",
+            [('k_caching', "False"), ('change_strides', 'True')], ncu_report=False,
             debug_mode=debug_mode)
 
 

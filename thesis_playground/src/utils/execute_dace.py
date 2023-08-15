@@ -192,8 +192,6 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
 
     rng = np.random.default_rng(RNG_SEED)
     inputs = get_inputs(program, rng, params)
-    log(f"{component}::run_program",
-        f"KLON: {inputs['KLON']}, KLEV: {inputs['KLEV']}, NCLV: {inputs['NCLV']}, NBLOCKS: {inputs['NBLOCKS']}")
     inputs = copy_to_device(inputs)
     outputs = copy_to_device(get_outputs(program, rng, params))
     if run_config.pattern is not None:

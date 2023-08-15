@@ -228,7 +228,7 @@ class ProfileConfig:
         inputs_device = copy_to_device(copy.deepcopy(inputs))
         outputs_device = copy_to_device(copy.deepcopy(outputs))
         for i in range(self.tot_time_repetitions):
-            log(f"{component}::set_input_pattern", f"Starting run {i} for total time")
+            log(f"{component}::profile_total_runtime", f"Starting run {i} for total time")
             sdfg(**inputs_device, **outputs_device)
 
         reports = sdfg.get_instrumentation_reports()
