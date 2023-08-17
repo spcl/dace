@@ -1101,6 +1101,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.materialized_views: Set[nodes.AccessNode] = set()
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1237,7 +1238,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     for k, (v, m) in self.views.items():
                         if v == arrname:
                             m.data = vname
-                            self.views[k] = (vname, m)
+                            self.views[k] = (vname, m, None)
 
         ####
 
@@ -1250,18 +1251,20 @@ class ProgramVisitor(ExtNodeVisitor):
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
+                if vnode in self.materialized_views:
+                    continue
                 if vnode.data in self.views:
                     if state.in_degree(vnode) == 0:
-                        aname, m = self.views[vnode.data]
+                        aname, m, conn = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_edge(r, None, vnode, 'views', copy.deepcopy(m))
+                        state.add_edge(r, conn, vnode, 'views', copy.deepcopy(m))
                         new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
-                        aname, m = self.views[vnode.data]
+                        aname, m, conn = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_edge(vnode, 'views', w, None, copy.deepcopy(m))
+                        state.add_edge(vnode, 'views', w, conn, copy.deepcopy(m))
                         new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has both incoming and outgoing edges')
@@ -3001,7 +3004,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type is None:
             arr_type = type(parent_array)
             # Size (1,) slice of NumPy array returns scalar value
-            if arr_type != data.Stream and (shape == [1] or shape == (1, )):
+            if (arr_type != data.Stream and not issubclass(arr_type, data.Structure)
+                    and (shape == [1] or shape == (1, ))):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
@@ -3013,6 +3017,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
+        elif issubclass(arr_type, data.Structure):
+            self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array))
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
@@ -3230,7 +3236,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                  result_data.strides,
                                                                  result_data.offset,
                                                                  find_new_name=True)
-                        self.views[true_name] = (result, Memlet.from_array(result, result_data))
+                        self.views[true_name] = (result, Memlet.from_array(result, result_data), None)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
@@ -4622,7 +4628,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute):
         # If visiting an attribute, return attribute value if it's of an array or global
-        name = until(astutils.unparse(node), '.')
+        if isinstance(node.value, ast.Name):
+            name = node.value.id
+        else:
+            name = self._gettype(node.value)
+            assert isinstance(name, list) and len(name) == 1
+            name = name[0]
+            assert isinstance(name, tuple) and len(name) == 2
+            name = name[0]
+        # name = until(astutils.unparse(node), '.')
         result = self._visitname(name, node)
         if isinstance(result, str) and result in self.sdfg.arrays:
             arr = self.sdfg.arrays[result]
@@ -4643,6 +4657,28 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
+            if not hasattr(arr, node.attr) and isinstance(arr, data.View):
+                varr = arr
+                vname = result
+                while isinstance(varr, data.View):
+                    vname = self.views[vname][0]
+                    varr = self.sdfg.arrays[vname]
+                arr = varr.stype
+            attr = getattr(arr, node.attr)
+            if issubclass(type(arr), data.Structure) and isinstance(attr, data.Data):
+                if node.attr not in self.sdfg.arrays:
+                    copy_desc = copy.deepcopy(attr)
+                    copy_desc.transient = True
+                    self.sdfg.arrays[node.attr] = copy_desc
+                vname, vdesc = self.sdfg.add_view(node.attr,
+                                                  attr.shape,
+                                                  attr.dtype,
+                                                  attr.storage,
+                                                  attr.strides,
+                                                  attr.offset,
+                                                  find_new_name=True)
+                self.views[vname] = (result, Memlet.from_array(f"{node.attr}", attr), node.attr)
+                return vname
             return getattr(arr, node.attr)
         except KeyError:
             return result
@@ -4829,8 +4865,13 @@ class ProgramVisitor(ExtNodeVisitor):
             if not strides:
                 strides = None
 
-            if is_index:
+            if is_index and not isinstance(arrobj, (data.Structure, data.StructArray)):
                 tmp = self.sdfg.temp_data_name()
+                # if isinstance(arrobj, data.StructArray):
+                #     tmparr = copy.deepcopy(arrobj.stype())
+                #     tmparr.transient = True
+                #     self.sdfg.add_datadesc(tmp, tmparr)
+                # else:
                 tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
             else:
                 tmp, tmparr = self.sdfg.add_view(array,
@@ -4839,15 +4880,17 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  storage=arrobj.storage,
                                                  strides=strides,
                                                  find_new_name=True)
-                self.views[tmp] = (array,
-                                   Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
-                                          wcr=expr.wcr))
+                self.views[tmp] = (array, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
+                                                 wcr=expr.wcr), None)
             self.variables[tmp] = tmp
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
                 wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
-                self.last_state.add_nedge(
-                    rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+                # self.last_state.add_edge(rnode, None, wnode, 'views',
+                self.last_state.add_edge(rnode, None, wnode, None,
+                                         Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+                # self.materialized_views.add(wnode)
+            
             return tmp
 
     def _parse_subscript_slice(self,
@@ -4930,7 +4973,10 @@ class ProgramVisitor(ExtNodeVisitor):
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
 
             name = rname(node)
-            true_name = defined_vars[name]
+            tokens = name.split('.')
+            true_name = defined_vars[tokens[0]]
+            # for token in tokens[1:]:
+            #     true_name = defined_vars[name]
 
             # If this subscript originates from an external array, create the
             # subset in the edge going to the connector, as well as a local
@@ -4965,7 +5011,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         raise NotImplementedError('Cannot slice a write access')
                     return new_name
 
-        # Obtain array/tuple
+        # Obtain array/tuple):
         node_parsed = self._gettype(node.value)
 
         if len(node_parsed) > 1:

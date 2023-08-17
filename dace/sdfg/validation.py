@@ -604,9 +604,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         break
 
         # Check if memlet data matches src or dst nodes
-        if (e.data.data is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
-                and (not isinstance(src_node, nd.AccessNode) or e.data.data != src_node.data)
-                and (not isinstance(dst_node, nd.AccessNode) or e.data.data != dst_node.data)):
+        name = e.data.data
+        if (name is not None and (isinstance(src_node, nd.AccessNode) or isinstance(dst_node, nd.AccessNode))
+                and (not isinstance(src_node, nd.AccessNode) or (name != src_node.data and name != e.src_conn))
+                and (not isinstance(dst_node, nd.AccessNode) or (name != dst_node.data and name != e.dst_conn))):
             raise InvalidSDFGEdgeError(
                 "Memlet data does not match source or destination "
                 "data nodes)",
@@ -647,14 +648,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     )
 
                 # Bounds
-                if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
+                if hasattr(arr, 'offset'):
+                    offset = arr.offset
+                else:
+                    offset = [0] * len(arr.shape)
+                if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), offset)):
                     # In case of dynamic memlet, only output a warning
                     if e.data.dynamic:
                         warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
                     else:
                         raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
+                       for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, offset)):
                     if e.data.dynamic:
                         warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
                     else:
@@ -674,8 +679,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     )
 
                 # Bounds
+                offset = arr.offset if hasattr(arr, 'offset') else [0] * len(arr.shape)
                 if any(
-                    ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), arr.offset)):
+                    ((minel + off) < 0) == True for minel, off in zip(e.data.other_subset.min_element(), offset)):
                     raise InvalidSDFGEdgeError(
                         "Memlet other_subset negative out-of-bounds",
                         sdfg,
@@ -683,7 +689,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         eid,
                     )
                 if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, arr.offset)):
+                       for maxel, s, off in zip(e.data.other_subset.max_element(), arr.shape, offset)):
                     raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
@@ -725,10 +731,22 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Check dimensionality of memory access
         if isinstance(e.data.subset, (sbs.Range, sbs.Indices)):
-            if e.data.subset.dims() != len(sdfg.arrays[e.data.data].shape):
+            tokens = e.data.data.split('.', 1)
+            desc = sdfg.arrays[tokens[0]]
+            if len(tokens) > 1:
+                current_edge = e
+                while isinstance(desc, dt.View):
+                    src = state.memlet_path(current_edge)[0].src
+                    assert isinstance(src, nd.AccessNode)
+                    desc = sdfg.arrays[src.data]
+                    current_edge = next((edge for edge in state.in_edges_by_connector(src, 'views')), None)
+                if isinstance(desc, dt.StructArray):
+                    desc = desc.stype
+                desc = getattr(desc, tokens[1])
+            if e.data.subset.dims() != len(desc.shape):
                 raise InvalidSDFGEdgeError(
                     "Memlet subset uses the wrong dimensions"
-                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(sdfg.arrays[e.data.data].shape)),
+                    " (%dD for a %dD data node)" % (e.data.subset.dims(), len(desc.shape)),
                     sdfg,
                     state_id,
                     eid,

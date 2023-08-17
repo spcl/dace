@@ -414,10 +414,11 @@ def make_properties(cls):
                     raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
         # Assert that there are no fields in the object not captured by
         # properties, unless they are prefixed with "_"
-        for name, prop in obj.__dict__.items():
-            if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
-                raise PropertyError("{} : Variable {} is neither a Property nor "
-                                    "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
+        if not isinstance(obj, dace.data.Structure):
+            for name, prop in obj.__dict__.items():
+                if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
+                    raise PropertyError("{} : Variable {} is neither a Property nor "
+                                        "an internal variable (prefixed with \"_\")".format(str(type(obj)), name))
 
     # Replace the __init__ method
     cls.__init__ = initialize_properties
@@ -1378,6 +1379,45 @@ class TypeClassProperty(Property):
             return None
         elif isinstance(obj, str):
             return TypeClassProperty.from_string(obj)
+        elif isinstance(obj, dict):
+            # Let the deserializer handle this
+            return dace.serialize.from_json(obj)
+        else:
+            raise TypeError("Cannot parse type from: {}".format(obj))
+
+
+class DataClassProperty(Property):
+    """ Custom property type for memory as defined in dace.data, e.g. `dace.data.Scalar`. """
+
+    def __get__(self, obj, objtype=None) -> 'Data':
+        return super().__get__(obj, objtype)
+
+    @property
+    def dtype(self):
+        return pydoc.locate("dace.data.Data")
+
+    @staticmethod
+    def from_string(s):
+        dtype = pydoc.locate("dace.data.{}".format(s))
+        if dtype is None or not isinstance(dtype, pydoc.locate("dace.data.Data")):
+            raise ValueError("Not a valid data type: {}".format(s))
+        return dtype
+
+    @staticmethod
+    def to_string(obj):
+        return obj.to_string()
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return obj.dtype.to_json()
+
+    @staticmethod
+    def from_json(obj, context=None):
+        if obj is None:
+            return None
+        elif isinstance(obj, str):
+            return DataClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj)
