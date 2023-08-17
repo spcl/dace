@@ -108,7 +108,7 @@ def copy_expr(
     elif def_type == DefinedType.FPGA_ShiftRegister:
         return expr
 
-    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
@@ -327,7 +327,7 @@ def emit_memlet_reference(dispatcher,
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
-    elif defined_type == DefinedType.Stream:
+    elif defined_type in (DefinedType.Stream, DefinedType.Object):
         typedef = defined_ctype
         ref = '&'
         offset_expr = ''
@@ -1234,7 +1234,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
               and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
