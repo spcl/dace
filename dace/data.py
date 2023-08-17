@@ -510,6 +510,7 @@ class StructureView(Structure):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for Views')
 
+
 @make_properties
 class Scalar(Data):
     """ Data descriptor of a scalar value. """

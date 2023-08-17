@@ -215,9 +215,21 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         ancestor=0,
                                                         is_write=is_write)
         if not declared:
-            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
+            if isinstance(nodedesc, data.StructureView):
+                for k, v in nodedesc.members.items():
+                    if isinstance(v, data.Data):
+                        ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
+                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+                        self._dispatcher.declared_arrays.add(f"{name}.{k}", defined_type, ctypedef)
+                        self._dispatcher.defined_vars.add(f"{name}.{k}", defined_type, ctypedef)
+                # TODO: Find a better way to do this (the issue is with pointers of pointers)
+                if atype.endswith('*'):
+                    atype = atype[:-1]
+                if value.startswith('&'):
+                    value = value[1:]
+            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
@@ -311,7 +323,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
-        if isinstance(nodedesc, data.Structure):
+        if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type}();\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             for k, v in nodedesc.members.items():
@@ -322,7 +334,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, data.View):
+        if isinstance(nodedesc, (data.StructureView, data.View)):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -487,7 +499,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
+        if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):

@@ -473,7 +473,7 @@ class CompiledSDFG(object):
                 else:
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
+            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and not isinstance(atype, dt.StructArray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
