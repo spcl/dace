@@ -34,7 +34,8 @@
         "cloudsc_vert_loop_mwe_wip": "vert_loop_mwe_wip",
         "cloudsc_vert_loop_10": "vert_loop_10",
         "microbenchmark_v1": "map_loop_1",
-        "microbenchmark_v3": "map_loop_3"
+        "microbenchmark_v3": "map_loop_3",
+        "mwe_array_order": "mwe_array_order"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -88,7 +89,8 @@
         "cloudsc_vert_loop_10": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDQV", "NCLDTOP",
                                 "NBLOCKS"],
         "microbenchmark_v1": ["KLEV", "NBLOCKS"],
-        "microbenchmark_v3": ["KLEV", "NBLOCKS"]
+        "microbenchmark_v3": ["KLEV", "NBLOCKS"],
+        "mwe_array_order": ["KLON", "KLEV", "NBLOCKS", "NCLV", "NCLDQL"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -143,7 +145,8 @@
         "cloudsc_vert_loop_10": ["PTSPHY", "RLMIN", "ZEPSEC", "RG", "RTHOMO", "ZALFAW", "PLU", "LDCUM", "PSNDE",
                                 "PAPH_N", "PSUPSAT_N", "PT_N", "TENDENCY_TMP_T_N", "TENDENCY_TMP_CLD_N", "PCLV_N"],
         "microbenchmark_v1": ["INPUT"],
-        "microbenchmark_v3": ["INPUT_F"]
+        "microbenchmark_v3": ["INPUT_F"],
+        "mwe_array_order": ["INP1", "INP3"]
 
     },
     "program_outputs": {
@@ -181,6 +184,7 @@
         "cloudsc_vert_loop_mwe_wip": ["PLUDE_NF"],
         "cloudsc_vert_loop_10": ["ZSOLQA_N", "PLUDE"],
         "microbenchmark_v1": ["OUTPUT"],
-        "microbenchmark_v3": ["OUTPUT_F"]
+        "microbenchmark_v3": ["OUTPUT_F"],
+        "mwe_array_order": ["OUT1"]
     }
 }

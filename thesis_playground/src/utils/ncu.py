@@ -37,7 +37,7 @@ class SummedIAction(IAction):
         return MyMetric(value)
 
     def __str__(self) -> str:
-        return f"SummedIAction with actions {self.actions}"
+        return f"SummedIAction with actions {[a.name for a in self.actions]}"
 
     def __len__(self) -> int:
         return len(self.actions)

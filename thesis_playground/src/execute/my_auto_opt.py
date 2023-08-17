@@ -543,7 +543,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[input]
             tasklet, map_entry, map_exit = transform_state.add_mapped_tasklet(
-                    name=f"tranpose_{input}",
+                    name=f"transpose_{input}",
                     map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
                     inputs={'_in': Memlet(data=input, subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},
                     code='_out = _in',
@@ -561,7 +561,7 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
             # Simply need to copy the data, the different strides take care of the transposing
             arr = sdfg.arrays[output]
             tasklet, map_entry, map_exit = transform_state_back.add_mapped_tasklet(
-                    name=f"tranpose_{output}",
+                    name=f"transpose_{output}",
                     map_ranges={f"_i{i}": f"0:{s}" for i, s in enumerate(arr.shape)},
                     inputs={'_in': Memlet(data=flipped_data,
                                           subset=", ".join(f"_i{i}" for i, _ in enumerate(arr.shape)))},

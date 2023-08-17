@@ -15,9 +15,23 @@ from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, ge
                         create_if_not_exist
 from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
+from measurements.data2 import read_data_from_result_file, add_column_if_not_exist
 from measurements.profile_config import ProfileConfig
 
 component = "run2"
+
+
+def do_test():
+    program = 'mwe_array_order'
+    profile_configs = []
+    params1 = [ParametersProvider(program, update={'NBLOCKS': 100, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})]
+    params2 = [ParametersProvider(program, update={'NBLOCKS': 200, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})]
+    profile_configs.append(ProfileConfig(program, params1, ['NBLOCKS'], ncu_repetitions=1, tot_time_repetitions=5))
+    profile_configs.append(ProfileConfig(program, params2, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5))
+    experiment_desc = "test run"
+    profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
+            [('k_caching', "False"), ('change_strides', 'False')], ncu_report=False,
+            debug_mode=False)
 
 
 def do_classes(additional_desc: Optional[str] = None):
@@ -27,7 +41,7 @@ def do_classes(additional_desc: Optional[str] = None):
     profile_configs = []
     klev_value = 1000
     klon_start = 1000
-    klon_end = 5000
+    klon_end = 3000
     klon_step = 1000
     for program in class1:
         params = []
@@ -52,6 +66,10 @@ def do_classes(additional_desc: Optional[str] = None):
     profile(profile_configs, RunConfig(k_caching=False, change_stride=False, outside_loop_first=False,
                                        move_assignment_outside=False),
             "Class 1-3 Baseline", [('outside_first', 'False'), ('move_assignments_outside', 'False')], ncu_report=False)
+    # Add ncu data for class 1 once outside first is active
+    for config in profile_configs:
+        if config.program in class1:
+            config.ncu_repetitions = 2
     profile(profile_configs, RunConfig(k_caching=False, change_stride=False, outside_loop_first=True,
                                        move_assignment_outside=False),
             "Class 1-3 outside map first", [('outside_first', 'True'), ('move_assignments_outside', 'False')], ncu_report=False)
@@ -136,7 +154,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
 base_experiments = {
     'vert-loop': do_vertical_loops,
     'k_caching': do_k_caching,
-    'classes': do_classes
+    'classes': do_classes,
+    'test': do_test
 }
 
 
@@ -210,7 +229,18 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
                                                               f"{program_config.program}_{new_experiment_id}_" +
                                                               '_'.join(additional_columns_values) +
                                                               ".ncu-rep")
-        program_config.profile(run_config, **additional_args).to_csv(os.path.join(experiment_folder, 'results.csv'))
+            additional_args['sdfg_path'] = os.path.join(experiment_folder, 'graph.sdfg')
+        df = program_config.profile(run_config, **additional_args)
+        results_file = os.path.join(experiment_folder, 'results.csv')
+        if os.path.exists(results_file):
+            existing_df = read_data_from_result_file(program_config.program, new_experiment_id)\
+                          .reset_index(level='experiment id').drop('experiment id', axis='columns')
+            indices = df.index.names
+            # bring indices into the same order, otherwise concat does not work as expected
+            df = df.reset_index().set_index(indices)
+            existing_df = existing_df.reset_index().set_index(indices)
+            df = pd.concat([df, existing_df])
+        df.to_csv(results_file)
         for index, params in enumerate(program_config.sizes):
             with open(os.path.join(experiment_folder, f"{index}_params.json"), 'w') as file:
                 json.dump(params.get_dict(), file)
@@ -220,7 +250,7 @@ def action_profile(args):
     node = check_output(['uname', '-a']).decode('UTF-8').split(' ')[1].split('.')[0]
     if args.logfile is None:
         set_logfile(os.path.join(get_results_2_folder(),
-                    f"profile_{node}_{datetime.now().strftime('%Y-%m%-%d-%H-%M-%S')}.log"))
+                    f"profile_{node}_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.log"))
     else:
         set_logfile(os.path.join(get_results_2_folder(), args.logfile))
     function_args = json.loads(args.args)

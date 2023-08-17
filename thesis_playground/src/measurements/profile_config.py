@@ -6,6 +6,7 @@ import numpy as np
 import dace
 import sympy
 from dace.sdfg import SDFG
+from numbers import Number
 
 from utils.log import log
 from utils.ncu import get_all_actions_filtered, get_frequencies, get_peak_performance, get_achieved_work, \
@@ -19,7 +20,7 @@ from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, R
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
 from execute.my_auto_opt import specialise_symbols
-from measurements.flop_computation import get_number_of_bytes_2
+from measurements.flop_computation import get_number_of_bytes_2, get_number_of_flops
 
 component = "utils::ProfileConfig"
 
@@ -128,7 +129,20 @@ class ProfileConfig:
         return action
 
     @staticmethod
-    def add_ncu_action_data(data: pd.DataFrame, action: IAction, metadata: Dict[str, Union[str, int]]):
+    def add_ncu_action_data(
+            action: IAction,
+            metadata: Dict[str, Union[str, int]]) -> List[Dict[str, Number]]:
+        """
+        Extracts different measurement points from the given ncu action
+
+        :param action: The action to extract values from
+        :type action: IAction
+        :param metadata: The metadata to append to every data entry
+        :type metadata: Dict[str, Union[str, int]]
+        :return: List of data entries.
+        :rtype: List[Dict[str, Number]]
+        """
+        data = []
         data.append({'measurement': 'gpu frequency', 'value': get_frequencies(action)[0], **metadata})
         data.append({'measurement': 'memory frequency', 'value': get_frequencies(action)[1], **metadata})
         data.append({'measurement': 'peak performance', 'value': get_peak_performance(action)[0], **metadata})
@@ -140,6 +154,7 @@ class ProfileConfig:
         data.append({'measurement': 'measured bandwidth', 'value': get_achieved_performance(action)[1], **metadata})
         data.append({'measurement': 'runtime', 'value': get_runtime(action), **metadata})
         data.append({'measurement': 'cycles', 'value': get_cycles(action), **metadata})
+        return data
 
     def compile(self, params: ParametersProvider, run_config: RunConfig,
                 specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
@@ -233,6 +248,8 @@ class ProfileConfig:
 
         reports = sdfg.get_instrumentation_reports()
         size_data = self.get_size_data_for_dataframe(params)
+        size_data['scope'] = "Total"
+        size_data['num_kernels'] = -1
         data = []
         for index, report in enumerate(reports):
             keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
@@ -247,10 +264,7 @@ class ProfileConfig:
                 'value': report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0],
                 **size_data}
             data.append(this_data)
-        log(f"{component}::profile_total_runtime",
-            f"Run {self.program} {self.ncu_repetitions} times with ncu "
-            f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
-            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
+        data.extend(self.get_theoretical_values(params, inputs, outputs))
         return data
 
     def profile_ncu(
@@ -259,7 +273,25 @@ class ProfileConfig:
             ncu_report_path: str,
             params: ParametersProvider,
             run_config: RunConfig) -> List[Dict[str, Union[str, float, int]]]:
+        """
+        Profiles the kernels using ncu
 
+        :param sdfg_path: Path to the sdfg to use
+        :type sdfg_path: str
+        :param ncu_report_path: The path where to store the ncu reprot
+        :type ncu_report_path: str
+        :param params: The parameters to use
+        :type params: ParametersProvider
+        :param run_config: The run configuration to use
+        :type run_config: RunConfig
+        :return: List of dictionaries. Each dit is one ncu measurement value for one size
+        :rtype: List[Dict[str, Union[str, float, int]]]
+        """
+
+        log(f"{component}::profile_ncu",
+            f"Run {self.program} {self.ncu_repetitions} times with ncu "
+            f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
+            f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
         data = []
         for index in range(self.ncu_repetitions):
             program_args = self.get_program_command_line_arguments(params, run_config)
@@ -268,21 +300,97 @@ class ProfileConfig:
                            program_args=program_args,
                            ncu_args=['--set', 'full'])
             size_data = self.get_size_data_for_dataframe(params)
-            metadata = {'program': self.program, 'run_number': index, **size_data}
+            metadata = {'program': self.program, 'run number': index, **size_data}
             if self.ncu_kernels is None:
-                metadata['scope'] = 'Total'
                 metadata['num_kernels'] = 0
                 action = self.get_action(ncu_report_path)
-                ProfileConfig.add_ncu_action_data(data, action, metadata)
+                metadata['scope'] = str(action)
+                log(f"{component}::profile_ncu", f"No ncu kernels defined, taking action {action}")
+                data.extend(ProfileConfig.add_ncu_action_data(action, metadata))
             else:
                 for name, kernel_re in self.ncu_kernels.items():
                     actions = get_all_actions_matching_re(ncu_report_path, kernel_re)
                     action = SummedIAction(actions)
                     if len(action) == 0:
                         continue
+                    log(f"{component}::profile_ncu", f"Use {action} for {name} with kernel_re {kernel_re}")
                     metadata['scope'] = name
                     metadata['num_kernels'] = len(action)
-                    ProfileConfig.add_ncu_action_data(data, action, metadata)
+                    data.extend(ProfileConfig.add_ncu_action_data(action, metadata))
+        return data
+
+    def get_theoretical_values(
+            self,
+            params: ParametersProvider,
+            inputs: Dict[str, Union[Number, np.ndarray]],
+            outputs: Dict[str, Union[Number, np.ndarray]]) -> List[Dict[str, Number]]:
+        """
+        Add theoretical flop and bytes information
+
+        :param params: The parameters to use
+        :type params: ParametersProvider
+        :param inputs: The input data, used to compute flop count
+        :type inputs: Dict[str, Union[Number, np.ndarray]]
+        :param outputs: The input data, used to compute flop count
+        :type outputs: Dict[str, Union[Number, np.ndarray]]
+        :return: List of dictionaries. Each dict is one value
+        :rtype: List[Dict[str, Number]]
+        """
+        data = []
+        size_data = self.get_size_data_for_dataframe(params)
+        size_data['scope'] = 'Total'
+        size_data['num_kernels'] = -1
+        theoretical_bytes = get_number_of_bytes_2(params, self.program)
+        theoretical_bytes_temp = get_number_of_bytes_2(params, self.program, True)
+        flop_count = get_number_of_flops(params, inputs, outputs, self.program)
+        if theoretical_bytes is None:
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes total',
+                         'value': -1, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes read',
+                         'value': -1, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes written',
+                         'value': -1, **size_data})
+        else:
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes total',
+                         'value': theoretical_bytes[0], **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes read',
+                         'value': theoretical_bytes[1], **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes written',
+                         'value': theoretical_bytes[2], **size_data})
+        if theoretical_bytes_temp is None:
+            size_data['scope'] = 'temp'
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp total',
+                         'value': -1, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp read',
+                         'value': -1, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp written',
+                         'value': -1, **size_data})
+        else:
+            size_data['scope'] = 'temp'
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp total',
+                         'value': theoretical_bytes_temp[0], **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp read',
+                         'value': theoretical_bytes_temp[1], **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp written',
+                         'value': theoretical_bytes_temp[2], **size_data})
+        if flop_count is not None:
+            size_data['scope'] = 'Total'
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical flops',
+                         'value': flop_count.get_total_flops(), **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical adds',
+                         'value': flop_count.adds, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical muls',
+                         'value': flop_count.muls, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical divs',
+                         'value': flop_count.divs, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical minmax',
+                         'value': flop_count.minmax, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical abs',
+                         'value': flop_count.abs, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical powers',
+                         'value': flop_count.powers, **size_data})
+            data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical roots',
+                         'value': flop_count.roots, **size_data})
         return data
 
     def profile(self, run_config: RunConfig, ncu_report_path: Optional[str] = None,
@@ -303,10 +411,11 @@ class ProfileConfig:
         """
         data = []
         ncu_report_path = '/tmp/profile.ncu-rep' if ncu_report_path is None else ncu_report_path
+        if sdfg_path is None:
+            sdfg_path = '/tmp/sdfg.sdfg'
 
         for params in self.sizes:
             sdfg = self.compile(params, run_config, debug_mode=debug_mode)
-            sdfg_path = '/tmp/sdfg.sdfg'
             sdfg.save(sdfg_path)
 
             if self.tot_time_repetitions > 0:
@@ -314,37 +423,6 @@ class ProfileConfig:
             if self.ncu_repetitions > 0:
                 data.extend(self.profile_ncu(sdfg_path, ncu_report_path, params, run_config))
 
-            size_data = self.get_size_data_for_dataframe(params)
-            theoretical_bytes = get_number_of_bytes_2(params, self.program)
-            theoretical_bytes_temp = get_number_of_bytes_2(params, self.program, True)
-            if theoretical_bytes is None:
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes total',
-                             'value': -1, **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes read',
-                             'value': -1, **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes written',
-                             'value': -1, **size_data})
-            else:
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes total',
-                             'value': theoretical_bytes[0], **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes read',
-                             'value': theoretical_bytes[1], **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes written',
-                             'value': theoretical_bytes[2], **size_data})
-            if theoretical_bytes_temp is None:
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp total',
-                             'value': -1, **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp read',
-                             'value': -1, **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp written',
-                             'value': -1, **size_data})
-            else:
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp total',
-                             'value': theoretical_bytes_temp[0], **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp read',
-                             'value': theoretical_bytes_temp[1], **size_data})
-                data.append({'program': self.program, 'run number': 0, 'measurement': 'theoretical bytes temp written',
-                             'value': theoretical_bytes_temp[2], **size_data})
         df = pd.DataFrame(data)
         index_cols = list(df.columns)
         index_cols.remove('value')

@@ -184,6 +184,9 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'INPUT_F': (params['NBLOCKS'], params['KLEV']),
         'OUTPUT': (params['KLEV'], params['NBLOCKS']),
         'OUTPUT_F': (params['NBLOCKS'], params['KLEV']),
+        'INP1': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+        'INP3': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
+        'OUT1': (params['KLON'], params['KLEV'], params['NBLOCKS'])
     }
 
 
