@@ -1171,7 +1171,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
         # top-level SDFG symbols.
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()

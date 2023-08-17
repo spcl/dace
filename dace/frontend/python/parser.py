@@ -120,8 +120,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
     if len(results) > 1:
-        raise ValueError('Ambiguous values for symbols in inference. '
-                         'Options: %s' % str(results))
+        raise ValueError('Ambiguous values for symbols in inference. Options: %s' % str(results))
     if len(results) == 0:
         raise ValueError('Cannot infer values for symbols in inference.')
 
@@ -136,7 +135,6 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
-
     def __init__(self,
                  f,
                  args,
@@ -683,6 +681,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                     types[f'__return_{i}'] = create_datadescriptor(subrettype)
             else:
                 types['__return'] = create_datadescriptor(rettype)
+
+        # Too many arguments given
+        if nargs > len(specified_args):
+            raise TypeError(f'{self.name}() takes {len(specified_args)} arguments but {nargs} were given')
 
         return types, arg_mapping, gvar_mapping, specified_args
 

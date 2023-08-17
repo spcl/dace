@@ -366,7 +366,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
         # top-level SDFG symbols.
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         # Compute array size
@@ -411,7 +411,8 @@ class SnitchCodeGen(TargetCodeGenerator):
             elif not symbolic.issymbolic(arrsize, sdfg.constants):
                 # static allocation
                 declaration_stream.write(f'// static allocate storage "{nodedesc.storage}"')
-                if node.desc(sdfg).lifetime == dace.AllocationLifetime.Persistent:
+                if node.desc(sdfg).lifetime in (dtypes.AllocationLifetime.Persistent,
+                                                dtypes.AllocationLifetime.External):
                     # Don't put a static if it is declared in the state struct for C compliance
                     declaration_stream.write(f'{nodedesc.dtype.ctype} {name}[{cpp.sym2cpp(arrsize)}];\n', sdfg,
                                              state_id, node)
@@ -1080,7 +1081,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         hdrs += 'typedef void * %sHandle_t;\n' % sdfg.name
         hdrs += '#ifdef __cplusplus\nextern "C" {\n#endif\n'
         hdrs += '%sHandle_t __dace_init_%s(%s);\n' % init_params
-        hdrs += 'void __dace_exit_%s(%sHandle_t handle);\n' % exit_params
+        hdrs += 'int __dace_exit_%s(%sHandle_t handle);\n' % exit_params
         hdrs += 'void __program_%s(%sHandle_t handle%s);\n' % params
         hdrs += '#ifdef __cplusplus\n}\n#endif\n'
 

@@ -491,6 +491,22 @@ class Range(Subset):
                 result |= symbolic.symlist(d).keys()
         return result
 
+    def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
+        """
+        Get set of free symbols by only looking at the dimension given by the indices list
+
+        :param indices: The indices of the dimensions to look at
+        :type indices: List[int]
+        :return: The set of free symbols
+        :rtype: Set[str]
+        """
+        result = set()
+        for i, dim in enumerate(self.ranges):
+            if i in indices:
+                for d in dim:
+                    result |= symbolic.symlist(d).keys()
+        return result
+
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
 

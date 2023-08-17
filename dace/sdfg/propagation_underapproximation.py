@@ -570,7 +570,6 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge].src_subset = subsets.Subsetlist(
                         [approximation_dict[edge].src_subset])
 
-        sdfg.view()
         self.propagate_memlets_sdfg(sdfg)
 
         # Replace None with empty Subsetlist in each Memlet
@@ -650,7 +649,8 @@ class UnderapproximateWrites(ppl.Pass):
                 # this cycle.
                 increment_edge = None
                 for iedge in in_edges:
-                    if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
+                    if itvarsym in self._freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
+                    #if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
                         increment_edge = iedge
                         break
                 if increment_edge is None:
@@ -889,7 +889,7 @@ class UnderapproximateWrites(ppl.Pass):
                     continue
 
                 out_memlet = self.unsqueeze_memlet_subsetList(
-                    internal_memlet, out_memlet, parent_sdfg)
+                    internal_memlet, out_memlet, parent_sdfg, nsdfg_node)
 
                 approximation_dict[edge] = out_memlet
 
@@ -898,7 +898,8 @@ class UnderapproximateWrites(ppl.Pass):
             self,
             internal_memlet: Memlet,
             external_memlet: Memlet,
-            parent_sdfg: dace.SDFG
+            parent_sdfg: dace.SDFG,
+            nsdfg: NestedSDFG
             ) -> Memlet:
         """helper method that tries to unsqueeze a memlet in a nested SDFG.
         If it fails it falls back to an empty memlet."""
@@ -923,13 +924,17 @@ class UnderapproximateWrites(ppl.Pass):
             other_subset=internal_memlet.other_subset
         )
 
+        internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
+        external_array = parent_sdfg.arrays[external_memlet.data]
+
+
         for j, subset in enumerate(_subsets):
             if subset is None:
                 continue
             tmp_memlet.subset = subset
             try:
                 unsqueezed_memlet = unsqueeze_memlet(
-                    tmp_memlet, external_memlet, False)
+                    tmp_memlet, external_memlet, False, internal_offset=internal_array.offset, external_offset=external_array.offset)
                 subset = unsqueezed_memlet.subset
             except (ValueError, NotImplementedError):
                 # In any case of memlets that cannot be unsqueezed (i.e.,

@@ -58,6 +58,7 @@ class NodeVisitor(object):
                 self.visit(value)
 
 
+
 class NodeTransformer(NodeVisitor):
     """
     A base node visitor that walks the abstract syntax tree and allows
@@ -120,6 +121,18 @@ class FindInputs(NodeVisitor):
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         self.nodes.append(node)
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.FNode):
+        """Called if no explicit visitor function exists for a node."""
+        for field, value in iter_fields(node):
+            if field == "args":
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value)
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         self.nodes.append(node.name)
@@ -357,10 +370,7 @@ class IndexExtractor(NodeTransformer):
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
-        return ast_internal_classes.Array_Subscript_Node(
-            name=node.name,
-            indices=new_indices,
-        )
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -543,8 +553,8 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                         i.lval, ast_internal_classes.Structure_Constructor_Node):
                     function_statement_name = i.lval.name
                     is_actually_function_statement = False
-                    # In Fortran, function statement are defined as scalar values, 
-                    # but called as arrays, so by identifiying that it is called as 
+                    # In Fortran, function statement are defined as scalar values,
+                    # but called as arrays, so by identifiying that it is called as
                     # a call_expr or structure_constructor, we also need to match
                     # the specification part and see that it is scalar rather than an array.
                     found = False
@@ -562,7 +572,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
                     if is_actually_function_statement:
                         to_change.append([i.lval, i.rval])
                         new_exec.remove(i)
-                        
+
                     else:
                         #There are no function statements after the first one that isn't a function statement
                         break
