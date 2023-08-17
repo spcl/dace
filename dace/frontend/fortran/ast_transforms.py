@@ -58,6 +58,7 @@ class NodeVisitor(object):
                 self.visit(value)
 
 
+
 class NodeTransformer(NodeVisitor):
     """
     A base node visitor that walks the abstract syntax tree and allows
@@ -120,6 +121,18 @@ class FindInputs(NodeVisitor):
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         self.nodes.append(node)
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.FNode):
+        """Called if no explicit visitor function exists for a node."""
+        for field, value in iter_fields(node):
+            if field == "args":
+                continue
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value)
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         self.nodes.append(node.name)
