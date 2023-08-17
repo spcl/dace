@@ -82,7 +82,10 @@ class DaCeCodeGenerator(object):
         k = id(obj)
         if k in self.fsyms:
             return self.fsyms[k]
-        result = obj.free_symbols
+        if hasattr(obj, 'used_symbols'):
+            result = obj.used_symbols(all_symbols=False)
+        else:
+            result = obj.free_symbols
         self.fsyms[k] = result
         return result
 

@@ -2,6 +2,7 @@
 import dace
 from dace import dtypes, nodes
 from typing import Any, Dict, List, Union
+import numpy as np
 
 N = dace.symbol("N")
 
@@ -73,6 +74,109 @@ def test_omp_props():
     assert ("#pragma omp parallel for schedule(guided, 5) num_threads(10)" in code)
 
 
+def test_omp_parallel():
+
+    @dace.program
+    def tester(A: dace.float64[1]):
+        for t in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+            A[0] += 1
+
+    sdfg = tester.to_sdfg()
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    me.map.omp_num_threads = 2
+
+    code = sdfg.generate_code()[0].clean_code
+    assert ("#pragma omp parallel num_threads(2)" in code)
+
+    a = np.random.rand(1)
+    ref = a + 2
+    sdfg(a)
+    assert np.allclose(a, ref)
+
+
+def test_omp_parallel_for_in_parallel():
+    """
+    Tests that an OpenMP map inside a parallel section ends up without an
+    extra (semantically-incorrect) ``parallel`` statement.
+    """
+
+    @dace.program
+    def tester(A: dace.float64[20]):
+        for t in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+            for i in dace.map[0:20] @ dace.ScheduleType.CPU_Multicore:
+                A[i] += 1
+
+    sdfg = tester.to_sdfg()
+    code = sdfg.generate_code()[0].clean_code
+    assert "#pragma omp parallel" in code
+    assert "#pragma omp for" in code
+
+    a = np.random.rand(20)
+    ref = a + 1
+    sdfg(a)
+    assert np.allclose(a, ref)
+
+
+def test_omp_get_tid():
+
+    @dace.program
+    def tester(A: dace.float64[20]):
+        for t in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+            A[t] += 1
+
+    sdfg = tester.to_sdfg()
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    me.map.omp_num_threads = 2
+
+    code = sdfg.generate_code()[0].clean_code
+    assert "#pragma omp parallel num_threads(2)" in code
+    assert "omp_get_thread_num()" in code
+
+    a = np.random.rand(20)
+    ref = np.copy(a)
+    ref[:2] += 1
+
+    sdfg(a)
+    assert np.allclose(a, ref)
+
+
+def test_omp_get_tid_elision():
+
+    @dace.program
+    def tester(A: dace.float64[20]):
+        for t in dace.map[0:1] @ dace.ScheduleType.CPU_Persistent:
+            A[0] += 1
+
+    sdfg = tester.to_sdfg()
+    code = sdfg.generate_code()[0].clean_code
+    assert "omp_get_thread_num()" not in code
+
+
+def test_omp_get_ntid():
+    __omp_num_threads = dace.symbol('__omp_num_threads')
+
+    @dace.program
+    def tester(A: dace.int64[1]):
+        for _ in dace.map[0:__omp_num_threads] @ dace.ScheduleType.CPU_Persistent:
+            A[0] = __omp_num_threads
+
+    sdfg = tester.to_sdfg()
+    code = sdfg.generate_code()[0].clean_code
+    assert "omp_get_num_threads()" in code
+
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    me.map.omp_num_threads = 3
+
+    a = np.zeros([1], dtype=np.int64)
+    sdfg(a, __omp_num_threads=1)  # Feed in some other value
+    assert np.allclose(a, 3)
+
+
 if __name__ == "__main__":
     test_lack_of_omp_props()
     test_omp_props()
+    test_omp_parallel()
+    test_omp_parallel_for_in_parallel()
+    test_omp_get_tid()
+    test_omp_get_tid_elision()
+    test_omp_get_ntid()
