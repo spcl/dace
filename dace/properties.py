@@ -1408,7 +1408,7 @@ class NestedDataClassProperty(Property):
     def to_json(self, obj):
         if obj is None:
             return None
-        return obj.dtype.to_json()
+        return obj.to_json()
 
     @staticmethod
     def from_json(obj, context=None):

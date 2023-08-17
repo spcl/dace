@@ -1102,9 +1102,29 @@ class StructArray(Array):
                  pool=False):
 
         self.stype = stype
-        dtype = stype.dtype
+        if stype:
+            dtype = stype.dtype
+        else:
+            dtype = dtypes.int8
         super(StructArray, self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset,
                                           may_alias, lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+    
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        # Create dummy object
+        ret = cls(None, ())
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        # Default shape-related properties
+        if not ret.offset:
+            ret.offset = [0] * len(ret.shape)
+        if not ret.strides:
+            # Default strides are C-ordered
+            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+        if ret.total_size == 0:
+            ret.total_size = _prod(ret.shape)
+        
+        return ret
 
 
 @make_properties
