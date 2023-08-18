@@ -186,15 +186,11 @@ def test_win_put(dtype):
 
     assertion = np.full([1], 0, dtype=np.int32)
 
-    # print(comm_rank, win_buffer)
-
     mpi_func(assertion=assertion,
              win_buffer=win_buffer,
              send_buffer=send_buffer,
              target_rank=target_rank,
              n=window_size)
-
-    # print(comm_rank, win_buffer)
 
     correct_data = np.full(window_size, (comm_rank - 1) % comm_size, dtype=np_dtype)
     if (not np.allclose(win_buffer, correct_data)):

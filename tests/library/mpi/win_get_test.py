@@ -15,7 +15,7 @@ import pytest
 def make_sdfg(dtype):
     n = dace.symbol("n")
 
-    sdfg = dace.SDFG("mpi_win_put")
+    sdfg = dace.SDFG("mpi_win_get")
     window_state = sdfg.add_state("create_window")
 
     sdfg.add_array("assertion", [1], dtype=dace.int32, transient=False)
@@ -186,15 +186,11 @@ def test_win_put(dtype):
 
     assertion = np.full([1], 0, dtype=np.int32)
 
-    print(comm_rank, receive_buffer)
-
     mpi_func(assertion=assertion,
              win_buffer=win_buffer,
              receive_buffer=receive_buffer,
              target_rank=target_rank,
              n=window_size)
-
-    print(comm_rank, receive_buffer)
 
     correct_data = np.full(window_size, (comm_rank + 1) % comm_size, dtype=np_dtype)
     if (not np.allclose(receive_buffer, correct_data)):
@@ -202,4 +198,4 @@ def test_win_put(dtype):
 
 if __name__ == "__main__":
     test_win_put(dace.int32)
-    # test_win_put(dace.float32)
+    test_win_put(dace.float32)
