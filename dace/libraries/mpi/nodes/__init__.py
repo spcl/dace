@@ -14,3 +14,4 @@ from .alltoall import Alltoall
 from .dummy import Dummy
 from .redistribute import Redistribute
 from .win_create import Win_create
+from .win_fence import Win_fence
