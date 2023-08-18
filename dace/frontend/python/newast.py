@@ -1307,6 +1307,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update(
             {k: self.sdfg.process_grids[v]
              for k, v in self.variables.items() if v in self.sdfg.process_grids})
+        result.update(
+            {k: self.sdfg.rma_windows[v]
+             for k, v in self.variables.items() if v in self.sdfg.rma_windows})
         try:
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
@@ -4686,6 +4689,8 @@ class ProgramVisitor(ExtNodeVisitor):
         for operand in operands:
             if isinstance(operand, str) and operand in self.sdfg.process_grids:
                 result.append((operand, type(self.sdfg.process_grids[operand]).__name__))
+            elif isinstance(operand, str) and operand in self.sdfg.rma_windows:
+                result.append((operand, type(self.sdfg.rma_windows[operand]).__name__))
             elif isinstance(operand, str) and operand in self.sdfg.arrays:
                 result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:
