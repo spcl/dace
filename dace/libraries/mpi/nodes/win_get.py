@@ -8,20 +8,20 @@ from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
-class ExpandWinPutMPI(ExpandTransformation):
+class ExpandWinGetMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        inbuffer, in_count_str = node.validate(parent_sdfg, parent_state)
-        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
+        outbuffer, out_count_str = node.validate(parent_sdfg, parent_state)
+        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(outbuffer.dtype.base_type)
 
         window_name = node.window_name
 
         code = f"""
-            MPI_Put(_inbuffer, {in_count_str}, {mpi_dtype_str}, \
-                    _target_rank, 0, {in_count_str}, {mpi_dtype_str}, \
+            MPI_Get(_outbuffer, {out_count_str}, {mpi_dtype_str}, \
+                    _target_rank, 0, {out_count_str}, {mpi_dtype_str}, \
                     __state->{window_name}_window);
         """
 
@@ -35,18 +35,18 @@ class ExpandWinPutMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Win_put(MPINode):
+class Win_get(MPINode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandWinPutMPI,
+        "MPI": ExpandWinGetMPI,
     }
     default_implementation = "MPI"
 
     window_name = dace.properties.Property(dtype=str, default=None)
 
     def __init__(self, name, window_name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_inbuffer", "_target_rank"}, outputs={"_out"}, **kwargs)
+        super().__init__(name, *args, inputs={"_target_rank"}, outputs={"_out", "_outbuffer"}, **kwargs)
         self.window_name = window_name
 
     def validate(self, sdfg, state):
@@ -55,15 +55,14 @@ class Win_put(MPINode):
                  parent SDFG.
         """
 
-        inbuffer = None 
-        for e in state.in_edges(self):
-            if e.dst_conn == "_inbuffer":
-                inbuffer = sdfg.arrays[e.data.data]
-
-        in_count_str = "XXX"
-        for _, _, _, dst_conn, data in state.in_edges(self):
-            if dst_conn == '_inbuffer':
+        outbuffer = None
+        for e in state.out_edges(self):
+            if e.src_conn == "_outbuffer":
+                outbuffer = sdfg.arrays[e.data.data]
+        out_count_str = "XXX"
+        for _, src_conn, _, _, data in state.out_edges(self):
+            if src_conn == '_outbuffer':
                 dims = [str(e) for e in data.subset.size_exact()]
-                in_count_str = "*".join(dims)
+                out_count_str = "*".join(dims)
         
-        return inbuffer, in_count_str
+        return outbuffer, out_count_str
