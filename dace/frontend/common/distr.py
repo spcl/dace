@@ -47,7 +47,6 @@ def _comm_split(pv: 'ProgramVisitor',
                 grid: str = None):
     """ Splits communicator
     """
-
     from dace.libraries.mpi.nodes.comm_split import Comm_split
 
     # fine a new comm world name
@@ -73,12 +72,12 @@ def _comm_split(pv: 'ProgramVisitor',
 @oprepo.replaces_method('Cartcomm', 'Split')
 @oprepo.replaces_method('Intracomm', 'Split')
 def _intracomm_comm_split(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     comm: Tuple[str, 'Comm'],
-                     color: Union[str, sp.Expr, Number] = 0,
-                     key: Union[str, sp.Expr, Number] = 0):
-    """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
+                          sdfg: SDFG,
+                          state: SDFGState,
+                          comm: Tuple[str, 'Comm'],
+                          color: Union[str, sp.Expr, Number] = 0,
+                          key: Union[str, sp.Expr, Number] = 0):
+    """ Equivalent to `dace.comm.split(color, key)`. """
     from mpi4py import MPI
     comm_name, comm_obj = comm
     if comm_obj == MPI.COMM_WORLD:
@@ -87,13 +86,13 @@ def _intracomm_comm_split(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces_method('ProcessComm', 'Split')
-def processcomm_comm_split(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     comm: Tuple[str, 'Comm'],
-                     color: Union[str, sp.Expr, Number] = 0,
-                     key: Union[str, sp.Expr, Number] = 0):
-    """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
+def _processcomm_comm_split(pv: 'ProgramVisitor',
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            comm: Tuple[str, 'Comm'],
+                            color: Union[str, sp.Expr, Number] = 0,
+                            key: Union[str, sp.Expr, Number] = 0):
+    """ Equivalent to `dace.comm.split(color, key)`. """
     return _comm_split(pv, sdfg, state, color, key, grid=comm)
 
 
