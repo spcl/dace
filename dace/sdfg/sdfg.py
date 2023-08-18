@@ -32,7 +32,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.distr_types import ProcessGrid, SubArray, RedistrArray
+from dace.distr_types import ProcessGrid, SubArray, RedistrArray, RMA_window
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
@@ -409,6 +409,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                            desc="Process-grid descriptors for this SDFG",
                            to_json=_arrays_to_json,
                            from_json=_arrays_from_json)
+    _windows = DictProperty(str,
+                            RMA_window,
+                            desc="MPI RMA window descriptors for this SDFG",
+                            to_json=_arrays_to_json,
+                            from_json=_arrays_from_json)
+    _rma_ops = DictProperty(str,
+                           str,
+                           desc="MPI RMA fence descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_arrays_from_json)
     _subarrays = DictProperty(str,
                               SubArray,
                               desc="Sub-array descriptors for this SDFG",
@@ -477,6 +487,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Grid-distribution-related fields
         self._pgrids = {}
+        self._windows = {}
+        self._rma_ops = {}
         self._subarrays = {}
         self._rdistrarrays = {}
 
@@ -646,6 +658,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def process_grids(self):
         """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
         return self._pgrids
+
+    @property
+    def rma_windows(self):
+        """ Returns a dictionary of RMA window descriptors (`RMA_window` objects) used in this SDFG. """
+        return self._windows
+
+    @property
+    def rma_ops(self):
+        """ Returns a dictionary of RMA operations descriptors (an empty string) used in this SDFG. """
+        return self._rma_ops
 
     @property
     def subarrays(self):
@@ -1666,8 +1688,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
 
-        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
-                 | self._rdistrarrays.keys())
+        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() |
+                 self._subarrays.keys() | self._rdistrarrays.keys() | self._windows.keys() |
+                 self._rma_ops.keys())
         return dt.find_new_name(name, names)
 
     def find_new_constant(self, name: str):
@@ -2042,6 +2065,26 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.append_exit_code(self._pgrids[grid_name].exit_code())
 
         return grid_name
+
+    def add_window(self):
+        """ Adds a RMA window to the RMA window descriptor store.
+        """
+
+        window_name = self._find_new_name('__win')
+
+        self._windows[window_name] = RMA_window(window_name)
+
+        return window_name
+
+    def add_rma_ops(self):
+        """ Adds a RMA op to the RMA ops descriptor store.
+        """
+
+        rma_op_name = self._find_new_name('__win_op')
+
+        self._rma_ops[rma_op_name] = ""
+
+        return rma_op_name
 
     def add_subarray(self,
                      dtype: dtypes.typeclass,

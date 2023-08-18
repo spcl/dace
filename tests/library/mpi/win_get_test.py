@@ -49,7 +49,7 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(window_state, fence_state_1, dace.InterstateEdge())
 
-    fence_name = sdfg.add_fence()
+    fence_name = sdfg.add_rma_ops()
     win_fence_node = mpi.nodes.win_fence.Win_fence(fence_name, window_name)
 
     # pseudo access for ordering
@@ -84,8 +84,8 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(fence_state_1, get_state, dace.InterstateEdge())
 
-    get_name = sdfg.add_fence()
-    win_put_node = mpi.nodes.win_get.Win_get(get_name, window_name)
+    get_name = sdfg.add_rma_ops()
+    win_get_node = mpi.nodes.win_get.Win_get(get_name, window_name)
 
     # pseudo access for ordering
     fence_node = get_state.add_access(fence_name)
@@ -95,19 +95,18 @@ def make_sdfg(dtype):
 
     get_state.add_edge(fence_node,
                        None,
-                       win_put_node,
+                       win_get_node,
                        None,
                        Memlet.from_array(fence_name, fence_desc))
 
     get_state.add_edge(target_rank,
                        None,
-                       win_put_node,
+                       win_get_node,
                        "_target_rank",
                        Memlet.simple(target_rank, "0:1", num_accesses=1))
-    
 
     receive_buffer = get_state.add_write("receive_buffer")
-    get_state.add_edge(win_put_node,
+    get_state.add_edge(win_get_node,
                        "_outbuffer",
                        receive_buffer,
                        None,
@@ -115,7 +114,7 @@ def make_sdfg(dtype):
     
     _, scal = sdfg.add_scalar(get_name, dace.int32, transient=True)
     wnode = get_state.add_write(get_name)
-    get_state.add_edge(win_put_node,
+    get_state.add_edge(win_get_node,
                        "_out",
                        wnode,
                        None,
@@ -127,18 +126,18 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(get_state, fence_state_2, dace.InterstateEdge())
 
-    fence_name = sdfg.add_fence()
+    fence_name = sdfg.add_rma_ops()
     win_fence_node = mpi.nodes.win_fence.Win_fence(fence_name, window_name)
 
     # pseudo access for ordering
-    put_node = fence_state_2.add_access(get_name)
-    put_desc = sdfg.arrays[get_name]
+    get_node = fence_state_2.add_access(get_name)
+    get_desc = sdfg.arrays[get_name]
 
-    fence_state_2.add_edge(put_node,
+    fence_state_2.add_edge(get_node,
                          None,
                          win_fence_node,
                          None,
-                         Memlet.from_array(get_name, put_desc))
+                         Memlet.from_array(get_name, get_desc))
     
     assertion_node = fence_state_2.add_access("assertion")
 
@@ -165,7 +164,7 @@ def make_sdfg(dtype):
     pytest.param("MPI", dace.float32, marks=pytest.mark.mpi),
     pytest.param("MPI", dace.int32, marks=pytest.mark.mpi)
 ])
-def test_win_put(dtype):
+def test_win_get(dtype):
     from mpi4py import MPI
     np_dtype = getattr(np, dtype.to_string())
     comm_world = MPI.COMM_WORLD
@@ -197,5 +196,5 @@ def test_win_put(dtype):
         raise (ValueError("The received values are not what I expected on root."))
 
 if __name__ == "__main__":
-    test_win_put(dace.int32)
-    test_win_put(dace.float32)
+    test_win_get(dace.int32)
+    test_win_get(dace.float32)
