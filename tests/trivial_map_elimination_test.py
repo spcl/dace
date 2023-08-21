@@ -86,35 +86,34 @@ class TrivialMapEliminationTest(unittest.TestCase):
 class TrivialMapInitEliminationTest(unittest.TestCase):
     def test_can_be_applied(self):
         graph = trivial_map_init_sdfg()
-        graph.save('trivial_map_expanded_sdfg.sdfg')
 
         count = graph.apply_transformations(TrivialMapElimination, validate=False, validate_all=False)
-        graph.save('trivial_map_expanded_sdfg_applied.sdfg')
         graph.validate()
 
         self.assertGreater(count, 0)
 
-    # def test_removes_map(self):
-    #     graph = trivial_map_sdfg()
+    def test_removes_map(self):
+        graph = trivial_map_init_sdfg()
 
-    #     graph.apply_transformations(TrivialMapElimination)
+        state = graph.nodes()[0]
+        map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        self.assertEqual(len(map_entries), 2)
 
-    #     state = graph.nodes()[0]
-    #     map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
-    #     self.assertEqual(len(map_entries), 0)
+        graph.apply_transformations(TrivialMapElimination)
 
-    # def test_raplaces_map_params_in_scope(self):
-    #     # Tests if the 'i' in the range of the memlet to B gets replaced
-    #     # with the value 'i' obtains in the map, namely '0'.
+        state = graph.nodes()[0]
+        map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        self.assertEqual(len(map_entries), 1)
 
-    #     graph = trivial_map_sdfg()
+    def test_reconnects_edges(self):
+        graph = trivial_map_init_sdfg()
 
-    #     graph.apply_transformations(TrivialMapElimination)
-
-    #     state = graph.nodes()[0]
-    #     B = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.AccessNode) and n.data == 'B'][0]
-    #     out_memlet = state.in_edges(B)[0]
-    #     self.assertEqual(out_memlet.data.subset, dace.subsets.Range([(0, 0, 1)]))
+        graph.apply_transformations(TrivialMapElimination)
+        state = graph.nodes()[0]
+        map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        self.assertEqual(len(map_entries), 1)
+        # Check that there is an outgoing edge from the map entry
+        self.assertEqual(len(state.out_edges(map_entries[0])), 1)
 
 
 if __name__ == '__main__':
