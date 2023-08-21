@@ -1303,6 +1303,16 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add SDFG arrays, in case a replacement added a new output
         result.update(self.sdfg.arrays)
 
+        # MPI-related stuff
+        result.update(
+            {k: self.sdfg.process_grids[v]
+             for k, v in self.variables.items() if v in self.sdfg.process_grids})
+        try:
+            from mpi4py import MPI
+            result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
+        except (ImportError, ModuleNotFoundError):
+            pass
+
         return result
 
     def _add_state(self, label=None):
@@ -2352,6 +2362,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Visit test-condition
         if not is_test_simple:
             parsed_node = self.visit(node)
+            if isinstance(parsed_node, (list, tuple)) and len(parsed_node) == 1:
+                parsed_node = parsed_node[0]
             if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
                 datadesc = self.sdfg.arrays[parsed_node]
                 if isinstance(datadesc, data.Array):
@@ -3653,6 +3665,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     # If the symbol is a callback, but is not used in the nested SDFG, skip it
                     continue
 
+                # NOTE: Is it possible that an array in the SDFG's closure is not in the SDFG?
+                # NOTE: Perhaps its use was simplified/optimized away?
+                if aname not in sdfg.arrays:
+                    continue
+
                 # First, we do an inverse lookup on the already added closure arrays for `arr`.
                 is_new_arr = True
                 for k, v in self.nested_closure_arrays.items():
@@ -3829,6 +3846,12 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in argdict.items() if self._is_outputnode(sdfg, k)
         }
 
+        # If an argument does not register as input nor as output, put it in the inputs.
+        # This may happen with input arguments that are used to set a promoted scalar.
+        for k, v in argdict.items():
+            if k not in inputs.keys() and k not in outputs.keys():
+                inputs[k] = v
+
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
             if arrname not in names_to_replace:
@@ -3840,13 +3863,6 @@ class ProgramVisitor(ExtNodeVisitor):
             if narrname in outputs:
                 self.outputs[arrname] = (state, outputs[narrname], [])
 
-        # If an argument does not register as input nor as output,
-        # put it in the inputs.
-        # This may happen with input argument that are used to set
-        # a promoted scalar.
-        for k, v in argdict.items():
-            if k not in inputs.keys() and k not in outputs.keys():
-                inputs[k] = v
         # Unset parent inputs/read accesses that
         # turn out to be outputs/write accesses.
         for memlet in outputs.values():
@@ -4354,8 +4370,11 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add object as first argument
             if modname in self.variables.keys():
                 arg = self.variables[modname]
-            else:
+            elif modname in self.scope_vars.keys():
                 arg = self.scope_vars[modname]
+            else:
+                # Fallback to (name, object)
+                arg = (modname, self.defined[modname])
             args.append(arg)
         # Otherwise, try to find a default implementation for the SDFG
         elif not found_ufunc:
@@ -4563,7 +4582,10 @@ class ProgramVisitor(ExtNodeVisitor):
         rname = self.scope_vars[name]
         if rname in self.scope_arrays:
             rng = subsets.Range.from_array(self.scope_arrays[rname])
-            rname, _ = self._add_read_access(rname, rng, node)
+            if isinstance(node.ctx, ast.Store):
+                rname, _ = self._add_write_access(rname, rng, node)
+            else:
+                rname, _ = self._add_read_access(rname, rng, node)
         return rname
 
     #### Visitors that return arrays
@@ -4662,7 +4684,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = []
         for operand in operands:
-            if isinstance(operand, str) and operand in self.sdfg.arrays:
+            if isinstance(operand, str) and operand in self.sdfg.process_grids:
+                result.append((operand, type(self.sdfg.process_grids[operand]).__name__))
+            elif isinstance(operand, str) and operand in self.sdfg.arrays:
                 result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append((operand, type(self.scope_arrays[operand])))
@@ -4898,6 +4922,8 @@ class ProgramVisitor(ExtNodeVisitor):
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript, inference: bool = False):
 
+        is_read: bool = not isinstance(node.ctx, ast.Store)
+
         if self.nested:
 
             defined_vars = {**self.variables, **self.scope_vars}
@@ -4924,13 +4950,19 @@ class ProgramVisitor(ExtNodeVisitor):
                 if inference:
                     rng.offset(rng, True)
                     return self.sdfg.arrays[true_name].dtype, rng.size()
-                new_name, new_rng = self._add_read_access(name, rng, node)
+                if is_read:
+                    new_name, new_rng = self._add_read_access(name, rng, node)
+                else:
+                    new_name, new_rng = self._add_write_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
                 if isinstance(self.sdfg.arrays[new_name], data.Scalar) or new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
-                    new_name, _ = self.make_slice(new_name, new_rng)
+                    if is_read:
+                        new_name, _ = self.make_slice(new_name, new_rng)
+                    else:
+                        raise NotImplementedError('Cannot slice a write access')
                     return new_name
 
         # Obtain array/tuple
@@ -4972,7 +5004,10 @@ class ProgramVisitor(ExtNodeVisitor):
             rng.offset(rng, True)
             return self.sdfg.arrays[array].dtype, rng.size()
 
-        return self._add_read_slice(array, node, expr)
+        if is_read:
+            return self._add_read_slice(array, node, expr)
+        else:
+            raise NotImplementedError('Write slicing not implemented')
 
     def _visit_ast_or_value(self, node: ast.AST) -> Any:
         result = self.visit(node)
