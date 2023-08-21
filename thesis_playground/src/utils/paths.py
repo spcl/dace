@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from os.path import join, dirname, split, abspath, exists
 from os import getcwd, listdir, makedirs
 
@@ -132,3 +132,23 @@ def get_plots_2_folder() -> str:
 
 def get_sdfg_gen_code_folder() -> str:
     return create_if_not_exist(join(get_thesis_playground_root_dir(), 'sdfg_gen_code'))
+
+
+def get_results_2_logdir(node: Optional[str] = None, profile_name: Optional[str] = None) -> str:
+    """
+    Get path to logfiles given node and profile name. If node or profile name is not given returns path to logfiles of
+    all nodes or all profiles of node
+
+    :param node: Name of the node, optional
+    :type node: Optional[str]
+    :param profile_name: Name of the profile, optional
+    :type profile_name: Optional[str]
+    :return: Path
+    :rtype: str
+    """
+    logdir = join(get_results_2_folder(), "logs")
+    if node is not None:
+        if profile_name is not None:
+            return create_if_not_exist(join(logdir, node, profile_name))
+        return create_if_not_exist(join(logdir, node))
+    return create_if_not_exist(logdir)

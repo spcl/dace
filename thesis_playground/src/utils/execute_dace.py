@@ -5,6 +5,7 @@ from typing import Tuple, Optional, List, Union, Dict
 import os
 from subprocess import run
 from argparse import Namespace
+import logging
 
 import dace
 
@@ -15,10 +16,9 @@ from utils.general import get_programs_data, read_source, get_fortran, get_sdfg,
 from utils.gpu_general import copy_to_device, print_non_zero_percentage
 from measurements.flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurements.data import ProgramMeasurement
-from utils.log import log
 
 RNG_SEED = 424388
-component = "utils::execute_date"
+logger = logging.getLogger(__name__)
 
 
 class RunConfig:
@@ -88,7 +88,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     :rtype: bool
     """
     assert run_config.device == dace.DeviceType.GPU
-    log(f"{component}::test_program", str(run_config))
+    logger.info(str(run_config))
 
     programs_data = get_programs_data()
     params = ParametersProvider(program, testing=True)
@@ -109,7 +109,7 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
 
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt, **add_args)
     else:
-        log(f"{component}::test_program", f"Reading SDFG from {sdfg_file} and compile it")
+        logger.info(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
         sdfg.compile()
 
@@ -128,22 +128,22 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     inputs_device = copy_to_device(inputs)
     sdfg(**inputs_device, **outputs_d_device)
 
-    log(f"{component}::test_program", f"{program} ({program_name}) on {run_config.device}")
+    logger.info(f"{program} ({program_name}) on {run_config.device}")
     outputs_d = outputs_d_device
     passes_test = compare_output(outputs_f, outputs_d, program, params)
     if compare_output_all(outputs_f, outputs_original, print_if_differ=False):
-        log(f"{component}::test_program", "!!! Fortran has not changed any output values !!!")
+        logger.error("!!! Fortran has not changed any output values !!!")
         passes_test = False
     if compare_output_all(outputs_d, outputs_original, print_if_differ=False):
-        log(f"{component}::test_program", "!!! DaCe has not changed any output values !!!")
+        logger.error("!!! DaCe has not changed any output values !!!")
         passes_test = False
 
     # passes_test = compare_output_all(outputs_f, outputs_d)
 
     if passes_test:
-        log(f"{component}::test_program", 'Success')
+        logger.info('Success')
     else:
-        log(f"{component}::test_program", '!!!TEST NOT PASSED!!!')
+        logger.error('!!!TEST NOT PASSED!!!')
     return passes_test
 
 
@@ -167,9 +167,8 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
     :type verbose_name: Optional[str]
     """
     programs = get_programs_data()['programs']
-    log(f"{component}::run_program",
-        f"run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
-    log(f"{component}::run_program", str(run_config))
+    logger.info(f"run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
+    logger.info(str(run_config))
     fsource = read_source(program)
     program_name = programs[program]
     if sdfg_file is None:
@@ -186,7 +185,7 @@ def run_program(program: str,  run_config: RunConfig, params: ParametersProvider
         sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt,
                              **additional_args)
     else:
-        log(f"{component}::run_program", f"Reading SDFG from {sdfg_file} and compile it")
+        logger.info(f"Reading SDFG from {sdfg_file} and compile it")
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
         sdfg.compile()
 
@@ -242,7 +241,7 @@ def profile_program(program: str, run_config: RunConfig, params: ParametersProvi
     results = ProgramMeasurement(program, params)
 
     programs = get_programs_data()['programs']
-    log(f"{component}::profile_program", f"Profile {program}({programs[program]}) rep={repetitions}")
+    logger.info(f"Profile {program}({programs[program]}) rep={repetitions}")
     routine_name = f"{programs[program]}_routine"
 
     sdfg = compile_for_profile(program, params, run_config)
@@ -254,7 +253,7 @@ def profile_program(program: str, run_config: RunConfig, params: ParametersProvi
         set_input_pattern(inputs, outputs, params, program, run_config.pattern)
 
     sdfg.clear_instrumentation_reports()
-    log(f"{component}::profile_program", "Measure total runtime")
+    logger.info("Measure total runtime")
     inputs = copy_to_device(inputs)
     outputs = copy_to_device(outputs)
     for i in range(repetitions):
@@ -270,8 +269,7 @@ def profile_program(program: str, run_config: RunConfig, params: ParametersProvi
         keys = list(report.durations[(0, -1, -1)][f"SDFG {routine_name}"].keys())
         key = keys[0]
         if len(keys) > 1:
-            log(f"{component}::profile_program",
-                f"Report has more than one key, taking only the first one. keys: {keys}")
+            logger.warning(f"Report has more than one key, taking only the first one. keys: {keys}")
         results.add_value("Total time",
                           float(report.durations[(0, -1, -1)][f"SDFG {routine_name}"][key][0]))
 
@@ -328,18 +326,16 @@ def gen_ncu_report(program: str, report_filename: str, run_config: RunConfig, nc
     :return: True if ncu report was successfully created, False otherwise
     :rtype: bool
     """
-    log(f"{component}::gen_ncu_report",
-        f"[utils::execute_dace::gen_ncu_report] Create ncu report and save it into {report_filename}")
+    logger.info(f"Create ncu report and save it into {report_filename}")
     command_program = get_command_args_single_run(program, run_config)
     command_program.extend(program_args)
     ncu_command = ['ncu', '--force-overwrite', '--export', report_filename, *ncu_args]
-    log(f"{component}::gen_ncu_report",
-        f"[utils::execute_dace::gen_ncu_report] command: {' '.join(ncu_command)} {' '.join(command_program)}")
+    logger.info(f"command: {' '.join(ncu_command)} {' '.join(command_program)}")
     ncu_output = run([*ncu_command, *command_program], capture_output=True)
     if ncu_output.returncode != 0:
-        log(f"{component}::gen_ncu_report", "Failed to run the program with ncu")
-        log(f"{component}::gen_ncu_report", ncu_output.stdout.decode('UTF-8'))
-        log(f"{component}::gen_ncu_report", ncu_output.stderr.decode('UTF-8'))
+        logger.error("Failed to run the program with ncu")
+        logger.error(ncu_output.stdout.decode('UTF-8'))
+        logger.error(ncu_output.stderr.decode('UTF-8'))
         return False
     return True
 
@@ -357,13 +353,13 @@ def gen_nsys_report(program: str, report_filename: str, run_config: RunConfig) -
     :return: True if ncu report was successfully created, False otherwise
     :rtype: bool
     """
-    log(f"{component}::gen_nsys_report", f"Create nsys report and save it into {report_filename}")
+    logger.info(f"Create nsys report and save it into {report_filename}")
     command_nsys = ['nsys', 'profile', '--force-overwrite', 'true', '--output', report_filename]
     command_program = get_command_args_single_run(program, run_config)
     nsys_output = run([*command_nsys, *command_program], capture_output=True)
     if nsys_output.returncode != 0:
-        log(f"{component}::gen_nsys_report", "Failed to run the program with nsys")
-        log(f"{component}::gen_nsys_report", nsys_output.stdout.decode('UTF-8'))
-        log(f"{component}::gen_nsys_report", nsys_output.stderr.decode('UTF-8'))
+        logger.error("Failed to run the program with nsys")
+        logger.error(nsys_output.stdout.decode('UTF-8'))
+        logger.error(nsys_output.stderr.decode('UTF-8'))
         return False
     return True

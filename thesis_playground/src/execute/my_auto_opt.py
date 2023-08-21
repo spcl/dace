@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Set, Tuple
 import copy
 import sympy
+import logging
 
 import dace
 from dace import dtypes
@@ -22,9 +23,9 @@ from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAs
 from dace.transformation import helpers as xfh
 
 from utils.general import save_graph
-from utils.log import log
 
 component = "execute::my_auto_opt"
+logger = logging.getLogger(__name__)
 
 
 def auto_optimize(sdfg: SDFG,
@@ -61,8 +62,8 @@ def auto_optimize(sdfg: SDFG,
     :note: This function is still experimental and may harm correctness in
            certain cases. Please report an issue if it does.
     """
-    log(f"{component}::auto_opt", f"sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
-        f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
+    logger.info(f"sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
+                f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
     # Fix for full cloudsc
     sdfg.validate()
     if sdfg.name == 'CLOUDSCOUTER':
@@ -141,7 +142,7 @@ def auto_optimize(sdfg: SDFG,
                 if not v.transient and type(v) == dace.data.Array:
                     v.storage = dace.dtypes.StorageType.GPU_Global
 
-        log(f"{component}::auto_opt", f"Apply GPU transformations")
+        logger.debug("Apply GPU transformations")
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 
@@ -230,7 +231,7 @@ def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
                     pass
 
     if debugprint and len(known_symbols) > 0:
-        log(f"{component}::specialise_symbols", f"Specializing the SDFG for symbols {known_symbols}")
+        logger.debug(f"Specializing the SDFG for symbols {known_symbols}")
     sdfg.specialize(known_symbols)
 
 
@@ -286,18 +287,12 @@ def loop_to_map_outside_first(sdfg: SDFG,
         if len(outside_loop_transformations) > 0:
             xform = outside_loop_transformations[0]
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
-            print(f"[my_auto_opt::loop_to_map_outside_first] apply LoopToMap to guard: {xform.loop_guard}, begin: "
-                  f"{xform.loop_begin} on sdfg: {sdfg.sdfg_list[xform.sdfg_id].label}")
-            print(f"[my_auto_opt::loop_to_map_outside_first] before free symbols: "
-                  f"{sdfg.sdfg_list[xform.sdfg_id].free_symbols}")
-            if sdfg.sdfg_list[xform.sdfg_id].parent_nsdfg_node is not None:
-                print(f"[my_auto_opt::loop_to_map_outside_first] before symol mapping:"
-                      f"{sdfg.sdfg_list[xform.sdfg_id].parent_nsdfg_node.symbol_mapping}")
+            logger.debug(f" apply LoopToMap to guard: {xform.loop_guard}, begin: {xform.loop_begin} on sdfg: "
+                         f"{sdfg.sdfg_list[xform.sdfg_id].label}")
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
             # xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
             if program is not None:
                 save_graph(sdfg, program, "after_outer_loop_to_map")
-            print()
             sdfg.validate()
             sdfg.apply_transformations_repeated([RefineNestedAccess], validate=validate, validate_all=validate_all)
             if program is not None:
@@ -317,7 +312,7 @@ def make_klev_outermost_map(sdfg: SDFG, symbols: Dict[str, int]):
                 xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
                 transformed = True
                 number_transformed += 1
-    log(f"{component}::make_klev_outermost_map", f"Applied {number_transformed} transformation to move KLEV-loop outside")
+    logger.debug(f"Applied {number_transformed} transformation to move KLEV-loop outside")
 
 
 def apply_transformation_stepwise(sdfg: SDFG,
@@ -341,7 +336,7 @@ def apply_transformation_stepwise(sdfg: SDFG,
     count = 0
     while len(xforms) > 1:
         count += 1
-        log(f"{component}::apply_transformation_stepwise", f"apply {xforms[0]}")
+        logger.debug(f"apply {xforms[0]}")
         xforms[0].apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                         sdfg.sdfg_list[xforms[0].sdfg_id])
         save_graph(sdfg, program, f"after_{description}")

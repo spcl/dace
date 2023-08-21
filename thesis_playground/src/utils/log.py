@@ -1,36 +1,28 @@
-from datetime import datetime
-
-global logfile
-global also_stdout
-global log_messages
-
-logfile = None
-also_stdout = True
-log_messages = []
+from typing import Optional
+import logging
 
 
-def set_logfile(path: str):
-    global logfile
-    logfile = path
+def setup_logging(logfile: Optional[str] = None, level=logging.INFO) -> Optional[logging.FileHandler]:
+    """
+    Setup logging by defining the fromat and handlers
 
-
-def log(component: str, message: str):
-    global also_stdout
-    global log_messages
-
-    log_str = (f"[{datetime.now().strftime('%H:%M:%S')} | {component}] {message}")
-    if also_stdout:
-        print(log_str)
-    log_messages.append(log_str)
-    if len(log_messages) > 10:
-        write_log()
-
-
-def write_log():
-    global logfile
-    global log_messages
+    :param logfile: Path to logfile, if None only logs to console, defaults to None
+    :type logfile: Optional[str], optional
+    :param level: Minimum level to log, defaults to logging.INFO
+    :type level: [TODO:type], optional
+    :return: Filehandler if logging to logfile, otherwise None. Can be used to close handler
+    :rtype: Optional[logging.FileHandler]
+    """
+    logging.basicConfig(level=level)
+    root_logger = logging.getLogger()
+    root_logger.handlers = []
+    format = logging.Formatter("%(levelname)s:%(asctime)s:%(name)s.%(funcName)s:%(message)s")
+    stdout_handler = logging.StreamHandler()
+    stdout_handler.setFormatter(format)
+    root_logger.addHandler(stdout_handler)
     if logfile is not None:
-        with open(logfile, 'a') as file:
-            for msg in log_messages:
-                file.write(f"{msg}\n")
-            log_messages = []
+        file_handler = logging.FileHandler(logfile)
+        file_handler.setFormatter(format)
+        root_logger.addHandler(file_handler)
+        return file_handler
+    return None
