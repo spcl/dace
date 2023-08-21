@@ -11,7 +11,7 @@ import sympy
 import shutil
 import logging
 
-from utils.log import setup_logging
+from utils.log import setup_logging, close_filehandlers
 from utils.execute_dace import RunConfig, test_program
 from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file, \
                         create_if_not_exist, get_results_2_logdir
@@ -280,7 +280,7 @@ def action_profile(args):
         logfile = args.logfile
 
     logfile_path = os.path.join(logdir, logfile)
-    file_handler = setup_logging(logfile_path)
+    file_handlers = setup_logging(logfile_path, f"{logfile_path}.all")
     logger.info(f"Use logfile {logfile}")
     function_args = json.loads(args.args)
     experiment_ids = []
@@ -295,9 +295,9 @@ def action_profile(args):
         else:
             new_logfile = os.path.join('FAILING-'.join(experiment_ids)+'-date-'+logfile)
         logger.info(f"Move logfile from {logfile} to {new_logfile}")
-        file_handler.flush()
-        file_handler.close()
+        close_filehandlers(file_handlers)
         shutil.move(logfile_path, new_logfile)
+        shutil.move(f"{logfile_path}.all", f"{new_logfile}.all")
 
 
 def main():

@@ -3,8 +3,11 @@ from numbers import Number
 import numpy as np
 import copy
 import json
+import logging
 
 from execute.parameters import ParametersProvider
+
+logger = logging.getLogger(__name__)
 
 
 # Length of a double in bytes
@@ -78,7 +81,7 @@ def save_roofline_data(data: Dict[str, Tuple[FlopCount, Number]], filename: str)
         all_dict[program] = (all_dict[program][0].to_dict(), all_dict[program][1])
 
     with open(filename, 'w') as file:
-        print(f"Write file into {filename}")
+        logger.info(f"Write file into {filename}")
         json.dump(all_dict, file)
 
 
@@ -144,7 +147,7 @@ def get_number_of_flops(
     elif program == 'my_roofline_test':
         return KLEV * (KFDIA-KIDIA+1) * FlopCount(adds=1, roots=1)
     else:
-        print(f"ERROR: No flop count available for program {program}")
+        logger.error(f"No flop count available for program {program}")
         return None
 
 
@@ -196,13 +199,11 @@ def get_number_formula_iteration(
                 inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']] < inputs['RLMIN'])
         number_of_iterations += np.count_nonzero(
                 inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQI']] < inputs['RLMIN'])
-        # print(f"{number_of_iterations:,} / {2 * (KLEV-NCLDTOP+1) * (KFDIA-KIDIA+1):,}")
         return (number_of_iterations)
     elif program == 'cloudsc_class3_1985':
         number_if_iterations = np.count_nonzero(
                 (outputs['ZICETOT2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['ZEPSEC']) &
                 (inputs['ZTP1'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['RTT']))
-        # print(f"{number_if_iterations:,} / {(KLEV-NCLDTOP+1) * (KFDIA-KIDIA+1):,}")
         return (number_if_iterations)
     elif program == 'cloudsc_class3_2120':
         zqe = (inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQV']]
@@ -618,10 +619,9 @@ def get_double_accessed(params: ParametersProvider, program: str, variable: str)
     iteration_shapes = get_data_ranges(params)
 
     for entry in iteration_shapes[program]:
-        # print(program, variable, entry['variables'], variable in entry['variables'])
         if variable in entry['variables']:
             return entry['size']
-    print(f"ERROR: could not find iteration shape for variable {variable} in program {program}")
+    logger.error(f"Could not find iteration shape for variable {variable} in program {program}")
     return None
 
 
@@ -651,14 +651,10 @@ def get_number_of_bytes(
     for input in inputs:
         if isinstance(inputs[input], np.ndarray):
             bytes += BYTES_DOUBLE * get_double_accessed(params, program, input)
-            # print(f"{input}: rough: {np.prod(inputs[input].shape):,}, "
-            #       f"precise: {get_double_accessed(params, program, input):,}")
         else:
             bytes += BYTES_DOUBLE
     for output in outputs:
         bytes += BYTES_DOUBLE * get_double_accessed(params, program, output)
-        # print(f"{output}: rough: {np.prod(outputs[output].shape)*2:,}, "
-        #       f"precise: {get_double_accessed(params, program, output):,}")
 
     return int(bytes)
 
@@ -700,22 +696,17 @@ def get_number_of_bytes_2(
     for inp in programs_data['program_inputs'][program]:
         if data[inp] == (0, ):
             read += BYTES_DOUBLE
-    # print(f"{read:,} bytes come from scalar inputs")
     for entry in memory_data:
         # if 'action' not in entry:
         #     continue
         if entry['size'] == 0:
-            print(f"[flop_computation::get_number_of_bytes] WARNING: size is 0 for {entry['variables']} for {program}")
+            logger.warning(f"size is 0 for {entry['variables']} for {program}")
         if entry['action'] in ['r']:
-            # print(f"{entry['variables']} add {entry['size']:,} bytes reading each")
             read += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
         if entry['action'] in ['w']:
-            # print(f"{entry['variables']} add {entry['size']:,} bytes writing each")
             written += entry['size'] * len(entry['variables']) * BYTES_DOUBLE
         if entry['action'] in ['rw']:
-            # print(f"{entry['variables']} add {entry['size']:,} bytes reading and writing")
             read += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
             written += int(entry['size'] * len(entry['variables']) * BYTES_DOUBLE / 2)
 
-    # print(f"This sums up to a total of {read+written:,} bytes")
     return (read+written, read, written)
