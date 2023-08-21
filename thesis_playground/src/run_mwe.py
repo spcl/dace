@@ -24,6 +24,8 @@ def main():
                         default=None,
                         help='Foldername under which intermediate SDFGs should be stored')
     parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
+    parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
+                        help='Use DaCes auto_opt instead of mine')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -55,6 +57,8 @@ def main():
             reset_graph_files(args.verbose_name)
             add_args['verbose_name'] = args.verbose_name
         sdfg = get_sdfg(fsource, program_name)
+        if args.use_dace_auto_opt:
+            add_args['use_my_auto_opt'] = False
         sdfg = optimize_sdfg(sdfg, device_map[args.device], **add_args)
 
     sdfg.instrument = dace.InstrumentationType.Timer
