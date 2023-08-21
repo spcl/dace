@@ -5,6 +5,7 @@ import dace
 from execute.parameters import ParametersProvider
 from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, optimize_sdfg
 from utils.cli_frontend import add_cloudsc_size_arguments
+from utils.log import setup_logging
 
 
 def main():
@@ -32,6 +33,7 @@ def main():
     args = parser.parse_args()
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
     device = device_map[args.device]
+    setup_logging()
 
     if args.debug:
         enable_debug_flags()

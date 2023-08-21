@@ -4,6 +4,7 @@ import numpy as np
 import copy
 
 from execute.parameters import ParametersProvider
+from utils.log import setup_logging
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import get_programs_data, get_sdfg, read_source, optimize_sdfg, generate_arguments_fortran, \
                           get_fortran, compare_output_all, use_cache, reset_graph_files
@@ -28,6 +29,7 @@ def main():
 
     args = parser.parse_args()
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
+    setup_logging()
 
     add_args = {}
     params = ParametersProvider(args.program)

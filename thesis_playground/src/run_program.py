@@ -1,5 +1,6 @@
 from argparse import ArgumentParser
 
+from utils.log import setup_logging
 from utils.paths import get_default_sdfg_file
 from utils.general import use_cache, enable_debug_flags, remove_build_folder, reset_graph_files
 from utils.execute_dace import RunConfig, run_program, test_program
@@ -35,6 +36,7 @@ def main():
     args = parser.parse_args()
     run_config = RunConfig()
     run_config.set_from_args(args)
+    setup_logging()
 
     if args.sdfg_file is not None:
         args.read_sdfg = True
