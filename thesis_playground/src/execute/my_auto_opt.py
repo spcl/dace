@@ -71,9 +71,10 @@ def auto_optimize(sdfg: SDFG,
         for node in cloudsc_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 print(f"[my_auto_opt::auto_optimizes] remove symbols in {node}")
-                node.sdfg.remove_symbol('_for_it_49')
-                node.sdfg.remove_symbol('_for_it_62')
-                node.sdfg.remove_symbol('_for_it_65')
+                symbols_to_remove = ['_for_it_49', '_for_it_62', '_for_it_65']
+                for symbol in symbols_to_remove:
+                    if symbol in node.sdfg.symbols:
+                        node.sdfg.remove_symbol(symbol)
 
     sdfg.validate()
     if symbols:
