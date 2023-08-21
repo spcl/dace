@@ -428,14 +428,24 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
-    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
-    for xf in xforms:
-        # expect that maps only have one dimension, as we did the MapExpansion transformation before
-        if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
-            xf.apply(sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id),
-                     sdfg.sdfg_list[xf.sdfg_id])
-    if program is not None:
-        save_graph(sdfg, program, "after_map_to_for_loop")
+    continue_search = True
+    while continue_search:
+        xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
+        logger.debug("Found %i many possible transformations to transform map back to for-loop", len(xforms))
+        continue_search = False
+        for xf in xforms:
+            # expect that maps only have one dimension, as we did the MapExpansion transformation before
+            logger.debug("Check if %s is the correct one ", xf)
+            logger.debug("with map entry %s", xf.map_entry)
+            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
+                continue_search = True
+                logger.debug("Found the correct map. Apply it to state %s and sdfg %s",
+                             sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id), sdfg.sdfg_list[xf.sdfg_id])
+                xf.apply(sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id),
+                         sdfg.sdfg_list[xf.sdfg_id])
+                break
+        if program is not None:
+            save_graph(sdfg, program, "after_map_to_for_loop")
 
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int], schedule: ScheduleType) -> SDFG:
