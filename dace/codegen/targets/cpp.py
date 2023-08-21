@@ -108,7 +108,7 @@ def copy_expr(
     elif def_type == DefinedType.FPGA_ShiftRegister:
         return expr
 
-    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
@@ -327,7 +327,7 @@ def emit_memlet_reference(dispatcher,
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
-    elif defined_type == DefinedType.Stream:
+    elif defined_type in (DefinedType.Stream, DefinedType.Object):
         typedef = defined_ctype
         ref = '&'
         offset_expr = ''
@@ -1082,11 +1082,20 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 ]
 
         if isinstance(visited_slice, ast.Tuple):
-            if len(strides) != len(visited_slice.elts):
+            # If slice is multi-dimensional and writes to array with more than 1 elements, then:
+            # - Assume this is indirection (?)
+            # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
+            if target not in self.constants:
+                desc = self.sdfg.arrays[dname]
+                if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
+                    elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+            else:
+                elts = visited_slice.elts
+            if len(strides) != len(elts):
                 raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
-                                  'got %d)' % (len(strides), len(visited_slice.elts)))
+                                  'got %d)' % (len(strides), len(elts)))
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
@@ -1223,7 +1232,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
               and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
