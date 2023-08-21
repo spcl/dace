@@ -5,6 +5,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import make_properties
+from dace.memlet import Memlet
 
 
 @make_properties
@@ -48,12 +49,16 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
         if len(remaining_ranges) == 0:
             # Redirect map entry's out edges
+            write_only_map = False
             for edge in graph.out_edges(map_entry):
                 path = graph.memlet_path(edge)
                 index = path.index(edge)
 
-                # Add an edge directly from the previous source connector to the destination
-                graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+                if len(path) > 1:
+                    # Add an edge directly from the previous source connector to the destination
+                    graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+                else:
+                    write_only_map = True
 
             # Redirect map exit's in edges.
             for edge in graph.in_edges(map_exit):
@@ -63,6 +68,11 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
                 # Add an edge directly from the source to the next destination connector
                 if len(path) > index + 1:
                     graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
+                    if write_only_map:
+                        outer_exit = path[index+1].dst
+                        outer_entry = graph.entry_node(outer_exit)
+                        if outer_entry is not None:
+                            graph.add_edge(outer_entry, None, edge.src, None, Memlet())
 
             # Remove map
             graph.remove_nodes_from([map_entry, map_exit])
