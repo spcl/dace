@@ -835,9 +835,9 @@ class struct(typeclass):
                 fields.append((k, v.as_ctypes()))
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
-        # fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
         struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
         _FFI_CTYPES[self] = struct_class
         return struct_class
 

@@ -1392,12 +1392,14 @@ class NestedDataClassProperty(Property):
 
     @property
     def dtype(self):
-        return pydoc.locate("dace.data.Data")
+        from dace import data as dt
+        return dt.Data
 
     @staticmethod
     def from_string(s):
-        dtype = pydoc.locate("dace.data.{}".format(s))
-        if dtype is None or not isinstance(dtype, pydoc.locate("dace.data.Data")):
+        from dace import data as dt
+        dtype = getattr(dt, s, None)
+        if dtype is None or not isinstance(dtype, dt.Data):
             raise ValueError("Not a valid data type: {}".format(s))
         return dtype
 

@@ -374,7 +374,7 @@ class Structure(Data):
                        desc="Dictionary of structure members",
                        from_json=_arrays_from_json,
                        to_json=_arrays_to_json)
-    name = Property(dtype=str, desc="Structure name")
+    name = Property(dtype=str, desc="Structure type name")
 
     def __init__(self,
                  members: Dict[str, Data],
@@ -478,7 +478,7 @@ class Structure(Data):
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
             with the following syntax: ``Structure[N,M]``
-            :return: A ``data.Array`` data descriptor.
+            :return: A ``data.StructArray`` data descriptor.
         """
         if isinstance(s, list) or isinstance(s, tuple):
             return StructArray(self, tuple(s))
@@ -1084,7 +1084,7 @@ class StructArray(Array):
     stype = NestedDataClassProperty(allow_none=True, default=None)
 
     def __init__(self,
-                 stype,
+                 stype: Structure,
                  shape,
                  transient=False,
                  allow_conflicts=False,

@@ -55,10 +55,13 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
+        # NOTE: Multi-nesting with StructArrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}.{k}')
+                elif isinstance(v, data.StructArray):
+                    _visit_structure(v.stype, args, f'{prefix}.{k}')
                 elif isinstance(v, data.Data):
                     args[f'{prefix}.{k}'] = v
 
@@ -71,11 +74,7 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(arg_type, data.StructArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
-                for attr in dir(desc):
-                    value = getattr(desc, attr)
-                    if isinstance(value, data.Data):
-                        assert attr in sdfg.arrays
-                        arglist[attr] = value
+                _visit_structure(desc, arglist, name)
 
         for name, arg_type in arglist.items():
             if isinstance(arg_type, (data.Scalar, data.Structure)):
@@ -300,6 +299,8 @@ class CPUCodeGen(TargetCodeGenerator):
         name = node.data
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
+        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
+        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
         alloc_name = alloc_name.replace('.', '->')
 
         if nodedesc.transient is False:
@@ -324,7 +325,7 @@ class CPUCodeGen(TargetCodeGenerator):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
-            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type}();\n")
+            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             for k, v in nodedesc.members.items():
                 if isinstance(v, data.Data):
@@ -1183,6 +1184,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
+        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
+        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
         ptr = ptr.replace('.', '->')
 
         if fpga.is_fpga_array(desc):
