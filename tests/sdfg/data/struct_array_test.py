@@ -10,12 +10,11 @@ def test_read_struct_array():
 
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  order=['indptr', 'indices', 'data'],
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  order=['indptr', 'indices', 'data'],
-                                  name='CSRMatrix',
-                                  transient=True)
+    csr_obj_view = dace.data.StructureView(
+        [('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]), ('data', dace.float32[nnz])],
+        name='CSRMatrix',
+        transient=True)
 
     sdfg = dace.SDFG('array_of_csr_to_dense')
 
@@ -84,13 +83,13 @@ def test_read_struct_array():
 def test_write_struct_array():
 
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  order=['indptr', 'indices', 'data'],
-                                  name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-                                  order=['indptr', 'indices', 'data'],
-                                  name='CSRMatrix',
-                                  transient=True)
+    csr_obj = dace.data.Structure(
+        [('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]), ('data', dace.float32[nnz])],
+        name='CSRMatrix')
+    csr_obj_view = dace.data.StructureView(
+        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+        name='CSRMatrix',
+        transient=True)
 
     sdfg = dace.SDFG('array_dense_to_csr')
 

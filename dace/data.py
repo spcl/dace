@@ -5,7 +5,7 @@ import functools
 
 from collections import OrderedDict
 from numbers import Number
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy
 import sympy as sp
@@ -19,7 +19,8 @@ import dace.dtypes as dtypes
 from dace import serialize, symbolic
 from dace.codegen import cppunparse
 from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
-                             Property, ShapeProperty, SymbolicProperty, TypeClassProperty, make_properties)
+                             OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
+                             make_properties)
 
 
 def create_datadescriptor(obj, no_custom_desc=False):
@@ -370,15 +371,14 @@ def _arrays_from_json(obj, context=None):
 class Structure(Data):
     """ Base class for structures. """
 
-    members = Property(dtype=OrderedDict,
-                       desc="Dictionary of structure members",
-                       from_json=_arrays_from_json,
-                       to_json=_arrays_to_json)
+    members = OrderedDictProperty(default=OrderedDict(),
+                                  desc="Dictionary of structure members",
+                                  from_json=_arrays_from_json,
+                                  to_json=_arrays_to_json)
     name = Property(dtype=str, desc="Structure type name")
 
     def __init__(self,
-                 members: Dict[str, Data],
-                 order: List[str] = None,
+                 members: Union[Dict[str, Data], List[Tuple[str, Data]]],
                  name: str = 'Structure',
                  transient: bool = False,
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
@@ -386,19 +386,14 @@ class Structure(Data):
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  debuginfo: dtypes.DebugInfo = None):
 
-        order = order or list(members.keys())
-        if set(members.keys()) != set(order):
-            raise ValueError('Order must contain all members of the structure.')
-        
-        # TODO: Should we make a deep-copy here?
-        self.members = OrderedDict((k, members[k]) for k in order)
-
+        self.members = OrderedDict(members)
         for k, v in self.members.items():
             v.transient = transient
+
         self.name = name
         fields_and_types = OrderedDict()
         symbols = set()
-        for k, v in members.items():
+        for k, v in self.members.items():
             if isinstance(v, Structure):
                 symbols |= v.free_symbols
                 fields_and_types[k] = (v.dtype, str(v.total_size))

@@ -145,11 +145,15 @@ class Property(Generic[T]):
                 self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
         else:
             self._from_json = from_json
+            if self.from_json != from_json:
+                self.from_json = from_json
 
         if to_json is None:
             self._to_json = dace.serialize.to_json
         else:
             self._to_json = to_json
+            if self.to_json != to_json:
+                self.to_json = to_json
 
         if meta_to_json is None:
 
