@@ -259,6 +259,14 @@ custom_parameters = {
         'KIDIA': 1,
         'NBLOCKS': 200000
     },
+    'cloudscexp2':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 200000
+    },
 }
 
 
