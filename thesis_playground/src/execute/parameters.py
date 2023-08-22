@@ -271,9 +271,9 @@ custom_parameters = {
 
 
 # changes from the parameters dict for testing
-testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
+# testing_parameters = {'KLON': 1, 'KLEV': 4, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 5}
 # testing_parameters = {'KLON': 1, 'KLEV': 13, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 20}
-# testing_parameters = {'KLON': 1, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 100}
+testing_parameters = {'KLON': 1, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'NBLOCKS': 100}
 
 
 class ParametersProvider:
