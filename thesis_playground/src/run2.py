@@ -89,27 +89,55 @@ def do_classes(additional_desc: Optional[str] = None) -> List[int]:
     return experiment_ids
 
 
-def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 4.5e5,
-                 nblock_step: Number = 5e4, debug_mode: bool = False, nblock_split: Number = 1.5e5) -> List[int]:
+def do_k_caching_ncu(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 1.5e5,
+                     nblock_step: Number = 5e4, debug_mode: bool = False) -> List[int]:
     program = 'cloudsc_vert_loop_10'
     test_program(program, RunConfig(k_caching=True, change_stride=True))
     test_program(program, RunConfig(k_caching=True, change_stride=False))
     test_program(program, RunConfig(k_caching=False, change_stride=True))
     test_program(program, RunConfig(k_caching=False, change_stride=False))
     params_list_small = []
-    params_list_big = []
     profile_configs = []
-    for nblock in np.arange(nblock_split, nblock_min, -nblock_step):
+    for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
         params_list_small.append(params)
-    for nblock in np.arange(nblock_max, nblock_split, -nblock_step):
+    profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=0,
+                                         tot_time_repetitions=10))
+    experiment_desc = "Vertical loop example"
+    experiment_ids = []
+    experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=False),
+                                  experiment_desc+" baseline",
+                                  [('k_caching', "False"), ('change_strides', 'False')], ncu_report=True,
+                                  debug_mode=debug_mode))
+    experiment_ids.append(profile(profile_configs, RunConfig(k_caching=True, change_stride=False),
+                                  experiment_desc+" k_caching",
+                                  [('k_caching', "True"), ('change_strides', 'False')], ncu_report=True,
+                                  debug_mode=debug_mode))
+    experiment_ids.append(profile(profile_configs, RunConfig(k_caching=True, change_stride=True),
+                          experiment_desc+" both",
+                          [('k_caching', "True"), ('change_strides', 'True')], ncu_report=True,
+                          debug_mode=debug_mode))
+    experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=True),
+                                  experiment_desc+" change stride",
+                                  [('k_caching', "False"), ('change_strides', 'True')], ncu_report=True,
+                                  debug_mode=debug_mode))
+    return experiment_ids
+
+
+def do_k_caching_total(additional_desc: Optional[str] = None, nblock_min: Number = 2e5-2, nblock_max: Number = 4.5e5,
+                       nblock_step: Number = 5e4, debug_mode: bool = False) -> List[int]:
+    program = 'cloudsc_vert_loop_10'
+    test_program(program, RunConfig(k_caching=True, change_stride=True))
+    test_program(program, RunConfig(k_caching=True, change_stride=False))
+    test_program(program, RunConfig(k_caching=False, change_stride=True))
+    test_program(program, RunConfig(k_caching=False, change_stride=False))
+    params_list_big = []
+    profile_configs = []
+    for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
         params = ParametersProvider(program, update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1,
                                                      'KLON': 1})
         params_list_big.append(params)
-    profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=2,
-                           tot_time_repetitions=10,
-                           ncu_kernels={'work': r'stateinner_loops_[\w_0-9]*', 'transpose': r'transpose_[\w_0-9]*'}))
     profile_configs.append(ProfileConfig(program, params_list_big, ['NBLOCKS'], ncu_repetitions=0,
                                          tot_time_repetitions=10))
     experiment_desc = "Vertical loop example"
@@ -128,7 +156,7 @@ def do_k_caching(additional_desc: Optional[str] = None, nblock_min: Number = 1.0
                           debug_mode=debug_mode))
     experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=True),
                                   experiment_desc+" change stride",
-                                  [('k_caching', "False"), ('change_strides', 'True')], ncu_report=False,
+                                  [('k_caching', "False"), ('change_strides', 'True')], ncu_report=True,
                                   debug_mode=debug_mode))
     return experiment_ids
 
@@ -172,7 +200,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
 
 base_experiments = {
     'vert-loop': do_vertical_loops,
-    'k_caching': do_k_caching,
+    'k_caching_ncu': do_k_caching_ncu,
+    'k_caching_total': do_k_caching_total,
     'classes': do_classes,
     'test': do_test
 }
@@ -293,7 +322,7 @@ def action_profile(args):
         if len(experiment_ids) > 0:
             new_logfile = os.path.join(logdir, '-'.join(experiment_ids)+'-date-'+logfile)
         else:
-            new_logfile = os.path.join('FAILING-'.join(experiment_ids)+'-date-'+logfile)
+            new_logfile = os.path.join(logdir, 'FAILING-date-'+logfile)
         logger.info(f"Move logfile from {logfile} to {new_logfile}")
         close_filehandlers(file_handlers)
         shutil.move(logfile_path, new_logfile)
