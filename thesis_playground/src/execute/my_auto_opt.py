@@ -28,57 +28,29 @@ component = "execute::my_auto_opt"
 logger = logging.getLogger(__name__)
 
 
-def auto_optimize(sdfg: SDFG,
-                  device: dtypes.DeviceType,
-                  program: str = None,
-                  validate: bool = True,
-                  validate_all: bool = True,
-                  symbols: Dict[str, int] = None,
-                  k_caching: bool = False,
-                  outside_first: bool = True,
-                  move_assignments_outside: bool = True
-                  ) -> SDFG:
+def auto_optimize_phase_1(
+        sdfg: SDFG,
+        program: str = None,
+        validate: bool = True,
+        validate_all: bool = True,
+        outside_first: bool = True,
+        symbols: Dict[str, int] = None):
     """
-    Runs a basic sequence of transformations to optimize a given SDFG to decent
-    performance. In particular, performs the following:
+    Perform auto optimisation. Only first phase without applying any architecture specific optimisations
 
-        * Simplify
-        * Auto-parallelization (loop-to-map)
-        * Greedy application of SubgraphFusion
-        * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
-        * Tiled stream accumulation (MapTiling -> AccumulateTransient)
-        * Collapse all maps to parallelize across all dimensions
-        * Set all library nodes to expand to ``fast`` expansion, which calls
-          the fastest library on the target device
-
-    :param sdfg: The SDFG to optimize.
-    :param device: the device to optimize for.
-    :param validate: If True, validates the SDFG after all transformations
-                     have been applied.
-    :param validate_all: If True, validates the SDFG after every step.
-    :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
-    :return: The optimized SDFG.
-    :note: Operates in-place on the given SDFG.
-    :note: This function is still experimental and may harm correctness in
-           certain cases. Please report an issue if it does.
+    :param sdfg: The SDFG on which to apply the optimisations inplace
+    :type sdfg: SDFG
+    :param program: The name of the program if graph should be saved between, defaults to None
+    :type program: str, optional
+    :param validate: If True, validates the SDFG after all transformations have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
+    :type validate_all: bool, optional
     """
-    logger.info(f"sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
-                f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
-    # Fix for full cloudsc
-    sdfg.validate()
-    if sdfg.name == 'CLOUDSCOUTER':
-        cloudsc_state = sdfg.find_state('stateCLOUDSC')
-        for node in cloudsc_state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                print(f"[my_auto_opt::auto_optimizes] remove symbols in {node}")
-                symbols_to_remove = ['_for_it_49', '_for_it_62', '_for_it_65']
-                for symbol in symbols_to_remove:
-                    if symbol in node.sdfg.symbols:
-                        node.sdfg.remove_symbol(symbol)
-
-    sdfg.validate()
     if symbols:
         specialise_symbols(sdfg, symbols)
+    if validate:
+        sdfg.validate()
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
@@ -102,16 +74,12 @@ def auto_optimize(sdfg: SDFG,
             xfh.split_interstate_edges(s)
         if program is not None:
             save_graph(sdfg, program, "after_splitting_interstate_edges")
-        # l2ms = apply_transformation_stepwise(sdfg, [LoopToMap, RefineNestedAccess], program, "loop_to_map")
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
         if program is not None:
             save_graph(sdfg, program, "after_loop_to_map")
-
-    if k_caching:
-        k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify(verbose=True, validate_all=True)
@@ -123,6 +91,24 @@ def auto_optimize(sdfg: SDFG,
     sdfg.simplify()
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
+    if validate:
+        sdfg.validate
+
+
+def auto_optimize_phase_2(sdfg: SDFG,
+                          device: dtypes.DeviceType,
+                          program: str = None,
+                          validate: bool = True,
+                          validate_all: bool = True,
+                          symbols: Dict[str, int] = None,
+                          k_caching: bool = False,
+                          outside_first: bool = True,
+                          move_assignments_outside: bool = True
+                          ) -> SDFG:
+    if symbols:
+        specialise_symbols(sdfg, symbols)
+    if k_caching:
+        k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program)
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
@@ -205,6 +191,60 @@ def auto_optimize(sdfg: SDFG,
         sdfg.validate()
 
     return sdfg
+
+
+def auto_optimize(sdfg: SDFG,
+                  device: dtypes.DeviceType,
+                  program: str = None,
+                  validate: bool = True,
+                  validate_all: bool = True,
+                  symbols: Dict[str, int] = None,
+                  k_caching: bool = False,
+                  outside_first: bool = True,
+                  move_assignments_outside: bool = True
+                  ) -> SDFG:
+    """
+    Runs a basic sequence of transformations to optimize a given SDFG to decent
+    performance. In particular, performs the following:
+
+        * Simplify
+        * Auto-parallelization (loop-to-map)
+        * Greedy application of SubgraphFusion
+        * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
+        * Tiled stream accumulation (MapTiling -> AccumulateTransient)
+        * Collapse all maps to parallelize across all dimensions
+        * Set all library nodes to expand to ``fast`` expansion, which calls
+          the fastest library on the target device
+
+    :param sdfg: The SDFG to optimize.
+    :param device: the device to optimize for.
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied.
+    :param validate_all: If True, validates the SDFG after every step.
+    :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+    :return: The optimized SDFG.
+    :note: Operates in-place on the given SDFG.
+    :note: This function is still experimental and may harm correctness in
+           certain cases. Please report an issue if it does.
+    """
+    logger.info(f"sdfg: {sdfg.name}, device: {device}, program: {program}, validate: {validate}"
+                f", validate_all: {validate_all}, symbols: {symbols}, k_caching: {k_caching}")
+    # Fix for full cloudsc
+    sdfg.validate()
+    if sdfg.name == 'CLOUDSCOUTER':
+        cloudsc_state = sdfg.find_state('stateCLOUDSC')
+        for node in cloudsc_state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                print(f"[my_auto_opt::auto_optimizes] remove symbols in {node}")
+                symbols_to_remove = ['_for_it_49', '_for_it_62', '_for_it_65']
+                for symbol in symbols_to_remove:
+                    if symbol in node.sdfg.symbols:
+                        node.sdfg.remove_symbol(symbol)
+
+    symbols_1 = copy.deepcopy(symbols)
+    auto_optimize_phase_1(sdfg, program, validate, validate_all, outside_first, symbols)
+    return auto_optimize_phase_2(sdfg, device, program, validate, validate_all, symbols, k_caching, outside_first,
+                                  move_assignments_outside)
 
 
 def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
@@ -387,14 +427,10 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_make_klev_outermost")
 
-    # make_klev_maps_sequential(sdfg, symbols)
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_make_klev_sequential")
-
     # Before MapCollapse first to allow MapFusion to work correctly
-    sdfg.apply_transformations_repeated([MapCollapse])
-    if program is not None:
-        save_graph(sdfg, program, "after_map_collapse")
+    # sdfg.apply_transformations_repeated([MapCollapse])
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_map_collapse")
 
     # Apply TrivialMapElimination before Fusion to avoid problems with maps overt KLON=1
     sdfg.apply_transformations_repeated([TrivialMapElimination])
@@ -405,9 +441,9 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
-    sdfg.apply_transformations_repeated([MapExpansion])
-    if program is not None:
-        save_graph(sdfg, program, "after_map_expansion")
+    # sdfg.apply_transformations_repeated([MapExpansion])
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_map_expansion")
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
         'max_difference_start': 1,
@@ -420,9 +456,9 @@ def k_caching_prototype_v1(sdfg: SDFG,
         save_graph(sdfg, program, "after_greedy_fuse")
 
     # sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
-    apply_transformation_stepwise(sdfg, [MapFusion], program, "map_fusion")
-    if program is not None:
-        save_graph(sdfg, program, "after_map_fusion")
+    # apply_transformation_stepwise(sdfg, [MapFusion], program, "map_fusion")
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_map_fusion")
 
     sdfg.simplify()
     if program is not None:

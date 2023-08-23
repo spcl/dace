@@ -16,6 +16,7 @@ from utils.ncu_report import IAction
 from utils.general import get_programs_data, remove_build_folder, insert_heap_size_limit, get_inputs, \
                           get_outputs, use_cache, enable_debug_flags
 from utils.gpu_general import copy_to_device
+from utils.generate_sdfg import get_optimised_sdfg
 from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, RNG_SEED
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
@@ -39,12 +40,14 @@ class ProfileConfig:
     ignore_action_re: Optional[str]
     size_identifiers: List[str]
     ncu_kernels: Dict[str, str]
+    use_basic_sdfg: bool
 
     def __init__(self, program: str, sizes: List[ParametersProvider], size_identifiers: List[str],
                  set_heap_limit: bool = False, heap_limit_str: str = '',
                  heap_limit_expr: Optional[sympy.core.expr.Expr] = None,
                  tot_time_repetitions: int = 5, ncu_repetitions: int = 3,
-                 ignore_action_re: Optional[str] = None, ncu_kernels: Optional[Dict[str, str]] = None):
+                 ignore_action_re: Optional[str] = None, ncu_kernels: Optional[Dict[str, str]] = None,
+                 use_basic_sdfg: bool = False):
         """
         Constructor
 
@@ -71,7 +74,9 @@ class ProfileConfig:
         :param ncu_kernels: Dictionary of kernels to take from ncu. Key is kernel name to save, value is regex for
         kernel name as given by ncu, optional. If not given will take the kernel as specified by ignore_action_re. If
         there are multiple kernels per regex takes sum.
-        type ncu_kernels: Optional[Dict[str, str]]
+        :type ncu_kernels: Optional[Dict[str, str]]
+        :param use_basic_sdfg: Whether to lazy load the basic sdfgs, defaults to False
+        :type use_basic_sdfg: bool
         """
         self.program = program
         self.sizes = sizes
@@ -83,6 +88,7 @@ class ProfileConfig:
         self.ncu_repetitions = ncu_repetitions
         self.ignore_action_re = ignore_action_re
         self.ncu_kernels = ncu_kernels
+        self.use_basic_sdfg = use_basic_sdfg
 
     def get_program_command_line_arguments(self, params: ParametersProvider, run_config: RunConfig) -> List[str]:
         """
@@ -181,7 +187,10 @@ class ProfileConfig:
         if not specialise_symbols:
             for symbol in self.size_identifiers:
                 del params_dict[symbol]
-        sdfg = compile_for_profile(self.program, params_dict, run_config)
+        if self.use_basic_sdfg:
+            sdfg = get_optimised_sdfg(self.program, run_config, params, self.size_identifiers)
+        else:
+            sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
             if self.heap_limit_str == "" and self.heap_limit_expr is None:
                 logger.warning("Should set heap string or expression, but both are empty")

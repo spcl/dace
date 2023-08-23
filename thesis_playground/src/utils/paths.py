@@ -152,3 +152,7 @@ def get_results_2_logdir(node: Optional[str] = None, profile_name: Optional[str]
             return create_if_not_exist(join(logdir, node, profile_name))
         return create_if_not_exist(join(logdir, node))
     return create_if_not_exist(logdir)
+
+
+def get_basic_sdfg_dir() -> str:
+    return create_if_not_exist(join(get_thesis_playground_root_dir(), 'basic_sdfgs'))
