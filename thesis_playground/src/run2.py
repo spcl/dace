@@ -17,10 +17,29 @@ from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, ge
                         create_if_not_exist, get_results_2_logdir
 from utils.experiments2 import get_experiment_list_df
 from execute.parameters import ParametersProvider
-from measurements.data2 import read_data_from_result_file, add_column_if_not_exist
+from measurements.data2 import read_data_from_result_file
 from measurements.profile_config import ProfileConfig
 
 logger = logging.getLogger("run2")
+
+
+def do_cloudsc() -> List[int]:
+    program = 'cloudsc_vert_loop_10'
+    params = []
+    experiment_ids = []
+    params.append(ParametersProvider(program, update={'NBLOCKS': 1000}))
+    params.append(ParametersProvider(program, update={'NBLOCKS': 2000}))
+    params.append(ParametersProvider(program, update={'NBLOCKS': 3000}))
+    profile_config = ProfileConfig(program, params, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5)
+    # experiment_desc = 'Full cloudsc'
+    experiment_desc = 'vert_loop_10'
+    experiment_ids.append(profile(profile_config, RunConfig(k_caching=False, change_stride=False),
+                                  experiment_desc + ' baseline', [('k_caching', "False"), ('change_strides', 'False')],
+                                  ncu_report=False))
+    experiment_ids.append(profile(profile_config, RunConfig(k_caching=True, change_stride=True),
+                                  experiment_desc + ' my optimisations', [('k_caching', "True"), ('change_strides', 'True')],
+                                  ncu_report=False))
+    return experiment_ids
 
 
 def do_test() -> List[int]:
