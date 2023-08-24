@@ -175,7 +175,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
 
         # replicate loop in nested sdfg
-        new_before, new_guard, new_after = nsdfg.sdfg.add_loop(
+        new_before, new_guard, new_after, new_loop = nsdfg.sdfg.add_loop(
             before_state=None,
             loop_state=nsdfg.sdfg.nodes()[0],
             loop_end_state=None,
@@ -184,6 +184,9 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             initialize_expr=f'{start}',
             condition_expr=f'{itervar} <= {end}' if forward_loop else f'{itervar} >= {end}',
             increment_expr=f'{itervar} + {step}' if forward_loop else f'{itervar} - {abs(step)}')
+
+        for state in nsdfg.sdfg.nodes():
+            new_loop.states.add(state)
 
         # remove outer loop
         before_guard_edge = nsdfg.sdfg.edges_between(new_before, new_guard)[0]

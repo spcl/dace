@@ -83,7 +83,7 @@ class MapToForLoop(transformation.SingleStateTransformation):
                                      '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
                                      '%s + %s' % (loop_idx, replace_param(loop_step)))
         # store as object fields for external access
-        self.before_state, self.guard, self.after_state = loop_result
+        self.before_state, self.guard, self.after_state, self.loop = loop_result
         # Skip map in input edges
         for edge in nstate.out_edges(map_entry):
             src_node = nstate.memlet_path(edge)[0].src
@@ -95,6 +95,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
             dst_node = nstate.memlet_path(edge)[-1].dst
             nstate.add_edge(edge.src, edge.src_conn, dst_node, None, edge.data)
             nstate.remove_edge(edge)
+
+        for state in nsdfg.states():
+            if state != self.before_state and state != self.after_state:
+                self.loop.states.add(state)
 
         # Remove nodes from dynamic map range
         nstate.remove_nodes_from([e.src for e in dace.sdfg.dynamic_map_inputs(nstate, map_entry)])

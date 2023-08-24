@@ -2299,10 +2299,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
-            _, loop_guard, loop_end = self.sdfg.add_loop(
+            _, loop_guard, loop_end, sdfg_loop = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0], astutils.unparse(ast_ranges[0][0]),
                 '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])), incr[indices[0]],
-                last_loop_state)
+                last_loop_state, False)
 
             # Handle else clause
             if node.orelse:
@@ -2324,19 +2324,26 @@ class ProgramVisitor(ExtNodeVisitor):
                 out_edges = self.sdfg.out_edges(next_state)
                 for e in out_edges:
                     self.sdfg.remove_edge(e)
-                self.sdfg.add_edge(next_state, loop_guard, dace.InterstateEdge(assignments=incr))
+                continue_edge = dace.InterstateEdge(assignments=incr)
+                sdfg_loop.continue_edges.add(continue_edge)
+                self.sdfg.add_edge(next_state, loop_guard, continue_edge)
             break_states = self.break_states.pop()
             while break_states:
                 next_state = break_states.pop()
                 out_edges = self.sdfg.out_edges(next_state)
                 for e in out_edges:
                     self.sdfg.remove_edge(e)
-                self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
+                break_edge = dace.InterstateEdge()
+                sdfg_loop.break_edges.add(break_edge)
+                self.sdfg.add_edge(next_state, loop_end, break_edge)
             self.loop_idx -= 1
 
             for state in body_states:
                 if not nx.has_path(self.sdfg.nx, loop_guard, state):
                     self.sdfg.remove_node(state)
+                else:
+                    sdfg_loop.states.add(state)
+            sdfg_loop.states.add(loop_guard)
         else:
             raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
@@ -2407,8 +2414,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(astr, atom.dtype)
 
         # Add loop to SDFG
-        _, loop_guard, loop_end = self.sdfg.add_loop(laststate, first_loop_state, end_loop_state, None, None, loop_cond,
-                                                     None, last_loop_state)
+        _, loop_guard, loop_end, sdfg_loop = self.sdfg.add_loop(laststate, first_loop_state, end_loop_state, None, None,
+                                                                loop_cond, None, last_loop_state, False)
 
         # Connect the correct while-guard state
         # Current state:
@@ -2442,19 +2449,26 @@ class ProgramVisitor(ExtNodeVisitor):
             out_edges = self.sdfg.out_edges(next_state)
             for e in out_edges:
                 self.sdfg.remove_edge(e)
-            self.sdfg.add_edge(next_state, begin_guard, dace.InterstateEdge())
+            continue_edge = dace.InterstateEdge()
+            sdfg_loop.continue_edges.add(continue_edge)
+            self.sdfg.add_edge(next_state, begin_guard, continue_edge)
         break_states = self.break_states.pop()
         while break_states:
             next_state = break_states.pop()
             out_edges = self.sdfg.out_edges(next_state)
             for e in out_edges:
                 self.sdfg.remove_edge(e)
-            self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
+            break_edge = dace.InterstateEdge()
+            sdfg_loop.break_edges.add(break_edge)
+            self.sdfg.add_edge(next_state, loop_end, break_edge)
         self.loop_idx -= 1
 
         for state in body_states:
             if not nx.has_path(self.sdfg.nx, end_guard, state):
                 self.sdfg.remove_node(state)
+            else:
+                sdfg_loop.states.add(state)
+        sdfg_loop.states.add(begin_guard)
 
     def visit_Break(self, node: ast.Break):
         if self.loop_idx < 0:
