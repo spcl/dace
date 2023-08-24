@@ -47,6 +47,20 @@ def auto_optimize_phase_1(
     :param validate_all: If True, validates the SDFG after every step, defaults to True
     :type validate_all: bool, optional
     """
+    logger.debug(f"program: {program}, outside_first: {outside_first}, symbols: {symbols}")
+
+    # Fix for full cloudsc
+    sdfg.validate()
+    if sdfg.name == 'CLOUDSCOUTER':
+        cloudsc_state = sdfg.find_state('stateCLOUDSC')
+        for node in cloudsc_state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                logger.debug(f"remove symbols in {node}")
+                symbols_to_remove = ['_for_it_49', '_for_it_62', '_for_it_65']
+                for symbol in symbols_to_remove:
+                    if symbol in node.sdfg.symbols:
+                        node.sdfg.remove_symbol(symbol)
+
     if symbols:
         specialise_symbols(sdfg, symbols)
     if validate:
@@ -241,7 +255,6 @@ def auto_optimize(sdfg: SDFG,
                     if symbol in node.sdfg.symbols:
                         node.sdfg.remove_symbol(symbol)
 
-    symbols_1 = copy.deepcopy(symbols)
     auto_optimize_phase_1(sdfg, program, validate, validate_all, outside_first, symbols)
     return auto_optimize_phase_2(sdfg, device, program, validate, validate_all, symbols, k_caching, outside_first,
                                   move_assignments_outside)
