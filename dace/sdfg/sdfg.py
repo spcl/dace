@@ -365,16 +365,16 @@ class InterstateEdge(object):
 class SDFGLoop(object):
 
     init_statement = CodeProperty(optional=True, allow_none=True, default=None)
-    loop_condition = CodeProperty()
+    loop_condition = CodeProperty(allow_none=True, default=None)
     update_statement = CodeProperty(optional=True, allow_none=True, default=None)
-    states = SetProperty(element_type=SDFGState, desc='States in the loop')
+    states = ListProperty(SDFGState, desc='States in the loop')
 
-    guard_state = Property(dtype=SDFGState)
+    guard_state = Property(dtype=SDFGState, allow_none=True, default=None)
     inverted = Property(dtype=bool, default=False, desc='Whether the loop is inverted (do-while style)')
 
-    continue_edges = SetProperty(element_type=InterstateEdge)
-    break_edges = SetProperty(element_type=InterstateEdge)
-    #return_edges = SetProperty(element_type=InterstateEdge)
+    continue_edges = ListProperty(element_type=InterstateEdge)
+    break_edges = ListProperty(element_type=InterstateEdge)
+    #return_edges = ListProperty(element_type=InterstateEdge)
 
     init_edge = Property(dtype=InterstateEdge)
     update_edge = Property(dtype=InterstateEdge)
@@ -382,10 +382,14 @@ class SDFGLoop(object):
     exit_edge = Property(dtype=InterstateEdge)
 
     def __init__(self):
-        self.states = set()
-        self.continue_edges = set()
-        self.break_edges = set()
-        self.return_edges = set()
+        self.init_statement = None
+        self.loop_condition = CodeBlock('True')
+        self.update_statement = None
+        self.states = []
+        self.guard_state = None
+        self.continue_edges = []
+        self.break_edges = []
+        #self.return_edges = []
 
 
 @make_properties
@@ -412,7 +416,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
     symbols = DictProperty(str, dtypes.typeclass, desc="Global symbols for this SDFG")
-    loops = SetProperty(element_type=SDFGLoop)
+    sdfg_loops = ListProperty(element_type=SDFGLoop)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
@@ -484,7 +488,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._propagate = propagate
         self._parent = parent
         self.symbols = {}
-        self.loops = set()
+        self.sdfg_loops = []
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
@@ -2182,7 +2186,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             raise ValueError("Cannot initalize or increment an empty loop variable")
 
         loop = SDFGLoop()
-        self.loops.add(loop)
 
         # Handling empty states
         if loop_end_state is None:
@@ -2205,10 +2208,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Loop condition
         if condition_expr:
-            cond_ast = CodeBlock(condition_expr).code
+            cond_code_block = CodeBlock(condition_expr)
+            cond_ast = cond_code_block.code
         else:
-            cond_ast = CodeBlock('True').code
-        loop.loop_condition = cond_ast
+            cond_code_block = CodeBlock('True')
+            cond_ast = cond_code_block.code
+        loop.loop_condition = cond_code_block
         loop_edge = InterstateEdge(cond_ast)
         exit_edge = InterstateEdge(negate_expr(cond_ast))
         self.add_edge(guard, loop_state, loop_edge)
@@ -2226,6 +2231,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         loop.guard_state = guard
         loop.inverted = inverted
 
+        self.sdfg_loops.append(loop)
         return before_state, guard, after_state, loop
 
     # SDFG queries
