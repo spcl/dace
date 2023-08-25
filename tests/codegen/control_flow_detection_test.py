@@ -120,6 +120,33 @@ def test_single_outedge_branch():
     assert np.allclose(res, 2)
 
 
+def test_extraneous_goto():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        if a[0] < 0:
+            a[1] = 1
+        a[2] = 1
+
+    sdfg = tester.to_sdfg()
+    assert 'goto' not in sdfg.generate_code()[0].code
+
+
+def test_extraneous_goto_nested():
+
+    @dace.program
+    def tester(a: dace.float64[20]):
+        if a[0] < 0:
+            if a[0] < 1:
+                a[1] = 1
+            else:
+                a[1] = 2
+        a[2] = 1
+
+    sdfg = tester.to_sdfg()
+    assert 'goto' not in sdfg.generate_code()[0].code
+
+
 if __name__ == '__main__':
     test_for_loop_detection()
     test_invalid_for_loop_detection()
@@ -128,3 +155,5 @@ if __name__ == '__main__':
     test_edge_sympy_function('TrueFalse')
     test_edge_sympy_function('SwitchCase')
     test_single_outedge_branch()
+    test_extraneous_goto()
+    test_extraneous_goto_nested()
