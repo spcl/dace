@@ -28,6 +28,7 @@ from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
 from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg.sdfg_control_flow import ControlFlowGraph, LoopScopeBlock, ControlFlowBlock
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
@@ -1044,6 +1045,11 @@ class ProgramVisitor(ExtNodeVisitor):
     progress_bar = None
     start_time: float = 0
 
+    sdfg: SDFG
+    last_block: ControlFlowBlock
+    cfg_target: ControlFlowGraph
+    last_cfg_target: ControlFlowGraph
+
     def __init__(self,
                  name: str,
                  filename: str,
@@ -1119,7 +1125,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     if sym.name not in self.sdfg.symbols:
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
-        self.last_state = self.sdfg.add_state('init', is_start_state=True)
+        self.cfg_target = self.sdfg
+        self.last_block = self.cfg_target.add_state('init', is_start_block=True)
+        self.last_cfg_target = self.sdfg
 
         self.inputs: DependencyType = {}
         self.outputs: DependencyType = {}
@@ -1201,7 +1209,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for stmt in program.body:
                 self.visit_TopLevel(stmt)
         if len(self.sdfg.nodes()) == 0:
-            self.sdfg.add_state("EmptyState")
+            self.cfg_target.add_state('EmptyState')
 
         # Handle return values
         # Assignments to return values become __return* arrays
@@ -1315,12 +1323,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def _add_state(self, label=None):
-        state = self.sdfg.add_state(label)
-        if self.last_state is not None:
-            self.sdfg.add_edge(self.last_state, state, dace.InterstateEdge())
-        self.last_state = state
+    def _add_block(self, block: ControlFlowBlock):
+        if self.last_block is not None and self.last_cfg_target == self.cfg_target:
+            self.cfg_target.add_edge(self.last_block, block, dace.InterstateEdge())
+        self.last_block = block
+        self.last_cfg_target = self.cfg_target
+
+    def _add_state(self, label=None) -> SDFGState:
+        state = self.cfg_target.add_state(label)
+        self._add_block(state)
         return state
+
+    def _add_loop_scope_block(self, label=None) -> LoopScopeBlock:
+        loop_scope_block = LoopScopeBlock(loop_var=indices[0],
+                                          initialize_expr=astutils.unparse(ast_ranges[0][0]),
+                                          update_expr=incr[indices[0]],
+                                          condition_expr=loop_cond_expr,
+                                          inverted=False)
+        self.cfg_target.add_node(loop_scope_block)
+        self._add_block(loop_scope_block)
+        return loop_scope_block
 
     def _parse_arg(self, arg: Any, as_list=True):
         """ Parse possible values to slices or objects that can be used in
@@ -2136,15 +2158,19 @@ class ProgramVisitor(ExtNodeVisitor):
                          body: List[ast.AST],
                          name: str,
                          lineno: int,
-                         last_state=True,
+                         parent: ControlFlowGraph,
+                         unconnected_last_block=True,
                          extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
         """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
             and the first and last internal states of the recursive visit. Also returns a boolean value indicating
             whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
             to generate correct control flow. """
-        before_state = self.last_state
-        self.last_state = None
-        first_internal_state = self._add_state('%s_%d' % (name, lineno))
+        previous_block = self.last_block
+        previous_target = self.cfg_target
+        self.last_block = None
+        self.cfg_target = parent
+
+        first_innner_block = self._add_state('%s_%d' % (name, lineno))
 
         # Add iteration variables to recursive visit
         if extra_symbols:
@@ -2153,23 +2179,25 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals.update(extra_symbols)
 
         # Recursive loop processing
-        return_stmt = False
+        has_return_statement = False
         for stmt in body:
             self.visit_TopLevel(stmt)
             if isinstance(stmt, ast.Return):
-                return_stmt = True
+                has_return_statement = True
 
         # Create the next state
-        last_internal_state = self.last_state
-        if last_state:
-            self.last_state = None
+        last_inner_block = self.last_state
+        if unconnected_last_block:
+            self.last_block = None
             self._add_state('end%s_%d' % (name, lineno))
 
         # Revert new symbols
         if extra_symbols:
             self.globals = old_globals
+        # Restore previous target
+        self.cfg_target = previous_target
 
-        return before_state, first_internal_state, last_internal_state, return_stmt
+        return previous_block, first_innner_block, last_inner_block, has_return_statement
 
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
@@ -2290,19 +2318,21 @@ class ProgramVisitor(ExtNodeVisitor):
             self.loop_idx += 1
             self.continue_states.append([])
             self.break_states.append([])
-            laststate, first_loop_state, last_loop_state, _ = self._recursive_visit(node.body,
-                                                                                    'for',
-                                                                                    node.lineno,
-                                                                                    extra_symbols=extra_syms)
-            end_loop_state = self.last_state
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
+            loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
             incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
-            _, loop_guard, loop_end = self.sdfg.add_loop(
-                laststate, first_loop_state, end_loop_state, indices[0], astutils.unparse(ast_ranges[0][0]),
-                '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])), incr[indices[0]],
-                last_loop_state)
+            loop_scope = LoopScopeBlock(loop_var=indices[0],
+                                        initialize_expr=astutils.unparse(ast_ranges[0][0]),
+                                        update_expr=incr[indices[0]],
+                                        condition_expr=loop_cond_expr,
+                                        inverted=False)
+            self.cfg_target = loop_scope
+
+            self._recursive_visit(node.body, 'for', node.lineno, extra_symbols=extra_syms)
+
+            end_loop_state = self.last_state
 
             # Handle else clause
             if node.orelse:
@@ -2311,32 +2341,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.visit(stmt)
 
                 # The state that all "break" edges go to
-                loop_end = self._add_state(f'postloop_{node.lineno}')
-
-            body_states = list(
-                sdutil.dfs_conditional(self.sdfg,
-                                       sources=[first_loop_state],
-                                       condition=lambda p, c: c is not loop_guard))
-
-            continue_states = self.continue_states.pop()
-            while continue_states:
-                next_state = continue_states.pop()
-                out_edges = self.sdfg.out_edges(next_state)
-                for e in out_edges:
-                    self.sdfg.remove_edge(e)
-                self.sdfg.add_edge(next_state, loop_guard, dace.InterstateEdge(assignments=incr))
-            break_states = self.break_states.pop()
-            while break_states:
-                next_state = break_states.pop()
-                out_edges = self.sdfg.out_edges(next_state)
-                for e in out_edges:
-                    self.sdfg.remove_edge(e)
-                self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
+                state = self.cfg_target.add_state(f'postloop_{node.lineno}')
+                if self.last_state is not None:
+                    self.sdfg.add_edge(self.last_state, state, dace.InterstateEdge())
+                self.last_state = state
+                return state
             self.loop_idx -= 1
-
-            for state in body_states:
-                if not nx.has_path(self.sdfg.nx, loop_guard, state):
-                    self.sdfg.remove_node(state)
         else:
             raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 

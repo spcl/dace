@@ -24,6 +24,7 @@ import dace
 import dace.serialize
 from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
 from dace.sdfg.scope import ScopeTree
+from dace.sdfg.sdfg_control_flow import LoopScopeBlock, ControlFlowGraph
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
@@ -402,7 +403,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
+class SDFG(ControlFlowGraph):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed
@@ -499,10 +500,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
-        self._start_state: Optional[int] = None
-        self._cached_start_state: Optional[SDFGState] = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
-        self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -531,14 +529,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip derivative attributes
-            if k in ('_cached_start_state', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
+            if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
                      '_sdfg_list', '_transformation_hist'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
-        result._cached_start_state = copy.deepcopy(self._cached_start_state, memo)
+        result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
             if id(getattr(self, k)) in memo:
@@ -583,7 +581,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
-        tmp['start_state'] = self._start_state
+        tmp['start_state'] = self._start_block
 
         tmp['attributes']['name'] = self.name
         if hash:
@@ -627,7 +625,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_state' in json_obj:
-            ret._start_state = json_obj['start_state']
+            ret._start_block = json_obj['start_state']
 
         return ret
 
@@ -787,34 +785,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     @property
     def start_state(self):
-        """ Returns the starting state of this SDFG. """
-        if self._cached_start_state is not None:
-            return self._cached_start_state
-
-        source_nodes = self.source_nodes()
-        if len(source_nodes) == 1:
-            self._cached_start_state = source_nodes[0]
-            return source_nodes[0]
-        # If starting state is ambiguous (i.e., loop to initial state or more
-        # than one possible start state), allow manually overriding start state
-        if self._start_state is not None:
-            self._cached_start_state = self.node(self._start_state)
-            return self._cached_start_state
-        raise ValueError('Ambiguous or undefined starting state for SDFG, '
-                         'please use "is_start_state=True" when adding the '
-                         'starting state with "add_state"')
+        return self.start_block
 
     @start_state.setter
     def start_state(self, state_id):
-        """ Manually sets the starting state of this SDFG.
-
-            :param state_id: The node ID (use `node_id(state)`) of the
-                             state to set.
-        """
-        if state_id < 0 or state_id >= self.number_of_nodes():
-            raise ValueError("Invalid state ID")
-        self._start_state = state_id
-        self._cached_start_state = self.node(state_id)
+        self.start_block = state_id
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -1253,15 +1228,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         if not isinstance(node, SDFGState):
             raise TypeError("Expected SDFGState, got " + str(type(node)))
-        super(SDFG, self).add_node(node)
-        self._cached_start_state = None
-        if is_start_state is True:
-            self.start_state = len(self.nodes()) - 1
-            self._cached_start_state = node
+        super(SDFG, self).add_node(node, is_start_block=is_start_state)
 
     def remove_node(self, node: SDFGState):
-        if node is self._cached_start_state:
-            self._cached_start_state = None
+        if node is self._cached_start_block:
+            self._cached_start_block = None
         return super().remove_node(node)
 
     def add_edge(self, u, v, edge):
@@ -1278,8 +1249,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             raise TypeError("Expected SDFGState, got: {}".format(type(v).__name__))
         if not isinstance(edge, InterstateEdge):
             raise TypeError("Expected InterstateEdge, got: {}".format(type(edge).__name__))
-        if v is self._cached_start_state:
-            self._cached_start_state = None
+        if v is self._cached_start_block:
+            self._cached_start_block = None
         return super(SDFG, self).add_edge(u, v, edge)
 
     def states(self):
@@ -1647,25 +1618,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     # Dynamic SDFG creation API
     ##############################
-    def add_state(self, label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state to this graph and returns it.
-
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
-        label = label or 'state'
-        existing_labels = self._labels
-        label = dt.find_new_name(label, existing_labels)
-        state = SDFGState(label, self)
-        self._labels.add(label)
-
-        self.add_node(state, is_start_state=is_start_state)
-        return state
-
     def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state before an existing state, reconnecting
             predecessors to it instead.
@@ -2152,13 +2104,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_loop(
         self,
         before_state,
-        loop_state,
         after_state,
         loop_var: str,
         initialize_expr: str,
         condition_expr: str,
         increment_expr: str,
-        loop_end_state=None,
+        inverted: bool = False,
     ):
         """
         Helper function that adds a looping state machine around a
@@ -2191,40 +2142,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :return: A 3-tuple of (``before_state``, generated loop guard state,
                  ``after_state``).
         """
-        from dace.frontend.python.astutils import negate_expr  # Avoid import loops
-
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
             raise ValueError("Cannot initalize or increment an empty loop variable")
 
+        loop_scope = LoopScopeBlock(loop_var=loop_var,
+                                    initialize_expr=initialize_expr,
+                                    update_expr=increment_expr,
+                                    condition_expr=condition_expr,
+                                    inverted=inverted)
+
         # Handling empty states
-        if loop_end_state is None:
-            loop_end_state = loop_state
         if before_state is None:
             before_state = self.add_state()
         if after_state is None:
             after_state = self.add_state()
 
-        # Create guard state
-        guard = self.add_state("guard")
+        self.add_node(loop_scope)
+        self.add_edge(before_state, loop_scope)
+        self.add_edge(loop_scope, after_state)
 
-        # Loop initialization
-        init = None if initialize_expr is None else {loop_var: initialize_expr}
-        self.add_edge(before_state, guard, InterstateEdge(assignments=init))
-
-        # Loop condition
-        if condition_expr:
-            cond_ast = CodeBlock(condition_expr).code
-        else:
-            cond_ast = CodeBlock('True').code
-        self.add_edge(guard, loop_state, InterstateEdge(cond_ast))
-        self.add_edge(guard, after_state, InterstateEdge(negate_expr(cond_ast)))
-
-        # Loop incrementation
-        incr = None if increment_expr is None else {loop_var: increment_expr}
-        self.add_edge(loop_end_state, guard, InterstateEdge(assignments=incr))
-
-        return before_state, guard, after_state
+        return before_state, loop_scope, after_state
 
     # SDFG queries
     ##############################

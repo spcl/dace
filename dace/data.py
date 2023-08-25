@@ -152,27 +152,6 @@ def _prod(sequence):
     return functools.reduce(lambda a, b: a * b, sequence, 1)
 
 
-def find_new_name(name: str, existing_names: Sequence[str]) -> str:
-    """
-    Returns a name that matches the given ``name`` as a prefix, but does not
-    already exist in the given existing name set. The behavior is typically
-    to append an underscore followed by a unique (increasing) number. If the
-    name does not already exist in the set, it is returned as-is.
-
-    :param name: The given name to find.
-    :param existing_names: The set of existing names.
-    :return: A new name that is not in existing_names.
-    """
-    if name not in existing_names:
-        return name
-    cur_offset = 0
-    new_name = name + '_' + str(cur_offset)
-    while new_name in existing_names:
-        cur_offset += 1
-        new_name = name + '_' + str(cur_offset)
-    return new_name
-
-
 @make_properties
 class Data:
     """ Data type descriptors that can be used as references to memory.

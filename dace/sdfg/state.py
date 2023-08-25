@@ -19,7 +19,8 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView
+from dace.sdfg.sdfg_control_flow import BasicBlock
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
@@ -746,7 +747,7 @@ class StateGraphView(object):
 
 
 @make_properties
-class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView):
+class SDFGState(BasicBlock, StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
@@ -790,9 +791,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param debuginfo: Source code locator for debugging.
         """
         from dace.sdfg.sdfg import SDFG  # Avoid import loop
-        super(SDFGState, self).__init__()
-        self._label = label
-        self._parent: SDFG = sdfg
+        BasicBlock.__init__(self, label, sdfg)
+        StateGraphView.__init__(self)
+        self._parent: Optional[SDFG] = sdfg
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
@@ -825,20 +826,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     @parent.setter
     def parent(self, value):
         self._parent = value
-
-    def __str__(self):
-        return self._label
-
-    @property
-    def label(self):
-        return self._label
-
-    @property
-    def name(self):
-        return self._label
-
-    def set_label(self, label):
-        self._label = label
 
     def is_empty(self):
         return self.number_of_nodes() == 0
