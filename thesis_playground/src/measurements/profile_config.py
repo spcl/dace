@@ -91,6 +91,10 @@ class ProfileConfig:
         self.ncu_kernels = ncu_kernels
         self.use_basic_sdfg = use_basic_sdfg
 
+    def __str__(self) -> str:
+        return f"ProfileConfig for {self.program} profiling {self.tot_time_repetitions} for total time and " \
+               f"{self.ncu_repetitions} using ncu"
+
     def get_program_command_line_arguments(self, params: ParametersProvider, run_config: RunConfig) -> List[str]:
         """
         Provides the command line arguments to run the program once using run_program.py given the selected parameters
@@ -190,6 +194,7 @@ class ProfileConfig:
                 del params_dict[symbol]
         if self.use_basic_sdfg:
             sdfg = get_optimised_sdfg(self.program, run_config, params, self.size_identifiers)
+            sdfg.compile()
         else:
             sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
@@ -236,11 +241,14 @@ class ProfileConfig:
         :return: List of dictionaries. Each dict is one total runtime measurement for one size.
         :rtype: List[Dict[str, Union[str, float, int]]]
         """
+        logger.debug("foo1")
         programs = get_programs_data()['programs']
         routine_name = f"{programs[self.program]}_routine"
         rng = np.random.default_rng(RNG_SEED)
+        logger.debug("foo2")
         inputs = get_inputs(self.program, rng, params)
         outputs = get_outputs(self.program, rng, params)
+        logger.debug("foo3")
 
         if run_config.pattern is not None:
             set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
@@ -420,11 +428,12 @@ class ProfileConfig:
         if sdfg_path is None:
             sdfg_path = '/tmp/sdfg.sdfg'
         else:
-            logger.info("Save SDFG into {sdfg_path}")
+            logger.info(f"Save SDFG into {sdfg_path}")
 
         for params in self.sizes:
-            logger.info(f"Profile for {[params[name] for name in self.size_identifiers]}")
+            logger.info(f"Profile with {', '.join([name +': ' + str(params[name]) for name in self.size_identifiers])}")
             sdfg = self.compile(params, run_config, debug_mode=debug_mode)
+            logger.debug(f"Save SDFG into {sdfg_path}")
             sdfg.save(sdfg_path)
 
             if self.tot_time_repetitions > 0:
