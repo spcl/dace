@@ -131,7 +131,9 @@ def get_optimised_sdfg(
         program: str,
         run_config: RunConfig,
         params: ParametersProvider,
-        params_to_ignore: List[str] = []) -> SDFG:
+        params_to_ignore: List[str] = [],
+        instrument: bool = True
+        ) -> SDFG:
     logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
     basic_sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
 
@@ -160,6 +162,7 @@ def get_optimised_sdfg(
                     logger.debug(f"Set block size for {node}")
                     node.map.gpu_block_size = (32, 1, 1)
 
-    logger.debug("Instrument SDFG")
-    sdfg.instrument = dace.InstrumentationType.Timer
+    if instrument:
+        logger.debug("Instrument SDFG")
+        sdfg.instrument = dace.InstrumentationType.Timer
     return sdfg
