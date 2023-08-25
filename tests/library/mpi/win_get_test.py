@@ -49,7 +49,7 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(window_state, fence_state_1, dace.InterstateEdge())
 
-    fence_name = sdfg.add_rma_ops()
+    fence_name = sdfg.add_rma_ops(window_name, "fence")
     win_fence_node = mpi.nodes.win_fence.Win_fence(fence_name, window_name)
 
     # pseudo access for ordering
@@ -84,7 +84,7 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(fence_state_1, get_state, dace.InterstateEdge())
 
-    get_name = sdfg.add_rma_ops()
+    get_name = sdfg.add_rma_ops(window_name, "get")
     win_get_node = mpi.nodes.win_get.Win_get(get_name, window_name)
 
     # pseudo access for ordering
@@ -126,7 +126,7 @@ def make_sdfg(dtype):
 
     sdfg.add_edge(get_state, fence_state_2, dace.InterstateEdge())
 
-    fence_name = sdfg.add_rma_ops()
+    fence_name = sdfg.add_rma_ops(window_name, "fence")
     win_fence_node = mpi.nodes.win_fence.Win_fence(fence_name, window_name)
 
     # pseudo access for ordering
