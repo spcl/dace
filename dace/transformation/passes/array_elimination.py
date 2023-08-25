@@ -170,6 +170,9 @@ class ArrayElimination(ppl.Pass):
                 for anode in access_nodes[aname]:
                     if anode in removed_nodes:
                         continue
+                    if anode not in state.nodes():
+                        removed_nodes.add(anode)
+                        continue
 
                     if state.out_degree(anode) == 1:
                         succ = state.successors(anode)[0]
