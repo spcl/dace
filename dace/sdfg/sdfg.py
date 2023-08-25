@@ -416,7 +416,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                             from_json=_arrays_from_json)
     _rma_ops = DictProperty(str,
                            str,
-                           desc="MPI RMA fence descriptors for this SDFG",
+                           desc="MPI RMA ops descriptors for this SDFG",
                            to_json=_arrays_to_json,
                            from_json=_arrays_from_json)
     _subarrays = DictProperty(str,
@@ -2076,11 +2076,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return window_name
 
-    def add_rma_ops(self, op:str):
+    def add_rma_ops(self, window_name:str, op:str):
         """ Adds a RMA op to the RMA ops descriptor store.
         """
 
-        rma_op_name = self._find_new_name(f'__win_{op}')
+        rma_op_name = self._find_new_name(f'{window_name}_{op}')
 
         self._rma_ops[rma_op_name] = ""
 

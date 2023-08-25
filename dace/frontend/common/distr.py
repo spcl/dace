@@ -979,7 +979,7 @@ def _rma_fence(pv: ProgramVisitor,
     from dace.libraries.mpi.nodes.win_fence import Win_fence
 
     # fine a new fence name
-    fence_name = sdfg.add_rma_ops("fence")
+    fence_name = sdfg.add_rma_ops(window_name, "fence")
 
     _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
 
@@ -987,10 +987,12 @@ def _rma_fence(pv: ProgramVisitor,
 
     # check for the last RMA operation
     all_rma_ops_name = list(sdfg._rma_ops.keys())
-    if len(all_rma_ops_name) == 1:
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
         last_rma_op_name = window_name
     else:
-        last_rma_op_name = all_rma_ops_name[all_rma_ops_name.index(fence_name) - 1]
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(fence_name) - 1]
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1037,11 +1039,23 @@ def _rma_put(pv: ProgramVisitor,
 
     from dace.libraries.mpi.nodes.win_put import Win_put
 
-    put_name = sdfg.add_rma_ops("put")
+    put_name = sdfg.add_rma_ops(window_name, "put")
 
     # check for the last RMA operation
     all_rma_ops_name = list(sdfg._rma_ops.keys())
-    last_rma_op_name = all_rma_ops_name[all_rma_ops_name.index(put_name) - 1]
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
+                           if f"{window_name}_fence" in rma_op]
+
+    if len(cur_window_fences) % 2:
+        # if only odd number of fences,
+        # that means we're in a ongoing epoch
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(put_name) - 1]
+    else:
+        # if even number of fences,
+        # that means this operation is either a passive sync. one or a corrupted one
+        raise ValueError("Wrong synchronization of RMA calls!")
 
     put_node = Win_put(put_name, window_name)
 
@@ -1097,11 +1111,23 @@ def _rma_get(pv: ProgramVisitor,
 
     from dace.libraries.mpi.nodes.win_get import Win_get
 
-    get_name = sdfg.add_rma_ops("get")
+    get_name = sdfg.add_rma_ops(window_name, "get")
 
     # check for the last RMA operation
     all_rma_ops_name = list(sdfg._rma_ops.keys())
-    last_rma_op_name = all_rma_ops_name[all_rma_ops_name.index(get_name) - 1]
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
+                           if f"{window_name}_fence" in rma_op]
+
+    if len(cur_window_fences) % 2:
+        # if only odd number of fences,
+        # that means we're in a ongoing epoch
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(get_name) - 1]
+    else:
+        # if even number of fences,
+        # that means this operation is either a passive sync. one or a corrupted one
+        raise ValueError("Wrong synchronization of RMA calls!")
 
     get_node = Win_get(get_name, window_name)
 
