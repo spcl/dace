@@ -926,17 +926,22 @@ def _rma_window_create(pv: ProgramVisitor,
     """ Adds a RMA window to the DaCe Program.
 
         :param buffer: The name of window buffer.
-        :param comm: A dummy input for compatibility with mpi4py
+        :param comm: The comm world name of this window
         :process_grid: Name of the process-grid for collective scatter/gather operations.
         :return: Name of the window.
     """
 
     from dace.libraries.mpi.nodes.win_create import Win_create
 
+    # if 'comm' is not a 'str' means it's using mpi4py objects
+    # which can only be deafult the comm world
+    if not isinstance(comm, str):
+        comm = None
+
     # fine a new window name
     window_name = sdfg.add_window()
 
-    window_node = Win_create(window_name, grid)
+    window_node = Win_create(window_name, comm)
 
     buf_desc = sdfg.arrays[buffer]
     buf_node = state.add_read(buffer)

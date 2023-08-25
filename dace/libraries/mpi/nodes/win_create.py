@@ -24,8 +24,8 @@ class ExpandWinCreateMPI(ExpandTransformation):
         ]
     
         comm = "MPI_COMM_WORLD"
-        if node.grid:
-            comm = f"__state->{node.grid}_comm"
+        if node.comm:
+            comm = f"__state->{node.comm}_comm"
 
         code = f"""
             MPI_Win_create(_win_buffer,
@@ -56,11 +56,11 @@ class Win_create(MPINode):
     }
     default_implementation = "MPI"
 
-    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    comm = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
-    def __init__(self, name, grid=None, *args, **kwargs):
+    def __init__(self, name, comm=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_win_buffer"}, outputs={"_out"}, **kwargs)
-        self.grid = grid
+        self.comm = comm
 
     def validate(self, sdfg, state):
         """
