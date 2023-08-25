@@ -1045,7 +1045,7 @@ def _rma_put(pv: ProgramVisitor,
     state.add_edge(last_rma_op_node,
                    None,
                    put_node,
-                   None,
+                   "_in",
                    Memlet.from_array(last_rma_op_name, last_rma_op_desc))
 
     origin_node = state.add_read(origin)
@@ -1105,7 +1105,7 @@ def _rma_get(pv: ProgramVisitor,
     state.add_edge(last_rma_op_node,
                    None,
                    get_node,
-                   None,
+                   "_in",
                    Memlet.from_array(last_rma_op_name, last_rma_op_desc))
 
     _, target_rank_node = _get_int_arg_node(pv, sdfg, state, target_rank)

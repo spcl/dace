@@ -98,7 +98,7 @@ def make_sdfg(dtype):
     put_state.add_edge(fence_node,
                        None,
                        win_put_node,
-                       None,
+                       "_in",
                        Memlet.from_array(fence_name, fence_desc))
 
     put_state.add_edge(send_buffer,

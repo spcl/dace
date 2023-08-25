@@ -46,7 +46,7 @@ class Win_get(MPINode):
     window_name = dace.properties.Property(dtype=str, default=None)
 
     def __init__(self, name, window_name, *args, **kwargs):
-        super().__init__(name, *args, inputs={"_target_rank"}, outputs={"_out", "_outbuffer"}, **kwargs)
+        super().__init__(name, *args, inputs={"_in", "_target_rank"}, outputs={"_out", "_outbuffer"}, **kwargs)
         self.window_name = window_name
 
     def validate(self, sdfg, state):
