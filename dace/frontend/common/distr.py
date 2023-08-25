@@ -974,7 +974,7 @@ def _rma_fence(pv: ProgramVisitor,
     from dace.libraries.mpi.nodes.win_fence import Win_fence
 
     # fine a new fence name
-    fence_name = sdfg.add_rma_ops()
+    fence_name = sdfg.add_rma_ops("fence")
 
     _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
 
@@ -1032,7 +1032,7 @@ def _rma_put(pv: ProgramVisitor,
 
     from dace.libraries.mpi.nodes.win_put import Win_put
 
-    put_name = sdfg.add_rma_ops()
+    put_name = sdfg.add_rma_ops("put")
 
     # check for the last RMA operation
     all_rma_ops_name = list(sdfg._rma_ops.keys())
@@ -1092,7 +1092,7 @@ def _rma_get(pv: ProgramVisitor,
 
     from dace.libraries.mpi.nodes.win_get import Win_get
 
-    get_name = sdfg.add_rma_ops()
+    get_name = sdfg.add_rma_ops("get")
 
     # check for the last RMA operation
     all_rma_ops_name = list(sdfg._rma_ops.keys())

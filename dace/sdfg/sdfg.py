@@ -2076,11 +2076,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return window_name
 
-    def add_rma_ops(self):
+    def add_rma_ops(self, op:str):
         """ Adds a RMA op to the RMA ops descriptor store.
         """
 
-        rma_op_name = self._find_new_name('__win_op')
+        rma_op_name = self._find_new_name(f'__win_{op}')
 
         self._rma_ops[rma_op_name] = ""
 
