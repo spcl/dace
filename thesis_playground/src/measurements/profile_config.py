@@ -17,7 +17,8 @@ from utils.general import get_programs_data, remove_build_folder, insert_heap_si
                           get_outputs, use_cache, enable_debug_flags
 from utils.gpu_general import copy_to_device
 from utils.generate_sdfg import get_optimised_sdfg
-from utils.execute_dace import RunConfig, compile_for_profile, gen_ncu_report, RNG_SEED
+from utils.execute_dace import compile_for_profile, gen_ncu_report, RNG_SEED
+from utils.run_config import RunConfig
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
 from execute.my_auto_opt import specialise_symbols

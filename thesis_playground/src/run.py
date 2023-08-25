@@ -7,8 +7,9 @@ import json
 from utils.paths import get_results_dir
 from utils.general import get_programs_data, use_cache, remove_build_folder
 from utils.print import print_with_time, print_results_v2, print_performance
-from utils.execute_dace import RunConfig, test_program, profile_program, get_roofline_data, gen_ncu_report, \
+from utils.execute_dace import test_program, profile_program, get_roofline_data, gen_ncu_report, \
                                gen_nsys_report
+from utils.run_config import RunConfig
 from utils.ncu import get_all_actions_matching_re, action_list_to_dict, get_runtime, get_cycles
 from measurements.data import ProgramMeasurement, MeasurementRun
 from measurements.flop_computation import save_roofline_data

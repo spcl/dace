@@ -12,7 +12,8 @@ import shutil
 import logging
 
 from utils.log import setup_logging, close_filehandlers
-from utils.execute_dace import RunConfig, test_program
+from utils.execute_dace import test_program
+from utils.run_config import RunConfig
 from utils.paths import get_results_2_folder, get_thesis_playground_root_dir, get_experiments_2_file, \
                         create_if_not_exist, get_results_2_logdir
 from utils.experiments2 import get_experiment_list_df
