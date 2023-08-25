@@ -8,7 +8,7 @@ from dace.dtypes import ScheduleType
 from utils.general import replace_symbols_by_values
 from utils.paths import get_basic_sdfg_dir
 from utils.general import get_programs_data, read_source, get_sdfg
-from utils.execute_dace import RunConfig
+from utils.run_config import RunConfig
 from execute.parameters import ParametersProvider
 from execute.my_auto_opt import auto_optimize_phase_1, auto_optimize_phase_2, change_strides
 
