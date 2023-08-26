@@ -40,7 +40,7 @@ def range_eq_with_difference(this_range: Tuple[int, int, int],
     :return: If both ranges are "equal"
     :rtype: bool
     """
-    if any(type(trng) != type(orng) for trng, orng in zip(this_range, other_range)):
+    if any(dace.symbolic.issymbolic(trng) != dace.symbolic.issymbolic(orng) for trng, orng in zip(this_range, other_range)):
         return False
     return abs(this_range[0] - other_range[0]) <= max_difference_start \
         and abs(this_range[1] - other_range[1]) <= max_difference_end \

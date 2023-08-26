@@ -19,6 +19,9 @@ from dace.sdfg.graph import SubgraphView
 from typing import Dict
 import copy
 import warnings
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @make_properties
@@ -65,8 +68,25 @@ class CompositeFusion(transformation.SubgraphTransformation):
             setattr(sf, key, value)
         return sf
 
+    def get_subgraph_expansion(self) -> MultiExpansion:
+        """
+        Create MultiExpansion instance coping some required property
+
+        :return: [TODO:description]
+        :rtype: MultiExpansion
+        """
+        se = MultiExpansion()
+        se.max_difference_start = self.subgraph_fusion_properties['max_difference_start']
+        se.max_difference_end = self.subgraph_fusion_properties['max_difference_end']
+        return se
+
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
+        subgraph = self.subgraph_view(sdfg)
+        scope_dict = graph.scope_dict()
+        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
+        logger.debug("Check for maps: %s", [m.map for m in map_entries])
+
         if self.allow_expansion == True:
             subgraph_fusion = self.get_subgraph_fusion()
             subgraph_fusion.setup_match(subgraph)
@@ -74,7 +94,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 # try w/o copy first
                 return True
 
-            expansion = MultiExpansion()
+            expansion = self.get_subgraph_expansion()
             expansion.allow_offset = False
             expansion.setup_match(subgraph)
             expansion.permutation_only = not self.expansion_split
@@ -122,15 +142,15 @@ class CompositeFusion(transformation.SubgraphTransformation):
         scope_dict = graph.scope_dict()
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
         first_entry = next(iter(map_entries))
+        logger.debug("Apply to map entries: %s", map_entries)
 
         if self.allow_expansion:
-            expansion = MultiExpansion()
+            expansion = self.get_subgraph_expansion()
             expansion.allow_offset = False
             expansion.setup_match(subgraph, self.sdfg_id, self.state_id)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
-                sdfg.save('subgraph/after_expansion.sdfg')
 
         sf = self.get_subgraph_fusion()
         sf.setup_match(subgraph, self.sdfg_id, self.state_id)

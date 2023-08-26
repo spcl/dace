@@ -21,6 +21,9 @@ import dace.libraries.standard as stdlib
 
 import warnings
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def offset_map(state, map_entry):
@@ -62,8 +65,8 @@ class MultiExpansion(transformation.SubgraphTransformation):
     permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
 
     allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
-    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=1)
-    max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=1)
+    max_difference_start = Property(dtype=int, desc="Max difference between start of ranges of maps", default=0)
+    max_difference_end = Property(dtype=int, desc="Max difference between end of ranges of maps", default=0)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -80,19 +83,24 @@ class MultiExpansion(transformation.SubgraphTransformation):
             for r in ranges:
                 r.offset(r.min_element(), negative=True)
         brng, _ = helpers.common_map_base_ranges(ranges, max_difference_start=self.max_difference_start, max_difference_end=self.max_difference_end)
+        logger.debug("max difference start: %i, max_difference_end: %i, common map base ranges: %s", self.max_difference_start,
+                     self.max_difference_end, brng)
 
         # more than one outermost scoped map entry has to be availble
         if len(map_entries) <= 1:
+            logger.debug("Rejected: Only one outermost scoped map entry available")
             return False
 
         # check whether any parameters are in common
         if len(brng) == 0:
+            logger.debug("Rejected: No parameters in common")
             return False
 
         # if option enabled, return false if any splits are introduced
         if self.permutation_only == True:
             for map_entry in map_entries:
                 if len(map_entry.params) != len(brng):
+                    logger.debug("Rejected: Splits would be introduced")
                     return False
 
         # if option enabled, check contiguity in the last contiguous dimension
