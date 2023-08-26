@@ -1,11 +1,13 @@
 from argparse import ArgumentParser
+import logging
 
 import dace
 
 from execute.parameters import ParametersProvider
 from utils.run_config import RunConfig
 from utils.generate_sdfg import get_optimised_sdfg
-from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, optimize_sdfg
+from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, \
+                          optimize_sdfg, save_graph
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.log import setup_logging
 
@@ -31,15 +33,16 @@ def main():
                         help='Use DaCes auto_opt instead of mine')
     parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
     parser.add_argument('--log-file', default=None, help='Path to logfile with level DEBUG')
+    parser.add_argument('--log-level', default='warning')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
     device = device_map[args.device]
     if args.log_file is not None:
-        setup_logging(full_logfile=args.log_file)
+        setup_logging(full_logfile=args.log_file, level=args.log_level.upper())
     else:
-        setup_logging()
+        setup_logging(level=args.log_level.upper())
 
     if args.debug:
         enable_debug_flags()
@@ -55,7 +58,6 @@ def main():
         program_name = programs[args.program]
     else:
         program_name = args.program
-    sdfg = get_sdfg(fsource, program_name)
 
     add_args = {}
     if not args.not_specialise:
@@ -70,10 +72,13 @@ def main():
         add_args['use_my_auto_opt'] = False
     if args.no_outer_loop_first:
         add_args['outside_first'] = False
+    # sdfg = get_sdfg(fsource, program_name)
     # sdfg = optimize_sdfg(sdfg, device, verbose_name=verbose_name, **add_args)
-    run_config = RunConfig().set_from_args(args)
-    sdfg = get_optimised_sdfg(sdfg, run_config, params, ['NBLOCKS'])
-    sdfg.instrument = dace.InstrumentationType.Timer
+    run_config = RunConfig()
+    run_config.set_from_args(args)
+    run_config.device = device
+    sdfg = get_optimised_sdfg(args.program, run_config, params, ['NBLOCKS'], verbose_name=verbose_name)
+    save_graph(sdfg, verbose_name, "after_auto_opt")
     if not args.only_graph:
         sdfg.compile()
 

@@ -119,6 +119,7 @@ def auto_optimize_phase_2(sdfg: SDFG,
                           outside_first: bool = True,
                           move_assignments_outside: bool = True
                           ) -> SDFG:
+    logger.debug(f"Program: {program}")
     if symbols:
         specialise_symbols(sdfg, symbols)
     if k_caching:
@@ -436,15 +437,6 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_force_klev_to_map")
 
-    make_klev_outermost_map(sdfg, symbols)
-    if program is not None:
-        save_graph(sdfg, program, "after_make_klev_outermost")
-
-    # Before MapCollapse first to allow MapFusion to work correctly
-    # sdfg.apply_transformations_repeated([MapCollapse])
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_collapse")
-
     # Apply TrivialMapElimination before Fusion to avoid problems with maps overt KLON=1
     sdfg.apply_transformations_repeated([TrivialMapElimination])
     if program is not None:
@@ -454,10 +446,16 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
-    # sdfg.apply_transformations_repeated([MapExpansion])
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_expansion")
+    # Map expansion is required to make sure that klev is outermost afterwards to be able to fuse them properly
+    sdfg.apply_transformations_repeated([MapExpansion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_expansion")
 
+    make_klev_outermost_map(sdfg, symbols)
+    if program is not None:
+        save_graph(sdfg, program, "after_make_klev_outermost")
+
+    # Fuse maps to create one big KLEV-map
     greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
         'max_difference_start': 1,
         'max_difference_end': 1,
@@ -467,12 +465,6 @@ def k_caching_prototype_v1(sdfg: SDFG,
 
     if program is not None:
         save_graph(sdfg, program, "after_greedy_fuse")
-
-    # sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
-    # apply_transformation_stepwise(sdfg, [MapFusion], program, "map_fusion")
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_fusion")
-
     sdfg.simplify()
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
@@ -484,17 +476,15 @@ def k_caching_prototype_v1(sdfg: SDFG,
         continue_search = False
         for xf in xforms:
             # expect that maps only have one dimension, as we did the MapExpansion transformation before
-            logger.debug("Check if %s is the correct one ", xf)
-            logger.debug("with map entry %s", xf.map_entry)
-            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
+            xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
+            xf_state = xf_sdfg.find_state(xf.state_id)
+            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV'] and len(xf_state.out_edges(xf.map_entry)) > 1:
                 continue_search = True
-                logger.debug("Found the correct map. Apply it to state %s and sdfg %s",
-                             sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id), sdfg.sdfg_list[xf.sdfg_id])
-                xf.apply(sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id),
-                         sdfg.sdfg_list[xf.sdfg_id])
+                logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
+                xf.apply(xf_state, xf_sdfg)
+                if program is not None:
+                    save_graph(sdfg, program, "after_map_to_for_loop")
                 break
-        if program is not None:
-            save_graph(sdfg, program, "after_map_to_for_loop")
 
 
 def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int], schedule: ScheduleType) -> SDFG:
