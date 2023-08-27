@@ -10,6 +10,7 @@ import json
 import sympy
 import shutil
 import logging
+import traceback
 
 from utils.log import setup_logging, close_filehandlers
 from utils.execute_dace import RunConfig, test_program
@@ -24,19 +25,20 @@ logger = logging.getLogger("run2")
 
 
 def do_cloudsc() -> List[int]:
-    program = 'cloudsc_vert_loop_10'
+    program = 'cloudscexp2'
     params = []
     experiment_ids = []
     params.append(ParametersProvider(program, update={'NBLOCKS': 1000}))
-    params.append(ParametersProvider(program, update={'NBLOCKS': 2000}))
-    params.append(ParametersProvider(program, update={'NBLOCKS': 3000}))
-    profile_config = ProfileConfig(program, params, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5)
-    # experiment_desc = 'Full cloudsc'
-    experiment_desc = 'vert_loop_10'
-    experiment_ids.append(profile(profile_config, RunConfig(k_caching=False, change_stride=False),
+    # params.append(ParametersProvider(program, update={'NBLOCKS': 2000}))
+    # params.append(ParametersProvider(program, update={'NBLOCKS': 3000}))
+    profile_config = [ProfileConfig(program, params, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5,
+        use_basic_sdfg=True)]
+    experiment_desc = 'Full cloudsc'
+    # experiment_desc = 'vert_loop_10'
+    experiment_ids.append(profile(profile_config, RunConfig(k_caching=False, change_stride=False, outside_loop_first=False),
                                   experiment_desc + ' baseline', [('k_caching', "False"), ('change_strides', 'False')],
                                   ncu_report=False))
-    experiment_ids.append(profile(profile_config, RunConfig(k_caching=True, change_stride=True),
+    experiment_ids.append(profile(profile_config, RunConfig(k_caching=True, change_stride=True, outside_loop_first=False),
                                   experiment_desc + ' my optimisations', [('k_caching', "True"), ('change_strides', 'True')],
                                   ncu_report=False))
     return experiment_ids
@@ -122,7 +124,7 @@ def do_k_caching_ncu(additional_desc: Optional[str] = None, nblock_min: Number =
                                                      'KLON': 1})
         params_list_small.append(params)
     profile_configs.append(ProfileConfig(program, params_list_small, ['NBLOCKS'], ncu_repetitions=0,
-                                         tot_time_repetitions=10))
+                                         tot_time_repetitions=10, use_basic_sdfg=True))
     experiment_desc = "Vertical loop example"
     experiment_ids = []
     experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=False),
@@ -158,7 +160,7 @@ def do_k_caching_total(additional_desc: Optional[str] = None, nblock_min: Number
                                                      'KLON': 1})
         params_list_big.append(params)
     profile_configs.append(ProfileConfig(program, params_list_big, ['NBLOCKS'], ncu_repetitions=0,
-                                         tot_time_repetitions=10))
+                                         tot_time_repetitions=10, use_basic_sdfg=True))
     experiment_desc = "Vertical loop example"
     experiment_ids = []
     experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=False),
@@ -222,7 +224,8 @@ base_experiments = {
     'k_caching_ncu': do_k_caching_ncu,
     'k_caching_total': do_k_caching_total,
     'classes': do_classes,
-    'test': do_test
+    'test': do_test,
+    'cloudsc': do_cloudsc
 }
 
 
@@ -279,7 +282,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         experiment_list_df.to_csv(get_experiments_2_file())
 
     for program_config in program_configs:
-        logger.info(f"Run {program_config.program} with experiment id {new_experiment_id}")
+        logger.debug(f"Profile using {program_config}")
         experiment_folder = os.path.join(get_results_2_folder(), program_config.program, str(new_experiment_id))
         os.makedirs(experiment_folder, exist_ok=True)
         additional_columns_values = [col[1] for col in additional_columns]
@@ -299,6 +302,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
                                                               f"{program_config.program}_{new_experiment_id}_" +
                                                               '_'.join(additional_columns_values) +
                                                               ".ncu-rep")
+            logger.debug(f"Generate ncu report and save it into {additional_args['ncu_report_path']}")
         additional_args['sdfg_path'] = os.path.join(experiment_folder, 'graph.sdfg')
         df = program_config.profile(run_config, **additional_args)
         results_file = os.path.join(experiment_folder, 'results.csv')
@@ -335,8 +339,10 @@ def action_profile(args):
     try:
         experiment_ids = base_experiments[args.base_exp](**function_args)
         experiment_ids = [str(id) for id in experiment_ids]
-    except:
-        logger.error("An error occured while profiling")
+    except Exception as e:
+        logger.error(f"An error ({type(e)}) occured while profiling:")
+        logger.error(e)
+        logger.error(traceback.format_exc())
     finally:
         if len(experiment_ids) > 0:
             new_logfile = os.path.join(logdir, '-'.join(experiment_ids)+'-date-'+logfile)

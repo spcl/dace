@@ -1,7 +1,10 @@
+import logging
 from typing import Dict, Optional
 from numbers import Number
 import copy
 from argparse import Namespace
+
+logger = logging.getLogger(__name__)
 
 
 parameters = {
@@ -19,6 +22,7 @@ parameters = {
     'NSSOPT': 1,
     'NPROMA': 1,
     'NBLOCKS': 10000,
+    'KFLDX': 25,
 }
 
 # changes from the parameters dict for certrain programs
@@ -265,7 +269,8 @@ custom_parameters = {
         'KLON': 1,
         'KFDIA': 1,
         'KIDIA': 1,
-        'NBLOCKS': 200000
+        'NBLOCKS': 2000,
+        'NCLDTOP': 15,
     },
 }
 
@@ -300,7 +305,7 @@ class ParametersProvider:
         if key in self.parameters:
             return self.parameters[key]
         else:
-            print(f"WARNING: key {key} not in parameters, returned 1 instead")
+            logger.warning(f"WARNING: key {key} not in parameters, returned 1 instead")
             return 1
 
     def __len__(self) -> int:

@@ -1,29 +1,34 @@
-from typing import Dict, Union, Tuple, List
+from typing import Dict, Union, Tuple, List, Optional
 import numpy as np
 from numbers import Number
 import logging
+import copy
 
 from execute.parameters import ParametersProvider
 
 logger = logging.getLogger(__name__)
 
 
-def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
+def get_data(params: ParametersProvider, program: Optional[str] = None) -> Dict[str, Tuple]:
     """
-    Returns the data dict given the parameters dict
+    Returns the data dict given the parameters dict. If given a program name, will change/add program specific values.
 
     :param params: The parameters dict
     :type params: ParameterProvider
+    :param program: Name of program to get the data for, can be None
+    :type program: Optional[str]
     :return: The data dict
     :rtype: Dict[str, Tuple]
     """
-    return {
+    default_data = {
         'PTSPHY': (0, ),
         'R2ES': (0, ),
         'R3IES': (0, ),
         'R3LES': (0, ),
         'R4IES': (0, ),
         'R4LES': (0, ),
+        'R5IES': (0, ),
+        'R5LES': (0, ),
         'RALSDCP': (0, ),
         'RALVDCP': (0, ),
         'RAMIN': (0, ),
@@ -188,6 +193,83 @@ def get_data(params: ParametersProvider) -> Dict[str, Tuple]:
         'INP3': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
         'OUT1': (params['KLON'], params['KLEV'], params['NBLOCKS'])
     }
+    program_data = {
+        'cloudscexp2': {
+            'PT': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PQ': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_u': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_v': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_T': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_o3': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_q': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_a': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_cml_cld': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_u': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_v': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_T': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_o3': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_q': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_a': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_tmp_cld': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_u': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_v': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_T': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_o3': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_q': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_a': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'tendency_loc_cld': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PVFA': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PVFL': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PVFI': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PDYNA': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PDYNL': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PDYNI': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PHRSW': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PHRLW': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PVERVEL': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PAP': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PAPH': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PLSM': (params['KLON'], params['NBLOCKS']),
+            'LDCUM': (params['KLON'], params['NBLOCKS']),
+            'KTYPE': (params['KLON'], params['NBLOCKS']),
+            'PLU': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PLUDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PSNDE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PMFU': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PMFD': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PA': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PCLV': (params['KLON'], params['KLEV'], params['NCLV'], params['NBLOCKS']),
+            'PSUPSAT': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PLCRIT_AER': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PICRIT_AER': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PRE_ICE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PCCN': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PNICE': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PCOVPTOT': (params['KLON'], params['KLEV'], params['NBLOCKS']),
+            'PRAINFRAC_TOPRFZ': (params['KLON'], params['NBLOCKS']),
+            'PFSQLF': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFSQIF': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFCQLNG': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFCQNNG': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFSQRF': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFSQSF': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFCQRNG': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFCQSNG': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFSQLTUR': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFSQITUR': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFPLSL': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFPLSN': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFHPSL': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PFHPSN': (params['KLON'], params['KLEV']+1, params['NBLOCKS']),
+            'PEXTRA': (params['KLON'], params['KLEV'], params['KFLDX'], params['NBLOCKS']),
+            }
+    }
+    if program is not None and program in program_data:
+        data = copy.deepcopy(default_data)
+        logger.debug(f"Update data with program specific data for {program}")
+        data.update(program_data[program])
+        return data
+    return default_data
 
 
 def get_iteration_ranges(params: ParametersProvider, program: str) -> List[Dict]:
@@ -595,3 +677,16 @@ def set_input_pattern(
             logger.error(f"Pattern {pattern} does not exists for {program}")
     else:
         logger.error(f"Unknown pattern {pattern}")
+
+
+def is_integer(name: str) -> bool:
+    """
+    Return whether the given name should be treated as a integer variable
+
+    :param name: The name to check
+    :type name: str
+    :return: True if to be treated as an integer
+    :rtype: bool
+    """
+    integer_names = ['LDCUM', 'LDCUM_NF', 'LDCUM_NFS']
+    return name in integer_names
