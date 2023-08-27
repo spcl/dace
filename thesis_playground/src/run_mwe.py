@@ -27,6 +27,7 @@ def main():
     parser.add_argument('--change-stride', action='store_true', default=False, help="change stride")
     parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
                         help='Use DaCes auto_opt instead of mine')
+    parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -41,6 +42,8 @@ def main():
 
     add_args['k_caching'] = args.k_caching
     add_args['change_stride'] = args.change_stride
+    if args.no_outer_loop_first:
+        add_args['outside_first'] = False
 
     if args.cache:
         use_cache(args.program)
