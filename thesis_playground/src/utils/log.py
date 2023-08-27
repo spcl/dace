@@ -23,7 +23,7 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
     root_logger.handlers = []
-    format = logging.Formatter("%(levelname)s:%(asctime)s:%(name)s.%(funcName)s:%(message)s")
+    format = logging.Formatter("%(levelname)s:%(asctime)s:%(name)s.%(funcName)s: %(message)s")
     stdout_handler = logging.StreamHandler()
     stdout_handler.setFormatter(format)
     stdout_handler.setLevel(level)

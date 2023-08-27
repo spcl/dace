@@ -3,7 +3,8 @@ from argparse import ArgumentParser
 from utils.log import setup_logging
 from utils.paths import get_default_sdfg_file
 from utils.general import use_cache, enable_debug_flags, remove_build_folder, reset_graph_files
-from utils.execute_dace import RunConfig, run_program, test_program
+from utils.execute_dace import run_program, test_program
+from utils.run_config import RunConfig
 from execute.parameters import ParametersProvider
 
 

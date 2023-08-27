@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 
 import dace
+from utils.log import setup_logging
 from execute.parameters import ParametersProvider
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import reset_graph_files, optimize_sdfg
@@ -19,11 +20,16 @@ def main():
                         'default')
     parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
     parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
+    parser.add_argument('--log-file', default=None, help='Path to logfile with level DEBUG')
     add_cloudsc_size_arguments(parser)
     args = parser.parse_args()
 
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
     device = device_map[args.device]
+    if args.log_file is not None:
+        setup_logging(full_logfile=args.log_file)
+    else:
+        setup_logging()
 
     verbose_name = args.program
     if args.verbose_name is not None:

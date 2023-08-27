@@ -25,11 +25,14 @@ from typing import List, Union, Tuple, Optional, Callable
 import warnings
 from sympy import S
 import sympy
+import logging
 
 import dace.libraries.standard as stdlib
 
 from collections import defaultdict
 from itertools import chain
+
+logger = logging.getLogger(__name__)
 
 
 @make_properties
@@ -216,6 +219,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         if len(maps) <= 1:
             return False
 
+        logger.debug("Check for maps %s", maps)
         # 1.2 check whether all maps are the same
         base_map = maps[0]
         for map in maps:
@@ -224,11 +228,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             if not all([p1 == p2 for (p1, p2) in zip(map.params, base_map.params)]):
                 return False
             if not self._map_ranges_compatible(map, base_map):
+                logger.debug("Rejected: Map ranges are not compatible")
                 return False
 
         # 1.3 check whether all map entries have the same schedule
         schedule = map_entries[0].schedule
         if not all([entry.schedule == schedule for entry in map_entries]):
+            logger.debug("Rejected: Map schedules differ. Schedules: %s", {entry.map: entry.schedule for entry in
+                                                                           map_entries})
             return False
 
         # 2. check intermediate feasiblility
@@ -276,6 +283,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     in_in_edge = graph.memlet_path(in_edge)[-2]
                     subset_params = set([str(s) for s in in_in_edge.data.subset.free_symbols])
                     if any([p not in subset_params for p in in_edge.src.map.params]):
+                        logger.debug("Rejected: Free symbol not defined in map parameters")
                         return False
                 if in_edge.src in map_exits:
                     for iedge in graph.in_edges(in_edge.src):
@@ -341,6 +349,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 differences.insert(idx, 0)
                             self.arrays_as_circular_buffer[node.data] = differences
                     else:
+                        logger.debug("Rejected: subsets don't cover each other")
                         return False
             if node.data in self.arrays_as_circular_buffer:
                 if not self._check_memlet_sizes_for_circular_buffer(graph, node.data, self.arrays_as_circular_buffer):
@@ -480,6 +489,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 warnings.warn("SubgraphFusion::Disjoint Accesses found!")
                                 return False
 
+        logger.debug("Can be applied successful")
         return True
 
     @staticmethod
@@ -1016,6 +1026,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             print("SubgraphFusion::In_nodes", in_nodes)
             print("SubgraphFusion::Out_nodes", out_nodes)
             print("SubgraphFusion::Intermediate_nodes", intermediate_nodes)
+        logger.debug("in nodes: %s, out_nodes: %s, intermediate nodes: %s, circular buffers: %s", in_nodes, out_nodes,
+                     intermediate_nodes, self.arrays_as_circular_buffer)
 
         # all maps are assumed to have the same params and range in order
         global_map = nodes.Map(label="outer_fused", params=maps[0].params, ndrange=subsets.Range(map_base_ranges))
@@ -1026,9 +1038,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # as maps are split into outer and inner, indices should only have one entry as we are fusing one range
             # dimension only
             for idx in range(len(map_entry.map.range)):
-                # assert len(map_entry.map.range.ranges) == 1
-                # assert len(map_entry.map.params) == 1
-                # assert len(global_map.range.ranges) == 1
                 # can_be_applied checks that all params of all maps to merge are the same -> we can use the params from
                 # the current map
                 map_start = map_entry.map.range.ranges[idx][0]
@@ -1046,7 +1055,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         edge.condition = CodeBlock(condition_str)
                 if edge.condition.as_string != '1':
                     self.add_condition_to_map(graph, sdfg, map_entry, edge)
-
 
         schedule = map_entries[0].schedule
         global_map_entry.schedule = schedule
@@ -1067,6 +1075,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         if self.debug:
             print("SubgraphFusion:: {Intermediate_node: subgraph_contains_data} dict")
             print(subgraph_contains_data)
+        logger.debug("subgraph conatins data of: %s", subgraph_contains_data)
 
         self.init_maps = {}
         if self.change_init_outside:
@@ -1075,6 +1084,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if init_map is not None:
                     self.init_maps[node.data] = init_map
                     subgraph_contains_data[node.data] = True
+        logger.debug("subgraph conatins data of, after checking for init: %s", subgraph_contains_data)
 
         inconnectors_dict = {}
         # Dict for saving incoming nodes and their assigned connectors
@@ -1327,6 +1337,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_offset = desc.offset
 
                 # compress original shape
+                logger.debug("Change shape of %s from %s to %s", data_name, desc.shape, new_data_shape)
                 change_data(desc,
                             shape=new_data_shape,
                             strides=new_data_strides,

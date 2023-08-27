@@ -3,7 +3,8 @@ import os
 import json
 import numpy as np
 
-from utils.execute_dace import RunConfig, gen_ncu_report, profile_program, compile_for_profile
+from utils.execute_dace import gen_ncu_report, profile_program, compile_for_profile
+from utils.run_config import RunConfig
 from utils.paths import get_vert_loops_dir
 from utils.general import use_cache, disable_cache, insert_heap_size_limit, get_programs_data, remove_build_folder
 from utils.print import print_with_time

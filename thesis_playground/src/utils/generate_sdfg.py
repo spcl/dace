@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 import logging
 import dace
 from dace.sdfg import nodes, SDFG
@@ -7,8 +7,8 @@ from dace.dtypes import ScheduleType
 
 from utils.general import replace_symbols_by_values
 from utils.paths import get_basic_sdfg_dir
-from utils.general import get_programs_data, read_source, get_sdfg
-from utils.execute_dace import RunConfig
+from utils.general import get_programs_data, read_source, get_sdfg, save_graph
+from utils.run_config import RunConfig
 from execute.parameters import ParametersProvider
 from execute.my_auto_opt import auto_optimize_phase_1, auto_optimize_phase_2, change_strides
 
@@ -61,8 +61,13 @@ def generate_basic_sdfg(
     :rtype: SDFG
     """
     programs = get_programs_data()['programs']
+    if program in programs:
+        program_name = programs[program]
+    else:
+        program_name = program
+
+    logger.debug(f"program name: {program_name}")
     fsource = read_source(program)
-    program_name = programs[program]
     sdfg = get_sdfg(fsource, program_name)
     add_args = {}
     params_dict = params.get_dict()
@@ -73,7 +78,6 @@ def generate_basic_sdfg(
     add_args['outside_first'] = run_config.outside_loop_first
     logger.debug(f"Optimise SDFG for phase 1 (no device) ignoring {params_to_ignore}")
     replace_symbols_by_values(sdfg, {
-        'NCLDTOP': '15',
         'NCLV': '10',
         'NCLDQI': '3',
         'NCLDQL': '4',
@@ -132,27 +136,32 @@ def get_optimised_sdfg(
         run_config: RunConfig,
         params: ParametersProvider,
         params_to_ignore: List[str] = [],
-        instrument: bool = True
+        instrument: bool = True,
+        verbose_name: Optional[str] = None
         ) -> SDFG:
     logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
-    basic_sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
+    sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
 
     add_args = {}
     if run_config.specialise_symbols:
         add_args['symbols'] = params.get_dict()
     add_args['k_caching'] = run_config.k_caching
-    add_args['outside_first'] = run_config.outside_loop_first
     add_args['move_assignments_outside'] = run_config.move_assignment_outside
+    add_args['program'] = verbose_name
     logger.debug("Continue optimisation after getting basic SDFG")
-    sdfg = auto_optimize_phase_2(
-        basic_sdfg,
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "before_phase_2")
+    auto_optimize_phase_2(
+        sdfg,
         run_config.device,
         **add_args)
 
     if run_config.change_stride:
         schedule = ScheduleType.GPU_Device if run_config.device == dace.DeviceType.GPU else ScheduleType.Default
         logger.info("Change strides")
-        sdfg = change_strides(sdfg, ('NBLOCKS', ), params.get_dict(), schedule)
+        sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_change_stride")
 
     if run_config.device == dace.DeviceType.GPU:
         logger.info("Set gpu block size to (32, 1, 1)")
@@ -161,6 +170,8 @@ def get_optimised_sdfg(
                 if isinstance(node, nodes.MapEntry):
                     logger.debug(f"Set block size for {node}")
                     node.map.gpu_block_size = (32, 1, 1)
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_set_gpu_block_size")
 
     if instrument:
         logger.debug("Instrument SDFG")

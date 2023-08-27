@@ -1,11 +1,10 @@
-from typing import Dict, List, Optional, Set, Tuple
-import copy
+from typing import Dict, List, Optional
 import sympy
 import logging
 
 import dace
 from dace import dtypes
-from dace.data import _prod, Array, Scalar
+from dace.data import Array, Scalar
 from dace.sdfg import utils as sdutil
 from dace.sdfg import SDFG, nodes, infer_types, SDFGState
 from dace.transformation.optimizer import Optimizer
@@ -16,10 +15,9 @@ from dace.transformation.auto.auto_optimize import greedy_fuse, tile_wcrs, set_f
 
 # Transformations
 from dace.dtypes import ScheduleType
-from dace.sdfg.nodes import MapEntry, AccessNode
-from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapFusion, MapToForLoop, \
+from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, MapInterchange, MapToForLoop, \
                                          MapExpansion
-from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf, SwapLoopOrder
+from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf
 from dace.transformation import helpers as xfh
 
 from utils.general import save_graph
@@ -116,9 +114,29 @@ def auto_optimize_phase_2(sdfg: SDFG,
                           validate_all: bool = True,
                           symbols: Dict[str, int] = None,
                           k_caching: bool = False,
-                          outside_first: bool = True,
                           move_assignments_outside: bool = True
                           ) -> SDFG:
+    """
+    Perform optimisations which are device/architectrie specific. Works inplace on the given SDFG
+
+    :param sdfg: The SDFG to optimise
+    :type sdfg: SDFG
+    :param device: The device to optimise for
+    :type device: dtypes.DeviceType
+    :param program: The name of the program. If set will save intermediate graphs using this name, defaults to None
+    :type program: str, optional
+    :param validate: If True, validates the SDFG after all transformations have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
+    :type validate_all: bool, optional
+    :param symbols: Dictionary of symbols to specialise and their value, defaults to None
+    :type symbols: Dict[str, int], optional
+    :param k_caching: If K-caching should be applied, defaults to False
+    :type k_caching: bool, optional
+    :param move_assignments_outside: If MoveAssignmentsOutsideIf transformation should be applied, defaults to True
+    :type move_assignments_outside: bool, optional
+    """
+    logger.debug(f"Program: {program}")
     if symbols:
         specialise_symbols(sdfg, symbols)
     if k_caching:
@@ -204,8 +222,6 @@ def auto_optimize_phase_2(sdfg: SDFG,
     if validate or validate_all:
         sdfg.validate()
 
-    return sdfg
-
 
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
@@ -256,8 +272,7 @@ def auto_optimize(sdfg: SDFG,
                         node.sdfg.remove_symbol(symbol)
 
     auto_optimize_phase_1(sdfg, program, validate, validate_all, outside_first, symbols)
-    return auto_optimize_phase_2(sdfg, device, program, validate, validate_all, symbols, k_caching, outside_first,
-                                  move_assignments_outside)
+    auto_optimize_phase_2(sdfg, device, program, validate, validate_all, symbols, k_caching, move_assignments_outside)
 
 
 def specialise_symbols(sdfg: dace.SDFG, symbols: Dict[str, int]):
@@ -354,14 +369,27 @@ def loop_to_map_outside_first(sdfg: SDFG,
     return sdfg
 
 
-def make_klev_outermost_map(sdfg: SDFG, symbols: Dict[str, int]):
+def make_outermost_map(sdfg: SDFG, symbols: Dict[str, int], outermost_variable: str):
+    """
+    Swap maps as often as possible to make sure one is as far outside as possible. Assumes that any maps to be swapped
+    are expanded and thus have only one range.
+
+    :param sdfg: The SDFG to act upon
+    :type sdfg: SDFG
+    :param symbols: Symbols dictionary
+    :type symbols: Dict[str, int]
+    :param outermost_variable: The name of the variable who is the end of iteration range of the maps to be moved
+    outside. Must be in the symbols dict passed.
+    :type outermost_variable: str
+    """
     transformed = True
     number_transformed = 0
     while transformed:
         transformations = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapInterchange])]
         transformed = False
         for xform in transformations:
-            if xform.inner_map_entry.range.ranges[0][1] == symbols['KLEV']:
+            if (xform.inner_map_entry.range.ranges[0][1] == symbols[outermost_variable] or
+                    xform.inner_map_entry.range.ranges[0][1] == outermost_variable):
                 xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
                 transformed = True
                 number_transformed += 1
@@ -414,20 +442,29 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
     return transformation_class
 
 
-def make_klev_maps_sequential(sdfg: SDFG, symbols: Dict[str, int]):
-    # Leads to invalid SDFG with cycles (but which are empty)???
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.MapEntry):
-            if node.map.range.ranges[0][1] == symbols['KLEV'] or str(node.map.range.ranges[0][1]) == 'KLEV':
-                node.map.schedule = dtypes.ScheduleType.Sequential
-
-
 def k_caching_prototype_v1(sdfg: SDFG,
                            validate: bool,
                            validate_all: bool,
                            device: dace.DeviceType,
                            symbols: Dict[str, int],
                            program: Optional[str] = None):
+    """
+    Performs K-caching on the given SDFG by mergen all KLEV loops into one and shrink any intermediate arrays.
+
+    :param sdfg: The SDFG to act upon
+    :type sdfg: SDFG
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
+    :type validate_all: bool, optional
+    :param device: The device to optimise fort
+    :type device: dace.DeviceType
+    :param symbols: Dictionary of symbols to specialise and their valeus
+    :type symbols: Dict[str, int]
+    :param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
+    :type program: Optional[str], optional
+    """
     # Force KLEV loop with vertical dependency into a map
     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
     if len(xforms) == 1:
@@ -436,16 +473,7 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_force_klev_to_map")
 
-    make_klev_outermost_map(sdfg, symbols)
-    if program is not None:
-        save_graph(sdfg, program, "after_make_klev_outermost")
-
-    # Before MapCollapse first to allow MapFusion to work correctly
-    # sdfg.apply_transformations_repeated([MapCollapse])
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_collapse")
-
-    # Apply TrivialMapElimination before Fusion to avoid problems with maps overt KLON=1
+    # Apply TrivialMapElimination before Fusion to avoid problems with maps over KLON=1
     sdfg.apply_transformations_repeated([TrivialMapElimination])
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
@@ -454,10 +482,16 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
-    # sdfg.apply_transformations_repeated([MapExpansion])
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_expansion")
+    # Map expansion is required to make sure that klev is outermost afterwards to be able to fuse them properly
+    sdfg.apply_transformations_repeated([MapExpansion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_expansion")
 
+    make_outermost_map(sdfg, symbols, 'KLEV')
+    if program is not None:
+        save_graph(sdfg, program, "after_make_klev_outermost")
+
+    # Fuse maps to create one big KLEV-map
     greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
         'max_difference_start': 1,
         'max_difference_end': 1,
@@ -467,12 +501,6 @@ def k_caching_prototype_v1(sdfg: SDFG,
 
     if program is not None:
         save_graph(sdfg, program, "after_greedy_fuse")
-
-    # sdfg.apply_transformations_repeated([map_fusion_merge_different_ranges(MapFusion, 1, 1)])
-    # apply_transformation_stepwise(sdfg, [MapFusion], program, "map_fusion")
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_map_fusion")
-
     sdfg.simplify()
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
@@ -484,20 +512,34 @@ def k_caching_prototype_v1(sdfg: SDFG,
         continue_search = False
         for xf in xforms:
             # expect that maps only have one dimension, as we did the MapExpansion transformation before
-            logger.debug("Check if %s is the correct one ", xf)
-            logger.debug("with map entry %s", xf.map_entry)
-            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV']:
+            xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
+            xf_state = xf_sdfg.find_state(xf.state_id)
+            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV'] and len(xf_state.out_edges(xf.map_entry)) > 1:
                 continue_search = True
-                logger.debug("Found the correct map. Apply it to state %s and sdfg %s",
-                             sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id), sdfg.sdfg_list[xf.sdfg_id])
-                xf.apply(sdfg.sdfg_list[xf.sdfg_id].find_state(xf.state_id),
-                         sdfg.sdfg_list[xf.sdfg_id])
+                logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
+                xf.apply(xf_state, xf_sdfg)
+                if program is not None:
+                    save_graph(sdfg, program, "after_map_to_for_loop")
                 break
-        if program is not None:
-            save_graph(sdfg, program, "after_map_to_for_loop")
 
 
-def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[str, int], schedule: ScheduleType) -> SDFG:
+def change_strides(
+        sdfg: dace.SDFG,
+        stride_one_values: List[str],
+        schedule: ScheduleType) -> SDFG:
+    """
+    Change the strides of the arrays on the given SDFG such that the given dimension has stride 1. Returns a new SDFG.
+
+    :param sdfg: The input SDFG
+    :type sdfg: dace.SDFG
+    :param stride_one_values: Length of the dimension whose stride should be set to one. Expects that each array has
+    only one dimension whose length is in this list. Expects that list contains name of symbols
+    :type stride_one_values: List[str]
+    :param schedule: Schedule to use to copy the arrays
+    :type schedule: ScheduleType
+    :return: SDFG with changed strides
+    :rtype: SDFG
+    """
     # Create new SDFG and copy constants and symbols
     original_name = sdfg.name
     sdfg.name = "changed_strides"
@@ -517,7 +559,8 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
     for name, desc in sdfg.arrays.items():
         if not desc.transient:
             if isinstance(desc, Array):
-                new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage, desc.location, desc.transient, desc.strides,
+                new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage,
+                                   desc.location, desc.transient, desc.strides,
                                    desc.offset)
             elif isinstance(desc, Scalar):
                 new_sdfg.add_scalar(name, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
@@ -549,7 +592,6 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
         if stride_one_idx is not None:
             new_order[name] = [stride_one_idx]
 
-            # Do I need to check if it is fortran?
             new_strides = list(desc.strides)
             new_strides[stride_one_idx] = sympy.S.One
 
@@ -636,88 +678,3 @@ def change_strides(sdfg: dace.SDFG, stride_one_values: List[str], symbols: Dict[
                                                      memlet=Memlet(data=name))
 
     return new_sdfg
-
-
-# Copied and apdated from the microbenchmark my Alex and Lex
-def change_strides_old(sdfg: dace.SDFG, klev_vals: Tuple[int], symbols: Dict[str, int],
-                   syms_to_add: Set[str] = None) -> Dict[str, int]:
-
-    permutation = dict()
-    syms_to_add = syms_to_add or set()
-
-    for name, desc in sdfg.arrays.items():
-
-        # We target arrays that have KLEV or KLEV + 1 in their shape
-        shape_str = [str(s) for s in desc.shape]
-        klev_idx = None
-        divisor = None
-        for v in klev_vals:
-            if str(v) in shape_str:
-                klev_idx = shape_str.index(str(v))
-                divisor = v
-                break
-        if klev_idx is None:
-            continue
-
-        permutation[name] = klev_idx
-
-        is_fortran = (desc.strides[0] == 1)
-
-        # Update the strides
-        new_strides = list(desc.strides)
-        if is_fortran:
-            for idx in range(klev_idx + 1, len(desc.shape)):
-                new_strides[idx] /= divisor
-        else:
-            for idx in range(klev_idx):
-                new_strides[idx] /= divisor
-        new_strides[klev_idx] = _prod(desc.shape) / divisor
-        desc.strides = tuple(new_strides)
-
-        # Go to nested SDFGs
-        # Assuming only 1 level of nested SDFG
-        for sd in sdfg.all_sdfgs_recursive():
-
-            if sd is sdfg:
-                continue
-
-            assert sd.parent_sdfg is sdfg
-
-            for s in syms_to_add:
-                if s not in sd.parent_nsdfg_node.symbol_mapping:
-                    sd.parent_nsdfg_node.symbol_mapping[s] = s
-                    sd.add_symbol(s, dace.int32)
-
-            for nname, ndesc in sd.arrays.items():
-
-                if isinstance(ndesc, dace.data.Scalar):
-                    continue
-                if ndesc.transient:
-                    continue
-
-                nsdfg_node = sd.parent_nsdfg_node
-                is_input = True
-                edges = list(sd.parent.in_edges_by_connector(nsdfg_node, nname))
-                if len(edges) == 0:
-                    is_input = False
-                    edges = list(sd.parent.out_edges_by_connector(nsdfg_node, nname))
-                    if len(edges) == 0:
-                        raise ValueError
-                edge = edges[0]
-                if is_input:
-                    src = sd.parent.memlet_path(edge)[0].src
-                else:
-                    src = sd.parent.memlet_path(edge)[-1].dst
-                assert isinstance(src, dace.nodes.AccessNode)
-                if src.data not in sdfg.arrays:
-                    continue
-
-                subset = edge.data.subset
-                squeezed = copy.deepcopy(subset)
-                rem_idx = squeezed.squeeze()
-                assert len(squeezed) == len(ndesc.shape)
-                # inv_sqz_idx = [i for i in range(len(desc.shape)) if i not in sqz_idx]
-                nnew_strides = [new_strides[i] for i in rem_idx]
-                ndesc.strides = tuple(nnew_strides)
-
-    return permutation

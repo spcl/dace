@@ -536,7 +536,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     if change_stride:
         schedule = ScheduleType.GPU_Device if device == dace.DeviceType.GPU else ScheduleType.Default
         logger.info("Change strides")
-        sdfg = change_strides(sdfg, ('NBLOCKS', ), symbols, schedule)
+        sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_strides")
 
