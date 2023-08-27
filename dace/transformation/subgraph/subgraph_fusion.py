@@ -186,9 +186,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             diff_end_map = out_range.ranges[index][1] - in_range.ranges[index][1]
             if dace.symbolic.issymbolic(diff_end_map):
                 diff_end_map = diff_end_map.evalf(subs=sdfg.constants)
-            if (abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng):
+            if ((abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng) or
+                    dace.symbolic.issymbolic(diff_start_rng) != dace.symbolic.issymbolic(diff_end_rng)):
                 return None
             else:
+                logger.debug("diff_start_rng: %s, diff_end_rng: %s", diff_start_rng, diff_end_rng)
                 differences[index] = max(diff_start_rng, diff_end_rng)
 
         return differences
