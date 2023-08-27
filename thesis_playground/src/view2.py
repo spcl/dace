@@ -2,8 +2,9 @@ from argparse import ArgumentParser
 import os
 import numpy as np
 import shutil
+import re
 
-from utils.paths import get_results_2_folder, get_experiments_2_file
+from utils.paths import get_results_2_folder, get_experiments_2_file, get_results_2_logdir
 from utils.experiments2 import get_experiment_list_df
 from utils.print import print_dataframe
 from measurements.data2 import get_data_wideformat, average_data, add_column_if_not_exist
@@ -54,6 +55,18 @@ def action_remove_experiment(args):
                 shutil.rmtree(exp_dir)
         experiments = get_experiment_list_df().drop(int(experiment_id), axis='index')
         experiments.to_csv(get_experiments_2_file())
+        # TODO: Does not seem to work
+        for node in os.listdir(get_results_2_logdir()):
+            for experiment in os.listdir(get_results_2_logdir(node=node)):
+                for logfile in os.listdir(get_results_2_logdir(node=node, profile_name=experiment)):
+                    match = re.match(r"([0-9]*)-date-[0-9_]*.log", logfile)
+                    if match is not None:
+                        experiment_ids_log = match.group(1).split('-')
+                        if experiment_ids_log in experiment_ids:
+                            full_logfile_path = os.path.join(get_results_2_logdir(node=node, profile_name=experiment),
+                                                             logfile)
+                            print(f"Remove {full_logfile_path}")
+                            os.path.remove(full_logfile_path)
 
 
 def main():
