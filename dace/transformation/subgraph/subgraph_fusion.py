@@ -1488,7 +1488,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for dname, accesses in filtered_intermediate_data.items():
 
             # Checking if data are contained in the subgraph
-            if not subgraph_contains_data[dname]:
+            if not subgraph_contains_data[dname] and False:
                 # Find existing outer access nodes
                 inode, onode = None, None
                 for e in graph.in_edges(global_map_entry):
