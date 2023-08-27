@@ -24,7 +24,7 @@ def action_print(args):
             'change_strides': ('change strides', None),
     }
 
-    df = get_data_wideformat(args.experiment_ids).dropna()
+    df = get_data_wideformat(args.experiment_ids)
     df = average_data(df).reset_index().join(get_experiment_list_df(), on='experiment id')
     add_column_if_not_exist(df, [('runtime', -1), ('Total time', -1), ('measured bytes', -1)])
     print_dataframe(columns, df.reset_index(), args.tablefmt)
