@@ -139,7 +139,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         return check
 
     def _can_intermediate_array_be_transformed(
-        self, graph: SDFGState, node: nodes.AccessNode,
+            self, sdfg: SDFG, graph: SDFGState, node: nodes.AccessNode,
         lower_subset: subsets.Range, union_upper: subsets.Range
     ) -> Optional[List[dace.symbolic.symbol]]:
         """
@@ -175,13 +175,17 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         for index, (lower_rng, upper_rng) in enumerate(zip(lower_subset, union_upper)):
             # Compute difference, in what is not covered
             diff_start_rng = upper_rng[0] - lower_rng[0]
+            if dace.symbolic.issymbolic(diff_start_rng):
+                diff_start_rng = diff_start_rng.evalf(subs=sdfg.constants)
             diff_end_rng = lower_rng[1] - upper_rng[1]
+            if dace.symbolic.issymbolic(diff_end_rng):
+                diff_end_rng = diff_end_rng.evalf(subs=sdfg.constants)
             diff_start_map = out_range.ranges[index][0] - in_range.ranges[index][0]
+            if dace.symbolic.issymbolic(diff_start_map):
+                diff_start_map = diff_start_map.evalf(subs=sdfg.constants)
             diff_end_map = out_range.ranges[index][1] - in_range.ranges[index][1]
-            if isinstance(diff_start_map, sympy.core.expr.Expr):
-                diff_start_map = diff_start_map.evalf()
-            if isinstance(diff_end_map, sympy.core.expr.Expr):
-                diff_end_map = diff_end_map.evalf()
+            if dace.symbolic.issymbolic(diff_end_map):
+                diff_end_map = diff_end_map.evalf(subs=sdfg.constants)
             if (abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng):
                 return None
             else:
@@ -334,7 +338,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
                 if not union_upper.covers(lower_subset):
-                    differences = self._can_intermediate_array_be_transformed(graph, node, lower_subset, union_upper)
+                    differences = self._can_intermediate_array_be_transformed(sdfg, graph, node, lower_subset, union_upper)
                     if differences is not None:
                         if node.data in self.arrays_as_circular_buffer:
                             for index, diff in differences:
