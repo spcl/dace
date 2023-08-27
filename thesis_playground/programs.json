@@ -35,7 +35,8 @@
         "cloudsc_vert_loop_10": "vert_loop_10",
         "microbenchmark_v1": "map_loop_1",
         "microbenchmark_v3": "map_loop_3",
-        "mwe_array_order": "mwe_array_order"
+        "mwe_array_order": "mwe_array_order",
+        "cloudscexp2": "cloudscouter"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
@@ -90,7 +91,8 @@
                                 "NBLOCKS"],
         "microbenchmark_v1": ["KLEV", "NBLOCKS"],
         "microbenchmark_v3": ["KLEV", "NBLOCKS"],
-        "mwe_array_order": ["KLON", "KLEV", "NBLOCKS", "NCLV", "NCLDQL"]
+        "mwe_array_order": ["KLON", "KLEV", "NBLOCKS", "NCLV", "NCLDQL"],
+        "cloudscexp2": ["KLON", "KLEV", "NBLOCKS", "NCLDTOP", "NSSOPT"]
     },
     "program_inputs": {
         "cloudsc_class1_658": ["PTSPHY", "tendency_tmp_t", "tendency_tmp_q", "tendency_tmp_a", "PT", "PQ", "PA"],
@@ -146,7 +148,16 @@
                                 "PAPH_N", "PSUPSAT_N", "PT_N", "TENDENCY_TMP_T_N", "TENDENCY_TMP_CLD_N", "PCLV_N"],
         "microbenchmark_v1": ["INPUT"],
         "microbenchmark_v3": ["INPUT_F"],
-        "mwe_array_order": ["INP1", "INP3"]
+        "mwe_array_order": ["INP1", "INP3"],
+        "cloudscexp2": ["PTSPHY", "PT", "PQ", "tendency_cml_u","tendency_cml_v","tendency_cml_T",
+            "tendency_cml_o3","tendency_cml_q","tendency_cml_a", "tendency_cml_cld",
+            "tendency_tmp_u","tendency_tmp_v","tendency_tmp_T", "tendency_tmp_o3","tendency_tmp_q","tendency_tmp_a",
+            "tendency_tmp_cld", "tendency_loc_u","tendency_loc_v","tendency_loc_T",
+            "tendency_loc_o3","tendency_loc_q","tendency_loc_a", "tendency_loc_cld", "PVFA", "PVFL", "PVFI", "PDYNA",
+            "PDYNL", "PDYNI",  "PHRSW",    "PHRLW", "PVERVEL",  "PAP",      "PAPH", "PLSM",     "LDCUM",    "KTYPE",
+            "PLU",      "PLUDE",    "PSNDE",    "PMFU",     "PMFD", "PA", "PCLV",
+            "PSUPSAT", "PLCRIT_AER","PICRIT_AER", "PRE_ICE", "PCCN",     "PNICE",
+            "R2ES", "R3LES", "R3IES", "R4LES", "R4IES", "R5LES", "R5IES"]
 
     },
     "program_outputs": {
@@ -185,6 +196,12 @@
         "cloudsc_vert_loop_10": ["ZSOLQA_N", "PLUDE"],
         "microbenchmark_v1": ["OUTPUT"],
         "microbenchmark_v3": ["OUTPUT_F"],
-        "mwe_array_order": ["OUT1"]
+        "mwe_array_order": ["OUT1"], 
+        "cloudscexp2": ["PCOVPTOT", "PRAINFRAC_TOPRFZ", "PFSQLF",   "PFSQIF",  "PFCQNNG",  "PFCQLNG", "PFSQRF",
+           "PFSQSF",  "PFCQRNG",  "PFCQSNG", "PFSQLTUR", "PFSQITUR",  "PFPLSL",   "PFPLSN",   "PFHPSL",   "PFHPSN",
+            "PEXTRA"]
+    },
+    "program_true_flags": {
+        "cloudscexp2": ["LDMAINCALL", "LDSLPHY", "LAERLIQAUTOCP", "LAERLIQAUTOCPB", "LAERLIQAUTOLSP", "LAERLIQCOLL", "LAERICESED", "LAERICEAUTO", "LCLDEXTRA", "LCLDBUDGET"]
     }
 }

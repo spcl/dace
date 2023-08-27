@@ -26,7 +26,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
 
-from execute.data import ParametersProvider, get_iteration_ranges, get_data
+from execute.data import ParametersProvider, get_iteration_ranges, get_data, is_integer
 from utils.paths import get_dacecache, get_verbose_graphs_dir
 
 logger = logging.getLogger(__name__)
@@ -184,7 +184,7 @@ def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvide
     :return: Dictionary with the input data
     :rtype: Dict[str, Union[Number, np.ndarray]]
     """
-    data = get_data(params)
+    data = get_data(params, program)
     programs_data = get_programs_data()
     inp_data = dict()
     for p in programs_data['program_parameters'][program]:
@@ -194,11 +194,16 @@ def get_inputs(program: str, rng: np.random.Generator, params: ParametersProvide
         if shape == (0, ):  # Scalar
             inp_data[inp] = rng.random()
         else:
-            if inp in ['LDCUM', 'LDCUM_NF', 'LDCUM_NFS']:
+            if is_integer(inp):
                 # Random ints in range [0,1]
+                logger.debug(f"Generate input integer data for {inp} of shape {shape}")
                 inp_data[inp] = np.asfortranarray(rng.integers(0, 2, shape, dtype=np.int32))
             else:
+                logger.debug(f"Generate input float data for {inp} of shape {shape}")
                 inp_data[inp] = np.asfortranarray(rng.random(shape))
+    if program in programs_data['program_true_flags']:
+        for flag in programs_data['program_true_flags'][program]:
+            inp_data[flag] = np.int32(np.bool_(True))
     return inp_data
 
 
@@ -217,7 +222,7 @@ def get_outputs(program: str, rng: np.random.Generator, params: ParametersProvid
     :return: Dictionary with the output data
     :rtype: Dict[str, Union[Number, np.ndarray]]
     """
-    data = get_data(params)
+    data = get_data(params, program)
     programs_data = get_programs_data()
     out_data = dict()
     for out in programs_data['program_outputs'][program]:
@@ -225,6 +230,7 @@ def get_outputs(program: str, rng: np.random.Generator, params: ParametersProvid
         if shape == (0, ):  # Scalar
             raise NotImplementedError
         else:
+            logger.debug(f"Generate output float data for {out} of shape {shape}")
             out_data[out] = np.asfortranarray(rng.random(shape))
             # out_data[out] = np.asfortranarray(np.zeros(shape))
     return out_data
@@ -247,7 +253,8 @@ def get_programs_data(not_working: List[str] = ['cloudsc_class2_1001', 'mwe_test
 
     for program in not_working:
         for dict_key in programs_data:
-            del programs_data[dict_key][program]
+            if program in programs_data[dict_key]:
+                del programs_data[dict_key][program]
     return programs_data
 
 
@@ -370,8 +377,8 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
                     output_b[key][selection],
                     atol=10e-5)
             if not this_same:
-                logger.info(f"{key} is not the same for range {selection}")
-                print_compare_matrix(output_a[key][selection], output_b[key][selection], selection)
+                logger.error(f"{key} is not the same for range {selection}")
+                logger.error("\n"+print_compare_matrix(output_a[key][selection], output_b[key][selection], selection))
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
@@ -416,11 +423,12 @@ def compare_output_all(output_a: Dict,
             if name_a is not None and name_b is not None:
                 logger.error(f" {name_a} vs. {name_b}")
             np.set_printoptions(precision=4)
-            print_compare_matrix(output_a[key], output_b[key], [slice(0, dim) for dim in output_a[key].shape])
+            logger.error("\n"+print_compare_matrix(output_a[key], output_b[key],
+                         [slice(0, dim) for dim in output_a[key].shape]))
     return same
 
 
-def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: List[slice]):
+def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: List[slice]) -> str:
     """
     Print matrix comparing two matrices
 
@@ -435,14 +443,14 @@ def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: 
     if len(selection) == 0:
         diff = np.isclose(output_a, output_b)
         if diff:
-            logger.error(f"       {output_a:.3f}", end="   ")
+            return f"        {output_a:.3f}"
         else:
-            logger.error(f"{output_a:.3f}!={output_b:.3f}", end="   ")
-            # print(output_a-output_b)
+            return f" {output_a:.3f}!={output_b:.3f}"
     else:
+        compare_str = ""
         for elem_a, elem_b in zip(output_a, output_b):
-            print_compare_matrix(elem_a, elem_b, selection[1:])
-        logger.error()
+            compare_str += print_compare_matrix(elem_a, elem_b, selection[1:])
+        return compare_str + "\n"
 
 
 def enable_debug_flags():

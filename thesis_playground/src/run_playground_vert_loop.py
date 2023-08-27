@@ -240,7 +240,7 @@ def action_compare_fortran(args):
                 if not np.allclose(outputs_py[param], arguments_f[param]):
                     print(f"ERROR: {param} is not the same")
                     shape = outputs_py[param].shape
-                    print_compare_matrix(outputs_py[param], arguments_f[param], [slice(end) for end in shape])
+                    print(print_compare_matrix(outputs_py[param], arguments_f[param], [slice(end) for end in shape]))
 
 
 def main():
