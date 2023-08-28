@@ -173,9 +173,13 @@ def test_win_get(dtype):
 
     if comm_size < 2:
         raise ValueError("This test is supposed to be run with at least two processes!")
-    
-    sdfg = make_sdfg(dtype)
-    mpi_func = utils.distributed_compile(sdfg, comm_world)
+
+    mpi_func = None
+    for r in range(0, comm_size):
+        if r == comm_rank:
+            sdfg = make_sdfg(dtype)
+            mpi_func = sdfg.compile()
+        comm_world.Barrier()
 
     window_size = 10
     win_buffer = np.full(window_size, comm_rank, dtype=np_dtype)
