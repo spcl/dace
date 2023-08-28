@@ -128,7 +128,7 @@ def test_extraneous_goto():
             a[1] = 1
         a[2] = 1
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     assert 'goto' not in sdfg.generate_code()[0].code
 
 
@@ -143,7 +143,7 @@ def test_extraneous_goto_nested():
                 a[1] = 2
         a[2] = 1
 
-    sdfg = tester.to_sdfg()
+    sdfg = tester.to_sdfg(simplify=True)
     assert 'goto' not in sdfg.generate_code()[0].code
 
 
