@@ -1028,7 +1028,7 @@ def _rma_put(pv: ProgramVisitor,
              state: SDFGState,
              window_name: str,
              origin: str,
-             target_rank: Union[str, sp.Expr, Number] = 0):
+             target_rank: Union[str, sp.Expr, Number]):
     """ Initiate a RMA put for the DaCe Program.
 
         :param window_name: The name of the window to be sychronized.
@@ -1100,7 +1100,7 @@ def _rma_get(pv: ProgramVisitor,
              state: SDFGState,
              window_name: str,
              origin: str,
-             target_rank: Union[str, sp.Expr, Number] = 0):
+             target_rank: Union[str, sp.Expr, Number]):
     """ Initiate a RMA get for the DaCe Program.
 
         :param window_name: The name of the window to be sychronized.
@@ -1164,6 +1164,83 @@ def _rma_get(pv: ProgramVisitor,
                    Memlet.from_array(get_name, scal))
     
     return get_name
+
+
+@oprepo.replaces_method('RMA_window', 'Accumulate')
+def _rma_accumulate(pv: ProgramVisitor,
+             sdfg: SDFG,
+             state: SDFGState,
+             window_name: str,
+             origin: str,
+             target_rank: Union[str, sp.Expr, Number],
+             op: str = "MPI_SUM"):
+    """ Initiate a RMA accumulate for the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param origin: The name of origin buffer.
+        :target_rank: A value or scalar of the target rank.
+        :op: The name of MPI reduction
+        :return: Name of the new RMA accumulate descriptor.
+    """
+    from mpi4py import MPI
+    from dace.libraries.mpi.nodes.win_accumulate import Win_accumulate
+
+    accumulate_name = sdfg.add_rma_ops(window_name, "accumulate")
+
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+
+    # check for the last RMA operation
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
+                           if f"{window_name}_fence" in rma_op]
+
+    if len(cur_window_fences) % 2:
+        # if only odd number of fences,
+        # that means we're in a ongoing epoch
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(accumulate_name) - 1]
+    else:
+        # if even number of fences,
+        # that means this operation is either a passive sync. one or a corrupted one
+        raise ValueError("Wrong synchronization of RMA calls!")
+
+    accumulate_node = Win_accumulate(accumulate_name, window_name, op)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+    state.add_edge(last_rma_op_node,
+                   None,
+                   accumulate_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    origin_node = state.add_read(origin)
+    origin_desc = sdfg.arrays[origin]
+    state.add_edge(origin_node,
+                   None,
+                   accumulate_node,
+                   '_inbuffer',
+                   Memlet.from_array(origin, origin_desc))
+
+    _, target_rank_node = _get_int_arg_node(pv, sdfg, state, target_rank)
+    state.add_edge(target_rank_node,
+                   None,
+                   accumulate_node,
+                   '_target_rank',
+                   Memlet.simple(target_rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(accumulate_name, dace.int32, transient=True)
+    wnode = state.add_write(accumulate_name)
+    state.add_edge(accumulate_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(accumulate_name, scal))
+
+    return accumulate_name
 
 
 @oprepo.replaces('dace.comm.Subarray')

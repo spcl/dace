@@ -106,6 +106,39 @@ def test_RMA_get():
 
 
 @pytest.mark.mpi
+def test_RMA_accumulate():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    # sum all rank at rank 0
+    @dace.program
+    def mpi4py_rma_accumulate(win_buf: dace.int32[10], send_buf: dace.int32[10], rank: dace.int32):
+        win = MPI.Win.Create(win_buf, comm=commworld)
+        win.Fence(0)
+        win.Accumulate(send_buf, target_rank=rank, op=MPI.SUM)
+        win.Fence(0)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_rma_accumulate.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    window_size = 10
+    win_buffer = np.full(window_size, rank, dtype=np.int32)
+    win_buffer_ref = np.full(window_size, rank, dtype=np.int32)
+    send_buffer = np.full(window_size, rank, dtype=np.int32)
+
+    func(win_buf=win_buffer, send_buf=send_buffer, rank=0)
+    mpi4py_rma_accumulate.f(win_buf=win_buffer_ref, send_buf=send_buffer, rank=0)
+
+    assert (np.array_equal(win_buffer, win_buffer_ref))
+
+@pytest.mark.mpi
 def test_external_comm_bcast():
 
     from mpi4py import MPI
@@ -416,3 +449,4 @@ if __name__ == "__main__":
     test_alltoall()
     test_RMA_put()
     test_RMA_get()
+    test_RMA_accumulate()
