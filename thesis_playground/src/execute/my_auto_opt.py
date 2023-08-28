@@ -150,8 +150,10 @@ def auto_optimize_phase_2(sdfg: SDFG,
         save_graph(sdfg, program, "after_greedy_fuse")
 
     # Move Loops inside Maps when possible
-    # from dace.transformation.interstate import MoveLoopIntoMap
-    # sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    # from dace.transformation.interstate import MoveLoopIntoMap, StateFusion
+    # sdfg.apply_transformations_repeated([MoveLoopIntoMap, StateFusion, LoopToMap])
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_move_loop_into_map")
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:

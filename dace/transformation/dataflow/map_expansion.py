@@ -47,7 +47,7 @@ class MapExpansion(pm.SingleStateTransformation):
         new_maps = [
             nodes.Map(current_map.label + '_' + str(param), [param],
                       subsets.Range([param_range]),
-                      schedule=dtypes.ScheduleType.Sequential)
+                      schedule=current_map.schedule)
             for param, param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
