@@ -114,10 +114,10 @@ def do_classes(additional_desc: Optional[str] = None) -> List[int]:
 def do_k_caching_ncu(additional_desc: Optional[str] = None, nblock_min: Number = 1.0e5-2, nblock_max: Number = 1.5e5,
                      nblock_step: Number = 5e4, debug_mode: bool = False) -> List[int]:
     program = 'cloudsc_vert_loop_10'
-    test_program(program, RunConfig(k_caching=True, change_stride=True))
-    test_program(program, RunConfig(k_caching=True, change_stride=False))
-    test_program(program, RunConfig(k_caching=False, change_stride=True))
-    test_program(program, RunConfig(k_caching=False, change_stride=False))
+    test_program(program, RunConfig(k_caching=True, change_stride=True), print_values=False)
+    test_program(program, RunConfig(k_caching=True, change_stride=False), print_values=False)
+    test_program(program, RunConfig(k_caching=False, change_stride=True), print_values=False)
+    test_program(program, RunConfig(k_caching=False, change_stride=False), print_values=False)
     params_list_small = []
     profile_configs = []
     for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
@@ -150,10 +150,10 @@ def do_k_caching_ncu(additional_desc: Optional[str] = None, nblock_min: Number =
 def do_k_caching_total(additional_desc: Optional[str] = None, nblock_min: Number = 2e5-2, nblock_max: Number = 4.5e5,
                        nblock_step: Number = 5e4, debug_mode: bool = False) -> List[int]:
     program = 'cloudsc_vert_loop_10'
-    test_program(program, RunConfig(k_caching=True, change_stride=True))
-    test_program(program, RunConfig(k_caching=True, change_stride=False))
-    test_program(program, RunConfig(k_caching=False, change_stride=True))
-    test_program(program, RunConfig(k_caching=False, change_stride=False))
+    test_program(program, RunConfig(k_caching=True, change_stride=True), print_values=False)
+    test_program(program, RunConfig(k_caching=True, change_stride=False), print_values=False)
+    test_program(program, RunConfig(k_caching=False, change_stride=True), print_values=False)
+    test_program(program, RunConfig(k_caching=False, change_stride=False), print_values=False)
     params_list_big = []
     profile_configs = []
     for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
@@ -193,30 +193,32 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
             ]
     profile_configs = []
     for program in programs:
-        test_program(program, RunConfig())
+        test_program(program, RunConfig(), print_values=False)
         params_list = []
         for nblock in np.arange(nblock_max, nblock_min, -nblock_step):
             params = ParametersProvider(program,
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
-        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=3,
-                                             tot_time_repetitions=3))
+        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=0,
+                                             tot_time_repetitions=3, use_basic_sdfg=True))
 
     experiment_ids = []
     experiment_desc = "Vertical loops with ZSOLQA"
     if additional_desc is not None:
         experiment_desc += f" with {additional_desc}"
     logger.info("run stack profile")
-    experiment_ids.append(profile(profile_configs, RunConfig(), experiment_desc, [('temp allocation', 'stack')],
-                          ncu_report=True, debug_mode=debug_mode))
+    experiment_ids.append(profile(profile_configs, RunConfig(), experiment_desc + " stack allocation",
+                                  [('temp allocation', 'stack')],
+                                  ncu_report=False, debug_mode=debug_mode))
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
         KLON, NCLV, KLEV = sympy.symbols("KLON NCLV KLEV")
         profile_config.heap_limit_expr = (KLON * (NCLV - 1)) + KLON * NCLV * (NCLV - 1) + KLON * (NCLV - 1) + \
             KLON * (KLEV - 1) + 4 * KLON
     logger.info("run heap profile")
-    experiment_ids.append(profile(profile_configs, RunConfig(specialise_symbols=False), experiment_desc,
-                          [('temp allocation', 'heap')], ncu_report=True, debug_mode=debug_mode))
+    experiment_ids.append(profile(profile_configs, RunConfig(specialise_symbols=False),
+                                  experiment_desc + " heap allocation", [('temp allocation', 'heap')],
+                                  ncu_report=False, debug_mode=debug_mode))
     return experiment_ids
 
 
@@ -264,7 +266,8 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
             new_experiment_id = experiment_list_df.reset_index()['experiment id'].max() + 1
     else:
         new_experiment_id = 0
-    logger.info(f"Profile for {experiment_description} using experiment id: {new_experiment_id}")
+    logger.info(f"Profile for {experiment_description} using experiment id: {new_experiment_id} and profile configs: "
+                f"{[str(p) for p in program_configs]}")
 
     if not append_to_last_experiment:
         git_hash = check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=get_thesis_playground_root_dir())\
@@ -319,7 +322,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         for index, params in enumerate(program_config.sizes):
             with open(os.path.join(experiment_folder, f"{index}_params.json"), 'w') as file:
                 json.dump(params.get_dict(), file)
-        return new_experiment_id
+    return new_experiment_id
 
 
 def action_profile(args):
