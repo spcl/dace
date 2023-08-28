@@ -57,6 +57,9 @@ class ControlFlowBlock(object):
     def __str__(self):
         return self._label
 
+    def __repr__(self) -> str:
+        return f'ControlFlowBlock ({self.label})'
+
     @property
     def label(self) -> str:
         return self._label
@@ -85,6 +88,9 @@ class BasicBlock(OrderedMultiDiConnectorGraph[Node, Memlet], ControlFlowBlock):
     def __init__(self, label: str='', parent: Optional['ControlFlowGraph']=None):
         OrderedMultiDiConnectorGraph.__init__(self)
         ControlFlowBlock.__init__(self, label, parent)
+
+    def __repr__(self) -> str:
+        return f'BasicBlock ({self.label})'
 
 
 @make_properties
@@ -196,6 +202,12 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
         return graph_json
+
+    def __str__(self):
+        return ControlFlowBlock.__str__(self)
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__} ({self.label})'
 
 
 @make_properties

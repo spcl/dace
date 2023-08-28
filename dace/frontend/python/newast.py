@@ -2178,6 +2178,7 @@ class ProgramVisitor(ExtNodeVisitor):
             and the first and last internal states of the recursive visit. Also returns a boolean value indicating
             whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
             to generate correct control flow. """
+        previous_last_cfg_target = self.last_cfg_target
         previous_block = self.last_block
         previous_target = self.cfg_target
         self.last_block = None
@@ -2209,6 +2210,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals = old_globals
         # Restore previous target
         self.cfg_target = previous_target
+        self.last_cfg_target = previous_last_cfg_target
         self.last_block = previous_block
 
         return previous_block, first_innner_block, last_inner_block, has_return_statement
@@ -2338,12 +2340,13 @@ class ProgramVisitor(ExtNodeVisitor):
             loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
             incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
             loop_scope = self._add_loop_scope_block(loop_cond_expr,
-                                                    label='for',
+                                                    label=f'for_{node.lineno}',
                                                     loop_var=indices[0],
                                                     initialize_expr=astutils.unparse(ast_ranges[0][0]),
                                                     update_expr=incr[indices[0]],
                                                     inverted=False)
-            self._recursive_visit(node.body, 'for', node.lineno, extra_symbols=extra_syms, parent=loop_scope)
+            self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno, extra_symbols=extra_syms,
+                                  parent=loop_scope, unconnected_last_block=False)
 
             # Handle else clause
             if node.orelse:
@@ -2405,12 +2408,13 @@ class ProgramVisitor(ExtNodeVisitor):
         loop_cond, _ = self._visit_test(node.test)
 
         loop_scope = self._add_loop_scope_block(loop_cond,
-                                                label='while',
+                                                label=f'while_{node.lineno}',
                                                 inverted=False)
 
         # Parse body
         self.loop_idx += 1
-        self._recursive_visit(node.body, 'while', node.lineno, parent=loop_scope)
+        self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_scope,
+                              unconnected_last_block=False)
 
         # Add symbols from test as necessary
         symcond = pystr_to_symbolic(loop_cond)
