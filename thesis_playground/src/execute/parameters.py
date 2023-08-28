@@ -22,7 +22,7 @@ parameters = {
     'NSSOPT': 1,
     'NPROMA': 1,
     'NBLOCKS': 10000,
-    'KFLDX': 25,
+    'KFLDX': 0,
     'NCLV': 5,  # number of microphysics variables
     'NCLDQL': 1,  # liquid cloud water
     'NCLDQI': 2,  # ice cloud water
