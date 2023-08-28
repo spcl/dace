@@ -13,6 +13,7 @@ from execute.data import set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                           compare_output, compare_output_all, optimize_sdfg
 from utils.gpu_general import copy_to_device, print_non_zero_percentage
+from utils.run_config import RunConfig
 from measurements.flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurements.data import ProgramMeasurement
 
@@ -21,8 +22,13 @@ logger = logging.getLogger(__name__)
 
 
 # Copied and adapted from tests/fortran/cloudsc.py
-def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] = None,
-                 verbose_name: Optional[str] = None) -> bool:
+def test_program(
+        program: str,
+        run_config: RunConfig,
+        sdfg_file: Optional[str] = None,
+        verbose_name: Optional[str] = None,
+        print_values: bool = True,
+        params: Optional[ParametersProvider] = None) -> bool:
     """
     Tests the given program by comparing the output of the SDFG compiled version to the one compiled directly from
     fortran
@@ -36,6 +42,10 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
     None
     :type verbose_name: Optional[str]
+    :param print_values: If true, will print incorrect values, defaults to true
+    :type print_values: bool
+    :param params: Parameters to use, if not set will use default testing parameters for this program, defaults to None
+    :type params: ParametersProvider
     :return: True if test passes, False otherwise
     :rtype: bool
     """
@@ -43,7 +53,8 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     logger.info(str(run_config))
 
     programs_data = get_programs_data()
-    params = ParametersProvider(program, testing=True)
+    if params is None:
+        params = ParametersProvider(program, testing=True)
     fsource = read_source(program)
     program_name = programs_data['programs'][program]
     routine_name = f'{program_name}_routine'
@@ -76,17 +87,20 @@ def test_program(program: str, run_config: RunConfig, sdfg_file: Optional[str] =
     sdfg.validate()
     sdfg.simplify(validate_all=True)
 
+    logger.debug("Run fortran version with parameters: %s", [*list(inputs.keys()), *list(outputs_f.keys())])
     ffunc(**{k.lower(): v for k, v in inputs.items()}, **{k.lower(): v for k, v in outputs_f.items()})
     inputs_device = copy_to_device(inputs)
+    logger.debug("Run DaCe version wiht parameters: %s", [*list(inputs_device.keys()), *list(outputs_d_device.keys())])
     sdfg(**inputs_device, **outputs_d_device)
 
-    logger.info(f"{program} ({program_name}) on {run_config.device}")
+    logger.info(f"{program} ({program_name}) on {run_config.device}: Compare outputs")
     outputs_d = outputs_d_device
-    passes_test = compare_output(outputs_f, outputs_d, program, params)
-    if compare_output_all(outputs_f, outputs_original, print_if_differ=False):
+    passes_test = compare_output(outputs_f, outputs_d, program, params, print_values=print_values, name_a="Fortran",
+                                 name_b="DaCe")
+    if compare_output_all(outputs_f, outputs_original, print_if_differ=False, print_values=print_values):
         logger.error("!!! Fortran has not changed any output values !!!")
         passes_test = False
-    if compare_output_all(outputs_d, outputs_original, print_if_differ=False):
+    if compare_output_all(outputs_d, outputs_original, print_if_differ=False, print_values=print_values):
         logger.error("!!! DaCe has not changed any output values !!!")
         passes_test = False
 

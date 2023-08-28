@@ -156,3 +156,7 @@ def get_results_2_logdir(node: Optional[str] = None, profile_name: Optional[str]
 
 def get_basic_sdfg_dir() -> str:
     return create_if_not_exist(join(get_thesis_playground_root_dir(), 'basic_sdfgs'))
+
+
+def get_full_cloudsc_log_dir() -> str:
+    return create_if_not_exist(join(get_thesis_playground_root_dir(), 'full_cloudsc_logs'))

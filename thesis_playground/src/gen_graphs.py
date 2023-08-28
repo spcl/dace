@@ -33,7 +33,7 @@ def main():
                         help='Use DaCes auto_opt instead of mine')
     parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
     parser.add_argument('--log-file', default=None, help='Path to logfile with level DEBUG')
-    parser.add_argument('--log-level', default='warning')
+    parser.add_argument('--log-level', default='info')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
