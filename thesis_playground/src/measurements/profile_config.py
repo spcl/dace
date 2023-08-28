@@ -167,11 +167,11 @@ class ProfileConfig:
         data.append({'measurement': 'cycles', 'value': get_cycles(action), **metadata})
         return data
 
-    def compile(self, params: ParametersProvider, run_config: RunConfig,
-                specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
+    def generate_sdfg(self, params: ParametersProvider, run_config: RunConfig,
+                      specialise_changing_sizes: bool = True, debug_mode: bool = False) -> dace.SDFG:
         """
-        Compiles the program for the given parameters and run config. If heap_limit_str or heap_limit_expr is set and
-        set_heap_limit is True, will insert the heap_limit_str into the code. If heap_limit_expr is given the
+        Generates the SDFG for the program for the given parameters and run config. If heap_limit_str or heap_limit_expr
+        is set and set_heap_limit is True, will insert the heap_limit_str into the code. If heap_limit_expr is given the
         heap_limit_str will be set to the evaluated expression given the parameters dict.
 
         :param params: The Parameters to use
@@ -194,10 +194,10 @@ class ProfileConfig:
                 del params_dict[symbol]
         if self.use_basic_sdfg:
             sdfg = get_optimised_sdfg(self.program, run_config, params, self.size_identifiers)
-            sdfg.compile()
         else:
             sdfg = compile_for_profile(self.program, params_dict, run_config)
         if self.set_heap_limit and not run_config.specialise_symbols:
+            sdfg.compile()
             if self.heap_limit_str == "" and self.heap_limit_expr is None:
                 logger.warning("Should set heap string or expression, but both are empty")
             else:
@@ -241,27 +241,25 @@ class ProfileConfig:
         :return: List of dictionaries. Each dict is one total runtime measurement for one size.
         :rtype: List[Dict[str, Union[str, float, int]]]
         """
-        logger.debug("foo1")
         programs = get_programs_data()['programs']
         routine_name = f"{programs[self.program]}_routine"
         rng = np.random.default_rng(RNG_SEED)
-        logger.debug("foo2")
         inputs = get_inputs(self.program, rng, params)
         outputs = get_outputs(self.program, rng, params)
-        logger.debug("foo3")
 
         if run_config.pattern is not None:
             set_input_pattern(inputs, outputs, params, self.program, run_config.pattern)
 
-        sdfg.clear_instrumentation_reports()
         logger.info(f"Run {self.program} {self.tot_time_repetitions} times to measure "
                     f"total runtime " f"{'with' if run_config.specialise_symbols else 'without'} symbols and "
                     f" KLON: {params['KLON']:,} KLEV: {params ['KLEV']:,} NBLOCKS: {params['NBLOCKS']:,}")
         inputs_device = copy_to_device(copy.deepcopy(inputs))
         outputs_device = copy_to_device(copy.deepcopy(outputs))
+        csdfg = sdfg.compile()
+        sdfg.clear_instrumentation_reports()
         for i in range(self.tot_time_repetitions):
             logger.info(f"Starting run {i} for total time")
-            sdfg(**inputs_device, **outputs_device)
+            csdfg(**inputs_device, **outputs_device)
 
         reports = sdfg.get_instrumentation_reports()
         size_data = self.get_size_data_for_dataframe(params)
@@ -432,7 +430,7 @@ class ProfileConfig:
 
         for params in self.sizes:
             logger.info(f"Profile with {', '.join([name +': ' + str(params[name]) for name in self.size_identifiers])}")
-            sdfg = self.compile(params, run_config, debug_mode=debug_mode)
+            sdfg = self.generate_sdfg(params, run_config, debug_mode=debug_mode)
             logger.debug(f"Save SDFG into {sdfg_path}")
             sdfg.save(sdfg_path)
 

@@ -76,8 +76,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
         :rtype: MultiExpansion
         """
         se = MultiExpansion()
-        se.max_difference_start = self.subgraph_fusion_properties['max_difference_start']
-        se.max_difference_end = self.subgraph_fusion_properties['max_difference_end']
+        if 'max_difference_start' in self.subgraph_fusion_properties:
+            se.max_difference_start = self.subgraph_fusion_properties['max_difference_start']
+        if 'max_difference_end' in self.subgraph_fusion_properties:
+            se.max_difference_end = self.subgraph_fusion_properties['max_difference_end']
         return se
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:

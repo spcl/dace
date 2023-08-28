@@ -78,11 +78,11 @@ def generate_basic_sdfg(
     add_args['outside_first'] = run_config.outside_loop_first
     logger.debug(f"Optimise SDFG for phase 1 (no device) ignoring {params_to_ignore}")
     replace_symbols_by_values(sdfg, {
-        'NCLV': '10',
-        'NCLDQI': '3',
-        'NCLDQL': '4',
-        'NCLDQS': '6',
-        'NCLDQV': '7'})
+        'NCLV': params['NCLV'],
+        'NCLDQI': params['NCLDQI'],
+        'NCLDQL': params['NCLDQL'],
+        'NCLDQS': params['NCLDQS'],
+        'NCLDQV': params['NCLDQV']})
     auto_optimize_phase_1(sdfg, **add_args)
     return sdfg
 
@@ -104,7 +104,29 @@ def get_path_of_basic_sdfg(program: str, run_config: RunConfig, params_to_ignore
     return os.path.join(get_basic_sdfg_dir(), filename)
 
 
-def get_basic_sdfg(program: str, run_config: RunConfig, params: ParametersProvider, params_to_ignore: List[str] = []) -> SDFG:
+def check_sdfg_symbols(sdfg: SDFG, params: ParametersProvider) -> bool:
+    """
+    Checks that all constants set inside the given SDFG have the same value as the params given
+
+    :param sdfg: The SDFG to check
+    :type sdfg: SDFG
+    :param params: The parameters to check agains
+    :type params: ParametersProvider
+    :return: True if symbol/constants value match, False otherwise
+    :rtype: bool
+    """
+    for symbol, value in sdfg.constants.items():
+        if params[symbol] != value:
+            logger.debug("Symobl %s has different value: %s (SDFG) vs %s (parameters)", symbol, value, params[symbol])
+            return False
+    return True
+
+
+def get_basic_sdfg(
+        program: str,
+        run_config: RunConfig,
+        params: ParametersProvider,
+        params_to_ignore: List[str] = []) -> SDFG:
     """
     Get the basic sdfg. Will load it if available or generated it if not
 
@@ -123,12 +145,15 @@ def get_basic_sdfg(program: str, run_config: RunConfig, params: ParametersProvid
     logger.debug(f"Check fo basic SDFG in {path}")
     if os.path.exists(path):
         logger.info(f"Load basic SDFG from {path}")
-        return SDFG.from_file(path)
-    else:
-        logger.info("Generate basic SDFG")
-        sdfg = generate_basic_sdfg(program, run_config, params, params_to_ignore)
-        sdfg.save(path)
-        return sdfg
+        sdfg = SDFG.from_file(path)
+        if check_sdfg_symbols(sdfg, params):
+            return sdfg
+        else:
+            logger.info("Symbols of stored basic SDFG don't match. Generate new basic SDFG")
+    logger.info("Generate basic SDFG")
+    sdfg = generate_basic_sdfg(program, run_config, params, params_to_ignore)
+    sdfg.save(path)
+    return sdfg
 
 
 def get_optimised_sdfg(
@@ -137,7 +162,8 @@ def get_optimised_sdfg(
         params: ParametersProvider,
         params_to_ignore: List[str] = [],
         instrument: bool = True,
-        verbose_name: Optional[str] = None
+        verbose_name: Optional[str] = None,
+        storage_on_gpu: bool = True
         ) -> SDFG:
     logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
     sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
@@ -148,6 +174,7 @@ def get_optimised_sdfg(
     add_args['k_caching'] = run_config.k_caching
     add_args['move_assignments_outside'] = run_config.move_assignment_outside
     add_args['program'] = verbose_name
+    add_args['storage_on_gpu'] = storage_on_gpu
     logger.debug("Continue optimisation after getting basic SDFG")
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_phase_2")
@@ -160,8 +187,8 @@ def get_optimised_sdfg(
         schedule = ScheduleType.GPU_Device if run_config.device == dace.DeviceType.GPU else ScheduleType.Default
         logger.info("Change strides")
         sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
-    if verbose_name is not None:
-        save_graph(sdfg, verbose_name, "after_change_stride")
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_change_stride")
 
     if run_config.device == dace.DeviceType.GPU:
         logger.info("Set gpu block size to (32, 1, 1)")

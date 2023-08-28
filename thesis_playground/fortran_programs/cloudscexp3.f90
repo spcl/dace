@@ -475,16 +475,16 @@ PROGRAM CLOUDPROGRAM
   REAL(KIND=JPRB)       :: PT(KLON,KLEV,NBLOCKS)    ! T at start of callpar
   REAL(KIND=JPRB)       :: PQ(KLON,KLEV,NBLOCKS)    ! Q at start of callpar
   
-  REAL(KIND=JPRB) :: tendency_cml_u(KLON,KLEV,NBLOCKS) ,tendency_cml_v(KLON,KLEV,NBLOCKS) ,tendency_cml_T(KLON,KLEV,NBLOCKS)    ! GMV fields
-  REAL(KIND=JPRB):: tendency_cml_o3(KLON,KLEV,NBLOCKS) ,tendency_cml_q(KLON,KLEV,NBLOCKS) ,tendency_cml_a(KLON,KLEV,NBLOCKS)   ! GFL fields
+  REAL(KIND=JPRB) :: tendency_cml_T(KLON,KLEV,NBLOCKS)    ! GMV fields
+  REAL(KIND=JPRB):: tendency_cml_q(KLON,KLEV,NBLOCKS) ,tendency_cml_a(KLON,KLEV,NBLOCKS)   ! GFL fields
   REAL(KIND=JPRB):: tendency_cml_cld(KLON,KLEV,NCLV,NBLOCKS)    ! composed cloud array
   
-  REAL(KIND=JPRB):: tendency_tmp_u(KLON,KLEV,NBLOCKS),tendency_tmp_v(KLON,KLEV,NBLOCKS),tendency_tmp_T(KLON,KLEV,NBLOCKS)   ! GMV fields
-  REAL(KIND=JPRB):: tendency_tmp_o3(KLON,KLEV,NBLOCKS),tendency_tmp_q(KLON,KLEV,NBLOCKS),tendency_tmp_a(KLON,KLEV,NBLOCKS)  ! GFL fields
+  REAL(KIND=JPRB):: tendency_tmp_T(KLON,KLEV,NBLOCKS)   ! GMV fields
+  REAL(KIND=JPRB):: tendency_tmp_q(KLON,KLEV,NBLOCKS),tendency_tmp_a(KLON,KLEV,NBLOCKS)  ! GFL fields
   REAL(KIND=JPRB)  :: tendency_tmp_cld(KLON,KLEV,NCLV,NBLOCKS)   ! composed cloud array
   
-  REAL(KIND=JPRB):: tendency_loc_u(KLON,KLEV,NBLOCKS),tendency_loc_v(KLON,KLEV,NBLOCKS),tendency_loc_T(KLON,KLEV,NBLOCKS)   ! GMV fields
-  REAL(KIND=JPRB):: tendency_loc_o3(KLON,KLEV,NBLOCKS),tendency_loc_q(KLON,KLEV,NBLOCKS),tendency_loc_a(KLON,KLEV,NBLOCKS)  ! GFL fields
+  REAL(KIND=JPRB):: tendency_loc_T(KLON,KLEV,NBLOCKS)   ! GMV fields
+  REAL(KIND=JPRB):: tendency_loc_q(KLON,KLEV,NBLOCKS),tendency_loc_a(KLON,KLEV,NBLOCKS)  ! GFL fields
   REAL(KIND=JPRB) :: tendency_loc_cld(KLON,KLEV,NCLV,NBLOCKS)   ! composed cloud array
   
   !TYPE (STATE_TYPE) , INTENT (IN)  :: tendency_cml   ! cumulative tendency used for final output
@@ -545,14 +545,14 @@ PROGRAM CLOUDPROGRAM
   CALL CLOUDSCOUTER(NBLOCKS, NGPTOT, NPROMA,    KLON,    KLEV,&
   & PTSPHY,&
   & PT, PQ,&
-  & tendency_cml_u,tendency_cml_v,tendency_cml_T,&
-  & tendency_cml_o3,tendency_cml_q,tendency_cml_a,&
+  & tendency_cml_T,&
+  & tendency_cml_q,tendency_cml_a,&
   & tendency_cml_cld,&
-  & tendency_tmp_u,tendency_tmp_v,tendency_tmp_T,&
-  & tendency_tmp_o3,tendency_tmp_q,tendency_tmp_a,&
+  & tendency_tmp_T,&
+  & tendency_tmp_q,tendency_tmp_a,&
   & tendency_tmp_cld,&
-  & tendency_loc_u,tendency_loc_v,tendency_loc_T,&
-  & tendency_loc_o3,tendency_loc_q,tendency_loc_a,&
+  & tendency_loc_T,&
+  & tendency_loc_q,tendency_loc_a,&
   & tendency_loc_cld,&
   & PVFA, PVFL, PVFI, PDYNA, PDYNL, PDYNI, &
   & PHRSW,    PHRLW,&
@@ -587,14 +587,14 @@ SUBROUTINE CLOUDSCOUTER&
   & (NBLOCKS, NGPTOT, NPROMA,    KLON,    KLEV,&
   & PTSPHY,&
   & PT, PQ,&
-  & tendency_cml_u,tendency_cml_v,tendency_cml_T,&
-  & tendency_cml_o3,tendency_cml_q,tendency_cml_a,&
+  & tendency_cml_T,&
+  & tendency_cml_q,tendency_cml_a,&
   & tendency_cml_cld,&
-  & tendency_tmp_u,tendency_tmp_v,tendency_tmp_T,&
-  & tendency_tmp_o3,tendency_tmp_q,tendency_tmp_a,&
+  & tendency_tmp_T,&
+  & tendency_tmp_q,tendency_tmp_a,&
   & tendency_tmp_cld,&
-  & tendency_loc_u,tendency_loc_v,tendency_loc_T,&
-  & tendency_loc_o3,tendency_loc_q,tendency_loc_a,&
+  & tendency_loc_T,&
+  & tendency_loc_q,tendency_loc_a,&
   & tendency_loc_cld,&
   & PVFA, PVFL, PVFI, PDYNA, PDYNL, PDYNI, &
   & PHRSW,    PHRLW,&
@@ -664,16 +664,16 @@ USE YOECLDP  , ONLY : NCLV, NCLDQL,NCLDQI,NCLDQR,NCLDQS, NCLDQV,RAMID,&
   REAL(KIND=JPRB)       :: PT(KLON,KLEV,NBLOCKS)    ! T at start of callpar
   REAL(KIND=JPRB)       :: PQ(KLON,KLEV,NBLOCKS)    ! Q at start of callpar
   
-  REAL(KIND=JPRB) :: tendency_cml_u(KLON,KLEV,NBLOCKS) ,tendency_cml_v(KLON,KLEV,NBLOCKS) ,tendency_cml_T(KLON,KLEV,NBLOCKS)    ! GMV fields
-  REAL(KIND=JPRB):: tendency_cml_o3(KLON,KLEV,NBLOCKS) ,tendency_cml_q(KLON,KLEV,NBLOCKS) ,tendency_cml_a(KLON,KLEV,NBLOCKS)   ! GFL fields
+  REAL(KIND=JPRB) :: tendency_cml_T(KLON,KLEV,NBLOCKS)    ! GMV fields
+  REAL(KIND=JPRB):: tendency_cml_q(KLON,KLEV,NBLOCKS) ,tendency_cml_a(KLON,KLEV,NBLOCKS)   ! GFL fields
   REAL(KIND=JPRB):: tendency_cml_cld(KLON,KLEV,NCLV,NBLOCKS)    ! composed cloud array
   
-  REAL(KIND=JPRB):: tendency_tmp_u(KLON,KLEV,NBLOCKS),tendency_tmp_v(KLON,KLEV,NBLOCKS),tendency_tmp_T(KLON,KLEV,NBLOCKS)   ! GMV fields
-  REAL(KIND=JPRB):: tendency_tmp_o3(KLON,KLEV,NBLOCKS),tendency_tmp_q(KLON,KLEV,NBLOCKS),tendency_tmp_a(KLON,KLEV,NBLOCKS)  ! GFL fields
+  REAL(KIND=JPRB):: tendency_tmp_T(KLON,KLEV,NBLOCKS)   ! GMV fields
+  REAL(KIND=JPRB):: tendency_tmp_q(KLON,KLEV,NBLOCKS),tendency_tmp_a(KLON,KLEV,NBLOCKS)  ! GFL fields
   REAL(KIND=JPRB)  :: tendency_tmp_cld(KLON,KLEV,NCLV,NBLOCKS)   ! composed cloud array
   
-  REAL(KIND=JPRB):: tendency_loc_u(KLON,KLEV,NBLOCKS),tendency_loc_v(KLON,KLEV,NBLOCKS),tendency_loc_T(KLON,KLEV,NBLOCKS)   ! GMV fields
-  REAL(KIND=JPRB):: tendency_loc_o3(KLON,KLEV,NBLOCKS),tendency_loc_q(KLON,KLEV,NBLOCKS),tendency_loc_a(KLON,KLEV,NBLOCKS)  ! GFL fields
+  REAL(KIND=JPRB):: tendency_loc_T(KLON,KLEV,NBLOCKS)   ! GMV fields
+  REAL(KIND=JPRB):: tendency_loc_q(KLON,KLEV,NBLOCKS),tendency_loc_a(KLON,KLEV,NBLOCKS)  ! GFL fields
   REAL(KIND=JPRB) :: tendency_loc_cld(KLON,KLEV,NCLV,NBLOCKS)   ! composed cloud array
   
   !TYPE (STATE_TYPE) , INTENT (IN)  :: tendency_cml   ! cumulative tendency used for final output
@@ -744,14 +744,14 @@ USE YOECLDP  , ONLY : NCLV, NCLDQL,NCLDQI,NCLDQR,NCLDQS, NCLDQV,RAMID,&
       CALL CLOUDSC(1,    NPROMA,    KLON,    KLEV,&
       & PTSPHY,&
       & PT(:,:,IBL), PQ(:,:,IBL),&
-      & tendency_cml_u(:,:,IBL),tendency_cml_v(:,:,IBL),tendency_cml_T(:,:,IBL),&
-      & tendency_cml_o3(:,:,IBL),tendency_cml_q(:,:,IBL),tendency_cml_a(:,:,IBL),&
+      & tendency_cml_T(:,:,IBL),&
+      & tendency_cml_q(:,:,IBL),tendency_cml_a(:,:,IBL),&
       & tendency_cml_cld(:,:,:,IBL),&
-      & tendency_tmp_u(:,:,IBL),tendency_tmp_v(:,:,IBL),tendency_tmp_T(:,:,IBL),&
-      & tendency_tmp_o3(:,:,IBL),tendency_tmp_q(:,:,IBL),tendency_tmp_a(:,:,IBL),&
+      & tendency_tmp_T(:,:,IBL),&
+      & tendency_tmp_q(:,:,IBL),tendency_tmp_a(:,:,IBL),&
       & tendency_tmp_cld(:,:,:,IBL),&
-      & tendency_loc_u(:,:,IBL),tendency_loc_v(:,:,IBL),tendency_loc_T(:,:,IBL),&
-      & tendency_loc_o3(:,:,IBL),tendency_loc_q(:,:,IBL),tendency_loc_a(:,:,IBL),&
+      & tendency_loc_T(:,:,IBL),&
+      & tendency_loc_q(:,:,IBL),tendency_loc_a(:,:,IBL),&
       & tendency_loc_cld(:,:,:,IBL),&
       & PVFA(:,:,IBL), PVFL(:,:,IBL), PVFI(:,:,IBL), PDYNA(:,:,IBL), PDYNL(:,:,IBL), PDYNI(:,:,IBL), &
       & PHRSW(:,:,IBL),    PHRLW(:,:,IBL),&
@@ -809,14 +809,14 @@ SUBROUTINE CLOUDSC&
  & (KIDIA,    KFDIA,    KLON,    KLEV,&
  & PTSPHY,&
  & PT, PQ,&
- & tendency_cml_u,tendency_cml_v,tendency_cml_T,&
- & tendency_cml_o3,tendency_cml_q,tendency_cml_a,&
+ & tendency_cml_T,&
+ & tendency_cml_q,tendency_cml_a,&
  & tendency_cml_cld,&
- & tendency_tmp_u,tendency_tmp_v,tendency_tmp_T,&
- & tendency_tmp_o3,tendency_tmp_q,tendency_tmp_a,&
+ & tendency_tmp_T,&
+ & tendency_tmp_q,tendency_tmp_a,&
  & tendency_tmp_cld,&
- & tendency_loc_u,tendency_loc_v,tendency_loc_T,&
- & tendency_loc_o3,tendency_loc_q,tendency_loc_a,&
+ & tendency_loc_T,&
+ & tendency_loc_q,tendency_loc_a,&
  & tendency_loc_cld,&
  & PVFA, PVFL, PVFI, PDYNA, PDYNL, PDYNI, &
  & PHRSW,    PHRLW,&
@@ -1098,16 +1098,16 @@ REAL(KIND=JPRB)   ,INTENT(IN)    :: PQ(KLON,KLEV)    ! Q at start of callpar
 LOGICAL           ,INTENT(IN)    :: LDSLPHY 
 LOGICAL           ,INTENT(IN)    :: LDMAINCALL       ! T if main call to cloudsc
 REAL(KIND=JPRB)   ,INTENT(INOUT) :: PEXTRA(KLON,KLEV,KFLDX) ! extra fields
-REAL(KIND=JPRB) :: tendency_cml_u(KLON,KLEV) ,tendency_cml_v(KLON,KLEV) ,tendency_cml_T(KLON,KLEV)    ! GMV fields
-REAL(KIND=JPRB):: tendency_cml_o3(KLON,KLEV) ,tendency_cml_q(KLON,KLEV) ,tendency_cml_a(KLON,KLEV)   ! GFL fields
+REAL(KIND=JPRB) :: tendency_cml_T(KLON,KLEV)    ! GMV fields
+REAL(KIND=JPRB):: tendency_cml_q(KLON,KLEV) ,tendency_cml_a(KLON,KLEV)   ! GFL fields
 REAL(KIND=JPRB):: tendency_cml_cld(KLON,KLEV,NCLV)    ! composed cloud array
 
-REAL(KIND=JPRB):: tendency_tmp_u(KLON,KLEV),tendency_tmp_v(KLON,KLEV),tendency_tmp_T(KLON,KLEV)   ! GMV fields
-REAL(KIND=JPRB):: tendency_tmp_o3(KLON,KLEV),tendency_tmp_q(KLON,KLEV),tendency_tmp_a(KLON,KLEV)  ! GFL fields
+REAL(KIND=JPRB):: tendency_tmp_T(KLON,KLEV)   ! GMV fields
+REAL(KIND=JPRB):: tendency_tmp_q(KLON,KLEV),tendency_tmp_a(KLON,KLEV)  ! GFL fields
 REAL(KIND=JPRB)  :: tendency_tmp_cld(KLON,KLEV,NCLV)   ! composed cloud array
 
-REAL(KIND=JPRB):: tendency_loc_u(KLON,KLEV),tendency_loc_v(KLON,KLEV),tendency_loc_T(KLON,KLEV)   ! GMV fields
-REAL(KIND=JPRB):: tendency_loc_o3(KLON,KLEV),tendency_loc_q(KLON,KLEV),tendency_loc_a(KLON,KLEV)  ! GFL fields
+REAL(KIND=JPRB):: tendency_loc_T(KLON,KLEV)   ! GMV fields
+REAL(KIND=JPRB):: tendency_loc_q(KLON,KLEV),tendency_loc_a(KLON,KLEV)  ! GFL fields
 REAL(KIND=JPRB) :: tendency_loc_cld(KLON,KLEV,NCLV)   ! composed cloud array
 
 !TYPE (STATE_TYPE) , INTENT (IN)  :: tendency_cml   ! cumulative tendency used for final output

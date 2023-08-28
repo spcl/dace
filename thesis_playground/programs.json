@@ -36,7 +36,8 @@
         "microbenchmark_v1": "map_loop_1",
         "microbenchmark_v3": "map_loop_3",
         "mwe_array_order": "mwe_array_order",
-        "cloudscexp2": "cloudscouter"
+        "cloudscexp2": "cloudscouter",
+        "cloudscexp3": "cloudscouter"
     },
     "program_parameters": {
         "cloudsc_class1_658": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV"],
