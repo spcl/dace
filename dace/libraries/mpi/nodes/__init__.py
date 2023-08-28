@@ -18,3 +18,6 @@ from .win_fence import Win_fence
 from .win_put import Win_put
 from .win_get import Win_get
 from .win_accumulate import Win_accumulate
+from .win_lock import Win_lock
+from .win_unlock import Win_unlock
+from .win_flush import Win_flush
