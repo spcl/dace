@@ -34,6 +34,8 @@ def main():
     parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
     parser.add_argument('--log-file', default=None, help='Path to logfile with level DEBUG')
     parser.add_argument('--log-level', default='info')
+    parser.add_argument('--transfer-to-gpu', default=False, action='store_true',
+                        help='Disable setting storage location for input arrays to GPU global')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -77,7 +79,8 @@ def main():
     run_config = RunConfig()
     run_config.set_from_args(args)
     run_config.device = device
-    sdfg = get_optimised_sdfg(args.program, run_config, params, ['NBLOCKS'], verbose_name=verbose_name)
+    sdfg = get_optimised_sdfg(args.program, run_config, params, ['NBLOCKS'], verbose_name=verbose_name,
+                              storage_on_gpu=not args.transfer_to_gpu)
     save_graph(sdfg, verbose_name, "after_auto_opt")
     if not args.only_graph:
         sdfg.compile()

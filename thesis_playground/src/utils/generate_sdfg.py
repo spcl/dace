@@ -187,8 +187,8 @@ def get_optimised_sdfg(
         schedule = ScheduleType.GPU_Device if run_config.device == dace.DeviceType.GPU else ScheduleType.Default
         logger.info("Change strides")
         sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
-    if verbose_name is not None:
-        save_graph(sdfg, verbose_name, "after_change_stride")
+        if verbose_name is not None:
+            save_graph(sdfg, verbose_name, "after_change_stride")
 
     if run_config.device == dace.DeviceType.GPU:
         logger.info("Set gpu block size to (32, 1, 1)")
