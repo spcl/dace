@@ -3,41 +3,48 @@ import ast
 import collections
 import copy
 import ctypes
-import itertools
 import gzip
-from numbers import Integral
+import itertools
+import json
 import os
-import pickle, json
-from hashlib import md5, sha256
-from pydoc import locate
+import pickle
 import random
 import re
 import shutil
 import sys
 import time
-from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, TYPE_CHECKING, Union
 import warnings
+from hashlib import md5, sha256
+from numbers import Integral
+from pydoc import locate
+from typing import (TYPE_CHECKING, Any, AnyStr, BinaryIO, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type,
+                    Union)
+
 import numpy as np
 import sympy as sp
 
 import dace
 import dace.serialize
-from dace import (data as dt, hooks, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
-from dace.sdfg.scope import ScopeTree
-from dace.sdfg.sdfg_control_flow import LoopScopeBlock, ControlFlowGraph
-from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
-from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
+from dace import data as dt
+from dace import dtypes, hooks
+from dace import memlet as mm
+from dace import properties
+from dace import subsets as sbs
+from dace import symbolic
 from dace.config import Config
-from dace.frontend.python import astutils, wrappers
-from dace.sdfg import nodes as nd
-from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState
-from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.distr_types import ProcessGrid, SubArray, RedistrArray
+from dace.distr_types import ProcessGrid, RedistrArray, SubArray
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
-                             TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
-from typing import BinaryIO
+from dace.frontend.python import astutils, wrappers
+from dace.properties import (CodeBlock, CodeProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty,
+                             OptionalSDFGReferenceProperty, Property, TransformationHistProperty, make_properties)
+from dace.sdfg import nodes as nd
+from dace.sdfg.graph import Edge, OrderedDiGraph, SubgraphView
+from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
+from dace.sdfg.scope import ScopeTree
+from dace.sdfg.sdfg_control_flow import ControlFlowGraph, LoopScopeBlock
+from dace.sdfg.state import SDFGState
+from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
@@ -549,7 +556,8 @@ class SDFG(ControlFlowGraph):
         result._sdfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
-            from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
+            from dace.transformation.passes.fusion_inline import \
+                FixNestedSDFGReferences
 
             result._sdfg_list = result.reset_sdfg_list()
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
@@ -992,7 +1000,8 @@ class SDFG(ControlFlowGraph):
         :return: An InstrumentedDataReport object, or None if one does not exist.
         """
         # Avoid import loops
-        from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+        from dace.codegen.instrumentation.data.data_report import \
+            InstrumentedDataReport
 
         if timestamp is None:
             reports = self.available_data_reports()
@@ -1035,7 +1044,8 @@ class SDFG(ControlFlowGraph):
         :param kwargs: Keyword arguments to call SDFG with.
         :return: The return value(s) of this SDFG.
         """
-        from dace.codegen.compiled_sdfg import CompiledSDFG  # Avoid import loop
+        from dace.codegen.compiled_sdfg import \
+            CompiledSDFG  # Avoid import loop
 
         binaryobj: CompiledSDFG = self.compile()
         set_report = binaryobj.get_exported_function('__dace_set_instrumented_data_report')
@@ -1218,40 +1228,10 @@ class SDFG(ControlFlowGraph):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def add_node(self, node, is_start_state=False):
-        """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
-            thereof.
-
-            :param node: The node to add.
-            :param is_start_state: If True, sets this node as the starting
-                                   state.
-        """
-        if not isinstance(node, SDFGState):
-            raise TypeError("Expected SDFGState, got " + str(type(node)))
-        super(SDFG, self).add_node(node, is_start_block=is_start_state)
-
     def remove_node(self, node: SDFGState):
         if node is self._cached_start_block:
             self._cached_start_block = None
         return super().remove_node(node)
-
-    def add_edge(self, u, v, edge):
-        """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
-            subclass thereof.
-
-            :param u: Source node.
-            :param v: Destination node.
-            :param edge: The edge to add.
-        """
-        if not isinstance(u, SDFGState):
-            raise TypeError("Expected SDFGState, got: {}".format(type(u).__name__))
-        if not isinstance(v, SDFGState):
-            raise TypeError("Expected SDFGState, got: {}".format(type(v).__name__))
-        if not isinstance(edge, InterstateEdge):
-            raise TypeError("Expected InterstateEdge, got: {}".format(type(edge).__name__))
-        if v is self._cached_start_block:
-            self._cached_start_block = None
-        return super(SDFG, self).add_edge(u, v, edge)
 
     def states(self):
         """ Alias that returns the nodes (states) in this SDFG. """
@@ -1618,6 +1598,9 @@ class SDFG(ControlFlowGraph):
 
     # Dynamic SDFG creation API
     ##############################
+    def add_state(self, label=None, is_start_block=False, parent_sdfg=None) -> 'SDFGState':
+        return super().add_state(label, is_start_block, self if parent_sdfg is None else parent_sdfg)
+
     def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state before an existing state, reconnecting
             predecessors to it instead.
@@ -2208,7 +2191,8 @@ class SDFG(ControlFlowGraph):
         process.
         """
         # Avoid import loops
-        from dace.codegen import compiled_sdfg as cs, compiler
+        from dace.codegen import compiled_sdfg as cs
+        from dace.codegen import compiler
 
         binary_filename = compiler.get_binary_name(self.build_folder, self.name)
         dll = cs.ReloadableDLL(binary_filename, self.name)
@@ -2421,7 +2405,8 @@ class SDFG(ControlFlowGraph):
         :param options: Zero or more transformation initialization option dictionaries.
         :return: List of PatternTransformation objects inititalized with their properties.
         """
-        from dace.transformation import PatternTransformation  # Avoid import loops
+        from dace.transformation import \
+            PatternTransformation  # Avoid import loops
 
         if isinstance(xforms, (PatternTransformation, type)):
             xforms = [xforms]
@@ -2485,7 +2470,8 @@ class SDFG(ControlFlowGraph):
                         [MapTiling, MapFusion, GPUTransformSDFG],
                         options=[{'tile_size': 16}, {}, {}])
         """
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
+        from dace.transformation.passes.pattern_matching import \
+            PatternMatchAndApply  # Avoid import loops
 
         xforms = self._initialize_transformations_from_type(xforms, options)
 
@@ -2539,7 +2525,8 @@ class SDFG(ControlFlowGraph):
                     # Applies InlineSDFG until no more subgraphs can be inlined
                     sdfg.apply_transformations_repeated(InlineSDFG)
         """
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+        from dace.transformation.passes.pattern_matching import \
+            PatternMatchAndApplyRepeated
 
         xforms = self._initialize_transformations_from_type(xforms, options)
 
@@ -2590,7 +2577,8 @@ class SDFG(ControlFlowGraph):
                 # Tiles all maps once
                 sdfg.apply_transformations_once_everywhere(MapTiling, options=dict(tile_size=16))
         """
-        from dace.transformation.passes.pattern_matching import PatternApplyOnceEverywhere
+        from dace.transformation.passes.pattern_matching import \
+            PatternApplyOnceEverywhere
 
         xforms = self._initialize_transformations_from_type(xforms, options)
 

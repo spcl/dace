@@ -751,8 +751,6 @@ class SDFGState(BasicBlock, StateGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
-
     nosync = Property(dtype=bool, default=False, desc="Do not synchronize at the end of the state")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
@@ -797,10 +795,8 @@ class SDFGState(BasicBlock, StateGraphView):
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
-        self.is_collapsed = False
         self.nosync = False
         self.location = location if location is not None else {}
-        self._default_lineinfo = None
     
     def __deepcopy__(self, memo):
         cls = self.__class__
@@ -832,13 +828,6 @@ class SDFGState(BasicBlock, StateGraphView):
 
     def validate(self) -> None:
         validate_state(self)
-
-    def set_default_lineinfo(self, lineinfo: dtypes.DebugInfo):
-        """
-        Sets the default source line information to be lineinfo, or None to
-        revert to default mode.
-        """
-        self._default_lineinfo = lineinfo
 
     def nodes(self) -> List[nd.Node]:  # Added for type hints
         return super().nodes()
