@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Union
 import sympy
 import logging
 
@@ -530,6 +530,27 @@ def k_caching_prototype_v1(sdfg: SDFG,
                 break
 
 
+def list_access_nodes(
+        sdfg: dace.SDFG,
+        array_name: str) -> List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]:
+    """
+    Find all access nodes in the SDFG of the given array name. Does not recourse into nested SDFGs.
+
+    :param sdfg: The SDFG to search through
+    :type sdfg: dace.SDFG
+    :param array_name: The name of the wanted array
+    :type array_name: str
+    :return: [TODO:description]
+    :rtype: List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]
+    """
+    found_nodes = []
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode) and node.data == array_name:
+                found_nodes.append((node, state))
+    return found_nodes
+
+
 def change_strides(
         sdfg: dace.SDFG,
         stride_one_values: List[str],
@@ -551,26 +572,51 @@ def change_strides(
     original_name = sdfg.name
     sdfg.name = "changed_strides"
     new_sdfg = SDFG(original_name)
-    for name, value in sdfg.constants.items():
-        new_sdfg.add_constant(name, value)
-    for name, stype in sdfg.symbols.items():
-        new_sdfg.add_symbol(name, stype)
+    for dname, value in sdfg.constants.items():
+        new_sdfg.add_constant(dname, value)
+    for dname, stype in sdfg.symbols.items():
+        new_sdfg.add_symbol(dname, stype)
 
     changed_stride_state = new_sdfg.add_state("with_changed_strides", is_start_state=True)
     inputs, outputs = sdfg.read_and_write_sets()
+    # Get all arrays which are persistent == not transient
+    persistent_arrays = {name: desc for name, desc in sdfg.arrays.items() if not desc.transient}
+
+    # Get the persistent arrays of all the transient arrays which get copied to GPU
+    for dname in persistent_arrays:
+        for access, state in list_access_nodes(sdfg, dname):
+            if len(state.out_edges(access)) == 1:
+                edge = state.out_edges(access)[0]
+                if isinstance(edge.dst, nodes.AccessNode):
+                    if edge.dst.data in inputs:
+                        logger.debug("Replace %s by %s in inputs", edge.dst.data, dname)
+                        inputs.remove(edge.dst.data)
+                        inputs.add(dname)
+            if len(state.in_edges(access)) == 1:
+                edge = state.in_edges(access)[0]
+                if isinstance(edge.src, nodes.AccessNode):
+                    if edge.src.data in inputs:
+                        logger.debug("Replace %s by %s in outputs", edge.src.data, dname)
+                        outputs.remove(edge.src.data)
+                        outputs.add(dname)
+
+    # Only keep inputs and outputs which are persistent
+    inputs.intersection_update(persistent_arrays.keys())
+    outputs.intersection_update(persistent_arrays.keys())
+    logger.debug("Handed SDFG, Inputs: %s, Outputs: %s", inputs, outputs)
     nsdfg = changed_stride_state.add_nested_sdfg(sdfg, new_sdfg, inputs=inputs, outputs=outputs)
     transform_state = new_sdfg.add_state_before(changed_stride_state, label="transform_data", is_start_state=True)
     transform_state_back = new_sdfg.add_state_after(changed_stride_state, "transform_data_back", is_start_state=False)
 
     # copy arrays
-    for name, desc in sdfg.arrays.items():
+    for dname, desc in sdfg.arrays.items():
         if not desc.transient:
             if isinstance(desc, Array):
-                new_sdfg.add_array(name, desc.shape, desc.dtype, desc.storage,
+                new_sdfg.add_array(dname, desc.shape, desc.dtype, desc.storage,
                                    desc.location, desc.transient, desc.strides,
                                    desc.offset)
             elif isinstance(desc, Scalar):
-                new_sdfg.add_scalar(name, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
+                new_sdfg.add_scalar(dname, desc.dtype, desc.storage, desc.transient, desc.lifetime, desc.debuginfo)
 
     new_order = {}
     new_strides_map = {}
@@ -585,7 +631,7 @@ def change_strides(
                     for in_edge in graph.parent.in_edges_by_connector(graph.parent_nsdfg_node, connector):
                         array_names_map[str(connector)] = in_edge.data.data
 
-    for containing_sdfg, name, desc in sdfg.arrays_recursive():
+    for containing_sdfg, dname, desc in sdfg.arrays_recursive():
         shape_str = [str(s) for s in desc.shape]
         # Get index of the dimension we want to have stride 1
         stride_one_idx = None
@@ -597,7 +643,7 @@ def change_strides(
                 break
 
         if stride_one_idx is not None:
-            new_order[name] = [stride_one_idx]
+            new_order[dname] = [stride_one_idx]
 
             new_strides = list(desc.strides)
             new_strides[stride_one_idx] = sympy.S.One
@@ -606,20 +652,20 @@ def change_strides(
             previous_stride = sympy.S.One
             for i in range(len(new_strides)):
                 if i != stride_one_idx:
-                    new_order[name].append(i)
+                    new_order[dname].append(i)
                     new_strides[i] = previous_size * previous_stride
                     previous_size = desc.shape[i]
                     previous_stride = new_strides[i]
 
-            new_strides_map[name] = {}
+            new_strides_map[dname] = {}
             # Create a map entry for this data linking old strides to new strides. This assumes that each entry in
             # strides is unique which is given as otherwise there would be two dimension i, j where a[i, j] would point
             # to the same address as a[j, i]
             for new_stride, old_stride in zip(new_strides, desc.strides):
-                new_strides_map[name][old_stride] = new_stride
+                new_strides_map[dname][old_stride] = new_stride
             desc.strides = tuple(new_strides)
         else:
-            parent_name = array_names_map[name] if name in array_names_map else name
+            parent_name = array_names_map[dname] if dname in array_names_map else dname
             if parent_name in new_strides_map:
                 new_strides = []
                 for stride in desc.strides:
@@ -628,10 +674,10 @@ def change_strides(
 
     # Add new flipped arrays for every non-transient array
     flipped_names_map = {}
-    for name, desc in sdfg.arrays.items():
+    for dname, desc in sdfg.arrays.items():
         if not desc.transient:
-            flipped_name = f"{name}_flipped"
-            flipped_names_map[name] = flipped_name
+            flipped_name = f"{dname}_flipped"
+            flipped_names_map[dname] = flipped_name
             new_sdfg.add_array(flipped_name, desc.shape, desc.dtype,
                                desc.storage, desc.location, True,
                                desc.strides, desc.offset)
@@ -675,13 +721,13 @@ def change_strides(
                     schedule=schedule,
                     )
     # Deal with any arrays which have not been flipped (should only be scalars). Connect them directly
-    for name, desc in sdfg.arrays.items():
-        if not desc.transient and name not in new_order:
-            if name in inputs:
-                changed_stride_state.add_memlet_path(changed_stride_state.add_access(name), nsdfg, dst_conn=name,
-                                                     memlet=Memlet(data=name))
-            if name in outputs:
-                changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(name), src_conn=name,
-                                                     memlet=Memlet(data=name))
+    for dname, desc in sdfg.arrays.items():
+        if not desc.transient and dname not in new_order:
+            if dname in inputs:
+                changed_stride_state.add_memlet_path(changed_stride_state.add_access(dname), nsdfg, dst_conn=dname,
+                                                     memlet=Memlet(data=dname))
+            if dname in outputs:
+                changed_stride_state.add_memlet_path(nsdfg, changed_stride_state.add_access(dname), src_conn=dname,
+                                                     memlet=Memlet(data=dname))
 
     return new_sdfg
