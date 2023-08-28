@@ -234,7 +234,9 @@ class GeneralBlock(ControlFlow):
                                 successor = self.elements[i + 1].first_state
                             elif i == len(self.elements) - 1:
                                 # If last edge leads to first state in next block
-                                successor = _find_next_block(self).first_state
+                                next_block = _find_next_block(self) 
+                                if next_block is not None:
+                                    successor = next_block.first_state
 
                         expr += elem.generate_transition(sdfg, e, successor)
                     else:
