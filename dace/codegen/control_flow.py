@@ -634,15 +634,12 @@ def _find_next_block(block: ControlFlow) -> Optional[ControlFlow]:
     """
     # Find block in parent
     parent = block.parent
+    if parent is None:
+        return None
     ind = next(i for i, b in enumerate(parent.children) if b is block)
     if ind == len(parent.children) - 1 or isinstance(parent, (IfScope, IfElseChain, SwitchCaseScope)):
         # If last block, or other children are not reachable from current node (branches),
-        # continue upwards
-
-        if parent is None:  # Last block in root
-            return None
-
-        # Recursively continue upwards
+        # recursively continue upwards
         return _find_next_block(parent)
     return parent.children[ind + 1]
 
