@@ -114,7 +114,8 @@ def auto_optimize_phase_2(sdfg: SDFG,
                           validate_all: bool = True,
                           symbols: Dict[str, int] = None,
                           k_caching: bool = False,
-                          move_assignments_outside: bool = True
+                          move_assignments_outside: bool = True,
+                          storage_on_gpu: bool = True
                           ) -> SDFG:
     """
     Perform optimisations which are device/architectrie specific. Works inplace on the given SDFG
@@ -135,6 +136,9 @@ def auto_optimize_phase_2(sdfg: SDFG,
     :type k_caching: bool, optional
     :param move_assignments_outside: If MoveAssignmentsOutsideIf transformation should be applied, defaults to True
     :type move_assignments_outside: bool, optional
+    :param storage_on_gpu: If true, assumes that all arrays given as input/output are already on the GPU, defaults to
+    True
+    :type storage_on_gpu: bool
     """
     logger.debug(f"Program: {program}")
     if symbols:
@@ -155,7 +159,8 @@ def auto_optimize_phase_2(sdfg: SDFG,
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
-        if device == dace.DeviceType.GPU:
+        if storage_on_gpu:
+            logger.debug("Transfer arrays to GPU_Global storage")
             for k, v in sdfg.arrays.items():
                 if not v.transient and type(v) == dace.data.Array:
                     v.storage = dace.dtypes.StorageType.GPU_Global
