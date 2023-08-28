@@ -12,17 +12,23 @@ parameters = {
     'KLEV': 10000,
     'KIDIA': 2,
     'KFDIA': 9998,
-    'NCLV': 10,
-    'NCLDQI': 3,
-    'NCLDQL': 4,
-    'NCLDQR': 5,
-    'NCLDQS': 6,
-    'NCLDQV': 7,
+    # 'NCLV': 10,
+    # 'NCLDQI': 3,
+    # 'NCLDQL': 4,
+    # 'NCLDQR': 5,
+    # 'NCLDQS': 6,
+    # 'NCLDQV': 7,
     'NCLDTOP': 2,
     'NSSOPT': 1,
     'NPROMA': 1,
     'NBLOCKS': 10000,
     'KFLDX': 25,
+    'NCLV': 5,  # number of microphysics variables
+    'NCLDQL': 1,  # liquid cloud water
+    'NCLDQI': 2,  # ice cloud water
+    'NCLDQR': 3,  # rain water
+    'NCLDQS': 4,  # snow
+    'NCLDQV': 5,  # vapour
 }
 
 # changes from the parameters dict for certrain programs
@@ -264,6 +270,15 @@ custom_parameters = {
         'NBLOCKS': 200000
     },
     'cloudscexp2':
+    {
+        'KLEV': 137,
+        'KLON': 1,
+        'KFDIA': 1,
+        'KIDIA': 1,
+        'NBLOCKS': 2000,
+        'NCLDTOP': 15,
+    },
+    'cloudscexp3':
     {
         'KLEV': 137,
         'KLON': 1,

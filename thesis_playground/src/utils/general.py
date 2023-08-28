@@ -338,7 +338,14 @@ def disable_cache():
     os.putenv('DACE_compiler_use_cache', '0')
 
 
-def compare_output(output_a: Dict, output_b: Dict, program: str, params: ParametersProvider) -> bool:
+def compare_output(
+        output_a: Dict,
+        output_b: Dict,
+        program: str,
+        params: ParametersProvider,
+        name_a: Optional[str] = None,
+        name_b: Optional[str] = None,
+        print_values: bool = True) -> bool:
     """
     Compares two outputs. Outputs are dictionaries where key is the variable name and value a n-dimensional matrix. They
     are compared based on the ranges given by get_iteration_ranges for the given program
@@ -349,8 +356,14 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
     :type output_b: Dict
     :param program: The program name
     :type program: str
+    :param name_a: Name of first output, defaults to None
+    :type name_a: Optional[str], optional
+    :param name_b: Name of second output, defaults to None
+    :type name_b: Optional[str], optional
     :param testing_dataset: Set to true if the dataset used for testing should be used, defaults to False
     :type testing_dataset: bool, optional
+    :param print_values: If true, will print incorrect values, defaults to true
+    :type print_values: bool
     :return: True if the outputs are equal, false otherwise
     :rtype: bool
     """
@@ -378,7 +391,10 @@ def compare_output(output_a: Dict, output_b: Dict, program: str, params: Paramet
                     atol=10e-5)
             if not this_same:
                 logger.error(f"{key} is not the same for range {selection}")
-                logger.error("\n"+print_compare_matrix(output_a[key][selection], output_b[key][selection], selection))
+                if print_values:
+                    logger.error(f"{name_a} vs. {name_b}")
+                    logger.error("\n"+print_compare_matrix(output_a[key][selection], output_b[key][selection],
+                                                           selection))
             same = same and this_same
     set_range_keys = set(range_keys)
     set_a_keys = set(output_a.keys())
@@ -396,6 +412,7 @@ def compare_output_all(output_a: Dict,
                        print_if_differ: bool = True,
                        name_a: Optional[str] = None,
                        name_b: Optional[str] = None,
+                       print_values: bool = True
                        ) -> bool:
     """
     Compare all arrays stored in the two different dicts. Assumes the dicts have the same keys. Compares full
@@ -405,12 +422,14 @@ def compare_output_all(output_a: Dict,
     :type output_a: Dict
     :param output_b: Dict B to compare
     :type output_b: Dict
-    :param print_if_differ: If the two differing matrices should be printed, defaults to True
+    :param print_if_differ: If true, will print if the given values differ.
     :type print_if_differ: bool, optional
     :param name_a: Name of Dict A, defaults to None
     :type name_a: Optional[str], optional
     :param name_b: Name of Dict B, defaults to None
     :type name_b: Optional[str], optional
+    :param print_values: If true, will print incorrect values, defaults to true
+    :type print_values: bool
     :return: True if all matrices are the same, False otherwise
     :rtype: bool
     """
@@ -420,11 +439,12 @@ def compare_output_all(output_a: Dict,
         same = same and local_same
         if not local_same and print_if_differ:
             logger.error(f"Variable {key} differs",)
-            if name_a is not None and name_b is not None:
-                logger.error(f" {name_a} vs. {name_b}")
-            np.set_printoptions(precision=4)
-            logger.error("\n"+print_compare_matrix(output_a[key], output_b[key],
-                         [slice(0, dim) for dim in output_a[key].shape]))
+            if print_values:
+                if name_a is not None and name_b is not None:
+                    logger.error(f" {name_a} vs. {name_b}")
+                np.set_printoptions(precision=4)
+                logger.error("\n"+print_compare_matrix(output_a[key], output_b[key],
+                             [slice(0, dim) for dim in output_a[key].shape]))
     return same
 
 
@@ -500,11 +520,11 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     logger.info(f"device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
                 f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
     replace_symbols_by_values(sdfg, {
-        'NCLV': '10',
-        'NCLDQI': '3',
-        'NCLDQL': '4',
-        'NCLDQS': '6',
-        'NCLDQV': '7'})
+        'NCLV': symbols['NCLV'],
+        'NCLDQI': symbols['NCLDQI'],
+        'NCLDQL': symbols['NCLDQL'],
+        'NCLDQS': symbols['NCLDQS'],
+        'NCLDQV': symbols['NCLDQV']})
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
 
@@ -556,6 +576,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
 def replace_symbols_by_values(sdfg: SDFG, symbols_to_replace: Dict[str, str]):
     # Promote/replace symbols
+    logger.debug("Replace symbols by their values: %s", symbols_to_replace)
     for sd in sdfg.all_sdfgs_recursive():
         sd.replace_dict(symbols_to_replace)
         if sd.parent_nsdfg_node is not None:
