@@ -2077,15 +2077,8 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
         self.add_node(state, is_start_block=is_start_block)
         return state
 
-    # =============================================================================
-    # = Graph traversal methods ===================================================
-    # =============================================================================
-
-    #def all_nodes_recursive(self) -> Iterator[Tuple[SomeNodeT, SomeGraphT]]:
-    #    for node in self.nodes():
-    #        yield node, self
-    #        if isinstance(node, (ScopeBlock, SDFGState)):
-    #            yield from node.all_nodes_recursive()
+    ###################################################################
+    # Traversal methods
 
     def all_cfgs_recursive(self, recurse_into_sdfgs=True) -> Iterator['ControlFlowGraph']:
         """ Iterate over this and all nested CFGs. """
@@ -2111,6 +2104,9 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
                 yield block
             elif isinstance(block, ControlFlowGraph):
                 yield from block.all_states_recursive()
+
+    ###################################################################
+    # Getters & setters, overrides
 
     @property
     def start_block(self):
@@ -2175,12 +2171,6 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
         return graph_json
-
-    #def all_nodes_recursive(self):
-    #    for node in self.nodes():
-    #        yield node, self
-    #        if isinstance(node, (ScopeBlock, BlockGraphView)):
-    #            yield from node.all_nodes_recursive()
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)
