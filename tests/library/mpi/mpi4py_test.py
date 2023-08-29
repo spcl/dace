@@ -138,6 +138,124 @@ def test_RMA_accumulate():
 
     assert (np.array_equal(win_buffer, win_buffer_ref))
 
+
+@pytest.mark.mpi
+def test_passive_RMA_put():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_passive_rma_put(win_buf: dace.int32[10], send_buf: dace.int32[10], rank: dace.int32):
+        win = MPI.Win.Create(win_buf, comm=commworld)
+        win.Lock(rank)
+        win.Put(send_buf, target_rank=rank)
+        win.Flush(rank)
+        win.Unlock(rank)
+
+        # as MPI barrier
+        win.Fence(0)
+        win.Fence(0)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_passive_rma_put.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    window_size = 10
+    win_buffer = np.full(window_size, rank, dtype=np.int32)
+    win_buffer_ref = np.full(window_size, rank, dtype=np.int32)
+    send_buffer = np.full(window_size, rank, dtype=np.int32)
+
+
+    func(win_buf=win_buffer, send_buf=send_buffer, rank=((rank + 1) % size))
+    mpi4py_passive_rma_put.f(win_buf=win_buffer_ref, send_buf=send_buffer, rank=((rank + 1) % size))
+
+    assert (np.array_equal(win_buffer, win_buffer_ref))
+
+
+@pytest.mark.mpi
+def test_passive_RMA_get():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def mpi4py_passive_rma_get(win_buf: dace.int32[10], recv_buf: dace.int32[10], rank: dace.int32):
+        win = MPI.Win.Create(win_buf, comm=commworld)
+        win.Lock(rank)
+        win.Get(recv_buf, target_rank=rank)
+        win.Flush(rank)
+        win.Unlock(rank)
+
+        # as MPI barrier
+        win.Fence(0)
+        win.Fence(0)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_passive_rma_get.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    window_size = 10
+    win_buffer = np.full(window_size, rank, dtype=np.int32)
+    recv_buf = np.full(window_size, rank, dtype=np.int32)
+    recv_buf_ref = np.full(window_size, rank, dtype=np.int32)
+
+    func(win_buf=win_buffer, recv_buf=recv_buf, rank=((rank + 1) % size))
+    mpi4py_passive_rma_get.f(win_buf=win_buffer, recv_buf=recv_buf_ref, rank=((rank + 1) % size))
+
+    assert (np.array_equal(recv_buf, recv_buf_ref))
+
+
+@pytest.mark.mpi
+def test_RMA_passive_accumulate():
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    # sum all rank at rank 0
+    @dace.program
+    def mpi4py_passive_rma_accumulate(win_buf: dace.int32[10], send_buf: dace.int32[10], rank: dace.int32):
+        win = MPI.Win.Create(win_buf, comm=commworld)
+        win.Lock(rank)
+        win.Accumulate(send_buf, target_rank=rank, op=MPI.SUM)
+        win.Flush(rank)
+        win.Unlock(rank)
+
+        # as MPI barrier
+        win.Fence(0)
+        win.Fence(0)
+
+    if size < 2:
+        raise ValueError("Please run this test with at least two processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = mpi4py_passive_rma_accumulate.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
+
+    window_size = 10
+    win_buffer = np.full(window_size, rank, dtype=np.int32)
+    win_buffer_ref = np.full(window_size, rank, dtype=np.int32)
+    send_buffer = np.full(window_size, rank, dtype=np.int32)
+
+    func(win_buf=win_buffer, send_buf=send_buffer, rank=0)
+    mpi4py_passive_rma_accumulate.f(win_buf=win_buffer_ref, send_buf=send_buffer, rank=0)
+
+    if rank == 0:
+        assert (np.array_equal(win_buffer, win_buffer_ref))
+
+
 @pytest.mark.mpi
 def test_external_comm_bcast():
 
@@ -450,3 +568,6 @@ if __name__ == "__main__":
     test_RMA_put()
     test_RMA_get()
     test_RMA_accumulate()
+    test_passive_RMA_put()
+    test_passive_RMA_get()
+    test_RMA_passive_accumulate()

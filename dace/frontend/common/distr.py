@@ -1022,6 +1022,200 @@ def _rma_fence(pv: ProgramVisitor,
     return window_name
 
 
+@oprepo.replaces_method('RMA_window', 'Flush')
+def _rma_flush(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               window_name: str,
+               rank: Union[str, sp.Expr, Number]):
+    """ Adds a RMA flush to the DaCe Program.
+        flush will completes all outdtanding RMA operations
+
+        :param window_name: The name of the window to be sychronized.
+        :param rank: A value or scalar to specify the target rank.
+        :return: Name of the flush.
+    """
+
+    from dace.libraries.mpi.nodes.win_flush import Win_flush
+
+    # fine a new flush name
+    flush_name = sdfg.add_rma_ops(window_name, "flush")
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+
+    flush_node = Win_flush(flush_name, window_name)
+
+    # check for the last RMA operation
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(flush_name) - 1]
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   flush_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   flush_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(flush_name, dace.int32, transient=True)
+    wnode = state.add_write(flush_name)
+    state.add_edge(flush_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(flush_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Lock')
+def _rma_lock(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              window_name: str,
+              rank: Union[str, sp.Expr, Number],
+              lock_type: Union[str, sp.Expr, Number] = 234, # MPI.LOCK_EXCLUSIVE = 234
+              assertion: Union[str, sp.Expr, Number] = 0):
+    """ Adds a RMA lock to the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param assertion: A value or scalar for lock assertion.
+        :return: Name of the lock.
+    """
+
+    from dace.libraries.mpi.nodes.win_lock import Win_lock
+
+    # fine a new lock name
+    lock_name = sdfg.add_rma_ops(window_name, "lock")
+    lock_node = Win_lock(lock_name, window_name)
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+    _, lock_type_node = _get_int_arg_node(pv, sdfg, state, lock_type)
+    _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
+
+    # check for the last RMA operation
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(lock_name) - 1]
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for window lock ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   lock_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   lock_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    state.add_edge(lock_type_node,
+                   None,
+                   lock_node,
+                   '_lock_type',
+                   Memlet.simple(lock_type_node, "0:1", num_accesses=1))
+
+    state.add_edge(assertion_node,
+                   None,
+                   lock_node,
+                   '_assertion',
+                   Memlet.simple(assertion_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(lock_name, dace.int32, transient=True)
+    wnode = state.add_write(lock_name)
+    state.add_edge(lock_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(lock_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Unlock')
+def _rma_unlock(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               window_name: str,
+               rank: Union[str, sp.Expr, Number]):
+    """ Adds a RMA unlock to the DaCe Program.
+        Completes an RMA access epoch at the target process
+
+        :param window_name: The name of the window to be sychronized.
+        :param rank: A value or scalar to specify the target rank.
+        :return: Name of the Unlock.
+    """
+
+    from dace.libraries.mpi.nodes.win_unlock import Win_unlock
+
+    # fine a new unlock name
+    unlock_name = sdfg.add_rma_ops(window_name, "unlock")
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+
+    unlock_node = Win_unlock(unlock_name, window_name)
+
+    # check for the last RMA operation
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(unlock_name) - 1]
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   unlock_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   unlock_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(unlock_name, dace.int32, transient=True)
+    wnode = state.add_write(unlock_name)
+    state.add_edge(unlock_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(unlock_name, scal))
+
+    return window_name
+
+
 @oprepo.replaces_method('RMA_window', 'Put')
 def _rma_put(pv: ProgramVisitor,
              sdfg: SDFG,
@@ -1048,14 +1242,20 @@ def _rma_put(pv: ProgramVisitor,
     cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
                            if f"{window_name}_fence" in rma_op]
 
-    if len(cur_window_fences) % 2:
-        # if only odd number of fences,
-        # that means we're in a ongoing epoch
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(put_name) - 1]
-    else:
+    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(put_name) - 1]
+
+    # if only odd number of fences,
+    # that means we're in a ongoing epoch
+    if len(cur_window_fences) % 2 == 0:
         # if even number of fences,
         # that means this operation is either a passive sync. one or a corrupted one
-        raise ValueError("Wrong synchronization of RMA calls!")
+        # same logic applies to passive sync.
+        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
+                                    if "lock" in rma_op]
+        # if we don't have even number of syncs, give user a warning
+        if len(cur_window_passive_syncs) % 2 == 0:
+            print("You might have a bad synchronization of RMA calls!")
+
 
     put_node = Win_put(put_name, window_name)
 
@@ -1120,14 +1320,19 @@ def _rma_get(pv: ProgramVisitor,
     cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
                            if f"{window_name}_fence" in rma_op]
 
-    if len(cur_window_fences) % 2:
-        # if only odd number of fences,
-        # that means we're in a ongoing epoch
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(get_name) - 1]
-    else:
+    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(get_name) - 1]
+
+    # if only odd number of fences,
+    # that means we're in a ongoing epoch
+    if len(cur_window_fences) % 2 == 0:
         # if even number of fences,
         # that means this operation is either a passive sync. one or a corrupted one
-        raise ValueError("Wrong synchronization of RMA calls!")
+        # same logic applies to passive sync.
+        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
+                                    if "lock" in rma_op]
+        # if we don't have even number of syncs, give user a warning
+        if len(cur_window_passive_syncs) % 2 == 0:
+            print("You might have a bad synchronization of RMA calls!")
 
     get_node = Win_get(get_name, window_name)
 
@@ -1197,14 +1402,19 @@ def _rma_accumulate(pv: ProgramVisitor,
     cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
                            if f"{window_name}_fence" in rma_op]
 
-    if len(cur_window_fences) % 2:
-        # if only odd number of fences,
-        # that means we're in a ongoing epoch
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(accumulate_name) - 1]
-    else:
+    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(accumulate_name) - 1]
+
+    # if only odd number of fences,
+    # that means we're in a ongoing epoch
+    if len(cur_window_fences) % 2 == 0:
         # if even number of fences,
         # that means this operation is either a passive sync. one or a corrupted one
-        raise ValueError("Wrong synchronization of RMA calls!")
+        # same logic applies to passive sync.
+        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
+                                    if "lock" in rma_op]
+        # if we don't have even number of syncs, give user a warning
+        if len(cur_window_passive_syncs) % 2 == 0:
+            print("You might have a bad synchronization of RMA calls!")
 
     accumulate_node = Win_accumulate(accumulate_name, window_name, op)
 
