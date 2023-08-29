@@ -157,6 +157,14 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
+    def all_states_recursive(self) -> Generator['dace.SDFGState', None, None]:
+        """ Iterate over all states in this control flow graph. """
+        for block in self.nodes():
+            if isinstance(block, dace.SDFGState):
+                yield block
+            elif isinstance(block, ControlFlowGraph):
+                yield from block.all_states_recursive()
+
     @property
     def start_block(self):
         """ Returns the starting block of this ControlFlowGraph. """
