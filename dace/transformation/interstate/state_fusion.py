@@ -10,8 +10,7 @@ from dace import sdfg, subsets
 from dace.config import Config
 from dace.sdfg import SDFG, nodes
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import SDFGState
-from dace.sdfg.sdfg_control_flow import ControlFlowGraph, BasicBlock
+from dace.sdfg.state import SDFGState, ControlFlowGraph
 from dace.transformation import transformation
 
 
@@ -456,7 +455,7 @@ class StateFusion(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, graph: Union[ControlFlowGraph, BasicBlock], sdfg: SDFG):
+    def apply(self, graph: Union[ControlFlowGraph, SDFGState], sdfg: SDFG):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 

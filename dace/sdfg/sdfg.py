@@ -42,8 +42,7 @@ from dace.sdfg.graph import Edge, OrderedDiGraph, SubgraphView
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.sdfg_control_flow import ControlFlowGraph, LoopScopeBlock
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, ControlFlowGraph, LoopScopeBlock
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).

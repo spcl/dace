@@ -22,8 +22,7 @@ import abc
 import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, SDFGState
-from dace.sdfg.sdfg_control_flow import ControlFlowGraph, BasicBlock
+from dace.sdfg import SDFG, SDFGState, ControlFlowGraph
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -109,7 +108,7 @@ class PatternTransformation(TransformationBase):
         raise NotImplementedError
 
     def can_be_applied(self,
-                       graph: Union[SDFG, SDFGState],
+                       graph: Union[ControlFlowGraph, SDFGState],
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
@@ -127,7 +126,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[ControlFlowGraph, BasicBlock], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: Union[ControlFlowGraph, SDFGState], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
@@ -501,7 +500,7 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def can_be_applied(self, graph: SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: ControlFlowGraph, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
 
             :param graph: SDFG object in which the match was found.

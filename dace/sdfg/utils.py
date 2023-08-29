@@ -1231,7 +1231,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                     candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                     sf = StateFusion()
                     sf.setup_match(cfg, id, -1, candidate, 0, override=True)
-                    if sf.can_be_applied(cfg, 0, cfg, permissive=permissive):
+                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                         sf.apply(cfg, sd)
                         applied += 1
                         counter += 1
