@@ -1246,14 +1246,6 @@ class SDFG(ControlFlowGraph):
             yield node, self
             yield from node.all_nodes_recursive()
 
-    def all_sdfgs_recursive(self):
-        """ Iterate over this and all nested SDFGs. """
-        yield self
-        for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.all_sdfgs_recursive()
-
     def all_edges_recursive(self):
         """ Iterate over all edges in this SDFG, including state edges,
             inter-state edges, and recursively edges within nested SDFGs,

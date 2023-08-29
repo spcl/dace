@@ -1,14 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Generator
 
 import dace
-from dace import data as dt
-from dace import symbolic
+from dace import symbolic, data as dt
 from dace.memlet import Memlet
 from dace.properties import CodeBlock, CodeProperty, Property, make_properties
+from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, OrderedMultiDiConnectorGraph
-from dace.sdfg.nodes import AccessNode, Node
 
 
 @make_properties
@@ -33,7 +32,7 @@ class ControlFlowBlock(object):
         """
         self._default_lineinfo = lineinfo
 
-    def data_nodes(self) -> List[AccessNode]:
+    def data_nodes(self) -> List[nd.AccessNode]:
         return []
 
     def replace_dict(self,
@@ -83,7 +82,7 @@ class ControlFlowBlock(object):
 
 
 @make_properties
-class BasicBlock(OrderedMultiDiConnectorGraph[Node, Memlet], ControlFlowBlock):
+class BasicBlock(OrderedMultiDiConnectorGraph[nd.Node, Memlet], ControlFlowBlock):
 
     def __init__(self, label: str='', parent: Optional['ControlFlowGraph']=None):
         OrderedMultiDiConnectorGraph.__init__(self)
@@ -141,6 +140,23 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
         self.add_node(state, is_start_block=is_start_block)
         return state
 
+    def all_cfgs_recursive(self, recurse_into_sdfgs=True) -> Generator['ControlFlowGraph', None, None]:
+        """ Iterate over this and all nested CFGs. """
+        yield self
+        for block in self.nodes():
+            if isinstance(block, BasicBlock) and recurse_into_sdfgs:
+                for node in block.nodes():
+                    if isinstance(node, nd.NestedSDFG):
+                        yield from node.sdfg.all_cfgs_recursive()
+            elif isinstance(block, ControlFlowGraph):
+                yield from block.all_cfgs_recursive()
+
+    def all_sdfgs_recursive(self) -> Generator['dace.SDFG', None, None]:
+        """ Iterate over this and all nested SDFGs. """
+        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=True):
+            if isinstance(cfg, dace.SDFG):
+                yield cfg
+
     @property
     def start_block(self):
         """ Returns the starting block of this ControlFlowGraph. """
@@ -178,13 +194,13 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         ControlFlowGraph.__init__(self)
         ControlFlowBlock.__init__(self, label, parent)
 
-    def data_nodes(self) -> List[AccessNode]:
+    def data_nodes(self) -> List[nd.AccessNode]:
         """ Returns all data_nodes (arrays) present in this state. """
         data_nodes = []
         for n in self.nodes():
             data_nodes.append(n.data_nodes())
 
-        return [n for n in self.nodes() if isinstance(n, AccessNode)]
+        return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
 
     def replace_dict(self,
                      repl: Dict[str, str],
@@ -202,6 +218,12 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
         return graph_json
+
+    def all_nodes_recursive(self):
+        for node in self.nodes():
+            yield node, self
+            if isinstance(node, (ScopeBlock, dace.sdfg.StateGraphView)):
+                yield from node.all_nodes_recursive()
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)

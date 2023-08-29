@@ -23,6 +23,7 @@ import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.sdfg_control_flow import ControlFlowGraph, BasicBlock
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -126,10 +127,11 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: Union[ControlFlowGraph, BasicBlock], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
+        :param graph: The graph object on which the transformation operates.
         :param sdfg: The SDFG to apply the transformation to.
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.

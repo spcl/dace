@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.sdfg.sdfg import SDFG, InterstateEdge, LogicalGroup
 
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, StateGraphView
 
 from dace.sdfg.scope import (scope_contains_scope, is_devicelevel_gpu, devicelevel_block_size, ScopeSubgraphView)
 

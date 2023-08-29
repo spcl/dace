@@ -1206,8 +1206,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            fusible_states += sd.number_of_edges()
+        for cfg in sdfg.all_cfgs_recursive():
+            fusible_states += cfg.number_of_edges()
 
     if progress is True:
         pbar = tqdm(total=fusible_states, desc='Fusing states')
@@ -1216,31 +1216,31 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
+        for cfg in sd.all_cfgs_recursive(recurse_into_sdfgs=False):
+            while True:
+                edges = list(cfg.nx.edges)
+                applied = 0
+                skip_nodes = set()
+                for u, v in edges:
+                    if (progress is None and tqdm is not None and (time.time() - start) > 5):
+                        progress = True
+                        pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-        while True:
-            edges = list(sd.nx.edges)
-            applied = 0
-            skip_nodes = set()
-            for u, v in edges:
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
-
-                if u in skip_nodes or v in skip_nodes:
-                    continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion()
-                sf.setup_match(sd, id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
-                    sf.apply(sd, sd)
-                    applied += 1
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
-            if applied == 0:
-                break
+                    if u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or not isinstance(u, SDFGState):
+                        continue
+                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                    sf = StateFusion()
+                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    if sf.can_be_applied(cfg, 0, cfg, permissive=permissive):
+                        sf.apply(cfg, sd)
+                        applied += 1
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                if applied == 0:
+                    break
     if progress:
         pbar.close()
     return counter
