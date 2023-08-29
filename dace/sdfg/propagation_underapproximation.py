@@ -186,10 +186,6 @@ class AffineSMemlet(SeparableMemletPattern):
         self.param = None
         self.paramind = None
         self.mult = None
-        self.add_min = None
-        self.add_max = None
-        self.constant_min = None
-        self.constant_max = None
 
         # Special case: Get the total internal access range
         # If this range matches (0, rs), we say that the propagated skip is 1
@@ -205,7 +201,7 @@ class AffineSMemlet(SeparableMemletPattern):
                 subexprs = [dexpr[0], dexpr[1]]
                 step = dexpr[2]
                 # if the range does not represent a single index return False
-                # TODO: remove this for more precise analyisis
+                # if step of subscript expression is not 1 back off
                 if not subexprs[0] == subexprs[1] or step != 1:
                     return False
 
@@ -260,15 +256,6 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
-            result_begin = subexprs[0].subs(self.param, node_rb).expand()
-            # if node_rs != 1:
-            #     # Special case: i:i+stride for a begin:end:stride range
-            #     if node_rb == result_begin and bre + 1 == node_rs and step == 1:
-            #         pass
-            #     else:
-            #         # Map ranges where the last index is not known
-            #         # exactly are not supported by this pattern.
-            #         return False
             if (any(s not in defined_vars for s in node_rb.free_symbols)
                     or any(s not in defined_vars for s in node_re.free_symbols)):
                 # Cannot propagate variables only defined in this scope (e.g.,
@@ -282,8 +269,8 @@ class AffineSMemlet(SeparableMemletPattern):
 
     def propagate(self, array, dim_exprs, node_range):
         # Compute last index in map according to range definition
+        # parameter range
         node_rb, node_re, node_rs = node_range[self.paramind]  # node_rs = 1
-        node_rlen = node_re - node_rb + 1
 
         if isinstance(dim_exprs, list):
             dim_exprs = dim_exprs[0]
@@ -298,6 +285,7 @@ class AffineSMemlet(SeparableMemletPattern):
             else:
                 raise NotImplementedError
 
+            # subscript expression
             rb = symbolic.pystr_to_symbolic(rb).expand()
             re = symbolic.pystr_to_symbolic(re).expand()
             rs = symbolic.pystr_to_symbolic(rs).expand()
@@ -316,46 +304,6 @@ class AffineSMemlet(SeparableMemletPattern):
 
         result_skip = self.multiplier * node_rs
         result_tile = 1
-
-        # TODO: Okay this is basically for cases like tiling, we can ignore this for now
-        # Special case: i:i+stride for a begin:end:stride range
-        # if (node_rb == result_begin and (re - rb + 1) == node_rs and rs == 1 and rt == 1):
-        #     return (node_rb, node_re, 1, 1)
-
-        # Experimental
-        # This should be using sympy.floor
-        # memlet_start_pts = ((re - rt + 1 - rb) / rs) + 1
-        # memlet_rlen = memlet_start_pts.expand() * rt
-        # interval_len = (result_end - result_begin + 1)
-        # num_elements = node_rlen * memlet_rlen
-
-        # if (interval_len == num_elements or interval_len.expand() == num_elements):
-        #     # Continuous access
-        #     result_skip = 1
-        #     result_tile = 1
-        # else:
-        #     if rt == 1:
-        #         result_skip = (result_end - result_begin - re + rb) / (node_re - node_rb)
-        #         try:
-        #             if result_skip < 1:
-        #                 result_skip = 1
-        #         except:
-        #             pass
-        #         result_tile = result_end - result_begin + 1 - (node_rlen - 1) * result_skip
-        #     else:
-        #         candidate_skip = rs
-        #         candidate_tile = rt * node_rlen
-        #         candidate_lstart_pt = result_end - result_begin + 1 - candidate_tile
-        #         if simplify(candidate_lstart_pt / (num_elements / candidate_tile - 1)) == candidate_skip:
-        #             result_skip = rs
-        #             result_tile = rt * node_rlen
-        #         else:
-        #             result_skip = rs / node_rlen
-        #             result_tile = rt
-
-        #     if result_skip == result_tile or result_skip == 1:
-        #         result_skip = 1
-        #         result_tile = 1
 
         result_begin = simplify(result_begin)
         result_end = simplify(result_end)
@@ -444,31 +392,6 @@ class ConstantSMemlet(SeparableMemletPattern):
         for var in variable_context[-1]:
             if var in free_symbols:
                 return False
-
-        # # Create a wildcard that excludes current map's parameters
-        # cst = sympy.Wild('cst', exclude=variable_context[-1] + list(variable_context[-2]))
-
-        # # Range case
-        # if isinstance(dexpr, tuple) and len(dexpr) == 3:
-        #     # Try to match a constant expression for the range
-        #     for rngelem in dexpr:
-        #         if dtypes.isconstant(rngelem):
-        #             continue
-
-        #         matches = rngelem.match(cst)
-        #         if matches is None or len(matches) != 1:
-        #             return False
-        #         if not matches[cst].is_constant():
-        #             return False
-
-        # else:  # Single element case
-        #     # Try to match a constant expression
-        #     if not dtypes.isconstant(dexpr):
-        #         matches = dexpr.match(cst)
-        #         if matches is None or len(matches) != 1:
-        #             return False
-        #         if not matches[cst].is_constant():
-        #             return False
 
         return True
 
@@ -926,7 +849,6 @@ class UnderapproximateWrites(ppl.Pass):
 
         internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
         external_array = parent_sdfg.arrays[external_memlet.data]
-
 
         for j, subset in enumerate(_subsets):
             if subset is None:
