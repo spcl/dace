@@ -20,8 +20,10 @@ static void CheckCusparseError(cusparseStatus_t const& status) {
 }
 
 static cusparseHandle_t CreateCusparseHandle(int device) {
-  if (cudaSetDevice(device) != cudaSuccess) {
-    throw std::runtime_error("Failed to set CUDA device.");
+  if (device >= 0) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
   }
   cusparseHandle_t handle;
   CheckCusparseError(cusparseCreate(&handle));
