@@ -8,6 +8,7 @@ import sympy as sp
 import networkx as nx
 from typing import Dict, List, Optional, Set, Tuple
 import re as regex
+import logging
 
 from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
@@ -19,6 +20,8 @@ from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
+
+logger = logging.getLogger(__name__)
 
 
 def _check_range(subset, a, itersym, b, step):
@@ -88,6 +91,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         allow_none=True,
         default=None,
         desc='The name of the iteration variable (optional).',
+    )
+
+    nsdfg = Property(
+        dtype=nodes.NestedSDFG,
+        allow_none=True,
+        default=None,
+        desc='The nested SDFG created when applying the transformation, if required',
     )
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
@@ -358,6 +368,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)
+        logger.debug("itervar: %s, start: %s, end: %s, step: %s", itervar, start, end, step)
 
         # Find all loop-body states
         states = set()
@@ -373,6 +384,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # Nest loop-body states
         if len(states) > 1:
+            logger.debug("Nest states, there are %i states", len(states))
 
             # Find read/write sets
             read_set, write_set = set(), set()
@@ -380,6 +392,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 rset, wset = state.read_and_write_sets()
                 read_set |= rset
                 write_set |= wset
+                logger.debug("state: %s: Add %s to read set and %s to write set", state, rset, wset)
                 # Add to write set also scalars between tasklets
                 for src_node in state.nodes():
                     if not isinstance(src_node, nodes.Tasklet):
@@ -398,6 +411,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         for edge in sdfg.edges_between(src, dst):
                             for s in edge.data.free_symbols:
                                 if s in sdfg.arrays:
+                                    # logger.debug("Add %s to read set as it is a free symbol in edge %s -> %s (%s)", s,
+                                    #              edge.src, edge.dst, edge.data)
                                     read_set.add(s)
 
             # Find NestedSDFG's unique data
@@ -465,7 +480,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 del sdfg.arrays[name]
 
             # Add NestedSDFG node
+            logger.debug("Add nsdfg with read: %s and writes: %s", read_set, write_set)
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
+            self.nsdfg = cnode
             if sdfg.parent:
                 for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                     if s not in cnode.symbol_mapping:
@@ -498,10 +515,11 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         symbols_to_remove = set()
         if len(isedge.data.assignments) > 0:
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
+            self.nsdfg = nsdfg
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
-                if sym in sdfg.symbols:
+                if sym in sdfg.symbols and sym not in nsdfg.sdfg.symbols:
                     nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
                     nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
                 elif sym in sdfg.arrays:
@@ -708,3 +726,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         nnode.sdfg.parent_nsdfg_node = nnode
                         nnode.sdfg.parent = nstate
                         nnode.sdfg.parent_sdfg = nsdfg
+
+
+        logger.debug("END: itervar: %s, start: %s, end: %s, step: %s", itervar, start, end, step)
+        logger.debug("")

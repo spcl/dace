@@ -12,6 +12,7 @@ import warnings
 from functools import reduce
 import operator
 import copy
+import logging
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
@@ -22,6 +23,8 @@ from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
+
+logger = logging.getLogger(__name__)
 
 
 @make_properties
@@ -996,6 +999,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         def _check_cand(candidates, outer_edges):
             for cname, (cand, nstate, indices) in candidates.items():
                 if all(me == 0 for i, me in enumerate(cand.subset.min_element()) if i in indices):
+                    # logger.debug("Ignore %s as all min elements are 0. cand: %s, nstate: %s", cname, cand, nstate)
                     ignore.add(cname)
                     continue
 
@@ -1003,9 +1007,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 try:
                     outer_edge = next(iter(outer_edges(nsdfg, cname)))
                 except StopIteration:  # Connector does not exist on this side
+                    # logger.debug("Ignore %s as connector does not exist", cname)
                     ignore.add(cname)
                     continue
                 if any(me != 0 for i, me in enumerate(outer_edge.data.subset.min_element()) if i in indices):
+                    # logger.debug("Ignore %s as some outer memlets begin with 0", cname)
                     ignore.add(cname)
                     continue
 
@@ -1022,6 +1028,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
                         subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
                     if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
+                        # logger.debug("Ignore %s due to wrt loops", cname)
                         ignore.add(cname)
                         continue
 
@@ -1034,9 +1041,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 # in "defined_symbols"
                 missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
+                    # logger.debug("Ignore %s due to missing symbols: %s", cname, missing_symbols)
                     ignore.add(cname)
                     continue
 
+        logger.debug("Check candidates in state %s, in: %s, out: %s", state, in_candidates, out_candidates)
         _check_cand(in_candidates, state.in_edges_by_connector)
         _check_cand(out_candidates, state.out_edges_by_connector)
         # This pervents the following errormessage for some SDFGs are nsdfg.sdfg.save seems to have sideeffects:
@@ -1052,12 +1061,14 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         nsdfg = self.nsdfg
         ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
+        logger.debug("ic: %s, oc: %s in state %s", ic, oc, graph)
         return (len(ic) + len(oc)) > 0
 
     def apply(self, state: SDFGState, sdfg: SDFG):
         nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
+        logger.debug("ic: %s, oc: %s in state: %s", torefine_in, torefine_out, state)
 
         refined = set()
 

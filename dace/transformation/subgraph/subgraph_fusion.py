@@ -186,8 +186,15 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             diff_end_map = out_range.ranges[index][1] - in_range.ranges[index][1]
             if dace.symbolic.issymbolic(diff_end_map):
                 diff_end_map = diff_end_map.evalf(subs=sdfg.constants)
-            if ((abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng) or
-                    dace.symbolic.issymbolic(diff_start_rng) != dace.symbolic.issymbolic(diff_end_rng)):
+            try:
+                if ((abs(diff_start_map) < diff_start_rng and abs(diff_end_map) < diff_end_rng) or
+                        dace.symbolic.issymbolic(diff_start_rng) != dace.symbolic.issymbolic(diff_end_rng)):
+                    return None
+            except TypeError as e:
+                logger.warning("Got error when comparing: %s. Most likely due to symbols. Give up on computing the "
+                               "difference", e)
+                logger.warning("diff_start_map: %s, diff_start_rng: %s, diff_end_map: %s, diff_end_rng: %s",
+                               diff_start_map, diff_start_rng, diff_end_map, diff_end_rng)
                 return None
             else:
                 logger.debug("diff_start_rng: %s, diff_end_rng: %s", diff_start_rng, diff_end_rng)
@@ -230,8 +237,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         base_map = maps[0]
         for map in maps:
             if map.get_param_num() != base_map.get_param_num():
+                logger.debug("Rejected: NUmber of parameters does not match")
                 return False
             if not all([p1 == p2 for (p1, p2) in zip(map.params, base_map.params)]):
+                logger.debug("Rejected: Map parameters are name differently")
                 return False
             if not self._map_ranges_compatible(map, base_map):
                 logger.debug("Rejected: Map ranges are not compatible")
@@ -298,6 +307,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                  node.data else iedge.data.other_subset)
 
                             subset_to_add.pop(dims_to_discard)
+                            logger.debug("Add to upper subsets %s, node: %s, oedge: %s", subset_to_add, node, iedge)
                             upper_subsets.add(subset_to_add)
                 else:
                     warnings.warn("SubgraphFusion::Nodes between two maps to be"
@@ -314,6 +324,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             subset_to_add = dcpy(oedge.data.subset if oedge.data.data ==
                                                  node.data else oedge.data.other_subset)
                             subset_to_add.pop(dims_to_discard)
+                            logger.debug("Add to lower subset %s, node: %s, oedge: %s", subset_to_add, node, oedge)
                             lower_subsets.add(subset_to_add)
 
             # We assume that upper_subsets are contiguous
@@ -328,6 +339,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 return False
 
             # now take union of upper subsets
+            logger.debug("Take union of upper subsets: %s", upper_subsets)
             upper_iter = iter(upper_subsets)
             union_upper = next(upper_iter)
             for subs in upper_iter:
@@ -340,6 +352,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
                 if not union_upper.covers(lower_subset):
+                    logger.debug("Check if intermediate node %s can be transformed with lower subset %s and upper %s",
+                            node, lower_subset, union_upper)
                     differences = self._can_intermediate_array_be_transformed(sdfg, graph, node, lower_subset, union_upper)
                     if differences is not None:
                         if node.data in self.arrays_as_circular_buffer:
@@ -355,7 +369,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 differences.insert(idx, 0)
                             self.arrays_as_circular_buffer[node.data] = differences
                     else:
-                        logger.debug("Rejected: subsets don't cover each other")
+                        logger.debug("Rejected: subsets don't cover each other. Union upper: %s, lower_subset: %s",
+                                union_upper, lower_subset)
                         return False
             if node.data in self.arrays_as_circular_buffer:
                 if not self._check_memlet_sizes_for_circular_buffer(graph, node.data, self.arrays_as_circular_buffer):

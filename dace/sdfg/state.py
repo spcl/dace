@@ -388,6 +388,7 @@ class StateGraphView(object):
             if validate and len(eq) != 0:
                 cycles = self.find_cycles()
                 if cycles:
+                    print("Leftover nodes in queue: {}".format(eq))
                     raise ValueError('Found cycles in state %s: %s' % (self.label, list(cycles)))
                 raise RuntimeError("Leftover nodes in queue: {}".format(eq))
 

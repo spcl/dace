@@ -8,6 +8,8 @@ from dace.properties import make_properties, Property
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.graph import SubgraphView
 import dace
+import logging
+from numbers import Number
 
 from collections import defaultdict
 import copy
@@ -18,8 +20,24 @@ import dace.libraries.standard as stdlib
 
 import itertools
 
+logger = logging.getLogger(__name__)
+
 # ****************
 # Helper functions
+
+
+def sympy_min(a: Union[Number, symbolic.SymExpr], b: Union[Number, symbolic.SymExpr]):
+    if symbolic.simplify(a > b):
+        return b
+    else:
+        return a
+
+
+def sympy_max(a: Union[Number, symbolic.SymExpr], b: Union[Number, symbolic.SymExpr]):
+    if symbolic.simplify(a > b):
+        return a
+    else:
+        return b
 
 
 def range_eq_with_difference(this_range: Tuple[int, int, int],
@@ -40,7 +58,7 @@ def range_eq_with_difference(this_range: Tuple[int, int, int],
     :return: If both ranges are "equal"
     :rtype: bool
     """
-    if any(dace.symbolic.issymbolic(trng) != dace.symbolic.issymbolic(orng) for trng, orng in zip(this_range, other_range)):
+    if any(symbolic.issymbolic(trng) != symbolic.issymbolic(orng) for trng, orng in zip(this_range, other_range)):
         return False
     return abs(this_range[0] - other_range[0]) <= max_difference_start \
         and abs(this_range[1] - other_range[1]) <= max_difference_end \
@@ -70,9 +88,17 @@ def range_in_ranges_with_difference(
     :rtype: Tuple[int, int, int]
     """
     for other_range in other_ranges:
-        if range_eq_with_difference(this_range, other_range, max_difference_start, max_difference_end):
-            return ((min(this_range[0], other_range[0]), max(this_range[1], other_range[1]), this_range[2]),
-                    other_range)
+        try:
+            if range_eq_with_difference(this_range, other_range, max_difference_start, max_difference_end):
+                start = this_range[0] if this_range[0] == other_range[0] else sympy_min(this_range[0], other_range[0])
+                end = this_range[1] if this_range[1] == other_range[1] else sympy_max(this_range[1], other_range[1])
+                return ((start, end, this_range[2]), other_range)
+        except TypeError as e:
+            logger.error(e)
+            logger.error("this_range: %s, other_range: %s, max_diff_start: %s, max_diff_end: %s", this_range,
+                         other_range, max_difference_start, max_difference_end)
+
+
     return None
 
 
@@ -286,8 +312,8 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     return SubgraphView(graph, list(node_set))
 
 
-def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_shape: Tuple[dace.symbolic.symbol],
-                              offsets: Optional[Tuple[dace.symbolic.symbol]] = None):
+def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_shape: Tuple[symbolic.symbol],
+                              offsets: Optional[Tuple[symbolic.symbol]] = None):
     """
     Add modulos to all memlet subset ranges in the given state and all nested SDFGs for the given data. The modulos are
     added to allow the array to shrink and be used in a cirular buffer manner. Deals with nested SDFGs by calling itself

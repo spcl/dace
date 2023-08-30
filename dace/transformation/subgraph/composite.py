@@ -87,6 +87,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
         subgraph = self.subgraph_view(sdfg)
         scope_dict = graph.scope_dict()
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
+        logger.debug("")
         logger.debug("Check for maps: %s", [m.map for m in map_entries])
 
         if self.allow_expansion == True:
