@@ -199,8 +199,8 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
             params = ParametersProvider(program,
                                         update={'NBLOCKS': int(nblock), 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})
             params_list.append(params)
-        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=0,
-                                             tot_time_repetitions=3, use_basic_sdfg=True))
+        profile_configs.append(ProfileConfig(program, params_list, ['NBLOCKS'], ncu_repetitions=2,
+                                             tot_time_repetitions=3, use_basic_sdfg=False))
 
     experiment_ids = []
     experiment_desc = "Vertical loops with ZSOLQA"
@@ -209,7 +209,7 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
     logger.info("run stack profile")
     experiment_ids.append(profile(profile_configs, RunConfig(), experiment_desc + " stack allocation",
                                   [('temp allocation', 'stack')],
-                                  ncu_report=False, debug_mode=debug_mode))
+                                  ncu_report=True, debug_mode=debug_mode))
     for profile_config in profile_configs:
         profile_config.set_heap_limit = True
         KLON, NCLV, KLEV = sympy.symbols("KLON NCLV KLEV")
@@ -218,7 +218,7 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
     logger.info("run heap profile")
     experiment_ids.append(profile(profile_configs, RunConfig(specialise_symbols=False),
                                   experiment_desc + " heap allocation", [('temp allocation', 'heap')],
-                                  ncu_report=False, debug_mode=debug_mode))
+                                  ncu_report=True, debug_mode=debug_mode))
     return experiment_ids
 
 
@@ -267,7 +267,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
     else:
         new_experiment_id = 0
     logger.info(f"Profile for {experiment_description} using experiment id: {new_experiment_id} and profile configs: "
-                f"{[str(p) for p in program_configs]}")
+                f"{program_configs}")
 
     if not append_to_last_experiment:
         git_hash = check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=get_thesis_playground_root_dir())\

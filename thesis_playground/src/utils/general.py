@@ -520,11 +520,11 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
     logger.info(f"device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
                 f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
     replace_symbols_by_values(sdfg, {
-        'NCLV': symbols['NCLV'],
-        'NCLDQI': symbols['NCLDQI'],
-        'NCLDQL': symbols['NCLDQL'],
-        'NCLDQS': symbols['NCLDQS'],
-        'NCLDQV': symbols['NCLDQV']})
+        'NCLV': str(symbols['NCLV']),
+        'NCLDQI': str(symbols['NCLDQI']),
+        'NCLDQL': str(symbols['NCLDQL']),
+        'NCLDQS': str(symbols['NCLDQS']),
+        'NCLDQV': str(symbols['NCLDQV'])})
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
 
@@ -590,6 +590,8 @@ def replace_symbols_by_values(sdfg: SDFG, symbols_to_replace: Dict[str, str]):
     # Verify promotion/replacement
     for sd in sdfg.all_sdfgs_recursive():
         assert not any(k in sd.symbols for k in symbols_to_replace.keys())
+        logger.debug(sd.symbols)
+        logger.debug(sd.free_symbols)
         assert not any(k in str(s) for s in sd.free_symbols for k in symbols_to_replace.keys())
         for state in sd.states():
             for node in state.nodes():

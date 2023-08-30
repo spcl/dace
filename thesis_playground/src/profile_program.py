@@ -25,7 +25,7 @@ def main():
         run_config.set_from_args(args)
         params = ParametersProvider(program)
         params.update_from_args(args)
-        profile_config = ProfileConfig(program, [params], ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=2,
+        profile_config = ProfileConfig(program, [params], ['NBLOCKS'], ncu_repetitions=1, tot_time_repetitions=2,
                 use_basic_sdfg=True)
         profile_config.profile(run_config)
 

@@ -78,11 +78,11 @@ def generate_basic_sdfg(
     add_args['outside_first'] = run_config.outside_loop_first
     logger.debug(f"Optimise SDFG for phase 1 (no device) ignoring {params_to_ignore}")
     replace_symbols_by_values(sdfg, {
-        'NCLV': params['NCLV'],
-        'NCLDQI': params['NCLDQI'],
-        'NCLDQL': params['NCLDQL'],
-        'NCLDQS': params['NCLDQS'],
-        'NCLDQV': params['NCLDQV']})
+        'NCLV': str(params['NCLV']),
+        'NCLDQI': str(params['NCLDQI']),
+        'NCLDQL': str(params['NCLDQL']),
+        'NCLDQS': str(params['NCLDQS']),
+        'NCLDQV': str(params['NCLDQV'])})
     auto_optimize_phase_1(sdfg, **add_args)
     return sdfg
 
@@ -167,6 +167,12 @@ def get_optimised_sdfg(
         ) -> SDFG:
     logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
     sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "basic_sdfg")
+
+    # symbols_to_replace = {k: str(v) for k, v in params.get_dict().items()}
+    # del symbols_to_replace['NBLOCKS']
+    # replace_symbols_by_values(sdfg, symbols_to_replace)
 
     add_args = {}
     if run_config.specialise_symbols:
@@ -178,6 +184,7 @@ def get_optimised_sdfg(
     logger.debug("Continue optimisation after getting basic SDFG")
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_phase_2")
+
     auto_optimize_phase_2(
         sdfg,
         run_config.device,
@@ -185,7 +192,9 @@ def get_optimised_sdfg(
 
     if run_config.change_stride:
         schedule = ScheduleType.GPU_Device if run_config.device == dace.DeviceType.GPU else ScheduleType.Default
-        logger.info("Change strides")
+        if not storage_on_gpu:
+            schedule = ScheduleType.Default
+        logger.info("Change strides using schedule %s", schedule)
         sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
         if verbose_name is not None:
             save_graph(sdfg, verbose_name, "after_change_stride")
