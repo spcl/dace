@@ -7,6 +7,7 @@ from dace import dtypes
 from dace.data import Array, Scalar
 from dace.sdfg import utils as sdutil
 from dace.sdfg import SDFG, nodes, infer_types, SDFGState
+from dace.sdfg.graph import SubgraphView
 from dace.transformation.optimizer import Optimizer
 from dace.memlet import Memlet
 
@@ -19,6 +20,7 @@ from dace.transformation.dataflow import TrivialMapElimination, MapCollapse, Map
                                          MapExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess, MoveAssignmentOutsideIf
 from dace.transformation import helpers as xfh
+from dace.transformation.passes.simplify import SimplifyPass
 
 from utils.general import save_graph
 
@@ -48,14 +50,18 @@ def auto_optimize_phase_1(
     logger.debug(f"program: {program}, outside_first: {outside_first}, symbols: {symbols}")
 
     # Fix for full cloudsc
+    symbols_to_remove = {
+        'CLOUDSCOUTER2': ['_for_it_49', '_for_it_62', '_for_it_65'],
+        'CLOUDSCOUTER3': ['_for_it_49', '_for_it_62', '_for_it_65'],
+        'CLOUDSCOUTER4': ['_for_it_59', '_for_it_46', '_for_it_62'],
+    }
     sdfg.validate()
-    if sdfg.name == 'CLOUDSCOUTER':
+    if sdfg.name in symbols_to_remove:
         cloudsc_state = sdfg.find_state('stateCLOUDSC')
         for node in cloudsc_state.nodes():
             if isinstance(node, nodes.NestedSDFG):
                 logger.debug(f"remove symbols in {node}")
-                symbols_to_remove = ['_for_it_49', '_for_it_62', '_for_it_65']
-                for symbol in symbols_to_remove:
+                for symbol in symbols_to_remove[sdfg.name]:
                     if symbol in node.sdfg.symbols:
                         node.sdfg.remove_symbol(symbol)
 
@@ -472,20 +478,78 @@ def k_caching_prototype_v1(sdfg: SDFG,
     :param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
     :type program: Optional[str], optional
     """
+    sdfg.add_symbol('NCLDTOP', int)
+    sdfg.simplify()
+    if symbols:
+        specialise_symbols(sdfg, symbols)
+
     # Force KLEV loop with vertical dependency into a map
-    xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
-    if len(xforms) == 1:
-        xform = xforms[0]
-        xform.apply(sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id), sdfg.sdfg_list[xform.sdfg_id])
+    logger.debug("Constants: %s, symbols: %s", sdfg.constants, sdfg.symbols)
+    to_transform = True
+    while to_transform:
+        xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[LoopToMap], permissive=True)]
+        to_transform = False
+        if len(xforms) > 0:
+            to_transform = True
+            xform = xforms[0]
+            xf_sdfg = sdfg.sdfg_list[xform.sdfg_id]
+            xf_state = sdfg.sdfg_list[xform.sdfg_id].find_state(xform.state_id)
+            xform.apply(xf_state, xf_sdfg)
+            logger.debug("Applied LoopToMap to state %s in SDFG %s", xf_state, xf_sdfg.name)
+            if program is not None:
+                save_graph(sdfg, program, "after_loop_to_map")
+            if xform.nsdfg is not None:
+                logger.debug("LoopToMap created a nsdfg: %s within %s", xform.nsdfg, xform.nsdfg.sdfg.parent)
+                amount = xform.nsdfg.sdfg.apply_transformations_repeated([RefineNestedAccess])
+                logger.debug("Applied %i RefineNestedAccess transformations", amount)
+                if program is not None:
+                    save_graph(sdfg, program, "after_refine_nested_acces")
+                # logger.debug("Look to refine accesses for nsdfg: %s parent: %s", xform.nsdfg,
+                #              xform.nsdfg.sdfg.parent)
+                # xforms_refine = [xf for xf in Optimizer(xf_sdfg).get_pattern_matches(patterns=[RefineNestedAccess],
+                #                  # states=[xform.nsdfg.sdfg.parent])]
+                #                  permissive=True)]
+                # logger.debug("Found %i many with %s", len(xforms_refine), [(xf.nsdfg, xf.nsdfg.sdfg.parent) for xf in
+                #              xforms_refine])
+                # for xf_refine in xforms_refine:
+                #     if xf_refine.nsdfg == xform.nsdfg:
+                #         xf_refine_sdfg = sdfg.sdfg_list[xf_refine.sdfg_id]
+                #         xf_refine_state = sdfg.sdfg_list[xf_refine.sdfg_id].find_state(xf_refine.state_id)
+                #         logger.debug("Apply RefineNestedAccess")
+                #         xf_refine.apply(xf_refine_state, xf_refine_sdfg)
+                #         if program is not None:
+                #             save_graph(sdfg, program, "after_refine_nested_acces")
+            # if xform.nsdfg is not None:
+            #     logger.debug("LoopToMap created a nsdfg: %s", xform.nsdfg)
+            #     refine_access = RefineNestedAccess()
+            #     refine_access.nested_sdfg = xform.nsdfg
+            #     # for expr in RefineNestedAccess.expressions():
+            #     #     logger.debug([pn.node for pn in expr.nodes()])
+            #     if refine_access.can_be_applied(xf_state, 0, xf_sdfg):
+            #         logger.debug("Refine nested access")
+            #         xf_refine_sdfg = sdfg.sdfg_list[refine_access.sdfg_id]
+            #         xf_refine_state = sdfg.sdfg_list[refine_access.sdfg_id].find_state(refine_access.state_id)
+            #         refine_access.apply(xf_refine_state, xf_refine_sdfg)
     if program is not None:
         save_graph(sdfg, program, "after_force_klev_to_map")
+
+    # sdfg.apply_transformations_repeated([RefineNestedAccess])
+    # if program is not None:
+    #     save_graph(sdfg, program, "after_refine_nested_access")
+
+    SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
+
+    # Simplify to get rid of any leftover states
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
+
 
     # Apply TrivialMapElimination before Fusion to avoid problems with maps over KLON=1
     sdfg.apply_transformations_repeated([TrivialMapElimination])
     if program is not None:
         save_graph(sdfg, program, "after_trivial_map_elimination")
 
-    sdfg.simplify()
+    SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
@@ -500,7 +564,7 @@ def k_caching_prototype_v1(sdfg: SDFG,
 
     # Fuse maps to create one big KLEV-map
     greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
-        'max_difference_start': 1,
+        'max_difference_start': symbols['NCLDTOP']+1,
         'max_difference_end': 1,
         'is_map_sequential': lambda map: (str(map.range.ranges[0][1]) == 'KLEV' or map.range.ranges[0][1] ==
                                           symbols['KLEV'])
@@ -512,22 +576,24 @@ def k_caching_prototype_v1(sdfg: SDFG,
     if program is not None:
         save_graph(sdfg, program, "after_simplify")
 
-    continue_search = True
-    while continue_search:
-        xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
-        logger.debug("Found %i many possible transformations to transform map back to for-loop", len(xforms))
-        continue_search = False
-        for xf in xforms:
-            # expect that maps only have one dimension, as we did the MapExpansion transformation before
-            xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
-            xf_state = xf_sdfg.find_state(xf.state_id)
-            if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV'] and len(xf_state.out_edges(xf.map_entry)) > 1:
-                continue_search = True
-                logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
-                xf.apply(xf_state, xf_sdfg)
-                if program is not None:
-                    save_graph(sdfg, program, "after_map_to_for_loop")
-                break
+    # continue_search = True
+    # while continue_search:
+    #     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
+    #     logger.debug("Found %i many possible transformations to transform map back to for-loop", len(xforms))
+    #     continue_search = False
+    #     for xf in xforms:
+    #         # expect that maps only have one dimension, as we did the MapExpansion transformation before
+    #         xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
+    #         xf_state = xf_sdfg.find_state(xf.state_id)
+    #         if xf.map_entry.map.range.ranges[0][1] == symbols['KLEV'] and len(xf_state.out_edges(xf.map_entry)) > 1:
+    #             continue_search = True
+    #             logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
+    #             xf.apply(xf_state, xf_sdfg)
+    #             if program is not None:
+    #                 save_graph(sdfg, program, "after_map_to_for_loop")
+    #             break
+    sdfg.validate()
+    logger.debug("Done with K-Caching")
 
 
 def list_access_nodes(
