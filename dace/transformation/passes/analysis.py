@@ -5,6 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
+from dace.sdfg.state import ControlFlowBlock
 from dace.sdfg.analysis import cfg
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
@@ -45,7 +46,7 @@ class StateReachability(ppl.Pass):
 @properties.make_properties
 class SymbolAccessSets(ppl.Pass):
     """
-    Evaluates symbol access sets (which symbols are read/written in each state or interstate edge).
+    Evaluates symbol access sets (which symbols are read/written in each control flow block or interstate edge).
     """
 
     CATEGORY: str = 'Analysis'
@@ -59,23 +60,24 @@ class SymbolAccessSets(ppl.Pass):
 
     def apply_pass(
             self, top_sdfg: SDFG, _
-    ) -> Dict[int, Dict[Union[SDFGState, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]]:
+    ) -> Dict[int, Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]]:
         """
-        :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
+        :return: A mapping of control flow blocks and interstate edges to a tuple of used (read, written) symbols.
         """
-        top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
+        top_result: Dict[int, Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             adesc = set(sdfg.arrays.keys())
-            result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
-                readset = state.free_symbols
-                # No symbols may be written to inside states.
-                result[state] = (readset, set())
-                for oedge in sdfg.out_edges(state):
-                    edge_readset = oedge.data.read_symbols() - adesc
-                    edge_writeset = set(oedge.data.assignments.keys())
-                    result[oedge] = (edge_readset, edge_writeset)
-            top_result[sdfg.sdfg_id] = result
+            result: Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]] = {}
+            for cfg in sdfg.all_cfgs_recursive(recurse_into_sdfgs=False):
+                for block in cfg.nodes():
+                    readset = block.free_symbols
+                    # No symbols may be written to inside states.
+                    result[block] = (readset, set())
+                    for oedge in sdfg.out_edges(block):
+                        edge_readset = oedge.data.read_symbols() - adesc
+                        edge_writeset = set(oedge.data.assignments.keys())
+                        result[oedge] = (edge_readset, edge_writeset)
+                top_result[sdfg.sdfg_id] = result
         return top_result
 
 

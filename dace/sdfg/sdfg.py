@@ -42,7 +42,7 @@ from dace.sdfg.graph import Edge, OrderedDiGraph, SubgraphView
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.state import SDFGState, ControlFlowGraph, LoopScopeBlock
+from dace.sdfg.state import SDFGState, ScopeBlock, LoopScopeBlock
 from dace.sdfg.validation import InvalidSDFGError, validate_sdfg
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
@@ -409,7 +409,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(ControlFlowGraph):
+class SDFG(ScopeBlock):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed
@@ -503,7 +503,6 @@ class SDFG(ControlFlowGraph):
         self._propagate = propagate
         self._parent = parent
         self.symbols = {}
-        self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -1206,11 +1205,6 @@ class SDFG(ControlFlowGraph):
         return self._parent
 
     @property
-    def parent_sdfg(self) -> 'SDFG':
-        """ Returns the parent SDFG of this SDFG, if exists. """
-        return self._parent_sdfg
-
-    @property
     def parent_nsdfg_node(self) -> nd.NestedSDFG:
         """ Returns the parent NestedSDFG node of this SDFG, if exists. """
         return self._parent_nsdfg_node
@@ -1218,10 +1212,6 @@ class SDFG(ControlFlowGraph):
     @parent.setter
     def parent(self, value):
         self._parent = value
-
-    @parent_sdfg.setter
-    def parent_sdfg(self, value):
-        self._parent_sdfg = value
 
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
@@ -1235,25 +1225,6 @@ class SDFG(ControlFlowGraph):
     def states(self):
         """ Alias that returns the nodes (states) in this SDFG. """
         return self.nodes()
-
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
-        """ Iterate over all nodes in this SDFG, including states, nodes in
-            states, and recursive states and nodes within nested SDFGs,
-            returning tuples on the form (node, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for node in self.nodes():
-            yield node, self
-            yield from node.all_nodes_recursive()
-
-    def all_edges_recursive(self):
-        """ Iterate over all edges in this SDFG, including state edges,
-            inter-state edges, and recursively edges within nested SDFGs,
-            returning tuples on the form (edge, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for e in self.edges():
-            yield e, self
-        for node in self.nodes():
-            yield from node.all_edges_recursive()
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within

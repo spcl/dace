@@ -19,10 +19,15 @@ from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
                              CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
-from dace.sdfg.graph import MultiConnectorEdge, SubgraphView, OrderedDiGraph, OrderedMultiDiConnectorGraph
+from dace.sdfg.graph import MultiConnectorEdge, SubgraphView, OrderedDiGraph, OrderedMultiDiConnectorGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
+
+
+SomeNodeT = Union[nd.Node, 'ControlFlowBlock']
+SomeEdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
+SomeGraphT = Union['ScopeBlock', 'SDFGState']
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -77,34 +82,58 @@ class BlockGraphView(object):
     # Typing overrides
 
     @overload
-    def nodes(self) -> List[nd.Node]:
+    def nodes(self) -> List[SomeNodeT]:
         ...
 
     @overload
-    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+    def edges(self) -> List[SomeEdgeT]:
         ...
 
     ###################################################################
     # Traversal methods
 
-    def all_nodes_recursive(self):
+    def all_nodes_recursive(self) -> Iterator[Tuple[SomeNodeT, SomeGraphT]]:
+        """
+        Iterate over all nodes in this graph or subgraph.
+        This includes control flow blocks, nodes in those blocks, and recursive control flow blocks and nodes within
+        nested SDFGs. It returns tuples of the form (node, parent), where the node is either a dataflow node, in which
+        case the parent is an SDFG state, or a control flow block, in which case the parent is a control flow graph
+        (i.e., an SDFG or a scope block).
+        """
         for node in self.nodes():
             yield node, self
             if isinstance(node, nd.NestedSDFG):
                 yield from node.sdfg.all_nodes_recursive()
-            elif isinstance(node, (ScopeBlock, SDFGState)):
+            elif isinstance(node, ControlFlowBlock):
                 yield from node.all_nodes_recursive()
 
-    def all_edges_recursive(self):
+    def all_edges_recursive(self) -> Iterator[Tuple[SomeEdgeT, SomeGraphT]]:
+        """
+        Iterate over all edges in this graph or subgraph.
+        This includes dataflow edges, inter-state edges, and recursive edges within nested SDFGs. It returns tuples of
+        the form (edge, parent), where the edge is either a dataflow edge, in which case the parent is an SDFG state, or
+        an inter-stte edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
+        """
         for e in self.edges():
             yield e, self
         for node in self.nodes():
             if isinstance(node, nd.NestedSDFG):
                 yield from node.sdfg.all_edges_recursive()
+            elif isinstance(node, ControlFlowBlock):
+                yield from node.all_edges_recursive()
 
-    def data_nodes(self):
-        """ Returns all data_nodes (arrays) present in this state. """
-        return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
+    def data_nodes(self) -> List[nd.AccessNode]:
+        """
+        Returns all data nodes (i.e., AccessNodes, arrays) present in this graph or subgraph.
+        Note: This does not recurse into nested SDFGs.
+        """
+        if isinstance(self, SDFGState):
+            return [n for n in self.nodes() if isinstance(n, nd.AccessNode)]
+        else:
+            data_nodes = []
+            for node in self.nodes():
+                data_nodes.extend(node.data_nodes())
+            return data_nodes
 
     def entry_node(self, node: nd.Node) -> nd.EntryNode:
         """ Returns the entry node that wraps the current node, or None if
@@ -150,7 +179,7 @@ class BlockGraphView(object):
                 result.insert(0, next_edge)
                 curedge = next_edge
 
-        # Prepend outgoing edges until reaching the sink node
+        # Append outgoing edges until reaching the sink node
         curedge = edge
         while not isinstance(curedge.dst, (nd.CodeNode, nd.AccessNode)):
             # Trace through scope entry using IN_# -> OUT_#
@@ -746,10 +775,6 @@ class BlockGraphView(object):
         replace_dict(self, repl, symrepl)
 
 
-SomeNodeT = Union[nd.Node, 'ControlFlowBlock']
-SomeGraphT = Union['ControlFlowGraph', 'SDFGState']
-
-
 @make_properties
 class ControlFlowBlock(BlockGraphView):
 
@@ -858,7 +883,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def __repr__(self) -> str:
         return f"SDFGState ({self.label})"
 
-    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None):
+    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None, cfg=None):
         """ Constructs an SDFG state.
 
             :param label: Name for the state (optional).
@@ -867,7 +892,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         from dace.sdfg.sdfg import SDFG  # Avoid import loop
         OrderedMultiDiConnectorGraph.__init__(self)
-        #StateGraphView.__init__(self)
         ControlFlowBlock.__init__(self, label, sdfg)
         self._parent: Optional[SDFG] = sdfg
         self._graph = self  # Allowing MemletTrackingView mixin to work
@@ -2105,6 +2129,12 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
             elif isinstance(block, ControlFlowGraph):
                 yield from block.all_states_recursive()
 
+    def all_control_flow_blocks_recursive(self, recurse_into_sdfgs=True) -> Iterator[ControlFlowBlock]:
+        """ Iterate over all control flow blocks in this control flow graph. """
+        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+            for block in cfg.nodes():
+                yield block
+
     ###################################################################
     # Getters & setters, overrides
 
@@ -2142,10 +2172,14 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
 class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
 
     # TODO: instrumentation
+    _parent_sdfg: Optional['dace.SDFG'] = None
+    _parent_cfg: Optional[ControlFlowGraph] = None
 
-    def __init__(self, label: str='', parent: Optional[ControlFlowGraph]=None):
+    def __init__(self, label: str='', parent: Optional[ControlFlowGraph]=None, sdfg: Optional['dace.SDFG']=None):
         ControlFlowGraph.__init__(self)
         ControlFlowBlock.__init__(self, label, parent)
+        self._parent_cfg = parent
+        self._parent_sdfg = sdfg
 
     def data_nodes(self) -> List[nd.AccessNode]:
         """ Returns all data_nodes (arrays) present in this state. """
@@ -2171,6 +2205,26 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
         return graph_json
+
+    ###################################################################
+    # Getters & setters, overrides
+
+    @property
+    def parent_cfg(self) -> Optional['ControlFlowGraph']:
+        return self._parent_cfg
+
+    @parent_cfg.setter
+    def parent_cfg(self, parent_cfg: 'ControlFlowGraph') -> None:
+        self._parent_cfg = parent_cfg
+
+    @property
+    def parent_sdfg(self) -> 'dace.SDFG':
+        """ Returns the parent SDFG of this control flow graph, if exists. """
+        return self._parent_sdfg
+
+    @parent_sdfg.setter
+    def parent_sdfg(self, value):
+        self._parent_sdfg = value
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)
