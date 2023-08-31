@@ -1306,33 +1306,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for c in components:
 
                 has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
-                # If a global is modified, execute once per global state,
-                # if a shared memory element is modified, execute once per block,
-                # if a local scalar is modified, execute in every thread.
-                if not has_map:
-                    written_nodes = [n for n in c if state.in_degree(n) > 0 and isinstance(n, dace.nodes.AccessNode)]
-
-                    # The order of the branching below matters - it reduces the scope with every detected write
-                    write_scope = 'thread'  # General case acts in every thread
-                    if any(sdfg.arrays[n.data].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
-                           for n in written_nodes):
-                        write_scope = 'grid'
-                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.GPU_Shared for n in written_nodes):
-                        write_scope = 'block'
-                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.Register for n in written_nodes):
-                        write_scope = 'thread'
-
-                    if write_scope == 'grid':
-                        callsite_stream.write("if (blockIdx.x == 0 "
-                                            "&& threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
-                    elif write_scope == 'block':
-                        callsite_stream.write("if (threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
-                    else:
-                        callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
-                else:
-                    callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
+                callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
 
                 # Need to skip certain entry nodes to make sure that they are
                 # not processed twice
