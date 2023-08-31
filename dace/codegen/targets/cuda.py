@@ -445,7 +445,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
-        if isinstance(node, nodes.NestedSDFG) and CUDACodeGen._in_device_code:
+        if CUDACodeGen._in_device_code:
             return True
         return False
 
@@ -2486,8 +2486,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):
             # Dynamically obtain node generator according to class name
-            gen = getattr(self, '_generate_' + type(node).__name__)
-            gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+            gen = getattr(self, '_generate_' + type(node).__name__, False)
+            if gen is not False:  # Not every node type has a code generator here
+                gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
             return
 
         if not CUDACodeGen._in_device_code:
@@ -2557,6 +2558,58 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _get_thread_id(self) -> str:
+        result = 'threadIdx.x'
+        if self._block_dims[1] != 1:
+            result += f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
+        if self._block_dims[2] != 1:
+            result += f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
+        return result
+
+    def _get_warp_id(self) -> str:
+        return f'(({self._get_thread_id()}) / warpSize)'
+    
+    def _get_block_id(self) -> str:
+        result = 'blockIdx.x'
+        if self._block_dims[1] != 1:
+            result += f' + gridDim.x * blockIdx.y'
+        if self._block_dims[2] != 1:
+            result += f' + gridDim.x * gridDim.y * blockIdx.z'
+        return result
+
+    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
+                                          callsite_stream: CodeIOStream) -> str:
+        if name not in node.location:
+            return 0
+        location: Union[int, str, subsets.Range] = node.location[name]
+        if not isinstance(location, str) or ':' in location:
+            # TODO
+            raise NotImplementedError('Only one element strings are supported')
+
+        callsite_stream.write(f'if (({index_expr}) == {location}) {{')
+
+        return 1
+
+    def _generate_Tasklet(self, sdfg: SDFG, dfg, state_id: int, node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        generated_preamble_scopes = 0
+        if self._in_device_code:
+            # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
+            # add condition
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(), node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node, callsite_stream)
+
+        # Call standard tasklet generation
+        old_codegen = self._cpu_codegen.calling_codegen
+        self._cpu_codegen.calling_codegen = self
+        self._cpu_codegen._generate_Tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._cpu_codegen.calling_codegen = old_codegen
+
+        if generated_preamble_scopes > 0:
+            # Generate appropriate postamble
+            for i in range(generated_preamble_scopes):
+                callsite_stream.write('}', sdfg, state_id, node)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
