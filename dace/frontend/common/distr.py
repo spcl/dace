@@ -1088,7 +1088,7 @@ def _rma_lock(pv: ProgramVisitor,
               state: SDFGState,
               window_name: str,
               rank: Union[str, sp.Expr, Number],
-              lock_type: Union[str, sp.Expr, Number] = 234, # MPI.LOCK_EXCLUSIVE = 234
+              lock_type: Union[str, sp.Expr, Number] = 234, # in intel MPI MPI.LOCK_EXCLUSIVE = 234
               assertion: Union[str, sp.Expr, Number] = 0):
     """ Adds a RMA lock to the DaCe Program.
 
@@ -1102,6 +1102,11 @@ def _rma_lock(pv: ProgramVisitor,
     # fine a new lock name
     lock_name = sdfg.add_rma_ops(window_name, "lock")
     lock_node = Win_lock(lock_name, window_name)
+
+    # different MPI might get other value
+    if lock_type == 234:
+        from mpi4py import MPI
+        lock_type = MPI.LOCK_EXCLUSIVE
 
     _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
     _, lock_type_node = _get_int_arg_node(pv, sdfg, state, lock_type)
