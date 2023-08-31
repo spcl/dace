@@ -2,6 +2,7 @@
 """ Contains classes of a single SDFG state and dataflow subgraphs. """
 
 import ast
+import abc
 import collections
 import copy
 import inspect
@@ -68,7 +69,7 @@ def _make_iterators(ndrange):
     return params, map_range
 
 
-class BlockGraphView(object):
+class BlockGraphView(abc.ABC):
     """
     Read-only view interface of an SDFG control flow block, containing methods for memlet tracking, traversal, subgraph
     creation, queries, and replacements. ``ControlFlowBlock`` and ``StateSubgraphView`` inherit from this class to share
@@ -136,13 +137,11 @@ class BlockGraphView(object):
             return data_nodes
 
     def entry_node(self, node: nd.Node) -> nd.EntryNode:
-        """ Returns the entry node that wraps the current node, or None if
-            it is top-level in a state. """
+        """ Returns the entry node that wraps the current node, or None if it is top-level in a state. """
         return self.scope_dict()[node]
 
     def exit_node(self, entry_node: nd.EntryNode) -> nd.ExitNode:
-        """ Returns the exit node leaving the context opened by
-            the given entry node. """
+        """ Returns the exit node leaving the context opened by the given entry node. """
         node_to_children = self.scope_children()
         return next(v for v in node_to_children[entry_node] if isinstance(v, nd.ExitNode))
 
@@ -353,8 +352,7 @@ class BlockGraphView(object):
         return copy.copy(self._scope_leaves_cached)
 
     def scope_dict(self, return_ids: bool = False, validate: bool = True) -> Dict[nd.Node, Optional[nd.Node]]:
-        """ Returns a dictionary that maps each SDFG node to its parent entry
-            node, or to None if the node is not in any scope.
+        """ Returns a dictionary that maps each SDFG node to its parent entry node, or to None if not in any scope.
 
             :param return_ids: Return node ID numbers instead of node objects.
             :param validate: Ensure that the graph is not malformed when
@@ -796,9 +794,6 @@ class ControlFlowBlock(BlockGraphView):
         revert to default mode.
         """
         self._default_lineinfo = lineinfo
-
-    def data_nodes(self) -> List[nd.AccessNode]:
-        return []
 
     def replace_dict(self,
                      repl: Dict[str, str],
@@ -2054,7 +2049,7 @@ class StateSubgraphView(SubgraphView, BlockGraphView):
 
 
 @make_properties
-class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge']):
+class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], BlockGraphView):
 
     def __init__(self):
         super(ControlFlowGraph, self).__init__()
