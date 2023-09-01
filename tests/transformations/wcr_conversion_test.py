@@ -131,13 +131,14 @@ def test_aug_assign_tasklet_rhs_brackets_cpp():
 def test_aug_assign_tasklet_func_lhs_cpp():
 
     @dace.program
-    def sdfg_aug_assign_tasklet_func_lhs_cpp(A: dace.float64[32]):
+    def sdfg_aug_assign_tasklet_func_lhs_cpp(A: dace.float64[32], B: dace.float64[32]):
         for i in range(32):
             with dace.tasklet(language=dace.Language.CPP):
                 a << A[i]
+                c << B[i]
                 b >> A[i]
                 """
-                b = min(a, 0);
+                b = min(a, c);
                 """
 
     sdfg = sdfg_aug_assign_tasklet_func_lhs_cpp.to_sdfg()
@@ -150,13 +151,14 @@ def test_aug_assign_tasklet_func_lhs_cpp():
 def test_aug_assign_tasklet_func_rhs_cpp():
 
     @dace.program
-    def sdfg_aug_assign_tasklet_func_rhs_cpp(A: dace.float64[32]):
+    def sdfg_aug_assign_tasklet_func_rhs_cpp(A: dace.float64[32], B: dace.float64[32]):
         for i in range(32):
             with dace.tasklet(language=dace.Language.CPP):
                 a << A[i]
+                c << B[i]
                 b >> A[i]
                 """
-                b = min(0, a);
+                b = min(c, a);
                 """
 
     sdfg = sdfg_aug_assign_tasklet_func_rhs_cpp.to_sdfg()
