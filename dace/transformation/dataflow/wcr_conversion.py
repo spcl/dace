@@ -20,6 +20,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     map_exit = transformation.PatternNode(nodes.MapExit)
 
     _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
+    _FUNCTIONS = ['min', 'max']
     _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
     _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
 
@@ -78,6 +79,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        funcs = '|'.join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         if tasklet.language is dtypes.Language.Python:
             # Match a single assignment with a binary operation as RHS
@@ -109,8 +111,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 inconn = edge.dst_conn
                 lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn), re.escape(inconn), ops)
                 rhs = r'^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
+                func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,.*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
+                func_rhs = r'^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
-                    continue
+                    if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
+                        continue
+
                 # Same memlet
                 if edge.data.subset != outedge.data.subset:
                     continue
@@ -183,6 +189,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
         outconn = outedge.src_conn
 
         ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        funcs = '|'.join(re.escape(o) for o in AugAssignToWCR._FUNCTIONS)
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
@@ -209,9 +216,24 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     match = re.match(
                             r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
                     if match is None:
-                        continue
-                    op = match.group(2)
-                    expr = match.group(1)
+                        func_rhs = r'^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs,
+                                                                                 re.escape(inconn))
+                        match = re.match(func_rhs, cstr)
+                        if match is None:
+                            func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,(.*)\)\s*;$' % (re.escape(outconn), funcs,
+                                                                                     re.escape(inconn))
+                            match = re.match(func_lhs, cstr)
+                            if match is None:
+                                continue
+                            else:
+                                op = match.group(1)
+                                expr = match.group(2)
+                        else:
+                            op = match.group(1)
+                            expr = match.group(2)
+                    else:
+                        op = match.group(2)
+                        expr = match.group(1)
                 else:
                     op = match.group(1)
                     expr = match.group(2)
@@ -231,7 +253,10 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             raise NotImplementedError
 
         # Change output edge
-        outedge.data.wcr = f'lambda a,b: a {op} b'
+        if op in AugAssignToWCR._FUNCTIONS:
+            outedge.data.wcr = f'lambda a,b: {op}(a, b)'
+        else:
+            outedge.data.wcr = f'lambda a,b: a {op} b'
 
         if self.expr_index == 0:
             # Remove input node and connector
@@ -251,6 +276,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             sd = sd.parent_sdfg
             outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
             for outedge in nstate.memlet_path(outedge):
-                outedge.data.wcr = f'lambda a,b: a {op} b'
+                if op in AugAssignToWCR._FUNCTIONS:
+                    outedge.data.wcr = f'lambda a,b: {op}(a, b)'
+                else:
+                    outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
             # traverse further up
