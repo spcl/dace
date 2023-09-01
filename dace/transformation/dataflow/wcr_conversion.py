@@ -108,8 +108,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
                 lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn), re.escape(inconn), ops)
-                rhs = r'^\s*%s\s*=\s*.*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
-                if re.match(lhs, cstr) is None:
+                rhs = r'^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
+                if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     continue
                 # Same memlet
                 if edge.data.subset != outedge.data.subset:
@@ -206,13 +206,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 inconn = edge.dst_conn
                 match = re.match(r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' % (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
-                    # match = re.match(
-                    #     r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
-                    #     (re.escape(outconn), ops, re.escape(inconn)), cstr)
-                    # if match is None:
-                    continue
-                    # op = match.group(2)
-                    # expr = match.group(1)
+                    match = re.match(
+                            r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                    if match is None:
+                        continue
+                    op = match.group(2)
+                    expr = match.group(1)
                 else:
                     op = match.group(1)
                     expr = match.group(2)
