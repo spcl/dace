@@ -164,3 +164,49 @@ def test_aug_assign_tasklet_func_rhs_cpp():
 
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
     assert applied == 1
+
+
+def test_aug_assign_free_map():
+
+    @dace.program
+    def sdfg_aug_assign_free_map(A: dace.float64[32]):
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << A[i]
+                b >> A[i]
+                b = a * 2
+
+    sdfg = sdfg_aug_assign_free_map.to_sdfg()
+    sdfg.simplify()
+
+    applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
+    assert applied == 1
+
+
+def test_aug_assign_dependent_map():
+
+    @dace.program
+    def sdfg_aug_assign_dependent_map(A: dace.float64[32], B: dace.float64[32]):
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << B[i]
+                b >> A[i]
+                b = a
+
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << A[i]
+                b >> A[i]
+                b = a * 2
+
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B[i]
+                b = a
+
+    sdfg = sdfg_aug_assign_dependent_map.to_sdfg()
+    sdfg.simplify()
+
+    applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
+    assert applied == 1
