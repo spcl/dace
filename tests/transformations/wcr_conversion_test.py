@@ -222,3 +222,26 @@ def test_aug_assign_dependent_map():
 
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
     assert applied == 1
+
+
+def test_free_map_permissive():
+
+    @dace.program
+    def sdfg_free_map_permissive(A: dace.float64[32], B: dace.float64[32]):
+        for i in dace.map[0:32]:
+            with dace.tasklet(language=dace.Language.CPP):
+                a << A[i]
+                k << B[i]
+                b >> A[i]
+                """
+                b = k * a;
+                """
+
+    sdfg = sdfg_free_map_permissive.to_sdfg()
+    sdfg.simplify()
+
+    applied = sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=False)
+    assert applied == 0
+
+    applied = sdfg.apply_transformations_repeated(AugAssignToWCR, permissive=True)
+    assert applied == 1

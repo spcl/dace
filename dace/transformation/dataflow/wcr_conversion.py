@@ -134,9 +134,10 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
                 # If in map, only match if the subset is independent of any
                 # map indices (otherwise no conflict)
-                if (expr_index == 1 and len(outedge.data.subset.free_symbols
-                                            & set(me.map.params)) == len(me.map.params)):
-                    continue
+                if expr_index == 1:
+                    if not permissive and len(outedge.data.subset.free_symbols & set(me.map.params)) == len(
+                            me.map.params):
+                        continue
 
                 return True
         else:
