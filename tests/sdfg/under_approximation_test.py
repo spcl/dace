@@ -38,7 +38,7 @@ def test_2D_map_full_write():
     result_subset_list = result[edge].subset.subset_list
     result_subset = result_subset_list[0]
     expected_subset = Range.from_string('0:M, 0:N')
-    assert (result_subset.__str__() == expected_subset.__str__())
+    assert (str(result_subset) == str(expected_subset))
 
 
 def test_2D_map_added_indices_no_propagation():
@@ -192,9 +192,9 @@ def test_map_tree_full_write():
     result_inner_edge_1 = result[inner_edge_1].subset.subset_list[0]
     result_outer_edge = result[outer_edge].subset.subset_list[0]
 
-    assert (result_inner_edge_0.__str__() == expected_subset_inner_edge.__str__())
-    assert (result_inner_edge_1.__str__() == expected_subset_inner_edge.__str__())
-    assert (result_outer_edge.__str__() == expected_subset_outer_edge.__str__())
+    assert (str(result_inner_edge_0) == str(expected_subset_inner_edge))
+    assert (str(result_inner_edge_1) == str(expected_subset_inner_edge))
+    assert (str(result_outer_edge) == str(expected_subset_outer_edge))
 
 
 def test_map_tree_no_write_multiple_indices():
@@ -273,8 +273,8 @@ def test_map_tree_multiple_indices_per_dimension_full_write():
     result_inner_edge_1 = result[inner_edge_1].subset.subset_list[0]
     result_outer_edge = result[outer_edge].subset.subset_list[0]
     assert (len(result[inner_edge_0].subset.subset_list) == 0)
-    assert (result_inner_edge_1.__str__() == expected_subset_inner_edge_1.__str__())
-    assert (result_outer_edge.__str__() == expected_subset_outer_edge.__str__())
+    assert (str(result_inner_edge_1) == str(expected_subset_inner_edge_1))
+    assert (str(result_outer_edge) == str(expected_subset_outer_edge))
 
 
 def test_loop_in_map_no_write():
@@ -312,7 +312,7 @@ def test_loop_in_map_full_write():
     edge = map_state.in_edges(map_state.data_nodes()[0])[0]
     result = results["approximation"]
     expected_subset = Range.from_string("0:N, 0:M")
-    assert (result[edge].subset.subset_list[0].__str__() == expected_subset.__str__())
+    assert (str(result[edge].subset.subset_list[0]) == str(expected_subset))
 
 
 def test_map_in_loop_full_write():
@@ -346,7 +346,7 @@ def test_map_in_loop_full_write():
 
     result = results["loop_approximation"]
     expected_subset = Range.from_string("0:N, 0:M")
-    assert (result[guard]["B"].subset.subset_list[0].__str__() == expected_subset.__str__())
+    assert (str(result[guard]["B"].subset.subset_list[0]) == str(expected_subset))
 
 
 def test_map_in_loop_no_write_0():
@@ -438,7 +438,7 @@ def test_nested_sdfg_in_map_full_write():
         if edge.dst is accessnode:
             write_set = memlet.subset
 
-    assert (write_set.__str__() == "0:M, 0:N")
+    assert (str(write_set) == "0:M, 0:N")
 
 
 def test_loop_in_nested_sdfg_in_map_partial_write():
@@ -466,7 +466,7 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (write_set.__str__() == "0:M, 0:N - 2")
+    assert (str(write_set) == "0:M, 0:N - 2")
 
 
 def test_nested_sdfg_in_map_full_write_1():
@@ -493,7 +493,7 @@ def test_nested_sdfg_in_map_full_write_1():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (write_set.__str__() == "0:M, 0:N")
+    assert (str(write_set) == "0:M, 0:N")
 
 
 def test_nested_sdfg_in_map_branches_no_write():
@@ -519,7 +519,7 @@ def test_nested_sdfg_in_map_branches_no_write():
     for edge, memlet in write_approx.items():
         if edge.dst is accessnode:
             write_set = memlet.subset
-    assert (not write_set.__str__() == "0:M, 0:N")
+    assert (not str(write_set) == "0:M, 0:N")
 
 
 def test_nested_sdfg_in_map_branches_no_write_1():
@@ -546,7 +546,7 @@ def test_nested_sdfg_in_map_branches_no_write_1():
         if edge.dst is accessnode:
             write_set = memlet.subset
 
-    assert (not write_set.__str__() == "0:M, 0:N")
+    assert (not str(write_set) == "0:M, 0:N")
 
 
 def test_constant_multiplicative_2D():
@@ -562,8 +562,8 @@ def test_constant_multiplicative_2D():
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1, 0:3*M - 2:3")
-    propagated_string = propagated_subset.__str__()
-    expected_string = expected_subset.__str__()
+    propagated_string = str(propagated_subset)
+    expected_string = str(expected_subset)
     assert (propagated_string == expected_string)
 
 
@@ -580,8 +580,8 @@ def test_affine_2D():
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1, 3 : 3 * M + 1 : 3")
-    propagated_string = propagated_subset.__str__()
-    expected_string = expected_subset.__str__()
+    propagated_string = str(propagated_subset)
+    expected_string = str(expected_subset)
     assert (propagated_string == expected_string)
 
 
@@ -626,8 +626,8 @@ def test_negative_step():
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1,0:M:1")
-    propagated_string = propagated_subset.__str__()
-    expected_string = expected_subset.__str__()
+    propagated_string = str(propagated_subset)
+    expected_string = str(expected_subset)
     assert (propagated_string == expected_string)
     assert (not propagated_memlet.subset.subset_list)
 
@@ -643,8 +643,8 @@ def test_step_not_one():
     propagated_subset = propagated_memlet.subset.subset_list[0]
 
     expected_subset = Range.from_string("0:N:3")
-    propagated_string = propagated_subset.__str__()
-    expected_string = expected_subset.__str__()
+    propagated_string = str(propagated_subset)
+    expected_string = str(expected_subset)
     assert (propagated_string == expected_string)
 
 
@@ -662,7 +662,7 @@ def test_simple_loop_overwrite():
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
 
-    assert (result[guard]["A"].subset.__str__() == Range.from_array(sdfg.arrays["A"]).__str__())
+    assert (str(result[guard]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
 
 def test_loop_2D_overwrite():
     """two nested loops that overwrite a two-dimensional array"""
@@ -681,8 +681,8 @@ def test_loop_2D_overwrite():
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
 
-    assert (result[guard1]["A"].subset.__str__() == Range.from_array(sdfg.arrays["A"]).__str__())
-    assert (result[guard2]["A"].subset.__str__() == "j, 0:N")
+    assert (str(result[guard1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
+    assert (str(result[guard2]["A"].subset) == "j, 0:N")
 
 
 def test_loop_2D_no_overwrite_0():
@@ -711,7 +711,7 @@ def test_loop_2D_no_overwrite_0():
 
     assert ("A" not in result[guard1].keys())
     assert ("A" not in result[guard2].keys())
-    assert (result[guard3]["A"].subset.__str__() == "j, 0:N")
+    assert (str(result[guard3]["A"].subset) == "j, 0:N")
 
 def test_2_loops_overwrite():
     """2 loops one after another overwriting an array"""
@@ -732,8 +732,8 @@ def test_2_loops_overwrite():
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
 
-    assert (result[guard_1]["A"].subset.__str__() == Range.from_array(sdfg.arrays["A"]).__str__())
-    assert (result[guard_2]["A"].subset.__str__() == Range.from_array(sdfg.arrays["A"]).__str__())
+    assert (str(result[guard_1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
+    assert (str(result[guard_2]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
 
 def test_loop_2D_overwrite_propagation_gap():
     """three nested loops that overwrite two dimensional array.
@@ -757,9 +757,9 @@ def test_loop_2D_overwrite_propagation_gap():
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
 
-    assert (result[guard1]["A"].subset.__str__() == Range.from_array(sdfg.arrays["A"]).__str__())
-    assert (result[guard2]["A"].subset.__str__() == "j, 0:N")
-    assert (result[guard3]["A"].subset.__str__() == "j, 0:N")
+    assert (str(result[guard1]["A"].subset) == str(Range.from_array(sdfg.arrays["A"])))
+    assert (str(result[guard2]["A"].subset) == "j, 0:N")
+    assert (str(result[guard3]["A"].subset) == "j, 0:N")
 
 
 def test_loop_2D_no_overwrite_1():
@@ -783,9 +783,9 @@ def test_loop_2D_no_overwrite_1():
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]["loop_approximation"]
 
-    assert (result[guard1]["A"].subset.__str__() == Range.from_string("0:N, 0:3*M - 2:3").__str__())
-    assert (result[guard2]["A"].subset.__str__() == "0:N, 3*j")
-    assert (result[guard3]["A"].subset.__str__() == "0:N, 3*j")
+    assert (str(result[guard1]["A"].subset) == str(Range.from_string("0:N, 0:3*M - 2:3")))
+    assert (str(result[guard2]["A"].subset) == "0:N, 3*j")
+    assert (str(result[guard3]["A"].subset) == "0:N, 3*j")
 
 def test_loop_2D_no_overwrite_2():
     """three nested loops that write to two dimensional array.
@@ -886,7 +886,7 @@ def test_loop_in_nested_sdfg_simple():
         if edge.dst is accessnode:
             write_set = memlet.subset
 
-    assert (write_set.__str__() == "0:M, 0:N")
+    assert (str(write_set) == "0:M, 0:N")
 
 
 def test_loop_break():
