@@ -111,12 +111,22 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
                 lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn), re.escape(inconn), ops)
+                # rhs: a = (...) op b
                 rhs = r'^\s*%s\s*=\s*\(.*\)\s*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
                 func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,.*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
                 func_rhs = r'^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
-                        continue
+                        inconns = [edge.dst_conn for edge in inedges]
+                        if len(inconns) != 2:
+                            continue
+
+                        # Special case: a = <other> op b
+                        other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
+                        rhs2 = r'^\s*%s\s*=\s*%s\s*%s\s*%s;$' % (re.escape(outconn), re.escape(other_inconn), ops,
+                                                                 re.escape(inconn))
+                        if re.match(rhs2, cstr) is None:
+                            continue
 
                 # Same memlet
                 if edge.data.subset != outedge.data.subset:
@@ -225,7 +235,20 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                                                                                      re.escape(inconn))
                             match = re.match(func_lhs, cstr)
                             if match is None:
-                                continue
+                                inconns = [edge.dst_conn for edge in inedges]
+                                if len(inconns) != 2:
+                                    continue
+
+                                # Special case: a = <other> op b
+                                other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
+                                rhs2 = r'^\s*%s\s*=\s*(%s)\s*(%s)\s*%s;$' % (
+                                    re.escape(outconn), re.escape(other_inconn), ops, re.escape(inconn))
+                                match = re.match(rhs2, cstr)
+                                if match is None:
+                                    continue
+                                else:
+                                    op = match.group(2)
+                                    expr = match.group(1)
                             else:
                                 op = match.group(1)
                                 expr = match.group(2)
