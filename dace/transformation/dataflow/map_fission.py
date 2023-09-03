@@ -264,7 +264,10 @@ class MapFission(transformation.SingleStateTransformation):
                     edge_to_outer[edge] = path[eindex - 1]
                 else:
                     # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data)
+                    outer_edge = [e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data]
+                    if not outer_edge:
+                        outer_edge = [e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.src.data and e.data.wcr is not None]
+                    outer_edge = outer_edge[0]
                     edge_to_outer[edge] = outer_edge
 
             for edge in external_edges_exit:
