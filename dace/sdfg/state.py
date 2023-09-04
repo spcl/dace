@@ -1689,7 +1689,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             # Modify edge to match memlet path
             edge._src_conn = sconn
             edge._dst_conn = dconn
-            edge._data = cur_memlet
+            edge._data = copy.deepcopy(cur_memlet)
 
             # Add connectors to edges
             if propagate_forward:
