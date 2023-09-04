@@ -8,16 +8,16 @@ class UnionFind:
     """
     Simple, not really optimized UnionFind implementation.
     """
-    
+
     def __init__(self, elements) -> None:
-        self.ids = {e : e for e in elements}
+        self.ids = {e: e for e in elements}
 
     def add_element(self, e):
         if e in self.ids:
             return False
-        self.ids.update({e : e})
+        self.ids.update({e: e})
         return True
-    
+
     def find(self, e):
         prev = e
         curr = self.ids[e]
@@ -27,15 +27,16 @@ class UnionFind:
         # shorten the path
         self.ids[e] = curr
         return curr
-    
+
     def union(self, e, f):
         if f not in self.ids:
             self.add_element(f)
         self.ids[self.find(e)] = f
-    
+
 
 class ContradictingAssumptions(Exception):
     pass
+
 
 class Assumptions:
     """
@@ -67,7 +68,7 @@ class Assumptions:
 
     def add_equal(self, e):
         for x in self.equal:
-            if not (isinstance(x, sp.Symbol) or isinstance(e, sp.Symbol))  and x != e:
+            if not (isinstance(x, sp.Symbol) or isinstance(e, sp.Symbol)) and x != e:
                 raise ContradictingAssumptions()
         self.equal.append(e)
         self.check_consistency()
@@ -89,11 +90,12 @@ class Assumptions:
                     if (g > l) == True:
                         raise ContradictingAssumptions()
         return True
-    
+
     def num_assumptions(self):
         # returns the number of individual assumptions for this symbol
         return len(self.greater) + len(self.lesser) + len(self.equal)
-    
+
+
 def propagate_assumptions(x, y, condensed_assumptions):
     """
     Assuming x is equal to y, we propagate the assumptions on x to y. E.g. we have x==y and
@@ -118,6 +120,7 @@ def propagate_assumptions(x, y, condensed_assumptions):
         assum_y.add_lesser(l)
     assum_y.check_consistency()
 
+
 def propagate_assumptions_equal_symbols(condensed_assumptions):
     """
     This method handles two things: 1) It generates the substitution dict for all equality assumptions.
@@ -139,7 +142,7 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
                 uf.union(sym, other.name)
 
     equality_subs1 = {}
-    
+
     # For each equivalence class, we now have one unique identifier.
     # For each class, we give all the assumptions to this single symbol.
     # And we swap each symbol in class for this symbol.
@@ -148,7 +151,7 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
             if isinstance(other, sp.Symbol):
                 propagate_assumptions(sym, uf.find(sym), condensed_assumptions)
                 equality_subs1.update({sym: sp.Symbol(uf.find(sym))})
-    
+
     equality_subs2 = {}
     # In a second step, each symbol gets replace with its equal number (if present)
     # using equality_subs2.
@@ -213,7 +216,7 @@ def parse_assumptions(assumptions, array_symbols):
 
     if assumptions is None:
         return {}, [({}, {})]
-    
+
     # Gather assumptions, keeping only the strongest ones for each symbol.
     condensed_assumptions: Dict[str, Assumptions] = {}
     for a in assumptions:
@@ -252,13 +255,13 @@ def parse_assumptions(assumptions, array_symbols):
 
     # Handle equal assumptions.
     equality_subs = propagate_assumptions_equal_symbols(condensed_assumptions)
-    
+
     # How many assumptions does symbol with most assumptions have?
     curr_max = -1
     for _, assum in condensed_assumptions.items():
         if assum.num_assumptions() > curr_max:
             curr_max = assum.num_assumptions()
-    
+
     all_subs = []
     for i in range(curr_max):
         all_subs.append(({}, {}))
@@ -271,7 +274,7 @@ def parse_assumptions(assumptions, array_symbols):
         for g in assum.greater:
             replacement_symbol = sp.Symbol(f'_p_{sym}', positive=True, integer=True)
             all_subs[i][0].update({sp.Symbol(sym): replacement_symbol + g})
-            all_subs[i][1].update({replacement_symbol : sp.Symbol(sym) - g})
+            all_subs[i][1].update({replacement_symbol: sp.Symbol(sym) - g})
             i += 1
         for l in assum.lesser:
             replacement_symbol = sp.Symbol(f'_n_{sym}', negative=True, integer=True)

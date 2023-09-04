@@ -156,17 +156,18 @@ def break_while_loop(x: dc.float64[N]):
             break
         x += 1
 
+
 @dc.program
-def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]): # --> cannot assume N, M to be positive
+def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]):  # --> cannot assume N, M to be positive
     if x[0] > 5:
-        x[:] += 1              # N+1 work, 1 depth
+        x[:] += 1  # N+1 work, 1 depth
     else:
         for i in range(M):  # M work, M depth
-            y[i+1] += y[i]
+            y[i + 1] += y[i]
     if M > N:
-        y[:N+1] += x[:]     # N+1 work, 1 depth
+        y[:N + 1] += x[:]  # N+1 work, 1 depth
     else:
-        x[:M+1] += y[:]     # M+1 work, 1 depth
+        x[:M + 1] += y[:]  # M+1 work, 1 depth
     # -->   Work:  Max(N+1, M) + Max(N+1, M+1)
     #       Depth: Max(1, M) + 1
 
@@ -185,14 +186,12 @@ tests_cases = [
     (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
     (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1')) * N,
-                          sp.Max(1, sp.Symbol('num_execs_0_1')))),
-    (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N,
-                           2 * sp.Symbol('num_execs_0_7'))),
+    (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1')) * N, sp.Max(1, sp.Symbol('num_execs_0_1')))),
+    (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N, 2 * sp.Symbol('num_execs_0_7'))),
     (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
     (break_for_loop, (N**2, N)),
     (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
-    (sequntial_ifs, (sp.Max(N+1, M) + sp.Max(N+1, M+1), sp.Max(1, M) + 1))
+    (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1))
 ]
 
 
@@ -210,7 +209,10 @@ def test_work_depth():
         # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
         reps = {s: sp.Symbol(s.name) for s in (res[0].free_symbols | res[1].free_symbols)}
         res = (res[0].subs(reps), res[1].subs(reps))
-        reps = {s: sp.Symbol(s.name) for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)}
+        reps = {
+            s: sp.Symbol(s.name)
+            for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)
+        }
         correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
         # check result
         assert correct == res
@@ -219,31 +221,24 @@ def test_work_depth():
 x, y, z, a = sp.symbols('x y z a')
 
 # (expr, assumptions, result)
-assumptions_tests=[
-    (sp.Max(x, y), ['x>y'], x),
-    (sp.Max(x, y, z), ['x>y'], sp.Max(x, z)),
-    (sp.Max(x, y), ['x==y'], y),
-    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11'], 11 + sp.Max(x,3)),
-    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11', 'x>3'], 11 + x),
-    (sp.Max(x, 11), ['x>5', 'x>3', 'x>11'], x),
-    (sp.Max(x, 11), ['x==y', 'x>11'], y),
+assumptions_tests = [
+    (sp.Max(x, y), ['x>y'], x), (sp.Max(x, y, z), ['x>y'], sp.Max(x, z)), (sp.Max(x, y), ['x==y'], y),
+    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11'], 11 + sp.Max(x, 3)), (sp.Max(x, 11) + sp.Max(x, 3), ['x<11',
+                                                                                                 'x>3'], 11 + x),
+    (sp.Max(x, 11), ['x>5', 'x>3', 'x>11'], x), (sp.Max(x, 11), ['x==y', 'x>11'], y),
     (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'a<11', 'c>7'], x + 11),
-    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'b==7'], 18),
-    (sp.Max(x, y), ['y>x', 'y==1000'], 1000),
+    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'b==7'], 18), (sp.Max(x, y), ['y>x', 'y==1000'], 1000),
     (sp.Max(x, y), ['y<x', 'y==1000'], x)
     # This test is not working yet and is here as an example of what can still be improved in the assumption system.
     # Further details in the TODO in the parse_assumptions method.
     # (sp.Max(M, N), ['N>0', 'N<5', 'M>5'], M)
-
 ]
 
 # These assumptions should trigger the ContradictingAssumptions exception.
-tests_for_exception = [
-    ['x>10', 'x<9'],
-    ['x==y', 'x>10', 'y<9'],
-    ['a==b', 'b==c', 'c==d', 'd==e', 'e==f', 'x==y', 'y==z', 'z>b', 'x==5', 'd==100'],
-    ['x==5', 'x<4']
-]
+tests_for_exception = [['x>10', 'x<9'], ['x==y', 'x>10', 'y<9'],
+                       ['a==b', 'b==c', 'c==d', 'd==e', 'e==f', 'x==y', 'y==z', 'z>b', 'x==5', 'd==100'],
+                       ['x==5', 'x<4']]
+
 
 def test_assumption_system():
     for expr, assums, res in assumptions_tests:
