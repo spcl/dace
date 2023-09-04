@@ -376,8 +376,6 @@ def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], ana
     traversal_q.append((sdfg.start_state, sp.sympify(0), sp.sympify(0), None, [], [], {}))
     visited = set()
 
-    num_edges = 0
-
     while traversal_q:
         state, depth, work, ie, condition_stack, common_subexpr_stack, value_map = traversal_q.popleft()
 
@@ -480,10 +478,10 @@ def sdfg_work_depth(sdfg: SDFG, w_d_map: Dict[str, Tuple[sp.Expr, sp.Expr]], ana
 def scope_work_depth(state: SDFGState,
                      w_d_map: Dict[str, sp.Expr],
                      analyze_tasklet,
-                     symbols,
-                     detailed_analysis,
-                     equality_subs,
-                     subs1,
+                     symbols: Dict[str, str],
+                     detailed_analysis: bool,
+                     equality_subs: Tuple[Dict[str, sp.Symbol], Dict[str, sp.Expr]],
+                     subs1: Dict[str, sp.Expr],
                      entry: nd.EntryNode = None) -> Tuple[sp.Expr, sp.Expr]:
     """
     Analyze the work and depth of a scope.
