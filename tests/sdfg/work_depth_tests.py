@@ -1,14 +1,18 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
 import dace as dc
-from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth
+from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth, parse_assumptions
 from dace.sdfg.work_depth_analysis.helpers import get_uuid
+from dace.sdfg.work_depth_analysis.assumptions import ContradictingAssumptions
 import sympy as sp
 
 from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
+from pytest import raises
+
 # TODO: add tests for library nodes (e.g. reduce, matMul)
+# TODO: add tests for average parallelism
 
 N = dc.symbol('N')
 M = dc.symbol('M')
@@ -65,11 +69,11 @@ def nested_for_loops(x: dc.float64[N], y: dc.float64[K]):
 @dc.program
 def nested_if_else(x: dc.int64[N], y: dc.int64[N], z: dc.int64[N], sum: dc.int64[1]):
     if x[10] > 50:
-        if x[9] > 50:
+        if x[9] > 40:
             z[:] = x + y  # N work, 1 depth
         z[:] += 2 * x  # 2*N work, 2 depth     --> total outer if: 3*N work, 3 depth
     else:
-        if y[9] > 50:
+        if y[9] > 30:
             for i in range(K):
                 sum += x[i]  # K work, K depth
         else:
@@ -152,7 +156,22 @@ def break_while_loop(x: dc.float64[N]):
             break
         x += 1
 
+@dc.program
+def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]): # --> cannot assume N, M to be positive
+    if x[0] > 5:
+        x[:] += 1              # N+1 work, 1 depth
+    else:
+        for i in range(M):  # M work, M depth
+            y[i+1] += y[i]
+    if M > N:
+        y[:N+1] += x[:]     # N+1 work, 1 depth
+    else:
+        x[:M+1] += y[:]     # M+1 work, 1 depth
+    # -->   Work:  Max(N+1, M) + Max(N+1, M+1)
+    #       Depth: Max(1, M) + 1
 
+
+#(sdfg, (expected_work, expected_depth))
 tests_cases = [
     (single_map, (N, 1)),
     (single_for_loop, (N, N)),
@@ -164,25 +183,20 @@ tests_cases = [
     (nested_if_else, (sp.Max(K, 3 * N, M + N), sp.Max(3, K, M + 1))),
     (max_of_positive_symbol, (3 * N**2, 3 * N)),
     (multiple_array_sizes, (sp.Max(2 * K, 3 * N, 2 * M + 3), 5)),
-    (unbounded_while_do, (sp.Symbol('num_execs_0_2', nonnegative=True) * N, sp.Symbol('num_execs_0_2',
-                                                                                      nonnegative=True))),
+    (unbounded_while_do, (sp.Symbol('num_execs_0_2') * N, sp.Symbol('num_execs_0_2'))),
     # We get this Max(1, num_execs), since it is a do-while loop, but the num_execs symbol does not capture this.
-    (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1', nonnegative=True)) * N,
-                          sp.Max(1, sp.Symbol('num_execs_0_1', nonnegative=True)))),
-    (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7', nonnegative=True) * N,
-                           2 * sp.Symbol('num_execs_0_7', nonnegative=True))),
-    (continue_for_loop, (sp.Symbol('num_execs_0_6', nonnegative=True) * N, sp.Symbol('num_execs_0_6',
-                                                                                     nonnegative=True))),
+    (unbounded_do_while, (sp.Max(1, sp.Symbol('num_execs_0_1')) * N,
+                          sp.Max(1, sp.Symbol('num_execs_0_1')))),
+    (unbounded_nonnegify, (2 * sp.Symbol('num_execs_0_7') * N,
+                           2 * sp.Symbol('num_execs_0_7'))),
+    (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
     (break_for_loop, (N**2, N)),
-    (break_while_loop, (sp.Symbol('num_execs_0_5', nonnegative=True) * N, sp.Symbol('num_execs_0_5', nonnegative=True)))
+    (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
+    (sequntial_ifs, (sp.Max(N+1, M) + sp.Max(N+1, M+1), sp.Max(1, M) + 1))
 ]
 
 
 def test_work_depth():
-    good = 0
-    failed = 0
-    exception = 0
-    failed_tests = []
     for test, correct in tests_cases:
         w_d_map = {}
         sdfg = test.to_sdfg()
@@ -190,12 +204,64 @@ def test_work_depth():
             sdfg.apply_transformations(NestSDFG)
         if 'nested_maps' in test.name:
             sdfg.apply_transformations(MapExpansion)
-
-        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth)
+        analyze_sdfg(sdfg, w_d_map, get_tasklet_work_depth, [], False)
         res = w_d_map[get_uuid(sdfg)]
+        # substitue each symbol without assumptions.
+        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+        reps = {s: sp.Symbol(s.name) for s in (res[0].free_symbols | res[1].free_symbols)}
+        res = (res[0].subs(reps), res[1].subs(reps))
+        reps = {s: sp.Symbol(s.name) for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)}
+        correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
         # check result
         assert correct == res
 
 
+x, y, z, a = sp.symbols('x y z a')
+
+# (expr, assumptions, result)
+assumptions_tests=[
+    (sp.Max(x, y), ['x>y'], x),
+    (sp.Max(x, y, z), ['x>y'], sp.Max(x, z)),
+    (sp.Max(x, y), ['x==y'], y),
+    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11'], 11 + sp.Max(x,3)),
+    (sp.Max(x, 11) + sp.Max(x, 3), ['x<11', 'x>3'], 11 + x),
+    (sp.Max(x, 11), ['x>5', 'x>3', 'x>11'], x),
+    (sp.Max(x, 11), ['x==y', 'x>11'], y),
+    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'a<11', 'c>7'], x + 11),
+    (sp.Max(x, 11) + sp.Max(a, 5), ['a==b', 'b==c', 'c==x', 'b==7'], 18),
+    (sp.Max(x, y), ['y>x', 'y==1000'], 1000),
+    (sp.Max(x, y), ['y<x', 'y==1000'], x)
+    # This test is not working yet and is here as an example of what can still be improved in the assumption system.
+    # Further details in the TODO in the parse_assumptions method.
+    # (sp.Max(M, N), ['N>0', 'N<5', 'M>5'], M)
+
+]
+
+# These assumptions should trigger the ContradictingAssumptions exception.
+tests_for_exception = [
+    ['x>10', 'x<9'],
+    ['x==y', 'x>10', 'y<9'],
+    ['a==b', 'b==c', 'c==d', 'd==e', 'e==f', 'x==y', 'y==z', 'z>b', 'x==5', 'd==100'],
+    ['x==5', 'x<4']
+]
+
+def test_assumption_system():
+    for expr, assums, res in assumptions_tests:
+        equality_subs, all_subs = parse_assumptions(assums, set())
+        initial_expr = expr
+        expr = expr.subs(equality_subs[0])
+        expr = expr.subs(equality_subs[1])
+        for subs1, subs2 in all_subs:
+            expr = expr.subs(subs1)
+            expr = expr.subs(subs2)
+        assert expr == res
+
+    for assums in tests_for_exception:
+        # check that the Exception gets raised.
+        with raises(ContradictingAssumptions):
+            parse_assumptions(assums, set())
+
+
 if __name__ == '__main__':
     test_work_depth()
+    test_assumption_system()
