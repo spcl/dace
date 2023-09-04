@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
 import ctypes
@@ -7,6 +7,7 @@ import inspect
 import itertools
 import numpy
 import re
+from collections import OrderedDict
 from functools import wraps
 from typing import Any
 from dace.config import Config
@@ -657,6 +658,8 @@ class pointer(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
+        if isinstance(self._typeclass, struct):
+            return ctypes.POINTER(self._typeclass.as_ctypes())
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
     def as_numpy_dtype(self):
@@ -772,10 +775,8 @@ class struct(typeclass):
         return {
             'type': 'struct',
             'name': self.name,
-            'data': {k: v.to_json()
-                     for k, v in self._data.items()},
-            'length': {k: v
-                       for k, v in self._length.items()},
+            'data': [(k, v.to_json()) for k, v in self._data.items()],
+            'length': [(k, v) for k, v in self._length.items()],
             'bytes': self.bytes
         }
 
@@ -787,23 +788,28 @@ class struct(typeclass):
         import dace.serialize  # Avoid import loop
 
         ret = struct(json_obj['name'])
-        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data'].items()}
-        ret._length = {k: v for k, v in json_obj['length'].items()}
+        ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
+        ret._length = {k: v for k, v in json_obj['length']}
         ret.bytes = json_obj['bytes']
 
         return ret
 
     def _parse_field_and_types(self, **fields_and_types):
-        self._data = dict()
-        self._length = dict()
+        # from dace.symbolic import pystr_to_symbolic
+        self._data = OrderedDict()
+        self._length = OrderedDict()
         self.bytes = 0
         for k, v in fields_and_types.items():
             if isinstance(v, tuple):
                 t, l = v
                 if not isinstance(t, pointer):
                     raise TypeError("Only pointer types may have a length.")
-                if l not in fields_and_types.keys():
-                    raise ValueError("Length {} not a field of struct {}".format(l, self.name))
+                # TODO: Do we need the free symbols of the length in the struct?
+                # NOTE: It is needed for the old use of dtype.struct. Are we deprecating that?
+                # sym_tokens = pystr_to_symbolic(l).free_symbols
+                # for sym in sym_tokens:
+                #     if str(sym) not in fields_and_types.keys():
+                #         raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
                 self._data[k] = t
                 self._length[k] = l
                 self.bytes += t.bytes
@@ -815,16 +821,24 @@ class struct(typeclass):
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
+        if self in _FFI_CTYPES:
+            return _FFI_CTYPES[self]
         # Populate the ctype fields for the struct class.
         fields = []
         for k, v in self._data.items():
             if isinstance(v, pointer):
-                fields.append((k, ctypes.c_void_p))  # ctypes.POINTER(_FFI_CTYPES[v.type])))
+                if isinstance(v._typeclass, struct):
+                    fields.append((k, ctypes.POINTER(v._typeclass.as_ctypes())))
+                else:
+                    fields.append((k, ctypes.c_void_p))
+            elif isinstance(v, struct):
+                fields.append((k, v.as_ctypes()))
             else:
                 fields.append((k, _FFI_CTYPES[v.type]))
-        fields = sorted(fields, key=lambda f: f[0])
         # Create new struct class.
         struct_class = type("NewStructClass", (ctypes.Structure, ), {"_fields_": fields})
+        # NOTE: Each call to `type` returns a different class, so we need to cache it to ensure uniqueness.
+        _FFI_CTYPES[self] = struct_class
         return struct_class
 
     def as_numpy_dtype(self):
@@ -835,7 +849,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
+            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
         )
 
 

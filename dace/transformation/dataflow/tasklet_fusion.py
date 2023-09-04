@@ -249,6 +249,9 @@ class TaskletFusion(pm.SingleStateTransformation):
                                         t1.language)
 
         for in_edge in graph.in_edges(t1):
+            if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):
+                if len(new_tasklet.in_connectors) > 0:
+                    continue
             graph.add_edge(in_edge.src, in_edge.src_conn, new_tasklet, in_edge.dst_conn, in_edge.data)
 
         for in_edge in graph.in_edges(t2):
