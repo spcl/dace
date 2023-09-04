@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -145,11 +145,15 @@ class Property(Generic[T]):
                 self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
         else:
             self._from_json = from_json
+            if self.from_json != from_json:
+                self.from_json = from_json
 
         if to_json is None:
             self._to_json = dace.serialize.to_json
         else:
             self._to_json = to_json
+            if self.to_json != to_json:
+                self.to_json = to_json
 
         if meta_to_json is None:
 
@@ -412,8 +416,7 @@ def make_properties(cls):
             except AttributeError:
                 if not prop.unmapped:
                     raise PropertyError("Property {} is unassigned in __init__ for {}".format(name, cls.__name__))
-        # Assert that there are no fields in the object not captured by
-        # properties, unless they are prefixed with "_"
+        # Assert that there are no fields in the object not captured by properties, unless they are prefixed with "_"
         for name, prop in obj.__dict__.items():
             if (name not in properties and not name.startswith("_") and name not in dir(type(obj))):
                 raise PropertyError("{} : Variable {} is neither a Property nor "
@@ -888,9 +891,13 @@ class SetProperty(Property):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
     def to_json(self, l):
+        if l is None:
+            return None
         return list(sorted(l))
 
     def from_json(self, l, sdfg=None):
+        if l is None:
+            return None
         return set(l)
 
     def __get__(self, obj, objtype=None):
@@ -1374,6 +1381,47 @@ class TypeClassProperty(Property):
             return None
         elif isinstance(obj, str):
             return TypeClassProperty.from_string(obj)
+        elif isinstance(obj, dict):
+            # Let the deserializer handle this
+            return dace.serialize.from_json(obj)
+        else:
+            raise TypeError("Cannot parse type from: {}".format(obj))
+
+
+class NestedDataClassProperty(Property):
+    """ Custom property type for nested data. """
+
+    def __get__(self, obj, objtype=None) -> 'Data':
+        return super().__get__(obj, objtype)
+
+    @property
+    def dtype(self):
+        from dace import data as dt
+        return dt.Data
+
+    @staticmethod
+    def from_string(s):
+        from dace import data as dt
+        dtype = getattr(dt, s, None)
+        if dtype is None or not isinstance(dtype, dt.Data):
+            raise ValueError("Not a valid data type: {}".format(s))
+        return dtype
+
+    @staticmethod
+    def to_string(obj):
+        return obj.to_string()
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return obj.to_json()
+
+    @staticmethod
+    def from_json(obj, context=None):
+        if obj is None:
+            return None
+        elif isinstance(obj, str):
+            return NestedDataClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
             return dace.serialize.from_json(obj)
