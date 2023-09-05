@@ -963,7 +963,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
     _sdfg: Optional['dace.SDFG'] = None
-    _parent: Optional['ControlFlowBlock'] = None
+    _parent: Optional['ScopeBlock'] = None
     _label: str
 
     def __init__(self,
@@ -1012,12 +1012,12 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         return self._label
 
     @property
-    def parent(self) -> Optional['ControlFlowBlock']:
+    def parent(self) -> Optional['ScopeBlock']:
         """ Returns the parent block of this block. """
         return self._parent
 
     @parent.setter
-    def parent(self, block: Optional['ControlFlowBlock']):
+    def parent(self, block: Optional['ScopeBlock']):
         self._parent = block
 
     @property
