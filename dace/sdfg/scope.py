@@ -122,7 +122,10 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
         if node is None: return -1
         return state.node_id(node)
 
-    return {node_id_or_none(k): [node_id_or_none(vi) for vi in v] for k, v in scope_dict.items()}
+    res = {}
+    for k, v in scope_dict.items():
+        res[node_id_or_none(k)] = [node_id_or_none(vi) for vi in v] if v is not None else []
+    return res
 
 
 def scope_contains_scope(sdict: ScopeDictType, node: NodeType, other_node: NodeType) -> bool:
@@ -246,7 +249,7 @@ def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGStat
     if is_parent_nested:
         return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node, with_gpu_default=True)
     else:
-        return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)
+        return is_devicelevel_gpu(state.sdfg, state, node, with_gpu_default=True)
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
@@ -294,7 +297,7 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         # Traverse up nested SDFGs
         if sdfg.parent is not None:
             if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
+                parent = sdfg.parent.sdfg
             else:
                 parent = sdfg.parent
             state, node = next((s, n) for s in parent.nodes() for n in s.nodes()

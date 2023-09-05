@@ -223,7 +223,7 @@ class SymbolWriteScopes(ppl.Pass):
     ) -> Optional[Edge[InterstateEdge]]:
         last_state: SDFGState = read if isinstance(read, SDFGState) else read.src
 
-        in_edges = last_state.parent.in_edges(last_state)
+        in_edges = last_state.sdfg.in_edges(last_state)
         deg = len(in_edges)
         if deg == 0:
             return None
@@ -233,7 +233,7 @@ class SymbolWriteScopes(ppl.Pass):
         write_isedge = None
         n_state = state_idom[last_state] if state_idom[last_state] != last_state else None
         while n_state is not None and write_isedge is None:
-            oedges = n_state.parent.out_edges(n_state)
+            oedges = n_state.sdfg.out_edges(n_state)
             odeg = len(oedges)
             if odeg == 1:
                 if any([sym == k for k in oedges[0].data.assignments.keys()]):
@@ -241,7 +241,7 @@ class SymbolWriteScopes(ppl.Pass):
             else:
                 dom_edge = None
                 for cand in oedges:
-                    if nxsp.has_path(n_state.parent.nx, cand.dst, last_state):
+                    if nxsp.has_path(n_state.sdfg.nx, cand.dst, last_state):
                         if dom_edge is not None:
                             dom_edge = None
                             break
@@ -279,7 +279,7 @@ class SymbolWriteScopes(ppl.Pass):
                     dominators = all_doms[write.dst]
                     reach = state_reach[write.dst]
                     for dom in dominators:
-                        iedges = dom.parent.in_edges(dom)
+                        iedges = dom.sdfg.in_edges(dom)
                         if len(iedges) == 1 and iedges[0] in result[sym]:
                             other_accesses = result[sym][iedges[0]]
                             coarsen = False

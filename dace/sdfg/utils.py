@@ -765,7 +765,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     Given a view access node, returns the last viewed access node
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     while isinstance(desc, dt.View):
@@ -781,7 +781,7 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     Given a view access node, returns a list of viewed access nodes
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     result = [node]
@@ -910,10 +910,10 @@ def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
             curnode = sdict[curnode]
             if curnode.schedule != dtypes.ScheduleType.Sequential:
                 return True
-    if state.parent.parent is not None:
+    if state.sdfg.parent is not None:
         # Find nested SDFG node and continue recursion
-        nsdfg_node = next(n for n in state.parent.parent if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
-        return is_parallel(state.parent.parent, nsdfg_node)
+        nsdfg_node = next(n for n in state.sdfg.parent if isinstance(n, nd.NestedSDFG) and n.sdfg == state.sdfg)
+        return is_parallel(state.sdfg.parent, nsdfg_node)
 
     return False
 
@@ -1269,18 +1269,18 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
 
     for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         id = node.sdfg.sdfg_id
-        sd = state.parent
+        graph = state.parent
 
         # We have to reevaluate every time due to changing IDs
-        state_id = sd.node_id(state)
+        state_id = graph.node_id(state)
         if multistate:
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                inliner.apply(state, sd)
+            inliner.setup_match(graph, id, state_id, candidate, 0, override=True)
+            if inliner.can_be_applied(state, 0, graph, permissive=permissive):
+                inliner.apply(state, state.sdfg)
                 counter += 1
                 continue
 
@@ -1288,9 +1288,9 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             InlineSDFG.nested_sdfg: node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-            inliner.apply(state, sd)
+        inliner.setup_match(graph, id, state_id, candidate, 0, override=True)
+        if inliner.can_be_applied(state, 0, graph, permissive=permissive):
+            inliner.apply(state, state.sdfg)
             counter += 1
 
     return counter
@@ -1379,7 +1379,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     """
 
     # Build a unique representation
-    sdfg = graph.parent
+    sdfg = graph.sdfg
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
@@ -1413,7 +1413,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
         # is the View.
         n = get_view_node(state, node)
         if n and isinstance(n, nd.AccessNode):
-            d = state.parent.arrays[n.data]
+            d = state.sdfg.arrays[n.data]
             return is_nonfree_sym_dependent(n, d, state, fsymbols)
     elif isinstance(desc, dt.Array):
         if any(str(s) not in fsymbols for s in desc.free_symbols):

@@ -121,7 +121,7 @@ class SingleState(ControlFlow):
     last_state: bool = False
 
     def as_cpp(self, codegen, symbols) -> str:
-        sdfg = self.state.parent
+        sdfg = self.state.sdfg
 
         expr = '__state_{}_{}:;\n'.format(sdfg.sdfg_id, self.state.label)
         if self.state.number_of_nodes() > 0:
@@ -218,7 +218,7 @@ class GeneralBlock(ControlFlow):
             # In a general block, emit transitions and assignments after each
             # individual state
             if isinstance(elem, SingleState):
-                sdfg = elem.state.parent
+                sdfg = elem.state.sdfg
                 out_edges = sdfg.out_edges(elem.state)
                 for j, e in enumerate(out_edges):
                     if e not in self.gotos_to_ignore:
@@ -361,7 +361,7 @@ class ForScope(ControlFlow):
                 init = f'{symbols[self.itervar]} {self.itervar}'
             init += ' = ' + self.init
 
-        sdfg = self.guard.parent
+        sdfg = self.guard.sdfg
 
         preinit = ''
         if self.init_edges:
@@ -403,7 +403,7 @@ class WhileScope(ControlFlow):
 
     def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
-            sdfg = self.guard.parent
+            sdfg = self.guard.sdfg
             test = unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
         else:
             test = 'true'

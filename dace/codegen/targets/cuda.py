@@ -204,9 +204,9 @@ class CUDACodeGen(TargetCodeGenerator):
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
             if (isinstance(node, nodes.MapEntry)
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
-                if state.parent not in shared_transients:
-                    shared_transients[state.parent] = state.parent.shared_transients()
-                self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                if state.sdfg not in shared_transients:
+                    shared_transients[state.sdfg] = state.sdfg.shared_transients()
+                self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.sdfg])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
         """
@@ -831,7 +831,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Remove CUDA streams from paths of non-gpu copies and CPU tasklets
         for node, graph in sdfg.all_nodes_recursive():
             if isinstance(graph, SDFGState):
-                cur_sdfg = graph.parent
+                cur_sdfg = graph.sdfg
 
                 if (isinstance(node, (nodes.EntryNode, nodes.ExitNode)) and node.schedule in dtypes.GPU_SCHEDULES):
                     # Node must have GPU stream, remove childpath and continue
@@ -1421,7 +1421,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         visited = set()
         for node, parent in dfg_scope.all_nodes_recursive():
             if isinstance(node, nodes.AccessNode):
-                nsdfg: SDFG = parent.parent
+                nsdfg: SDFG = parent.sdfg
                 desc = node.desc(nsdfg)
                 if (nsdfg, node.data) in visited:
                     continue

@@ -265,7 +265,7 @@ class AccessNode(Node):
     def desc(self, sdfg):
         from dace.sdfg import SDFGState, ScopeSubgraphView
         if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
-            sdfg = sdfg.parent
+            sdfg = sdfg.sdfg
         return sdfg.arrays[self.data]
 
     def validate(self, sdfg, state):
@@ -588,7 +588,7 @@ class NestedSDFG(CodeNode):
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
-            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)[0]
             free_syms &= internally_used_symbols
         
         return free_syms

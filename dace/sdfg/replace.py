@@ -168,17 +168,18 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                 sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
                 del sdfg.constants_prop[aname]
 
-    # Replace in interstate edges
-    for e in sdfg.edges():
-        e.data.replace_dict(repl, replace_keys=False)
+    for cf in sdfg.all_cfgs_recursive(recurse_into_sdfgs=False):
+        # Replace in interstate edges
+        for e in cf.edges():
+            e.data.replace_dict(repl, replace_keys=False)
 
-    for state in sdfg.nodes():
-        # Replace in access nodes
-        for node in state.data_nodes():
-            if node.data in repl:
-                node.data = repl[node.data]
-
-        # Replace in memlets
-        for edge in state.edges():
-            if edge.data.data in repl:
-                edge.data.data = repl[edge.data.data]
+        for block in cf.nodes():
+            if isinstance(block, dace.SDFGState):
+                # Replace in access nodes
+                for node in block.data_nodes():
+                    if node.data in repl:
+                        node.data = repl[node.data]
+                # Replace in memlets
+                for edge in block.edges():
+                    if edge.data.data in repl:
+                        edge.data.data = repl[edge.data.data]

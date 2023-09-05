@@ -491,7 +491,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
         elif isinstance(scope, nodes.EntryNode):
             return scope.schedule
         elif isinstance(scope, (SDFGState, SDFG)):
-            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
+            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.sdfg)
             if sdfg.parent_nsdfg_node is None:
                 return TOP_SCHEDULE
 
@@ -721,7 +721,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                     if curscope is None:
                         curscope = curstate
                 elif isinstance(curscope, (SDFGState, SDFG)):
-                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.parent)
+                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.sdfg)
                     # Go one SDFG up
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None

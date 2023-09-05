@@ -76,9 +76,6 @@ class BlockGraphView(abc.ABC):
     methods.
     """
 
-    def __init__(self, *args, **kwargs):
-        self._clear_scopedict_cache()
-
     ###################################################################
     # Typing overrides
 
@@ -190,85 +187,10 @@ class BlockGraphView(abc.ABC):
         raise NotImplementedError()
 
     ###################################################################
-    # Scope-related methods
-
-    def _clear_scopedict_cache(self):
-        """
-        Clears the cached results for the scope_dict function.
-        For use when the graph mutates (e.g., new edges/nodes, deletions).
-        """
-        self._scope_dict_toparent_cached = None
-        self._scope_dict_tochildren_cached = None
-        self._scope_tree_cached = None
-        self._scope_leaves_cached = None
-        # TODO: needs to be bubbled up to parents or not cached in control graph views.
-
-    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
-        from dace.sdfg.scope import ScopeTree
-
-        if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
-            return copy.copy(self._scope_tree_cached)
-
-        sdp = self.scope_dict()
-        sdc = self.scope_children()
-
-        result = {}
-
-        # Get scopes
-        for node, scopenodes in sdc.items():
-            if node is None:
-                exit_node = None
-            else:
-                exit_node = next(v for v in scopenodes if isinstance(v, nd.ExitNode))
-            scope = ScopeTree(node, exit_node)
-            result[node] = scope
-
-        # Scope parents and children
-        for node, scope in result.items():
-            if node is not None:
-                scope.parent = result[sdp[node]]
-            scope.children = [result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)]
-
-        self._scope_tree_cached = result
-
-        return copy.copy(self._scope_tree_cached)
-
-    def scope_leaves(self) -> List['dace.sdfg.scope.ScopeTree']:
-        if (hasattr(self, '_scope_leaves_cached') and self._scope_leaves_cached is not None):
-            return copy.copy(self._scope_leaves_cached)
-        st = self.scope_tree()
-        self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
-        return copy.copy(self._scope_leaves_cached)
-
-    @abc.abstractmethod
-    def scope_dict(self, validate: bool = True) -> Dict[nd.Node, Union[nd.Node, 'SDFGState']]:
-        """
-        Returns a dictionary that maps each SDFG node to its parent entry node, or to their parent state if not in any
-        scope.
-
-        :param return_ids: Return node ID numbers instead of node objects.
-        :param validate: Ensure that the graph is not malformed when computing dictionary.
-        :return: The mapping from a node to its parent scope entry node.
-        """
-        raise NotImplementedError()
-
-    @abc.abstractmethod
-    def scope_children(self,
-                       validate: bool = True) -> Dict[Union['SDFGState', nd.EntryNode], List[nd.Node]]:
-        """
-        Returns a dictionary that maps each SDFG entry node to its children, not including the children of children
-        entry nodes.
-        A list of top-level nodes (i.e., not in any scope) are keyed by their parent state in the dictionary.
-
-        :param validate: Ensure that the graph is not malformed when computing dictionary.
-        :return: The mapping from a node to a list of children nodes.
-        """
-        raise NotImplementedError()
-
-    ###################################################################
     # Query, subgraph, and replacement methods
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    @abc.abstractmethod
+    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
         """
         Returns a set of symbol names that are used in the graph.
 
@@ -285,7 +207,7 @@ class BlockGraphView(abc.ABC):
 
         :note: Assumes that the graph is valid (i.e., without undefined or overlapping symbols).
         """
-        return self.used_symbols(all_symbols=True)
+        return self.used_symbols(all_symbols=True)[0]
 
     @abc.abstractmethod
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
@@ -384,7 +306,7 @@ class BlockGraphView(abc.ABC):
 class DataflowGraphView(BlockGraphView, abc.ABC):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        self._clear_scopedict_cache()
 
     ###################################################################
     # Typing overrides
@@ -555,6 +477,53 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Scope-related methods
 
+    def _clear_scopedict_cache(self):
+        """
+        Clears the cached results for the scope_dict function.
+        For use when the graph mutates (e.g., new edges/nodes, deletions).
+        """
+        self._scope_dict_toparent_cached = None
+        self._scope_dict_tochildren_cached = None
+        self._scope_tree_cached = None
+        self._scope_leaves_cached = None
+
+    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
+        from dace.sdfg.scope import ScopeTree
+
+        if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
+            return copy.copy(self._scope_tree_cached)
+
+        sdp = self.scope_dict()
+        sdc = self.scope_children()
+
+        result = {}
+
+        # Get scopes
+        for node, scopenodes in sdc.items():
+            if node is None:
+                exit_node = None
+            else:
+                exit_node = next(v for v in scopenodes if isinstance(v, nd.ExitNode))
+            scope = ScopeTree(node, exit_node)
+            result[node] = scope
+
+        # Scope parents and children
+        for node, scope in result.items():
+            if node is not None:
+                scope.parent = result[sdp[node]]
+            scope.children = [result[n] for n in sdc[node] if isinstance(n, nd.EntryNode)]
+
+        self._scope_tree_cached = result
+
+        return copy.copy(self._scope_tree_cached)
+
+    def scope_leaves(self) -> List['dace.sdfg.scope.ScopeTree']:
+        if (hasattr(self, '_scope_leaves_cached') and self._scope_leaves_cached is not None):
+            return copy.copy(self._scope_leaves_cached)
+        st = self.scope_tree()
+        self._scope_leaves_cached = [scope for scope in st.values() if len(scope.children) == 0]
+        return copy.copy(self._scope_leaves_cached)
+
     def scope_dict(self, validate: bool = True) -> Dict[nd.Node, Union['SDFGState', nd.Node]]:
         from dace.sdfg.scope import _scope_dict_inner
         if self._scope_dict_toparent_cached is not None:
@@ -562,7 +531,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         else:
             result = {}
             node_queue = collections.deque(self.source_nodes())
-            eq = _scope_dict_inner(self, node_queue, self, False, result)
+            eq = _scope_dict_inner(self, node_queue, None, False, result)
 
             # Sanity checks
             if validate and len(eq) != 0:
@@ -589,7 +558,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         else:
             result = {}
             node_queue = collections.deque(self.source_nodes())
-            eq = _scope_dict_inner(self, node_queue, self, True, result)
+            eq = _scope_dict_inner(self, node_queue, None, True, result)
 
             # Sanity checks
             if validate and len(eq) != 0:
@@ -612,9 +581,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Query, subgraph, and replacement methods
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        state = self.graph if isinstance(self, SubgraphView) else self
-        sdfg = state.parent
+    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
+        state: dace.SDFGState = self.graph if isinstance(self, SubgraphView) else self
+        sdfg = state.sdfg
         new_symbols = set()
         freesyms = set()
 
@@ -655,7 +624,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
-        return freesyms - new_symbols
+        return freesyms - new_symbols, new_symbols, set()
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
         state = self.graph if isinstance(self, SubgraphView) else self
@@ -860,9 +829,6 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 @make_properties
 class ControlGraphView(BlockGraphView, abc.ABC):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     ###################################################################
     # Typing overrides
 
@@ -939,35 +905,6 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 return block.edges_by_connector(node, connector)
 
     ###################################################################
-    # Scope-related methods
-
-    def scope_dict(self, validate: bool = True) -> Dict[nd.Node, Union[nd.Node, 'SDFGState']]:
-        if self._scope_dict_toparent_cached is not None:
-            return copy.copy(self._scope_dict_toparent_cached)
-        else:
-            result = {}
-
-            for block in self.nodes():
-                result.update(block.scope_dict(validate))
-
-            # Cache result.
-            self._scope_dict_toparent_cached = result
-            return copy.copy(result)
-
-    def scope_children(self, validate: bool = True) -> Dict[Union[nd.Node, 'SDFGState'], List[nd.Node]]:
-        if self._scope_dict_tochildren_cached is not None:
-            return copy.copy(self._scope_dict_tochildren_cached)
-        else:
-            result = {}
-
-            for block in self.nodes():
-                result.update(block.scope_children(validate))
-
-            # Cache result
-            self._scope_dict_tochildren_cached = result
-            return copy.copy(result)
-
-    ###################################################################
     # Query, subgraph, and replacement methods
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
@@ -1025,13 +962,18 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     is_collapsed = Property(dtype=bool, desc='Show this block as collapsed', default=False)
 
-    _parent_cfg: Optional['ControlFlowGraph'] = None
+    _sdfg: Optional['dace.SDFG'] = None
+    _parent: Optional['ControlFlowBlock'] = None
     _label: str
 
-    def __init__(self, label: str='', parent: Optional['ControlFlowGraph']=None):
+    def __init__(self,
+                 label: str='',
+                 parent: Optional['ControlFlowBlock']=None,
+                 sdfg: Optional['dace.SDFG'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
-        self._parent_cfg = parent
+        self._parent = parent
+        self._sdfg = sdfg
         self._default_lineinfo = None
         self.is_collapsed = False
 
@@ -1070,13 +1012,21 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         return self._label
 
     @property
-    def parent_cfg(self):
-        """ Returns the parent graph of this block. """
-        return self._parent_cfg
+    def parent(self) -> Optional['ControlFlowBlock']:
+        """ Returns the parent block of this block. """
+        return self._parent
 
-    @parent_cfg.setter
-    def parent_cfg(self, value):
-        self._parent_cfg = value
+    @parent.setter
+    def parent(self, block: Optional['ControlFlowBlock']):
+        self._parent = block
+
+    @property
+    def sdfg(self) -> Optional['dace.SDFG']:
+        return self._sdfg
+
+    @sdfg.setter
+    def sdfg(self, sdfg: Optional['dace.SDFG']):
+        self._sdfg = sdfg
 
 
 @make_properties
@@ -1114,7 +1064,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     def __repr__(self) -> str:
         return f"SDFGState ({self.label})"
 
-    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None, cfg=None):
+    def __init__(self, label=None, sdfg=None, debuginfo=None, location=None, parent=None):
         """ Constructs an SDFG state.
 
             :param label: Name for the state (optional).
@@ -1123,8 +1073,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         from dace.sdfg.sdfg import SDFG  # Avoid import loop
         OrderedMultiDiConnectorGraph.__init__(self)
-        ControlFlowBlock.__init__(self, label, sdfg)
-        self._parent: Optional[SDFG] = sdfg
+        ControlFlowBlock.__init__(self, label, parent, sdfg)
         self._graph = self  # Allowing MemletTrackingView mixin to work
         self._clear_scopedict_cache()
         self._debuginfo = debuginfo
@@ -1146,15 +1095,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                     # TODO: Investigate why this happens.
                     pass
         return result
-
-    @property
-    def parent(self):
-        """ Returns the parent SDFG of this state. """
-        return self._parent
-
-    @parent.setter
-    def parent(self, value):
-        self._parent = value
 
     def is_empty(self):
         return self.number_of_nodes() == 0
@@ -1182,7 +1122,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Correct nested SDFG's parent attributes
         if isinstance(node, nd.NestedSDFG):
             node.sdfg.parent = self
-            node.sdfg.parent_sdfg = self.parent
+            node.sdfg.parent_sdfg = self.sdfg
             node.sdfg.parent_nsdfg_node = node
         self._clear_scopedict_cache()
         return super(SDFGState, self).add_node(node)
@@ -1210,7 +1150,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         self._clear_scopedict_cache()
         result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector, memlet)
-        memlet.try_initialize(self.parent, self, result)
+        memlet.try_initialize(self.sdfg, self, result)
         return result
 
     def remove_edge(self, edge):
@@ -1237,7 +1177,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         # Try to initialize edges before serialization
         for edge in self.edges():
-            edge.data.try_initialize(self.parent, self, edge)
+            edge.data.try_initialize(self.sdfg, self, edge)
 
         ret = {
             'type': type(self).__name__,
@@ -1309,7 +1249,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg import SDFG
         arrays = set(n.data for n in self.data_nodes())
         sdfg = SDFG(self.label)
-        sdfg._arrays = {k: self._parent.arrays[k] for k in arrays}
+        sdfg._arrays = {k: self.sdfg.arrays[k] for k in arrays}
         sdfg.add_node(self)
 
         return sdfg._repr_html_()
@@ -1329,7 +1269,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if node is None:
             return collections.OrderedDict()
 
-        sdfg: SDFG = self.parent
+        sdfg: SDFG = self.sdfg
 
         # Start with global symbols
         symbols = collections.OrderedDict(sdfg.symbols)
@@ -1471,7 +1411,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
 
         sdfg.parent = self
-        sdfg.parent_sdfg = self.parent
+        sdfg.parent_sdfg = self.sdfg
 
         sdfg.update_sdfg_list([])
 
@@ -1737,7 +1677,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
         # Try to initialize memlets
         for edge in edges:
-            edge.data.try_initialize(self.parent, self, edge)
+            edge.data.try_initialize(self.sdfg, self, edge)
 
         return tasklet, map_entry, map_exit
 
@@ -1919,8 +1859,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             )
 
         # Try to initialize memlets
-        iedge.data.try_initialize(self.parent, self, iedge)
-        eedge.data.try_initialize(self.parent, self, eedge)
+        iedge.data.try_initialize(self.sdfg, self, iedge)
+        eedge.data.try_initialize(self.sdfg, self, eedge)
 
         return (iedge, eedge)
 
@@ -2023,7 +1963,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                         cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
         # Try to initialize memlets
         for edge in edges:
-            edge.data.try_initialize(self.parent, self, edge)
+            edge.data.try_initialize(self.sdfg, self, edge)
 
     def remove_memlet_path(self, edge: MultiConnectorEdge, remove_orphans: bool = True) -> None:
         """ Removes all memlets and associated connectors along a path formed
@@ -2120,9 +2060,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_array" API is deprecated, please '
             'use "SDFG.add_array" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.parent._arrays:
-            del self.parent._arrays[name]
-        self.parent.add_array(name,
+        if name in self.sdfg._arrays:
+            del self.sdfg._arrays[name]
+        self.sdfg.add_array(name,
                               shape,
                               dtype,
                               storage=storage,
@@ -2153,9 +2093,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_stream" API is deprecated, please '
             'use "SDFG.add_stream" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.parent._arrays:
-            del self.parent._arrays[name]
-        self.parent.add_stream(
+        if name in self.sdfg._arrays:
+            del self.sdfg._arrays[name]
+        self.sdfg.add_stream(
             name,
             dtype,
             buffer_size,
@@ -2182,9 +2122,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             'The "SDFGState.add_scalar" API is deprecated, please '
             'use "SDFG.add_scalar" and "SDFGState.add_access"', DeprecationWarning)
         # Workaround to allow this legacy API
-        if name in self.parent._arrays:
-            del self.parent._arrays[name]
-        self.parent.add_scalar(name, dtype, storage, transient, lifetime, debuginfo)
+        if name in self.sdfg._arrays:
+            del self.sdfg._arrays[name]
+        self.sdfg.add_scalar(name, dtype, storage, transient, lifetime, debuginfo)
         return self.add_access(name, debuginfo)
 
     def add_transient(self,
@@ -2297,44 +2237,6 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
 
-    def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
-        """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
-
-            :param u: Source node.
-            :param v: Destination node.
-            :param edge: The edge to add.
-        """
-        if not isinstance(src, ControlFlowBlock):
-            raise TypeError('Expected ControlFlowBlock, got ' + str(type(src)))
-        if not isinstance(dst, ControlFlowBlock):
-            raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
-        if not isinstance(data, dace.sdfg.InterstateEdge):
-            raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
-        if dst is self._cached_start_block:
-            self._cached_start_block = None
-        return super(ControlFlowGraph, self).add_edge(src, dst, data)
-
-    def add_node(self, node, is_start_block=False):
-        if not isinstance(node, ControlFlowBlock):
-            raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
-        super().add_node(node)
-        node.parent_cfg = self
-        self._cached_start_block = None
-        if is_start_block is True:
-            self.start_block = len(self.nodes()) - 1
-            self._cached_start_block = node
-
-    def add_state(self, label=None, is_start_block=False, parent_sdfg=None) -> SDFGState:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
-        label = label or 'state'
-        existing_labels = self._labels
-        label = dt.find_new_name(label, existing_labels)
-        state = SDFGState(label, parent_sdfg)
-        self._labels.add(label)
-        self.add_node(state, is_start_block=is_start_block)
-        return state
-
     ###################################################################
     # Traversal methods
 
@@ -2405,35 +2307,56 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
 @make_properties
 class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
 
-    # TODO: instrumentation
-    _parent_sdfg: Optional['dace.SDFG'] = None
-    _parent_cfg: Optional[ControlFlowGraph] = None
-
-    def __init__(self, label: str='', parent: Optional[ControlFlowGraph]=None, sdfg: Optional['dace.SDFG']=None):
+    def __init__(self,
+                 label: str='',
+                 parent: Optional['ControlFlowBlock']=None,
+                 sdfg: Optional['dace.SDFG'] = None):
         ControlFlowGraph.__init__(self)
-        ControlFlowBlock.__init__(self, label, parent)
-        self._parent_cfg = parent
-        self._parent_sdfg = sdfg
+        ControlFlowBlock.__init__(self, label, parent, sdfg)
 
-    '''
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
+        """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
+
+            :param u: Source node.
+            :param v: Destination node.
+            :param edge: The edge to add.
+        """
+        if not isinstance(src, ControlFlowBlock):
+            raise TypeError('Expected ControlFlowBlock, got ' + str(type(src)))
+        if not isinstance(dst, ControlFlowBlock):
+            raise TypeError('Expected ControlFlowBlock, got ' + str(type(dst)))
+        if not isinstance(data, dace.sdfg.InterstateEdge):
+            raise TypeError('Expected InterstateEdge, got ' + str(type(data)))
+        if dst is self._cached_start_block:
+            self._cached_start_block = None
+        return super().add_edge(src, dst, data)
+
+    def add_node(self, node, is_start_block=False):
+        if not isinstance(node, ControlFlowBlock):
+            raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
+        super().add_node(node)
+        node.parent = self
+        node.sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
+        self._cached_start_block = None
+        if is_start_block is True:
+            self.start_block = len(self.nodes()) - 1
+            self._cached_start_block = node
+
+    def add_state(self, label=None, is_start_block=False) -> SDFGState:
+        if self._labels is None or len(self._labels) != self.number_of_nodes():
+            self._labels = set(s.label for s in self.nodes())
+        label = label or 'state'
+        existing_labels = self._labels
+        label = dt.find_new_name(label, existing_labels)
+        state = SDFGState(label)
+        self._labels.add(label)
+        self.add_node(state, is_start_block=is_start_block)
+        return state
+
+    @abc.abstractmethod
+    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set()
         free_syms = set()
-
-        # Exclude data descriptor names, constants, and shapes of global data descriptors
-        not_strictly_necessary_global_symbols = set()
-        sdfg: dace.SDFG = self._parent_sdfg if self._parent_sdfg is not None else self
-        for name, desc in sdfg.arrays.items():
-            defined_syms.add(name)
-
-            if not all_symbols:
-                used_desc_symbols = desc.used_symbols(all_symbols)
-                not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
-                not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
-
-        defined_syms |= set(sdfg.constants_prop.keys())
-
-        # Add free state symbols
         used_before_assignment = set()
 
         try:
@@ -2442,7 +2365,10 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
             ordered_blocks = self.nodes()
 
         for block in ordered_blocks:
-            free_syms |= block.used_symbols(all_symbols)
+            b_free_syms, b_defined_syms, b_used_before_syms = block.used_symbols(all_symbols)
+            free_syms |= b_free_syms
+            defined_syms |= b_defined_syms
+            used_before_assignment |= b_used_before_syms
 
             # Add free inter-state symbols
             for e in self.out_edges(block):
@@ -2454,12 +2380,12 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
 
-        # Remove symbols that were used before they were assigned
+        # Remove symbols that were used before they were assigned.
         defined_syms -= used_before_assignment
 
-        # Subtract symbols defined in inter-state edges and constants
-        return free_syms - defined_syms
-        '''
+        # Subtract symbols defined in inter-state edges and constants from the list of free symbols.
+        free_syms -= defined_syms
+        return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
         graph_json = ControlFlowGraph.to_json(self)
@@ -2469,23 +2395,6 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
 
     ###################################################################
     # Getters & setters, overrides
-
-    @property
-    def parent_cfg(self) -> Optional['ControlFlowGraph']:
-        return self._parent_cfg
-
-    @parent_cfg.setter
-    def parent_cfg(self, parent_cfg: 'ControlFlowGraph') -> None:
-        self._parent_cfg = parent_cfg
-
-    @property
-    def parent_sdfg(self) -> 'dace.SDFG':
-        """ Returns the parent SDFG of this control flow graph, if exists. """
-        return self._parent_sdfg
-
-    @parent_sdfg.setter
-    def parent_sdfg(self, value):
-        self._parent_sdfg = value
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)
@@ -2501,6 +2410,7 @@ class LoopScopeBlock(ScopeBlock):
     init_statement = CodeProperty(optional=True, allow_none=True, default=None)
     scope_condition = CodeProperty(allow_none=True, default=None)
     inverted = Property(dtype=bool, default=False)
+    loop_variable = Property(dtype=str, default='')
 
     def __init__(self,
                  loop_var: str,
@@ -2509,8 +2419,9 @@ class LoopScopeBlock(ScopeBlock):
                  update_expr: str,
                  label: str = '',
                  parent: Optional[ControlFlowGraph] = None,
+                 sdfg: Optional['dace.SDFG'] = None,
                  inverted: bool = False):
-        super(LoopScopeBlock, self).__init__(label, parent)
+        super(LoopScopeBlock, self).__init__(label, parent, sdfg)
 
         if initialize_expr is not None:
             self.init_statement = CodeBlock('%s = %s' % (loop_var, initialize_expr))
@@ -2527,13 +2438,28 @@ class LoopScopeBlock(ScopeBlock):
         else:
             self.update_statement = None
 
+        self.loop_variable = loop_var
         self.inverted = inverted
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        symbols = set()
+    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
+        free_symbols = set()
+        defined_symbols = set(self.loop_variable)
+        used_before_assignment = set()
         if self.init_statement is not None:
-            symbols |= self.init_statement.used_symbols(all_symbols)
-        return symbols()
+            free_symbols |= self.init_statement.get_free_symbols()
+        if self.update_statement is not None:
+            free_symbols |= self.update_statement.get_free_symbols()
+        free_symbols |= self.scope_condition.get_free_symbols()
+
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(all_symbols)
+        free_symbols |= b_free_symbols
+        defined_symbols |= b_defined_symbols
+        used_before_assignment |= b_used_before_assignment
+
+        defined_symbols -= used_before_assignment
+        free_symbols -= defined_symbols
+
+        return free_symbols, defined_symbols, used_before_assignment
 
     def to_json(self, parent=None):
         return super().to_json(parent)

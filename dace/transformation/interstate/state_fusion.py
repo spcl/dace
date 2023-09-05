@@ -30,7 +30,7 @@ class CCDesc:
 
 
 def top_level_nodes(state: SDFGState):
-    return state.scope_children()[state]
+    return state.scope_children()[None]
 
 
 class StateFusion(transformation.MultiStateTransformation):

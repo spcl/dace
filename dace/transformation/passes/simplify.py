@@ -16,7 +16,7 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 SIMPLIFY_PASSES = [
-    #InlineSDFGs,
+    InlineSDFGs,
     #ScalarToSymbolPromotion,
     FuseStates,
     #OptionalArrayInference,

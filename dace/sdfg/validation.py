@@ -357,14 +357,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
-    # TODO: set state SDFG and validate here. Parent won't point to the same thing.
-    #if state._parent != sdfg:
-    #    raise InvalidSDFGError("State does not point to the correct "
-    #                           "parent", sdfg, state_id)
+    if state.sdfg != sdfg:
+        raise InvalidSDFGError("State does not point to the correct sdfg", sdfg, state_id)
 
     # Unreachable
     ########################################
-    parent = state.parent
+    parent = state.sdfg
     if (parent.number_of_nodes() > 1 and parent.in_degree(state) == 0 and parent.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 

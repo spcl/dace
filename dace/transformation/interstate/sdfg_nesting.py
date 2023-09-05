@@ -565,7 +565,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Fission state if necessary
             cc = utils.weakly_connected_component(state, node)
             if not any(n in cc for n in subgraph.nodes()):
-                helpers.state_fission(state.parent, cc)
+                helpers.state_fission(state.sdfg, cc)
         for edge in removed_out_edges:
             # Find last access node that refers to this edge
             try:
@@ -604,7 +604,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """
         Deals with access->access edges where both sides are non-transient.
         """
-        nsdfg_node = nstate.parent.parent_nsdfg_node
+        nsdfg_node = nstate.sdfg.parent_nsdfg_node
         edges_to_ignore = edges_to_ignore or set()
         result = set()
         edges = input_edges

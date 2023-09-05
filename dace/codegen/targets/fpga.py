@@ -1332,7 +1332,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
 
         concurrent_kernels = 0  # Max number of kernels
-        sdfg = state.parent
+        sdfg = state.sdfg
 
         def increment(kernel_id):
             if concurrent_kernels > 0:

@@ -400,11 +400,11 @@ class Memlet(object):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
 
     def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
-        self.try_initialize(state.parent, state, edge)
+        self.try_initialize(state.sdfg, state, edge)
         return self.src_subset
 
     def get_dst_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
-        self.try_initialize(state.parent, state, edge)
+        self.try_initialize(state.sdfg, state, edge)
         return self.dst_subset
 
     @staticmethod

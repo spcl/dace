@@ -73,7 +73,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
-            sdfg = graph_or_subgraph.parent
+            sdfg = graph_or_subgraph.sdfg
             sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
@@ -196,7 +196,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
         return
     if not isinstance(graph, SDFGState):
         raise TypeError('Graph must be a state, an SDFG, or a subgraph of either')
-    sdfg = graph.parent
+    sdfg = graph.sdfg
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()
     for edge in graph_or_subgraph.edges():

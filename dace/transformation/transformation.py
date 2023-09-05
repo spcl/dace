@@ -708,7 +708,7 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
+                sdfg = subgraph.graph.sdfg
                 self.sdfg_id = sdfg.sdfg_id
                 self.state_id = sdfg.node_id(subgraph.graph)
             elif isinstance(subgraph.graph, SDFG):

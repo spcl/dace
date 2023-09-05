@@ -257,7 +257,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
 
     # From memlets, use non-scalar data descriptors for decision
     constraints: Set[dtypes.ScheduleType] = set()
-    sdfg = state.parent
+    sdfg = state.sdfg
     for dname in memlets:
         if isinstance(sdfg.arrays[dname], data.Scalar):
             continue  # Skip scalars
@@ -276,7 +276,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         raise validation.InvalidSDFGNodeError(
             f'Cannot determine default schedule for node {node}. '
             'Multiple arrays that point to it say that it should be the following schedules: '
-            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+            f'{constraints}', state.sdfg, state.sdfg.node_id(state), state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 
@@ -338,7 +338,7 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
             parent_schedules = parent_schedules + [dtypes.ScheduleType.GPU_ThreadBlock]
     # End of special case
 
-    sdfg = state.parent
+    sdfg = state.sdfg
     child_storage = _determine_child_storage(parent_schedules)
     if child_storage is None:
         child_storage = dtypes.SCOPEDEFAULT_STORAGE[None]

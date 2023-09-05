@@ -30,7 +30,7 @@ def test_nest_oneelementmap():
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, dace.nodes.MapEntry):
             subgraph = state.scope_subgraph(node, include_entry=False, include_exit=False)
-            nest_state_subgraph(state.parent, state, subgraph)
+            nest_state_subgraph(state.sdfg, state, subgraph)
 
     sdfg(A=A, B=B)
     assert np.allclose(A, B)

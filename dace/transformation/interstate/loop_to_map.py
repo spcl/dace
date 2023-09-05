@@ -423,7 +423,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             new_body = sdfg.add_state('single_state_body')
             nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
             nsdfg.add_node(body, is_start_state=True)
-            body.parent = nsdfg
+            body.sdfg = nsdfg
             exit_state = nsdfg.add_state('exit')
             nsymbols = dict()
             for state in states:

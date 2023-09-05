@@ -1335,7 +1335,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.current_state = block
 
     def _add_state(self, label=None) -> SDFGState:
-        state = self.cfg_target.add_state(label, False, self.sdfg)
+        state = self.cfg_target.add_state(label, False)
         self._add_block(state)
         return state
 

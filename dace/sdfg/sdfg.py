@@ -501,8 +501,8 @@ class SDFG(ScopeBlock):
                 self.add_constant(cstname, cstval, cst_dtype)
 
         self._propagate = propagate
-        self._parent = parent
         self.symbols = {}
+        self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
@@ -1200,22 +1200,22 @@ class SDFG(ScopeBlock):
         self._propagate = propagate
 
     @property
-    def parent(self) -> SDFGState:
-        """ Returns the parent SDFG state of this SDFG, if exists. """
-        return self._parent
-
-    @property
     def parent_nsdfg_node(self) -> nd.NestedSDFG:
         """ Returns the parent NestedSDFG node of this SDFG, if exists. """
         return self._parent_nsdfg_node
 
-    @parent.setter
-    def parent(self, value):
-        self._parent = value
-
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
+
+    @property
+    def parent_sdfg(self) -> 'SDFG':
+        """ Returns the parent SDFG of this SDFG, if exists. """
+        return self._parent_sdfg
+
+    @parent_sdfg.setter
+    def parent_sdfg(self, value):
+        self._parent_sdfg = value
 
     def remove_node(self, node: SDFGState):
         if node is self._cached_start_block:
@@ -1236,15 +1236,7 @@ class SDFG(ScopeBlock):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG.
-
-        :param all_symbols: If False, only returns the set of symbols that will be used
-                            in the generated code and are needed as arguments.
-        """
+    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set()
         free_syms = set()
 
@@ -1269,29 +1261,17 @@ class SDFG(ScopeBlock):
         # Add free state symbols
         used_before_assignment = set()
 
-        try:
-            ordered_states = self.topological_sort(self.start_state)
-        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
-            ordered_states = self.nodes()
-
-        for state in ordered_states:
-            free_syms |= state.used_symbols(all_symbols)
-
-            # Add free inter-state symbols
-            for e in self.out_edges(state):
-                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
-                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
-                # compute the symbols that are used before being assigned.
-                efsyms = e.data.used_symbols(all_symbols)
-                defined_syms |= set(e.data.assignments.keys()) - efsyms
-                used_before_assignment.update(efsyms - defined_syms)
-                free_syms |= efsyms
+        b_free_syms, b_defined_syms, b_used_before_syms = super().used_symbols(all_symbols)
+        free_syms |= b_free_syms
+        defined_syms |= b_defined_syms
+        used_before_assignment |= b_used_before_syms
 
         # Remove symbols that were used before they were assigned
         defined_syms -= used_before_assignment
 
         # Subtract symbols defined in inter-state edges and constants
-        return free_syms - defined_syms
+        free_syms -= defined_syms
+        return free_syms, defined_syms, used_before_assignment
 
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
@@ -1322,7 +1302,7 @@ class SDFG(ScopeBlock):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)[0]
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1528,8 +1508,8 @@ class SDFG(ScopeBlock):
 
     # Dynamic SDFG creation API
     ##############################
-    def add_state(self, label=None, is_start_block=False, parent_sdfg=None) -> 'SDFGState':
-        return super().add_state(label, is_start_block, self if parent_sdfg is None else parent_sdfg)
+    def add_state(self, label=None, is_start_block=False) -> 'SDFGState':
+        return super().add_state(label, is_start_block)
 
     def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state before an existing state, reconnecting
