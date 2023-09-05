@@ -1293,38 +1293,6 @@ class SDFG(ScopeBlock):
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
 
-    @property
-    def free_symbols(self) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
-
-        :note: Assumes that the graph is valid (i.e., without undefined or
-               overlapping symbols).
-        """
-        return self.used_symbols(all_symbols=True)
-
-    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
-        """
-        Determines what data containers are read and written in this SDFG. Does
-        not include reads to subsets of containers that have previously been
-        written within the same state.
-
-        :return: A two-tuple of sets of things denoting
-                 ({data read}, {data written}).
-        """
-        read_set = set()
-        write_set = set()
-        for state in self.states():
-            for edge in self.in_edges(state):
-                read_set |= edge.data.free_symbols & self.arrays.keys()
-            # Get dictionaries of subsets read and written from each state
-            rs, ws = state._read_and_write_sets()
-            read_set |= rs.keys()
-            write_set |= ws.keys()
-        return read_set, write_set
-
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required

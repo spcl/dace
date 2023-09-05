@@ -16,16 +16,16 @@ from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 SIMPLIFY_PASSES = [
-    InlineSDFGs,
-    ScalarToSymbolPromotion,
+    #InlineSDFGs,
+    #ScalarToSymbolPromotion,
     FuseStates,
-    OptionalArrayInference,
-    ConstantPropagation,
-    DeadDataflowElimination,
-    DeadStateElimination,
-    RemoveUnusedSymbols,
-    ArrayElimination,
-    ConsolidateEdges,
+    #OptionalArrayInference,
+    #ConstantPropagation,
+    #DeadDataflowElimination,
+    #DeadStateElimination,
+    #RemoveUnusedSymbols,
+    #ArrayElimination,
+    #ConsolidateEdges,
 ]
 
 _nonrecursive_passes = [

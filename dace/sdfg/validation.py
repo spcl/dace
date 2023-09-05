@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     import dace
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
+    from dace.sdfg.state import ControlFlowGraph
     from dace.memlet import Memlet
 
 ###########################################
@@ -25,6 +26,145 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_sdfg(graph)
     elif isinstance(gtype, SDFGState):
         validate_state(graph)
+
+
+def validate_cf_scope(sdfg: 'dace.sdfg.SDFG',
+                      scope: 'ControlFlowGraph',
+                      initialized_transients: Set[str],
+                      symbols: dict,
+                      references: Set[int] = None,
+                      **context: bool):
+    from dace.sdfg import SDFGState
+    from dace.sdfg.scope import is_in_scope
+
+    if len(scope.source_nodes()) > 1 and scope.start_block is None:
+        raise InvalidSDFGError("Starting block undefined", sdfg, None)
+
+    in_default_scope = None
+
+    # Check every state separately
+    start_block = scope.start_block
+    visited = set()
+    visited_edges = set()
+    # Run through blocks via DFS, ensuring that only the defined symbols are available for validation
+    for edge in scope.dfs_edges(start_block):
+        # Source -> inter-state definition -> Destination
+        ##########################################
+        visited_edges.add(edge)
+
+        # Reference check
+        if id(edge) in references:
+            raise InvalidSDFGInterstateEdgeError(
+                f'Duplicate inter-state edge object detected: "{edge}". Please '
+                'copy objects rather than using multiple references to the same one', sdfg, scope.edge_id(edge))
+        references.add(id(edge))
+        if id(edge.data) in references:
+            raise InvalidSDFGInterstateEdgeError(
+                f'Duplicate inter-state edge object detected: "{edge}". Please '
+                'copy objects rather than using multiple references to the same one', sdfg, scope.edge_id(edge))
+        references.add(id(edge.data))
+
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            validate_state(edge.src, scope.node_id(edge.src), sdfg, symbols, initialized_transients, references,
+                            **context)
+
+        ##########################################
+        # Edge
+        # Check inter-state edge for undefined symbols
+        undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
+        if len(undef_syms) > 0:
+            eid = scope.edge_id(edge)
+            raise InvalidSDFGInterstateEdgeError(
+                f'Undefined symbols in edge: {undef_syms}. Add those with '
+                '`sdfg.add_symbol()` or define outside with `dace.symbol()`', sdfg, eid)
+
+        # Validate inter-state edge names
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        if any(not dtypes.validate_name(s) for s in issyms):
+            invalid = next(s for s in issyms if not dtypes.validate_name(s))
+            eid = scope.edge_id(edge)
+            raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
+
+        # Ensure accessed data containers in assignments and conditions are accessible in this context
+        ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
+        for memlet in ise_memlets:
+            container = memlet.data
+            if not _accessible(sdfg, container, context):
+                # Check context w.r.t. maps
+                if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                    in_default_scope = False
+                    if sdfg.parent_nsdfg_node is not None:
+                        if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                    [dtypes.ScheduleType.Default]):
+                            in_default_scope = True
+                if in_default_scope is False:
+                    eid = scope.edge_id(edge)
+                    raise InvalidSDFGInterstateEdgeError(
+                        f'Trying to read an inaccessible data container "{container}" '
+                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+
+        # Add edge symbols into defined symbols
+        symbols.update(issyms)
+
+        ##########################################
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                validate_state(edge.dst, scope.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
+                               **context)
+            else:
+                validate_cf_scope(sdfg, edge.dst, initialized_transients, symbols, references, **context)
+    # End of block DFS
+
+    # If there is only one block, the DFS will miss it
+    if start_block not in visited:
+        if isinstance(start_block, SDFGState):
+            validate_state(start_block, scope.node_id(start_block), sdfg, symbols, initialized_transients, references,
+                            **context)
+        else:
+                validate_cf_scope(sdfg, start_block, initialized_transients, symbols, references, **context)
+
+    # Validate all inter-state edges (including self-loops not found by DFS)
+    for eid, edge in enumerate(scope.edges()):
+        if edge in visited_edges:
+            continue
+
+        # Reference check
+        if id(edge) in references:
+            raise InvalidSDFGInterstateEdgeError(
+                f'Duplicate inter-state edge object detected: "{edge}". Please '
+                'copy objects rather than using multiple references to the same one', sdfg, eid)
+        references.add(id(edge))
+        if id(edge.data) in references:
+            raise InvalidSDFGInterstateEdgeError(
+                f'Duplicate inter-state edge object detected: "{edge}". Please '
+                'copy objects rather than using multiple references to the same one', sdfg, eid)
+        references.add(id(edge.data))
+
+        issyms = edge.data.assignments.keys()
+        if any(not dtypes.validate_name(s) for s in issyms):
+            invalid = next(s for s in issyms if not dtypes.validate_name(s))
+            raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
+
+        # Ensure accessed data containers in assignments and conditions are accessible in this context
+        ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
+        for memlet in ise_memlets:
+            container = memlet.data
+            if not _accessible(sdfg, container, context):
+                # Check context w.r.t. maps
+                if in_default_scope is None:  # Lazy-evaluate in_default_scope
+                    in_default_scope = False
+                    if sdfg.parent_nsdfg_node is not None:
+                        if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
+                                    [dtypes.ScheduleType.Default]):
+                            in_default_scope = True
+                if in_default_scope is False:
+                    raise InvalidSDFGInterstateEdgeError(
+                        f'Trying to read an inaccessible data container "{container}" '
+                        f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
@@ -42,7 +182,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
     """
     # Avoid import loop
     from dace.codegen.targets import fpga
-    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+    from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
 
     references = references or set()
 
@@ -58,11 +198,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         if not dtypes.validate_name(sdfg.name):
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
-        if len(sdfg.source_nodes()) > 1 and sdfg.start_state is None:
-            raise InvalidSDFGError("Starting state undefined", sdfg, None)
-
-        if len(set([s.label for s in sdfg.nodes()])) != len(sdfg.nodes()):
-            raise InvalidSDFGError("Found multiple states with the same name", sdfg, None)
+        all_blocks = set(sdfg.all_control_flow_blocks_recursive(recurse_into_sdfgs=False))
+        if len(set([s.label for s in all_blocks])) != len(all_blocks):
+            raise InvalidSDFGError("Found multiple blocks with the same name", sdfg, None)
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
@@ -111,10 +249,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # Check if SDFG is located within a GPU kernel
         context['in_gpu'] = is_devicelevel_gpu(sdfg, None, None)
         context['in_fpga'] = is_devicelevel_fpga(sdfg, None, None)
-        in_default_scope = None
 
-        # Check every state separately
-        start_state = sdfg.start_state
         initialized_transients = {'__pystate'}
         initialized_transients.update(sdfg.constants_prop.keys())
         symbols = copy.deepcopy(sdfg.symbols)
@@ -123,122 +258,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
-        visited = set()
-        visited_edges = set()
-        # Run through states via DFS, ensuring that only the defined symbols
-        # are available for validation
-        for edge in sdfg.dfs_edges(start_state):
-            # Source -> inter-state definition -> Destination
-            ##########################################
-            visited_edges.add(edge)
 
-            # Reference check
-            if id(edge) in references:
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Duplicate inter-state edge object detected: "{edge}". Please '
-                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
-            references.add(id(edge))
-            if id(edge.data) in references:
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Duplicate inter-state edge object detected: "{edge}". Please '
-                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
-            references.add(id(edge.data))
-
-            # Source
-            if edge.src not in visited:
-                visited.add(edge.src)
-                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols, initialized_transients, references,
-                               **context)
-
-            ##########################################
-            # Edge
-            # Check inter-state edge for undefined symbols
-            undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
-            if len(undef_syms) > 0:
-                eid = sdfg.edge_id(edge)
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Undefined symbols in edge: {undef_syms}. Add those with '
-                    '`sdfg.add_symbol()` or define outside with `dace.symbol()`', sdfg, eid)
-
-            # Validate inter-state edge names
-            issyms = edge.data.new_symbols(sdfg, symbols)
-            if any(not dtypes.validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not dtypes.validate_name(s))
-                eid = sdfg.edge_id(edge)
-                raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
-
-            # Ensure accessed data containers in assignments and conditions are accessible in this context
-            ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
-            for memlet in ise_memlets:
-                container = memlet.data
-                if not _accessible(sdfg, container, context):
-                    # Check context w.r.t. maps
-                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
-                        in_default_scope = False
-                        if sdfg.parent_nsdfg_node is not None:
-                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
-                                        [dtypes.ScheduleType.Default]):
-                                in_default_scope = True
-                    if in_default_scope is False:
-                        eid = sdfg.edge_id(edge)
-                        raise InvalidSDFGInterstateEdgeError(
-                            f'Trying to read an inaccessible data container "{container}" '
-                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
-
-            # Add edge symbols into defined symbols
-            symbols.update(issyms)
-
-            ##########################################
-            # Destination
-            if edge.dst not in visited:
-                visited.add(edge.dst)
-                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols, initialized_transients, references,
-                               **context)
-        # End of state DFS
-
-        # If there is only one state, the DFS will miss it
-        if start_state not in visited:
-            validate_state(start_state, sdfg.node_id(start_state), sdfg, symbols, initialized_transients, references,
-                           **context)
-
-        # Validate all inter-state edges (including self-loops not found by DFS)
-        for eid, edge in enumerate(sdfg.edges()):
-            if edge in visited_edges:
-                continue
-
-            # Reference check
-            if id(edge) in references:
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Duplicate inter-state edge object detected: "{edge}". Please '
-                    'copy objects rather than using multiple references to the same one', sdfg, eid)
-            references.add(id(edge))
-            if id(edge.data) in references:
-                raise InvalidSDFGInterstateEdgeError(
-                    f'Duplicate inter-state edge object detected: "{edge}". Please '
-                    'copy objects rather than using multiple references to the same one', sdfg, eid)
-            references.add(id(edge.data))
-
-            issyms = edge.data.assignments.keys()
-            if any(not dtypes.validate_name(s) for s in issyms):
-                invalid = next(s for s in issyms if not dtypes.validate_name(s))
-                raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
-
-            # Ensure accessed data containers in assignments and conditions are accessible in this context
-            ise_memlets = edge.data.get_read_memlets(sdfg.arrays)
-            for memlet in ise_memlets:
-                container = memlet.data
-                if not _accessible(sdfg, container, context):
-                    # Check context w.r.t. maps
-                    if in_default_scope is None:  # Lazy-evaluate in_default_scope
-                        in_default_scope = False
-                        if sdfg.parent_nsdfg_node is not None:
-                            if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
-                                        [dtypes.ScheduleType.Default]):
-                                in_default_scope = True
-                    if in_default_scope is False:
-                        raise InvalidSDFGInterstateEdgeError(
-                            f'Trying to read an inaccessible data container "{container}" '
-                            f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
+        validate_cf_scope(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
@@ -314,8 +335,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg import utils as sdutil
     from dace.sdfg.scope import scope_contains_scope, is_devicelevel_gpu, is_devicelevel_fpga
 
-    sdfg = sdfg or state.parent
-    state_id = state_id or sdfg.node_id(state)
+    state_id = state_id or state.parent.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
@@ -337,13 +357,15 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
-    if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct "
-                               "parent", sdfg, state_id)
+    # TODO: set state SDFG and validate here. Parent won't point to the same thing.
+    #if state._parent != sdfg:
+    #    raise InvalidSDFGError("State does not point to the correct "
+    #                           "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
-    if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0):
+    parent = state.parent
+    if (parent.number_of_nodes() > 1 and parent.in_degree(state) == 0 and parent.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 
     if state.has_cycles():

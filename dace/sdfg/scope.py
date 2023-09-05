@@ -104,12 +104,10 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children, result
         # If this is an Entry Node, we need to recurse further
         if isinstance(node, nd.EntryNode):
             node_queue.extend(_scope_dict_inner(graph, collections.deque(successors), node, node_to_children, result))
-        # If this is an Exit Node, we push the successors to the external
-        # queue
+        # If this is an Exit Node, we push the successors to the external queue
         elif isinstance(node, nd.ExitNode):
             external_queue.extend(successors)
-        # Otherwise, it is a plain node, and we push its successors to the
-        # same queue
+        # Otherwise, it is a plain node, and we push its successors to the same queue
         else:
             node_queue.extend(successors)
 

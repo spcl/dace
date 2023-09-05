@@ -30,7 +30,7 @@ class CCDesc:
 
 
 def top_level_nodes(state: SDFGState):
-    return state.scope_children()[None]
+    return state.scope_children()[state]
 
 
 class StateFusion(transformation.MultiStateTransformation):
@@ -264,13 +264,13 @@ class StateFusion(transformation.MultiStateTransformation):
             first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
             first_output = {
                 node
-                for node in first_state.scope_children()[None]
+                for node in top_level_nodes(first_state)
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
             second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
             second_output = {
                 node
-                for node in second_state.scope_children()[None]
+                for node in top_level_nodes(second_state)
                 if isinstance(node, nodes.AccessNode) and node not in second_input
             }
 
@@ -489,7 +489,6 @@ class StateFusion(transformation.MultiStateTransformation):
         # Find source/sink (data) nodes
         first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
         first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
-        second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
 
         top2 = top_level_nodes(second_state)
 
