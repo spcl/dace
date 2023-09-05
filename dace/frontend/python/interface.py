@@ -293,10 +293,11 @@ class tasklet(metaclass=TaskletMetaclass):
     The DaCe framework cannot analyze these tasklets for optimization. 
     """
 
-    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python):
+    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python, side_effects: bool = False):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
+        self.side_effects = side_effects
 
     def __enter__(self):
         if self.language != dtypes.Language.Python:
