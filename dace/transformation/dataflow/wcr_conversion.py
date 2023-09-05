@@ -117,7 +117,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 func_rhs = r'^\s*%s\s*=\s*(%s)\(.*,\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs, re.escape(inconn))
                 if re.match(lhs, cstr) is None and re.match(rhs, cstr) is None:
                     if re.match(func_lhs, cstr) is None and re.match(func_rhs, cstr) is None:
-                        inconns = [edge.dst_conn for edge in inedges]
+                        inconns = list(self.tasklet.in_connectors)
                         if len(inconns) != 2:
                             continue
 
@@ -236,7 +236,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                                                                                      re.escape(inconn))
                             match = re.match(func_lhs, cstr)
                             if match is None:
-                                inconns = [edge.dst_conn for edge in inedges]
+                                inconns = list(self.tasklet.in_connectors)
                                 if len(inconns) != 2:
                                     continue
 
