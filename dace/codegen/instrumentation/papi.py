@@ -43,7 +43,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     _counters: Optional[Set[str]] = None
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._papi_used = False
@@ -350,7 +350,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     @staticmethod
     def perf_get_supersection_start_string(node, dfg, unified_id):
-        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             # Nested SuperSections are not supported. Therefore, we mark the
             # outermost section and disallow internal scopes from creating it.
             if not hasattr(node.map, '_can_be_supersection_start'):
@@ -360,7 +360,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             for x in children:
                 if not hasattr(x.map, '_can_be_supersection_start'):
                     x.map._can_be_supersection_start = True
-                if x.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                if x.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
 
                     x.map._can_be_supersection_start = False
                 elif x.map.schedule == dtypes.ScheduleType.Sequential:

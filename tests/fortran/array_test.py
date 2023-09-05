@@ -11,6 +11,7 @@ from dace import SDFG, SDFGState, nodes, dtypes, data, subsets, symbolic
 from dace.frontend.fortran import fortran_parser
 from fparser.two.symbol_table import SymbolTable
 from dace.sdfg import utils as sdutil
+from dace.sdfg.nodes import AccessNode
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
@@ -167,6 +168,54 @@ def test_fortran_frontend_input_output_connector():
     assert (a[1, 2] == 0)
 
 
+def test_fortran_frontend_memlet_in_map_test():
+    """
+    Tests that no assumption is made where the iteration variable is inside a memlet subset
+    """
+    test_string = """
+        PROGRAM memlet_range_test
+        implicit None
+        REAL INP(100, 10)
+        REAL OUT(100, 10)
+        CALL memlet_range_test_routine(INP, OUT)
+        END PROGRAM
+
+        SUBROUTINE memlet_range_test_routine(INP, OUT)
+            REAL INP(100, 10)
+            REAL OUT(100, 10)
+            DO I=1,100
+                CALL inner_loops(INP(I, :), OUT(I, :))
+            ENDDO
+        END SUBROUTINE memlet_range_test_routine
+
+        SUBROUTINE inner_loops(INP, OUT)
+            REAL INP(10)
+            REAL OUT(10)
+            DO J=1,10
+                OUT(J) = INP(J) + 1
+            ENDDO
+        END SUBROUTINE inner_loops
+
+    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "memlet_range_test")
+    sdfg.simplify()
+    # Expect that start is begin of for loop -> only one out edge to guard defining iterator variable
+    assert len(sdfg.out_edges(sdfg.start_state)) == 1
+    iter_var = symbolic.symbol(list(sdfg.out_edges(sdfg.start_state)[0].data.assignments.keys())[0])
+
+    for state in sdfg.states():
+        if len(state.nodes()) > 1:
+            for node in state.nodes():
+                if isinstance(node, AccessNode) and node.data in ['INP', 'OUT']:
+                    edges = [*state.in_edges(node), *state.out_edges(node)]
+                    # There should be only one edge in/to the access node
+                    assert len(edges) == 1
+                    memlet = edges[0].data
+                    # Check that the correct memlet has the iteration variable
+                    assert memlet.subset[0] == (iter_var, iter_var, 1)
+                    assert memlet.subset[1] == (1, 10, 1)
+
+
 if __name__ == "__main__":
 
     test_fortran_frontend_array_3dmap()
@@ -174,3 +223,4 @@ if __name__ == "__main__":
     test_fortran_frontend_input_output_connector()
     test_fortran_frontend_array_ranges()
     test_fortran_frontend_twoconnector()
+    test_fortran_frontend_memlet_in_map_test()
