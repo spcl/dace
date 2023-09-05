@@ -1150,6 +1150,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Indirections
         self.indirections = dict()
 
+        # Program variables
+        self.pvars = dict()  # Dict[str, Any]
+
     @classmethod
     def progress_count(cls) -> int:
         """ Returns the number of parsed SDFGs so far within this run. """
@@ -3120,6 +3123,12 @@ class ProgramVisitor(ExtNodeVisitor):
         self._visit_assign(node, node.target, None, dtype=dtype)
 
     def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
+
+        # NOTE: Assuming (for now) simple assignment with single target (LHS).
+        # NOTE: This should be enforced by the preprocessor.
+        # NOTE: There may be issues with implicit swaps (e.g., a, b = b, a).
+        assert  isinstance(node_target, (ast.Name, ast.Subscript, ast.Attribute))
+
         # Get targets (elts) and results
         elts = None
         results = None
@@ -3142,6 +3151,12 @@ class ProgramVisitor(ExtNodeVisitor):
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
         for target, (result, _) in zip(elts, results):
+
+            if not isinstance(result, (ast.Name, ast.Subscript, ast.Attribute)):
+                assert isinstance(target, ast.Name)
+                assert target.id not in self.pvars
+                self.pvars[target.id] = result
+                continue
 
             name = rname(target)
             true_name = None
@@ -4277,8 +4292,20 @@ class ProgramVisitor(ExtNodeVisitor):
             if self._has_sdfg(node.func.value):
                 func = node.func.value
 
+        # https://stackoverflow.com/a/2020083
+        def fullname(f):
+            module = f.__module__
+            if module == 'builtins':
+                return f.__qualname__ # avoid outputs like 'builtins.str'
+            return module + '.' + f.__qualname__
+        
+        if isinstance(node.func, ast.Name) and node.func.id in self.pvars:
+            funcname = fullname(self.pvars[node.func.id])
+            print(funcname)
+
         if func is None:
-            funcname = rname(node)
+            if funcname is None:
+                funcname = rname(node)
             # Check if the function exists as an SDFG in a different module
             modname = until(funcname, '.')
             if ('.' in funcname and len(modname) > 0 and modname in self.globals
