@@ -2227,6 +2227,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     src_ast = unnester.visit(src_ast)
     for parent, attr, idx, node in reversed(unnester.ast_nodes_to_add):
         getattr(parent, attr).insert(idx, node)
+    ast.fix_missing_locations(src_ast)
     
     print(astutils.unparse(src_ast))
 
