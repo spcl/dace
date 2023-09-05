@@ -2225,8 +2225,8 @@ def preprocess_dace_program(f: Callable[..., Any],
     src_ast = ParentSetter().visit(src_ast)
     unnester = ExpressionUnnester(names=program_names)
     src_ast = unnester.visit(src_ast)
-    for parent, idx, node in reversed(unnester.ast_nodes_to_add):
-        parent.body.insert(idx, node)
+    for parent, attr, idx, node in reversed(unnester.ast_nodes_to_add):
+        getattr(parent, attr).insert(idx, node)
     
     print(astutils.unparse(src_ast))
 
