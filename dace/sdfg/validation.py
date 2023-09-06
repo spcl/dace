@@ -445,16 +445,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             nsdfg_node = sdfg.parent_nsdfg_node
             if nsdfg_node is not None:
                 # Find unassociated non-transients access nodes
-                if (not arr.transient and node.data not in nsdfg_node.in_connectors
-                        and node.data not in nsdfg_node.out_connectors):
+                node_data = node.data.split('.')[0]
+                if (not arr.transient and node_data not in nsdfg_node.in_connectors
+                        and node_data not in nsdfg_node.out_connectors):
                     raise InvalidSDFGNodeError(
-                        f'Data descriptor "{node.data}" is not transient and used in a nested SDFG, '
+                        f'Data descriptor "{node_data}" is not transient and used in a nested SDFG, '
                         'but does not have a matching connector on the outer SDFG node.', sdfg, state_id, nid)
 
                 # Find writes to input-only arrays
                 only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
                 if (not arr.transient) and (not only_empty_inputs):
-                    if node.data not in nsdfg_node.out_connectors:
+                    if node_data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
                             'written to, but only given to nested SDFG as an '
