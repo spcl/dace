@@ -3141,14 +3141,18 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
 
         defined_vars = {**self.variables, **self.scope_vars}
-        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+        defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays})
 
         for target, (result, _) in zip(elts, results):
 
             name = rname(target)
+            tokens = name.split('.')
+            name = tokens[0]
             true_name = None
             if name in defined_vars:
                 true_name = defined_vars[name]
+                if len(tokens) > 1:
+                    true_name = '.'.join([true_name, *tokens[1:]])
                 true_array = defined_arrays[true_name]
 
             # If type was already annotated
@@ -3260,7 +3264,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
 
-                defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
+                defined_arrays = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.scope_arrays, **self.defined})
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
