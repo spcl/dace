@@ -79,7 +79,7 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = token in desc.members
+            result = hasattr(desc, 'members') and token in desc.members
         return result
 
 
