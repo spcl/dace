@@ -479,6 +479,11 @@ class Structure(Data):
             return StructArray(self, tuple(s))
         return StructArray(self, (s, ))
 
+    # NOTE: Like Scalars?
+    @property
+    def may_alias(self) -> bool:
+        return False
+
 
 @make_properties
 class StructureView(Structure):
