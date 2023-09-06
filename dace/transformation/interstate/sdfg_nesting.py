@@ -140,48 +140,43 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                     for e in nstate.out_edges(node) if isinstance(e.dst, nodes.AccessNode))):
                         return False
 
-        # Ensure that every connector has at least one corresponding access
-        # node in the (nested) SDFG. Otherwise, inlining is not possible.
+        # For each in/out connector, find source/sink node.
         # NOTE: FPGA-compatible SDFGs can have input connectors for data that
-        # are only written.
-        inp_data = {conn: set() for conn in in_connectors}
-        for e in graph.in_edges(nested_sdfg):
-            src = graph.memlet_path(e)[0].src
-            if isinstance(src, nodes.AccessNode):
-                inp_data[e.dst_conn].add(src.data)
-        out_data = dict()
-        for e in graph.out_edges(nested_sdfg):
-            dst = graph.memlet_path(e)[-1].dst
-            if isinstance(dst, nodes.AccessNode):
-                out_data[dst.data] = e.src_conn
+        # are only written. Hence, sink possible.
         rem_inpconns = dc(in_connectors)
         rem_outconns = dc(out_connectors)
         nstate = nested_sdfg.sdfg.node(0)
-        for node in nstate.nodes():
-            if isinstance(node, nodes.AccessNode):
-                if node.data in rem_inpconns:
-                    rem_inpconns.remove(node.data)
-                if node.data in rem_outconns:
-                    rem_outconns.remove(node.data)
-        if len(rem_outconns) > 0:
-            # Check if remaining outputs would disconnect anything or can be pruned
-            for conn in rem_outconns:
-                for e in graph.out_edges_by_connector(nested_sdfg, conn):
-                    if graph.out_degree(e.dst) > 0:
-                        return False
+        for conn in in_connectors:
+            # Disconnects anything, i.e., can be pruned?
+            edge = next(graph.in_edges_by_connector(nested_sdfg, conn))
+            if graph.in_degree(edge.src) == 0:
+                rem_inpconns.remove(conn)
+                continue
+            
+            # Else, find sink node to connect to
+            for node in nstate.source_nodes():
+                if node.data == conn:
+                    rem_inpconns.remove(conn)
+                    break
 
         if len(rem_inpconns) > 0:
-            for inpconn in list(rem_inpconns):
-                for access in inp_data[inpconn]:
-                    if access in out_data.keys():
-                        rem_inpconns.remove(inpconn)
-                        break
-        if len(rem_inpconns) > 0:
-            # Check if remaining inputs would disconnect anything or can be pruned
-            for conn in rem_inpconns:
-                for e in graph.in_edges_by_connector(nested_sdfg, conn):
-                    if graph.in_degree(e.src) > 0:
-                        return False
+            return False
+
+        for conn in out_connectors:
+            # Disconnects anything, i.e., can be pruned?
+            edge = next(graph.out_edges_by_connector(nested_sdfg, conn))
+            if graph.out_degree(edge.dst) == 0:
+                rem_outconns.remove(conn)
+                continue
+
+            # Else, find sink node to connect to
+            for node in nstate.sink_nodes():
+                if node.data == conn:
+                    rem_outconns.remove(conn)
+                    break
+
+        if len(rem_outconns) > 0:
+            return False
 
         return True
 
