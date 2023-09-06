@@ -3001,7 +3001,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if arr_type is None:
             arr_type = type(parent_array)
             # Size (1,) slice of NumPy array returns scalar value
-            if arr_type != data.Stream and (shape == [1] or shape == (1, )):
+            if arr_type not in (data.Stream, data.Structure) and (shape == [1] or shape == (1, )):
                 arr_type = data.Scalar
         if arr_type == data.Scalar:
             self.sdfg.add_scalar(var_name, dtype)
@@ -3013,6 +3013,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_array(var_name, shape, dtype, strides=strides)
         elif arr_type == data.Stream:
             self.sdfg.add_stream(var_name, dtype)
+        elif arr_type == data.Structure:
+            self.sdfg.add_datadesc(var_name, copy.deepcopy(parent_array))
         else:
             raise NotImplementedError("Data type {} is not implemented".format(arr_type))
 
@@ -4624,6 +4626,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # If visiting an attribute, return attribute value if it's of an array or global
         name = until(astutils.unparse(node), '.')
         result = self._visitname(name, node)
+        tmpname = f"{result}.{astutils.unparse(node.attr)}"
+        if tmpname in self.sdfg.arrays:
+            return tmpname
         if isinstance(result, str) and result in self.sdfg.arrays:
             arr = self.sdfg.arrays[result]
         elif isinstance(result, str) and result in self.scope_arrays:
@@ -4800,7 +4805,7 @@ class ProgramVisitor(ExtNodeVisitor):
             has_array_indirection = True
 
         # Add slicing state
-        self._add_state('slice_%s_%d' % (array, node.lineno))
+        self._add_state('slice_%s_%d' % (array.replace('.', '_'), node.lineno))
         if has_array_indirection:
             # Make copy slicing state
             rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
@@ -4847,7 +4852,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
                 wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
                 self.last_state.add_nedge(
-                    rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+                    rnode, wnode, Memlet(data=array,
+                                         subset=expr.subset,
+                                         other_subset=other_subset,
+                                         volume=expr.accesses,
+                                         wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(self,
@@ -4930,7 +4939,10 @@ class ProgramVisitor(ExtNodeVisitor):
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
 
             name = rname(node)
-            true_name = defined_vars[name]
+            tokens = name.split('.')
+            true_name = defined_vars[tokens[0]]
+            if len(tokens) > 1:
+                true_name = '.'.join([true_name, *tokens[1:]])
 
             # If this subscript originates from an external array, create the
             # subset in the edge going to the connector, as well as a local
@@ -4997,7 +5009,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Try to construct memlet from subscript
         node.value = ast.Name(id=array)
-        expr: MemletExpr = ParseMemlet(self, {**self.sdfg.arrays, **self.defined}, node, nslice)
+        defined = dace.sdfg.NestedDict({**self.sdfg.arrays, **self.defined})
+        expr: MemletExpr = ParseMemlet(self, defined, node, nslice)
 
         if inference:
             rng = expr.subset
