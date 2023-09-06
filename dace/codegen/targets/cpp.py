@@ -44,6 +44,12 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
+    # TODO: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    tokens = data_name.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = data_name.replace('.', '->')
+    else:
+        name = data_name
     ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
     if relative_offset:
         s = memlet.subset
@@ -82,6 +88,7 @@ def copy_expr(
         # get conf flag
         decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
+        # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
         expr = fpga.fpga_ptr(
             data_name,
             data_desc,
@@ -95,7 +102,7 @@ def copy_expr(
             and not isinstance(data_desc, data.View),
             decouple_array_interfaces=decouple_array_interfaces)
     else:
-        expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
+        expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -322,7 +329,7 @@ def emit_memlet_reference(dispatcher,
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        if is_write is False:
+        if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
@@ -369,6 +376,22 @@ def emit_memlet_reference(dispatcher,
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
+
+    # NOTE: Multi-nesting with StructArrays must be further investigated.
+    def _visit_structure(struct: data.Structure, name: str, prefix: str):
+        for k, v in struct.members.items():
+            if isinstance(v, data.Structure):
+                _visit_structure(v, name, f'{prefix}.{k}')
+            elif isinstance(v, data.StructArray):
+                _visit_structure(v.stype, name, f'{prefix}.{k}')
+            elif isinstance(v, data.Data):
+                tokens = prefix.split('.')
+                full_name = '.'.join([name, *tokens[1:], k])
+                new_memlet = dace.Memlet.from_array(full_name, v)
+                emit_memlet_reference(dispatcher, sdfg, new_memlet, f'{prefix}.{k}', conntype._typeclass.fields[k], is_write=is_write)
+
+    if isinstance(desc, data.Structure):
+        _visit_structure(desc, memlet.data, pointer_name)
 
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
