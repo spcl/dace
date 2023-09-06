@@ -77,7 +77,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 _visit_structure(desc, arglist, name)
 
         for name, arg_type in arglist.items():
-            if isinstance(arg_type, (data.Scalar, data.Structure)):
+            if isinstance(arg_type, data.Scalar):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow
                 if arg_type.storage is dtypes.StorageType.GPU_Global:
@@ -92,6 +92,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
                 else:
                     self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, data.Structure):
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
             else:
                 raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
                                                                                      v=str(arg_type)))
@@ -624,15 +626,15 @@ class CPUCodeGen(TargetCodeGenerator):
             # Corner cases
 
             # Writing one index
-            if (isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)[0] == DefinedType.Scalar):
-                stream.write(
-                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, dst_nodedesc.dtype, False)),
-                    sdfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
-                return
+            # if (isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None
+            #         and self._dispatcher.defined_vars.get(vconn)[0] == DefinedType.Scalar):
+            #     stream.write(
+            #         "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, dst_nodedesc.dtype, False)),
+            #         sdfg,
+            #         state_id,
+            #         [src_node, dst_node],
+            #     )
+            #     return
 
             # Setting a reference
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
