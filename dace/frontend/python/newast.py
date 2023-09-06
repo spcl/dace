@@ -2660,7 +2660,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     op1 = state.add_read(op_name, debuginfo=self.current_lineinfo)
                     op2 = state.add_write(target_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet("{a}[{s}]".format(a=target_name, s=target_subset))
+                    memlet = Memlet(data=target_name, subset=target_subset)
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
@@ -4849,7 +4849,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                                  strides=strides,
                                                  find_new_name=True)
                 self.views[tmp] = (array,
-                                   Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
+                                   Memlet(data=array,
+                                          subset=str(expr.subset),
+                                          other_subset=str(other_subset),
+                                          volume=expr.accesses,
                                           wcr=expr.wcr))
             self.variables[tmp] = tmp
             if not isinstance(tmparr, data.View):
