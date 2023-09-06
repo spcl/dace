@@ -2027,6 +2027,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
+        # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+        # members of Structures.
+        name = name.replace('.', '_')
         # If exists, fail
         if name in self._arrays:
             if find_new_name:
