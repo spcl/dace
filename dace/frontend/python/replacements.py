@@ -328,7 +328,7 @@ def _numpy_full_like(pv: ProgramVisitor,
     """ Creates and array of the same shape and dtype as a and initializes it
         with the fill value.
     """
-    if a not in sdfg.arrays.keys():
+    if a not in sdfg.arrays:
         raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     desc = sdfg.arrays[a]
     dtype = dtype or desc.dtype
