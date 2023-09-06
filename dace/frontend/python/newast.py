@@ -4855,10 +4855,12 @@ class ProgramVisitor(ExtNodeVisitor):
             if not isinstance(tmparr, data.View):
                 rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
                 wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
+                # NOTE: We convert the subsets to string because keeping the original symbolic information causes
+                # equality check failures, e.g., in LoopToMap.
                 self.last_state.add_nedge(
                     rnode, wnode, Memlet(data=array,
-                                         subset=expr.subset,
-                                         other_subset=other_subset,
+                                         subset=str(expr.subset),
+                                         other_subset=str(other_subset),
                                          volume=expr.accesses,
                                          wcr=expr.wcr))
             return tmp
