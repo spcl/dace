@@ -579,17 +579,25 @@ def cpp_array_expr(sdfg,
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
+    # TODO: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    tokens = memlet.data.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = memlet.data.replace('.', '->')
+    else:
+        name = memlet.data
+
     if with_brackets:
         if fpga.is_fpga_array(desc):
             # get conf flag
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
             ptrname = fpga.fpga_ptr(memlet.data,
                                     desc,
                                     sdfg,
                                     subset,
                                     decouple_array_interfaces=decouple_array_interfaces)
         else:
-            ptrname = ptr(memlet.data, desc, sdfg, codegen)
+            ptrname = ptr(name, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
