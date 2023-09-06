@@ -155,6 +155,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
             
             # Else, find sink node to connect to
             for node in nstate.source_nodes():
+                if not isinstance(node, nodes.AccessNode):
+                    continue
+
                 if node.data == conn:
                     rem_inpconns.remove(conn)
                     break
@@ -171,6 +174,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
             # Else, find sink node to connect to
             for node in nstate.sink_nodes():
+                if not isinstance(node, nodes.AccessNode):
+                    continue
+
                 if node.data == conn:
                     rem_outconns.remove(conn)
                     break
