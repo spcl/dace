@@ -1201,11 +1201,14 @@ def recursive_ast_improver(ast,
     added_modules = []
     for i in modules_to_parse:
         found = False
+        name=i
+        if i=="mo_restart_nml_and_att": 
+            name="mo_restart_nmls_and_atts"
         for j in source_list:
-            if i in j:
+            if name in j:
                 fname = j.split("/")
                 fname = fname[len(fname) - 1]
-                if fname == i + ".f90":
+                if fname == name + ".f90":
                     found = True
                     next_file = j
                     break
@@ -1259,30 +1262,65 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+    
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
     top_level_ast = parse_order.pop()
     name_dict = {}
+    rename_dict = {}
     for i in parse_order:
+        local_rename_dict = {}
         edges = list(dep_graph.in_edges(i))
         names = []
         for j in edges:
             list_dict = dep_graph.get_edge_data(j[0], j[1])
             if (list_dict['obj_list'] is not None):
                 for k in list_dict['obj_list'].children:
-                    if k.string not in names:
-                        names.append(k.string)
-
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
         name_dict[i] = names
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst()
     partial_modules = []
     partial_ast.symbols["c_int"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_int8_t"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_int64_t"]=ast_internal_classes.Int_Literal_Node(value=8)
+    partial_ast.symbols["c_int32_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_size_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_long"]=ast_internal_classes.Int_Literal_Node(value=8)
     partial_ast.symbols["c_signed_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    functions_to_rename={}
+    
+    #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
+    #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
+
     for i in parse_order:
-        if i in ["mtime","ISO_C_BINDING"]:
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
             continue
+       
         partial_ast.add_name_list_for_module(i, name_dict[i])
         partial_modules.append(partial_ast.create_ast(asts[i]))
+        tmp_rename=rename_dict[i]
+        for j in tmp_rename:
+            #print(j)
+            if partial_ast.symbols.get(j) is None:
+                #raise NameError("Symbol " + j + " not found in partial ast")
+                if functions_to_rename.get(i) is None:
+                    functions_to_rename[i]=[j]
+                else:
+                    functions_to_rename[i].append(j)    
+            else:
+                partial_ast.symbols[tmp_rename[j]]=partial_ast.symbols[j]
+
         print("Parsing module: ", i)
 
     program = partial_ast.create_ast(ast)

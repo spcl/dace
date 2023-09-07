@@ -371,6 +371,25 @@ class Nonlabel_Do_Stmt_Node(FNode):
         'iter',
     )
 
+class While_True_Control(FNode):
+    _attributes = ()
+    _fields = (
+        'name',
+    )
+
+
+class While_Control(FNode):
+    _attributes = ()
+    _fields = (
+        'cond',
+    )
+
+class While_Stmt_Node(FNode):
+    _attributes = ('name')
+    _fields = (
+        'body',
+        'cond',
+    )
 
 class Loop_Control_Node(FNode):
     _attributes = ()
@@ -388,8 +407,11 @@ class Else_If_Stmt_Node(FNode):
 
 class Only_List_Node(FNode):
     _attributes = ()
-    _fields = ('names', )
+    _fields = ('names','renames', )
 
+class Rename_Node(FNode):
+    _attributes = ()
+    _fields = ('oldname', 'newname', )
 
 class ParDecl_Node(FNode):
     _attributes = ('type', )
