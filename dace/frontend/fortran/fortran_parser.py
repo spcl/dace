@@ -463,6 +463,7 @@ class AST_translator:
                                 if i.type == "ALL":
                                     shape.append(array.shape[indices])
                                     mysize = mysize * array.shape[indices]
+                                    index_list.append(None)
                                 else:
                                     raise NotImplementedError("Index in ParDecl should be ALL")
                             else:
