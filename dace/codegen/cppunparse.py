@@ -847,8 +847,16 @@ class CPPUnparser:
         self.write(")")
 
     unop = {"Invert": "~", "Not": "!", "UAdd": "+", "USub": "-"}
+    unop_lambda = {'Invert': (lambda x: ~x), 'Not': (lambda x: not x), 'UAdd': (lambda x: +x), 'USub': (lambda x: -x)}
 
     def _UnaryOp(self, t):
+        # Dispatch constants after applying the operation
+        if t.operand.__class__.__name__ in ('Constant', 'Num'):
+            newval = self.unop_lambda[t.op.__class__.__name__](t.operand.n)
+            newnode = ast.Constant(value=newval)
+            self.dispatch(newnode)
+            return
+
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
         self.write(" ")
