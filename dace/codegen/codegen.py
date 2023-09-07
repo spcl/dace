@@ -16,7 +16,7 @@ from dace.sdfg import infer_types
 from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, ScopeBlock
 
 
 def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
@@ -102,6 +102,8 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             state: SDFGState = parent
             nsdfg = state.sdfg
             frame.targets.add(disp.get_node_dispatcher(nsdfg, state, node))
+        elif isinstance(node, ScopeBlock):
+            frame.targets.add(disp.get_state_scope_dispatcher(parent, node))
 
         # Array allocation
         if isinstance(node, dace.nodes.AccessNode):
@@ -149,7 +151,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
-def generate_code(sdfg, validate=True) -> List[CodeObject]:
+def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
 

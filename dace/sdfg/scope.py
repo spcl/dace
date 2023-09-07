@@ -122,10 +122,7 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
         if node is None: return -1
         return state.node_id(node)
 
-    res = {}
-    for k, v in scope_dict.items():
-        res[node_id_or_none(k)] = [node_id_or_none(vi) for vi in v] if v is not None else []
-    return res
+    return {node_id_or_none(k): [node_id_or_none(vi) for vi in v] for k, v in scope_dict.items()}
 
 
 def scope_contains_scope(sdict: ScopeDictType, node: NodeType, other_node: NodeType) -> bool:

@@ -365,8 +365,7 @@ class Graph(Generic[NodeT, EdgeT]):
         return [n for n in self.nodes() if self.out_degree(n) == 0]
 
     def topological_sort(self, source: NodeT = None) -> Sequence[NodeT]:
-        """Returns nodes in topological order iff the graph contains exactly
-        one node with no incoming edges."""
+        """Returns nodes in topological order iff the graph contains exactly one node with no incoming edges."""
         if source is not None:
             sources = [source]
         else:

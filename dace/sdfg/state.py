@@ -1169,7 +1169,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         from dace.sdfg.scope import _scope_dict_to_ids
         # Create scope dictionary with a failsafe
         try:
-            scope_dict_regular = self.scope_dict()
+            scope_dict_regular = self.scope_children()
             scope_dict_ids = _scope_dict_to_ids(self, scope_dict_regular)
             scope_dict = {k: sorted(v) for k, v in sorted(scope_dict_ids.items())}
         except (RuntimeError, ValueError):
@@ -2270,6 +2270,12 @@ class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdg
         for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
             for block in cfg.nodes():
                 yield block
+
+    def all_interstate_edges_recursive(self, recurse_into_sdfgs=True) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
+        """ Iterate over all interstate edges in this control flow graph. """
+        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+            for edge in cfg.edges():
+                yield edge
 
     ###################################################################
     # Getters & setters, overrides

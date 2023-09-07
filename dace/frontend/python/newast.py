@@ -31,7 +31,7 @@ from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
-from dace.sdfg import SDFG, SDFGState, ControlFlowGraph, ControlFlowBlock, LoopScopeBlock
+from dace.sdfg import SDFG, SDFGState, ControlFlowGraph, ControlFlowBlock, LoopScopeBlock, ScopeBlock
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -1046,8 +1046,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     sdfg: SDFG
     last_block: ControlFlowBlock
-    cfg_target: ControlFlowGraph
-    last_cfg_target: ControlFlowGraph
+    cfg_target: ScopeBlock
+    last_cfg_target: ScopeBlock
     current_state: SDFGState
 
     def __init__(self,
@@ -1334,8 +1334,8 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             self.current_state = block
 
-    def _add_state(self, label=None) -> SDFGState:
-        state = self.cfg_target.add_state(label, False)
+    def _add_state(self, label=None, is_start=False) -> SDFGState:
+        state = self.cfg_target.add_state(label, is_start_block=is_start)
         self._add_block(state)
         return state
 
@@ -2344,8 +2344,10 @@ class ProgramVisitor(ExtNodeVisitor):
                                                     initialize_expr=astutils.unparse(ast_ranges[0][0]),
                                                     update_expr=incr[indices[0]],
                                                     inverted=False)
-            self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno, extra_symbols=extra_syms,
-                                  parent=loop_scope, unconnected_last_block=False)
+            _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}',
+                                                            node.lineno, extra_symbols=extra_syms,
+                                                            parent=loop_scope, unconnected_last_block=False)
+            loop_scope.start_block = loop_scope.node_id(first_subblock)
 
             # Handle else clause
             if node.orelse:

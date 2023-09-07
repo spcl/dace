@@ -1404,22 +1404,21 @@ class SDFG(ScopeBlock):
         return result
 
     def shared_transients(self, check_toplevel=True) -> List[str]:
-        """ Returns a list of transient data that appears in more than one
-            state. """
+        """ Returns a list of transient data that appears in more than one state. """
         seen = {}
         shared = []
 
         # If a transient is present in an inter-state edge, it is shared
-        for interstate_edge in self.edges():
+        for interstate_edge in self.all_interstate_edges_recursive():
             for sym in interstate_edge.data.free_symbols:
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
 
         # If transient is accessed in more than one state, it is shared
-        for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.AccessNode) and node.desc(self).transient:
+        for state in self.all_states_recursive():
+            for node in state.data_nodes():
+                if node.desc(self).transient:
                     if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
                                                                          and seen[node.data] != state):
                         shared.append(node.data)
@@ -2255,8 +2254,10 @@ class SDFG(ScopeBlock):
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
             nodes) according to data on the memlets. """
-        for state in self.nodes():
-            state.fill_scope_connectors()
+        for cf in self.all_cfgs_recursive():
+            for block in cf.nodes():
+                if isinstance(block, SDFGState):
+                    block.fill_scope_connectors()
 
     def predecessor_state_transitions(self, state):
         """ Yields paths (lists of edges) that the SDFG can pass through
@@ -2555,7 +2556,7 @@ class SDFG(ScopeBlock):
                           including library nodes that expand to library nodes.
         """
 
-        states = list(self.states())
+        states = list(self.all_states_recursive())
         while len(states) > 0:
             state = states.pop()
             expanded_something = False
