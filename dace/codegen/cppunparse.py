@@ -851,11 +851,18 @@ class CPPUnparser:
 
     def _UnaryOp(self, t):
         # Dispatch constants after applying the operation
-        if t.operand.__class__.__name__ in ('Constant', 'Num'):
-            newval = self.unop_lambda[t.op.__class__.__name__](t.operand.n)
-            newnode = ast.Constant(value=newval)
-            self.dispatch(newnode)
-            return
+        if sys.version_info[:2] < (3, 8):
+            if isinstance(t.operand, ast.Num):
+                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.n)
+                newnode = ast.Num(n=newval)
+                self.dispatch(newnode)
+                return
+        else:
+            if isinstance(t.operand, ast.Constant):
+                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.value)
+                newnode = ast.Constant(value=newval)
+                self.dispatch(newnode)
+                return
 
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
