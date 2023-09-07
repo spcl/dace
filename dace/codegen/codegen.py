@@ -102,8 +102,6 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             state: SDFGState = parent
             nsdfg = state.sdfg
             frame.targets.add(disp.get_node_dispatcher(nsdfg, state, node))
-        elif isinstance(node, ScopeBlock):
-            frame.targets.add(disp.get_state_scope_dispatcher(parent, node))
 
         # Array allocation
         if isinstance(node, dace.nodes.AccessNode):
