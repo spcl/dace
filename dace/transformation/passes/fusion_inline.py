@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg.utils import fuse_states, inline_sdfgs
+from dace.sdfg.utils import fuse_states, inline_sdfgs, inline_loop_blocks
 from dace.transformation import pass_pipeline as ppl
 
 
@@ -83,6 +83,35 @@ class InlineSDFGs(ppl.Pass):
 
     def report(self, pass_retval: int) -> str:
         return f'Inlined {pass_retval} SDFGs.'
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
+class InlineScopes(ppl.Pass):
+    """
+    Inlines all possible sub-scopes of an SDFG to create a state machine.
+    """
+
+    CATEGORY: str = 'Cleanup'
+
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States | ppl.Modifies.InterstateEdges
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        inlined = inline_loop_blocks(sdfg, self.permissive, self.progress)
+        return inlined or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Inlined {pass_retval} scopes.'
 
 
 @dataclass(unsafe_hash=True)

@@ -49,8 +49,9 @@ class LoopScopeInline(transformation.MultiStateTransformation):
         parent.add_edge(init_state, guard_state, init_edge)
 
         end_state = parent.add_state(self.block.label + '_end')
+        cond_expr = self.block.scope_condition.code
         parent.add_edge(guard_state, end_state,
-                        InterstateEdge(condition=CodeBlock(astutils.negate_expr(self.block.scope_condition.code))))
+                        InterstateEdge(CodeBlock(astutils.negate_expr(cond_expr)).code))
         for a_edge in parent.out_edges(self.block):
             parent.add_edge(end_state, a_edge.dst, a_edge.data)
             parent.remove_edge(a_edge)
@@ -73,7 +74,7 @@ class LoopScopeInline(transformation.MultiStateTransformation):
 
         # Connect the loop states
         parent.add_edge(guard_state, internal_start,
-                        InterstateEdge(condition=self.block.scope_condition.as_string))
+                        InterstateEdge(CodeBlock(cond_expr).code))
         for node in to_connect:
             parent.add_edge(node, last_loop_state, InterstateEdge())
 
