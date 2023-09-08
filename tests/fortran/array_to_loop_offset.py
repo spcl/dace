@@ -41,7 +41,41 @@ def test_fortran_frontend_arr2loop_without_offset():
         for j in range(1,4):
             assert a[i-1, j-1] == i * 2
 
-def test_fortran_frontend_arr2loop_with_offset():
+def test_fortran_frontend_arr2loop_1d_offset():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    double precision, dimension(2:6) :: d
+                    CALL index_test_function(d)
+                    end
+
+                    SUBROUTINE index_test_function(d)
+                    double precision, dimension(2:6) :: d
+
+                    d(:) = 5
+
+                    END SUBROUTINE index_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    assert len(sdfg.data('d').shape) == 1
+    assert sdfg.data('d').shape[0] == 5
+
+    a = np.full([6], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert a[0] == 42
+    for i in range(2,7):
+        assert a[i-1] == 5
+
+def test_fortran_frontend_arr2loop_2d_offset():
     """
     Tests that the generated array map correctly handles offsets.
     """
@@ -80,5 +114,6 @@ def test_fortran_frontend_arr2loop_with_offset():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_arr2loop_with_offset()
+    test_fortran_frontend_arr2loop_1d_offset()
+    test_fortran_frontend_arr2loop_2d_offset()
     test_fortran_frontend_arr2loop_without_offset()
