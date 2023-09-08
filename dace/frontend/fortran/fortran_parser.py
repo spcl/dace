@@ -1015,6 +1015,40 @@ class AST_translator:
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
 
+def create_ast_from_string(
+    source_string: str,
+    sdfg_name: str,
+    transform: bool = False
+):
+    """
+    Creates an AST from a Fortran file in a string
+    :param source_string: The fortran file as a string
+    :param sdfg_name: The name to be given to the resulting SDFG
+    :return: The resulting AST
+
+    """
+    parser = pf().create(std="f2008")
+    reader = fsr(source_string)
+    ast = parser(reader)
+    tables = SymbolTable
+    own_ast = ast_components.InternalFortranAst(ast, tables)
+    program = own_ast.create_ast(ast)
+
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    functions_and_subroutines = functions_and_subroutines_builder.nodes
+
+    if transform:
+        program = ast_transforms.functionStatementEliminator(program)
+        program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+        program = ast_transforms.CallExtractor().visit(program)
+        program = ast_transforms.SignToIf().visit(program)
+        program = ast_transforms.ArrayToLoop().visit(program)
+        program = ast_transforms.SumToLoop().visit(program)
+        program = ast_transforms.ForDeclarer().visit(program)
+        program = ast_transforms.IndexExtractor().visit(program)
+
+    return (program, functions_and_subroutines)
 
 def create_sdfg_from_string(
     source_string: str,
@@ -1032,7 +1066,7 @@ def create_sdfg_from_string(
     ast = parser(reader)
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
-    program = own_ast.create_ast(ast)
+    program = own_ast.create_ast(ast, None)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
@@ -1074,7 +1108,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     ast = parser(reader)
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
-    program = own_ast.create_ast(ast)
+    program = own_ast.create_ast(ast, None)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
