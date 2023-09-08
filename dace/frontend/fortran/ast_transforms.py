@@ -1,7 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_components, ast_internal_classes
-from typing import List, Tuple, Set
+from typing import List, Optional, Tuple, Set
 import copy
 
 
@@ -310,6 +310,39 @@ class CallExtractor(NodeTransformer):
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+class ParentScopeAssigner(NodeVisitor):
+    """
+        For each node, it assigns its parent scope - program, subroutine, function.
+
+        If the parent node is one of the "parent" types, we assign it as the parent.
+        Otherwise, we look for the parent of my parent to cover nested AST nodes within
+        a single scope.
+    """
+    def __init__(self):
+        pass
+
+    def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
+
+        parent_node_types = [
+            ast_internal_classes.Subroutine_Subprogram_Node,
+            ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node,
+            ast_internal_classes.Program_Node
+        ]
+
+        if parent_node is not None and type(parent_node) in parent_node_types:
+            node.parent = parent_node
+        elif parent_node is not None:
+            node.parent = parent_node.parent
+
+        # Copied from `generic_visit` to recursively parse all leafs
+        for field, value in iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item, node)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value, node)
 
 class IndexExtractorNodeLister(NodeVisitor):
     """
