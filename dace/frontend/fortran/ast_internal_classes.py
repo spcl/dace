@@ -15,7 +15,8 @@ class FNode(object):
             Union[
                 Subroutine_Subprogram_Node,
                 Function_Subprogram_Node,
-                Main_Program_Node
+                Main_Program_Node,
+                Module_Node
             ]
         ] = None
         for k, v in kwargs.items():

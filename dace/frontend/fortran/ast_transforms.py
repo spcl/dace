@@ -326,7 +326,8 @@ class ParentScopeAssigner(NodeVisitor):
         parent_node_types = [
             ast_internal_classes.Subroutine_Subprogram_Node,
             ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node
+            ast_internal_classes.Main_Program_Node,
+            ast_internal_classes.Module_Node
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:

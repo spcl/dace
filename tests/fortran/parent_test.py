@@ -48,7 +48,44 @@ def test_fortran_frontend_parent():
         for execution in subroutine.execution_part.execution:
             assert execution.parent == subroutine
 
+def test_fortran_frontend_module():
+    """
+    Tests that the Fortran frontend can parse array accesses and that the accessed indices are correct.
+    """
+    test_string = """
+                    module test_module
+                    implicit none
+                        ! good enough approximation
+                        integer, parameter :: pi = 4
+                    end module test_module
+
+                    PROGRAM access_test
+                    implicit none
+                    double precision d(4)
+                    d(1)=0
+                    CALL array_access_test_function(d)
+                    end
+
+                    SUBROUTINE array_access_test_function(d)
+                    double precision d(4)
+
+                    d(2)=5.5
+
+                    END SUBROUTINE array_access_test_function
+                    """
+    ast, functions = fortran_parser.create_ast_from_string(test_string, "array_access_test")
+    ast_transforms.ParentScopeAssigner().visit(ast)
+
+    assert ast.parent is None
+    assert ast.main_program.parent == None
+
+    module = ast.modules[0]
+    assert module.parent == None
+    specification = module.specification_part.specifications[0]
+    assert specification.parent == module
+
 
 if __name__ == "__main__":
 
     test_fortran_frontend_parent()
+    test_fortran_frontend_module()
