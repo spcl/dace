@@ -735,6 +735,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           rangepos: list,
                           count: int,
                           newbody: list,
+                          scope_vars: ScopeVarsDeclarations,
                           declaration=True,
                           is_sum_to_loop=False):
     """
@@ -749,18 +750,54 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     :return: Ranges, rangepos, newbody
     """
 
+    def add_offset(original, offset: int):
+
+        if offset != 0:
+            return ast_internal_classes.BinOp_Node(
+                lval=original,
+                op="+",
+                rval=ast_internal_classes.Int_Literal_Node(value=str(offset))
+            )
+        else:
+            return original
+
     currentindex = 0
     indices = []
-    for i in node.indices:
+    offsets = scope_vars.get_var(node.parent, node.name.name).offsets
+
+    for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
+
             if i.type == "ALL":
-                ranges.append([
-                    ast_internal_classes.Int_Literal_Node(value="1"),
-                    ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
-                                                         type="INTEGER",
-                                                         arrname=node.name,
-                                                         pos=currentindex)
-                ])
+
+                lower_boundary = None
+                if offsets[idx] != 0:
+                    lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                else:
+                    lower_boundary = ast_internal_classes.Int_Literal_Node(value="1"),
+
+                upper_boundary = None
+                upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
+                                                        type="INTEGER",
+                                                        arrname=node.name,
+                                                        pos=currentindex)
+                """
+                    When there's an offset, we add MAX_RANGE + offset.
+                    But since the generated loop has `<=` condition, we need to subtract 1.
+                """
+                if offsets[idx] != 0:
+                    upper_boundary = ast_internal_classes.BinOp_Node(
+                        lval=upper_boundary,
+                        op="+",
+                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                    )
+                    upper_boundary = ast_internal_classes.BinOp_Node(
+                        lval=upper_boundary,
+                        op="-",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1")
+                    )
+                ranges.append([lower_boundary, upper_boundary])
+
             else:
                 ranges.append([i.range[0], i.range[1]])
             rangepos.append(currentindex)
@@ -782,8 +819,12 @@ class ArrayToLoop(NodeTransformer):
     """
     Transforms the AST by removing array expressions and replacing them with loops
     """
-    def __init__(self):
+    def __init__(self, ast):
         self.count = 0
+
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -798,7 +839,7 @@ class ArrayToLoop(NodeTransformer):
                 val = child.rval
                 ranges = []
                 rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, True)
+                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, self.scope_vars, True)
 
                 if res_range is not None and len(res_range) > 0:
                     rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -806,7 +847,7 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -880,8 +921,11 @@ class SumToLoop(NodeTransformer):
     """
     Transforms the AST by removing array sums and replacing them with loops
     """
-    def __init__(self):
+    def __init__(self, ast):
         self.count = 0
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -900,7 +944,7 @@ class SumToLoop(NodeTransformer):
                 rangeposrval = []
                 rangesrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, False, True)
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False, True)
 
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,
