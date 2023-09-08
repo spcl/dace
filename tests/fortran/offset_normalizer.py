@@ -81,11 +81,18 @@ def test_fortran_frontend_offset_normalizer_2d():
     # Test to verify that offset is normalized correctly
     ast, own_ast = fortran_parser.create_ast_from_string(test_string, "index_offset_test", True, True)
 
-    #for subroutine in ast.subroutine_definitions:
+    for subroutine in ast.subroutine_definitions:
 
-    #    loop = subroutine.execution_part.execution[1]
-    #    idx_assignment = loop.body.execution[1]
-    #    assert idx_assignment.rval.rval.value == "50"
+        loop = subroutine.execution_part.execution[1]
+        nested_loop = loop.body.execution[1]
+
+        idx = nested_loop.body.execution[1]
+        assert idx.lval.name == 'tmp_index_0'
+        assert idx.rval.rval.value == "50"
+
+        idx2 = nested_loop.body.execution[3]
+        assert idx2.lval.name == 'tmp_index_1'
+        assert idx2.rval.rval.value == "7"
 
     # Now test to verify it executes correctly
 
@@ -105,5 +112,5 @@ def test_fortran_frontend_offset_normalizer_2d():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_offset_normalizer_1d()
+    test_fortran_frontend_offset_normalizer_1d()
     test_fortran_frontend_offset_normalizer_2d()
