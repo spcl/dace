@@ -771,12 +771,11 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
             if i.type == "ALL":
 
                 lower_boundary = None
-                if offsets[idx] != 0:
+                if offsets[idx] != 1:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
                 else:
-                    lower_boundary = ast_internal_classes.Int_Literal_Node(value="1"),
+                    lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
 
-                upper_boundary = None
                 upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
                                                         type="INTEGER",
                                                         arrname=node.name,
@@ -785,7 +784,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     When there's an offset, we add MAX_RANGE + offset.
                     But since the generated loop has `<=` condition, we need to subtract 1.
                 """
-                if offsets[idx] != 0:
+                if offsets[idx] != 1:
                     upper_boundary = ast_internal_classes.BinOp_Node(
                         lval=upper_boundary,
                         op="+",
