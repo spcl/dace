@@ -1,5 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
+from sympy.matrices.expressions.slice import normalize
 from dace.frontend.fortran import ast_components, ast_internal_classes
 from typing import Dict, List, Optional, Tuple, Set
 import copy
@@ -354,16 +355,56 @@ class ScopeVarsDeclarations(NodeVisitor):
 
         self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
 
+    def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
+        return self.scope_vars[(self._scope_name(scope), variable_name)]
+
     def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
 
-        if isinstance(node.parent, ast_internal_classes.Main_Program_Node):
-            parent_name = node.parent.name.name.name
-        else:
-            parent_name = node.parent.name.name
+        parent_name = self._scope_name(node.parent)
         var_name = node.name
-
         self.scope_vars[(parent_name, var_name)] = node
 
+    def _scope_name(self, scope: ast_internal_classes.FNode) -> str:
+        if isinstance(scope, ast_internal_classes.Main_Program_Node):
+            return scope.name.name.name
+        else:
+            return scope.name.name
+
+
+class ArrayOffsetNormalizer(NodeTransformer):
+    """
+    """
+    def __init__(self, ast: ast_internal_classes.FNode):
+
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
+
+    #def visit(self, node: ast_internal_classes.FNode):
+    #    #print(node)
+    #    return self.generic_visit(node)
+        
+    #def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+    #    print(node.name.name)
+    #    return node
+        #if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+        #    return self.generic_visit(node)
+        #else:
+        #    return node
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+        #print(node.name.name)
+        return node
+    #    tmp = self.count
+    #    new_indices = []
+    #    for i in node.indices:
+    #        if isinstance(i, ast_internal_classes.ParDecl_Node):
+    #            new_indices.append(i)
+    #        else:
+    #            new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
+    #            tmp = tmp + 1
+    #    self.count = tmp
+    #    return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
 
 class IndexExtractorNodeLister(NodeVisitor):
     """
@@ -390,9 +431,22 @@ class IndexExtractor(NodeTransformer):
     Uses the IndexExtractorNodeLister to find all array subscript expressions
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the index expression with the variable.
+
+    Before parsing the AST, the transformation first runs:
+    - ParentScopeAssigner to ensure that each node knows its scope assigner.
+    - ScopeVarsDeclarations to aggregate all variable declarations for each function.
     """
-    def __init__(self, count=0):
+    def __init__(self, ast: ast_internal_classes.FNode, normalize_offsets: bool = False, count=0):
+
         self.count = count
+        self.normalize_offsets = normalize_offsets
+
+        #self.variable_indices: Dict[]
+
+        if normalize_offsets:
+            ParentScopeAssigner().visit(ast)
+            self.scope_vars = ScopeVarsDeclarations()
+            self.scope_vars.visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
@@ -421,9 +475,11 @@ class IndexExtractor(NodeTransformer):
             lister.visit(child)
             res = lister.nodes
             temp = self.count
+
+
             if res is not None:
                 for j in res:
-                    for i in j.indices:
+                    for idx, i in enumerate(j.indices):
                         if isinstance(i, ast_internal_classes.ParDecl_Node):
                             continue
                         else:
@@ -437,16 +493,33 @@ class IndexExtractor(NodeTransformer):
                                                                        line_number=child.line_number)
                                 ],
                                                                     line_number=child.line_number))
-                            newbody.append(
-                                ast_internal_classes.BinOp_Node(
-                                    op="=",
-                                    lval=ast_internal_classes.Name_Node(name=tmp_name),
-                                    rval=ast_internal_classes.BinOp_Node(
-                                        op="-",
-                                        lval=i,
-                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                        line_number=child.line_number),
-                                    line_number=child.line_number))
+                            if self.normalize_offsets:
+
+                                var_name = child.lval.name.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+                                offset = variable.offsets[idx]
+
+                                newbody.append(
+                                    ast_internal_classes.BinOp_Node(
+                                        op="=",
+                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                        rval=ast_internal_classes.BinOp_Node(
+                                            op="-",
+                                            lval=i,
+                                            rval=ast_internal_classes.Int_Literal_Node(value=str(offset)),
+                                            line_number=child.line_number),
+                                        line_number=child.line_number))
+                            else:
+                                newbody.append(
+                                    ast_internal_classes.BinOp_Node(
+                                        op="=",
+                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                        rval=ast_internal_classes.BinOp_Node(
+                                            op="-",
+                                            lval=i,
+                                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                            line_number=child.line_number),
+                                        line_number=child.line_number))
             newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
