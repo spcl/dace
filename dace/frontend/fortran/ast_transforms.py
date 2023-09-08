@@ -1,6 +1,5 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from sympy.matrices.expressions.slice import normalize
 from dace.frontend.fortran import ast_components, ast_internal_classes
 from typing import Dict, List, Optional, Tuple, Set
 import copy
@@ -370,42 +369,6 @@ class ScopeVarsDeclarations(NodeVisitor):
         else:
             return scope.name.name
 
-
-class ArrayOffsetNormalizer(NodeTransformer):
-    """
-    """
-    def __init__(self, ast: ast_internal_classes.FNode):
-
-        ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
-        self.scope_vars.visit(ast)
-
-    #def visit(self, node: ast_internal_classes.FNode):
-    #    #print(node)
-    #    return self.generic_visit(node)
-        
-    #def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-    #    print(node.name.name)
-    #    return node
-        #if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
-        #    return self.generic_visit(node)
-        #else:
-        #    return node
-
-    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
-        #print(node.name.name)
-        return node
-    #    tmp = self.count
-    #    new_indices = []
-    #    for i in node.indices:
-    #        if isinstance(i, ast_internal_classes.ParDecl_Node):
-    #            new_indices.append(i)
-    #        else:
-    #            new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
-    #            tmp = tmp + 1
-    #    self.count = tmp
-    #    return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
-
 class IndexExtractorNodeLister(NodeVisitor):
     """
     Finds all array subscript expressions in the AST node and its children that have to be extracted into independent expressions
@@ -440,8 +403,6 @@ class IndexExtractor(NodeTransformer):
 
         self.count = count
         self.normalize_offsets = normalize_offsets
-
-        #self.variable_indices: Dict[]
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
@@ -495,6 +456,7 @@ class IndexExtractor(NodeTransformer):
                                                                     line_number=child.line_number))
                             if self.normalize_offsets:
 
+                                # Find the offset of a variable to which we are assigning
                                 var_name = child.lval.name.name
                                 variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]

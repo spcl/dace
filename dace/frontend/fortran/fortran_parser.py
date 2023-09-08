@@ -1051,25 +1051,6 @@ def create_ast_from_string(
 
     return (program, own_ast)
 
-def ast2sdfg(program, own_ast, sdfg_name: str):
-
-    ast2sdfg = AST_translator(own_ast, __file__)
-    sdfg = SDFG(sdfg_name)
-    ast2sdfg.top_level = program
-    ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
-
-    for node, parent in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.NestedSDFG):
-            if 'test_function' in node.sdfg.name:
-                sdfg = node.sdfg
-                break
-    sdfg.parent = None
-    sdfg.parent_sdfg = None
-    sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()
-    return sdfg
-
 def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
