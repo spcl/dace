@@ -750,17 +750,6 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     :return: Ranges, rangepos, newbody
     """
 
-    def add_offset(original, offset: int):
-
-        if offset != 0:
-            return ast_internal_classes.BinOp_Node(
-                lval=original,
-                op="+",
-                rval=ast_internal_classes.Int_Literal_Node(value=str(offset))
-            )
-        else:
-            return original
-
     currentindex = 0
     indices = []
     offsets = scope_vars.get_var(node.parent, node.name.name).offsets

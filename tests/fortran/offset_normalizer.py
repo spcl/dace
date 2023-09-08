@@ -21,12 +21,6 @@ def test_fortran_frontend_offset_normalizer_1d():
                     do i=50,54
                         d(i) = i * 2.0
                     end do
-                    !do i=50,54
-                    !    do j=10,15
-                    !        d(i, j) = i * 2.0
-                    !        !d(i, :) = i * 2.0
-                    !    end do
-                    !end do
 
                     END SUBROUTINE index_test_function
                     """
@@ -71,7 +65,6 @@ def test_fortran_frontend_offset_normalizer_2d():
                     do i=50,54
                         do j=7,9
                             d(i, j) = i * 2.0 + 3 * j
-                            !d(i, :) = i * 2.0
                         end do
                     end do
 
