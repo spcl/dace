@@ -11,7 +11,13 @@ class FNode(object):
         self.integrity_exceptions = []
         self.read_vars = []
         self.written_vars = []
-        self.parent: Optional["FNode"] = None
+        self.parent: Optional[
+            Union[
+                Subroutine_Subprogram_Node,
+                Function_Subprogram_Node,
+                Main_Program_Node
+            ]
+        ] = None
         for k, v in kwargs.items():
             setattr(self, k, v)
 

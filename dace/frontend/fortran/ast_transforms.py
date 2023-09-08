@@ -1,7 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_components, ast_internal_classes
-from typing import List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 import copy
 
 
@@ -326,8 +326,7 @@ class ParentScopeAssigner(NodeVisitor):
         parent_node_types = [
             ast_internal_classes.Subroutine_Subprogram_Node,
             ast_internal_classes.Function_Subprogram_Node,
-            ast_internal_classes.Main_Program_Node,
-            ast_internal_classes.Program_Node
+            ast_internal_classes.Main_Program_Node
         ]
 
         if parent_node is not None and type(parent_node) in parent_node_types:
@@ -343,6 +342,28 @@ class ParentScopeAssigner(NodeVisitor):
                         self.visit(item, node)
             elif isinstance(value, ast_internal_classes.FNode):
                 self.visit(value, node)
+
+class ScopeVarsDeclarations(NodeVisitor):
+    """
+        Creates a mapping (scope name, variable name) -> variable declaration.
+
+        The visitor is used to access information on variable dimension, sizes, and offsets.
+    """
+
+    def __init__(self):
+
+        self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+
+        if isinstance(node.parent, ast_internal_classes.Main_Program_Node):
+            parent_name = node.parent.name.name.name
+        else:
+            parent_name = node.parent.name.name
+        var_name = node.name
+
+        self.scope_vars[(parent_name, var_name)] = node
+
 
 class IndexExtractorNodeLister(NodeVisitor):
     """
