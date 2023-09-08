@@ -200,6 +200,7 @@ class Symbol_Array_Decl_Node(Statement_Node):
     )
     _fields = (
         'sizes',
+        'offsets'
         'typeref',
         'init',
     )
@@ -214,6 +215,7 @@ class Var_Decl_Node(Statement_Node):
     )
     _fields = (
         'sizes',
+        'offsets',
         'typeref',
         'init',
     )
