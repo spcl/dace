@@ -5,23 +5,46 @@ import dace.dtypes as dtypes
 from mpi4py import MPI
 import time
 
+def dist_mat_mult(a_mat, b_mat, c_mat, comm_rank, comm_size):
+  grid_dim = int(np.floor(np.sqrt(comm_size)))
+  grid_i = comm_rank // grid_dim
+  grid_j = comm_rank % grid_dim
 
-# to check if this process owns this chunk of data
-# compare given i and j with grid_i and grid_j
-def owner(i, j, grid_i, grid_j):
-  if i == grid_i and j == grid_j:
-    return True
-  else:
-    return False
+  local_i_dim = a_mat.shape[0]
+  local_j_dim = b_mat.shape[1]
+  local_k_dim = a_mat.shape[1]
 
+  whole_i_dim = grid_dim * a_mat.shape[0]
+  whole_j_dim = grid_dim * b_mat.shape[1]
+  whole_k_dim = grid_dim * a_mat.shape[1]
 
-# get matrix form remote rank
-def get_mat(win, buffer, dim_0, dim_1, grid_dim):
-  rank = dim_0 * grid_dim + dim_1
-  win.Lock(rank)
-  win.Get(buffer, target_rank=rank)
-  win.Flush(rank)
-  win.Unlock(rank)
+  # local buffers for remote fetching
+  foreign_a_mat = np.zeros(a_mat.shape, dtype=np.int32)
+  foreign_b_mat = np.zeros(b_mat.shape, dtype=np.int32)
+
+  # RMA windows
+  a_win = MPI.Win.Create(a_mat, comm=comm_world)
+  b_win = MPI.Win.Create(b_mat, comm=comm_world)
+  for i in range(whole_i_dim // local_i_dim):
+    for j in range(whole_j_dim // local_j_dim):
+      for k in range(whole_k_dim // local_k_dim):
+        # check if this process owns this chunk of data
+        if i == grid_i and j == grid_j:
+          target_rank_a = i * grid_dim + k
+          target_rank_b = k * grid_dim + j
+          a_win.Lock(target_rank_a)
+          b_win.Lock(target_rank_b)
+
+          a_win.Get(foreign_a_mat, target_rank=target_rank_a)
+          b_win.Get(foreign_b_mat, target_rank=target_rank_b)
+
+          a_win.Flush(target_rank_a)
+          b_win.Flush(target_rank_b)
+
+          a_win.Unlock(target_rank_a)
+          b_win.Unlock(target_rank_b)
+
+          c_mat += np.matmul(foreign_a_mat, foreign_b_mat)
 
 
 def matrix_mul(comm_world, a, b):
@@ -33,39 +56,12 @@ def matrix_mul(comm_world, a, b):
   comm_rank = comm_world.Get_rank()
   comm_size = comm_world.Get_size()
 
-  grid_dim = int(np.floor(np.sqrt(comm_size)))
-  grid_i = comm_rank // grid_dim
-  grid_j = comm_rank % grid_dim
-
-  local_i_dim = a.shape[0]
-  local_j_dim = b.shape[1]
-  local_k_dim = a.shape[1]
-
-  whole_i_dim = grid_dim * a.shape[0]
-  whole_j_dim = grid_dim * b.shape[1]
-  whole_k_dim = grid_dim * a.shape[1]
-
   a_mat = np.array(a + comm_rank, dtype=np.int32)
   b_mat = np.array(b + comm_rank, dtype=np.int32)
   c_mat = np.zeros((a_mat.shape[0], b_mat.shape[1]), dtype=np.int32)
 
-  # local buffers for remote fetching
-  foreign_a_mat = np.zeros(a.shape, dtype=np.int32)
-  foreign_b_mat = np.zeros(b.shape, dtype=np.int32)
-
-  # RMA windows
-  a_win = MPI.Win.Create(a_mat, comm=comm_world)
-  b_win = MPI.Win.Create(b_mat, comm=comm_world)
-
   start = time.time()
-  for i in range(whole_i_dim // local_i_dim):
-    for j in range(whole_j_dim // local_j_dim):
-      for k in range(whole_k_dim // local_k_dim):
-        if owner(i, j, grid_i, grid_j):
-          get_mat(a_win, foreign_a_mat, i, k, grid_dim)
-          get_mat(b_win, foreign_b_mat, k, j, grid_dim)
-
-          c_mat += np.matmul(foreign_a_mat, foreign_b_mat)
+  dist_mat_mult(a_mat, b_mat, c_mat, comm_rank, comm_size)
   time_con = time.time() - start
 
   # to ensure every process completed the calculation
