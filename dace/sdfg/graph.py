@@ -405,7 +405,7 @@ class Graph(Generic[NodeT, EdgeT]):
             for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
                 yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
         else:
-            return nx.all_simple_paths(self._nx, source_node, dest_node)
+            yield from nx.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
         """Finds all nodes between begin and end. Returns None if there is any
