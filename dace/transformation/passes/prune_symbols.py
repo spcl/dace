@@ -55,6 +55,11 @@ class RemoveUnusedSymbols(ppl.Pass):
                 sdfg.remove_symbol(sym)
                 result.add(sym)
 
+        for e in sdfg.edges():
+            for aname in list(e.data.assignments):
+                if aname in result:
+                    del e.data.assignments[aname]
+
         if self.recursive:
             # Prune nested SDFGs recursively
             sid = sdfg.sdfg_id
@@ -84,10 +89,10 @@ class RemoveUnusedSymbols(ppl.Pass):
             result |= _symbols_in_code(code.as_string)
 
         for desc in sdfg.arrays.values():
-            result |= set(map(str, desc.free_symbols))
+            result |= set(map(str, desc.used_symbols(False)))
 
         for state in sdfg.nodes():
-            result |= state.free_symbols
+            result |= state.used_symbols(False)
             # In addition to the standard free symbols, we are conservative with other tasklet languages by
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
@@ -104,7 +109,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
 
         for e in sdfg.edges():
-            result |= e.data.free_symbols
+            result |= e.data.used_symbols(False)
 
         return result
 
