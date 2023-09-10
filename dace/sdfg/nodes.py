@@ -335,6 +335,7 @@ class Tasklet(CodeNode):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+
     side_effects = Property(dtype=bool,
                             allow_none=True,
                             default=None,
@@ -342,6 +343,10 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+
+    ignored_symbols = SetProperty(element_type=str,
+                                  desc='Symbols that should not be considered as free in this '
+                                  'tasklet. For example, a global variable.')
 
     def __init__(self,
                  label,
@@ -355,6 +360,7 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location=None,
                  side_effects=None,
+                 ignored_symbols=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -366,6 +372,7 @@ class Tasklet(CodeNode):
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.side_effects = side_effects
         self.debuginfo = debuginfo
+        self.ignored_symbols = ignored_symbols or set()
 
     @property
     def language(self):
@@ -393,7 +400,7 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys() | self.ignored_symbols)
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -590,7 +597,9 @@ class NestedSDFG(CodeNode):
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
             keys_to_use &= internally_used_symbols
 
-        free_syms |= set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items() if k in keys_to_use))
+        free_syms |= set().union(*(map(str,
+                                       pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
+                                   if k in keys_to_use))
 
         return free_syms
 
@@ -641,7 +650,7 @@ class NestedSDFG(CodeNode):
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
-        
+
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
         inout_connectors = self.in_connectors.keys() & self.out_connectors.keys()
@@ -661,7 +670,7 @@ class NestedSDFG(CodeNode):
                                  f"output ({outputs}) arrays")
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+        symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
@@ -752,10 +761,18 @@ class MapEntry(EntryNode):
     def __str__(self):
         return str(self.map)
 
-    @property
-    def free_symbols(self) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        if not all_symbols and self.schedule in (dtypes.ScheduleType.CPU_Persistent,
+                                                 dtypes.ScheduleType.GPU_Persistent):
+            # Range elements in persistent maps are not used in code generation
+            return set()
+
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        return self.used_symbols(all_symbols=True)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type

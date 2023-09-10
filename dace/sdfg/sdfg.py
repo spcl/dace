@@ -1451,7 +1451,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param for_call: If True, returns arguments that can be used when calling the SDFG.
         """
         # Get global free symbols scalar arguments
-        free_symbols = free_symbols or self.free_symbols
+        free_symbols = free_symbols or self.used_symbols(False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))

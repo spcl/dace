@@ -452,7 +452,7 @@ class StateGraphView(object):
             if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
                 return False
             return True
-        
+
         for e in self.edges():
             # If used for code generation, only consider memlet tree leaves
             if not all_symbols and not _is_leaf_memlet(e):
@@ -463,7 +463,7 @@ class StateGraphView(object):
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
         return freesyms - new_symbols
-    
+
     @property
     def free_symbols(self) -> Set[str]:
         """
@@ -474,7 +474,6 @@ class StateGraphView(object):
                overlapping symbols).
         """
         return self.used_symbols(all_symbols=True)
-
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
         """
@@ -536,8 +535,8 @@ class StateGraphView(object):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data and
-                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                            if (in_edge.data.data == out_edge.data.data
+                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
                                 break
 
@@ -804,7 +803,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-    
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
@@ -1104,6 +1103,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         code_exit: str = "",
         location: dict = None,
         side_effects: Optional[bool] = None,
+        ignored_symbols: Optional[Set[str]] = None,
         debuginfo=None,
     ):
         """ Adds a tasklet to the SDFG state. """
@@ -1127,6 +1127,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             code_exit=code_exit,
             location=location,
             side_effects=side_effects,
+            ignored_symbols=ignored_symbols,
             debuginfo=debuginfo,
         ) if language != dtypes.Language.SystemVerilog else nd.RTLTasklet(
             name,
@@ -1140,6 +1141,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             code_exit=code_exit,
             location=location,
             side_effects=side_effects,
+            ignored_symbols=ignored_symbols,
             debuginfo=debuginfo,
         )
         self.add_node(tasklet)
