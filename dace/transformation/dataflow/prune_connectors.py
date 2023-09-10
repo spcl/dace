@@ -48,13 +48,14 @@ class PruneConnectors(pm.SingleStateTransformation):
             if e.data.wcr is not None and e.src_conn in prune_in:
                 if (graph.in_degree(next(iter(graph.in_edges_by_connector(nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
-        has_before = all(
-            graph.in_degree(graph.memlet_path(e)[0].src) > 0 for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
-        has_after = all(
-            graph.out_degree(graph.memlet_path(e)[-1].dst) > 0 for e in graph.out_edges(nsdfg)
-            if e.src_conn in prune_out)
-        if has_before and has_after:
-            return False
+        if not permissive:
+            has_before = all(
+                graph.in_degree(graph.memlet_path(e)[0].src) > 0 for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
+            has_after = all(
+                graph.out_degree(graph.memlet_path(e)[-1].dst) > 0 for e in graph.out_edges(nsdfg)
+                if e.src_conn in prune_out)
+            if has_before and has_after:
+                return False
         if len(prune_in) > 0 or len(prune_out) > 0:
             return True
 
@@ -77,20 +78,22 @@ class PruneConnectors(pm.SingleStateTransformation):
                     prune_in.remove(e.src_conn)
         do_not_prune = set()
         for conn in prune_in:
-            if any(
-                    state.in_degree(state.memlet_path(e)[0].src) > 0 for e in state.in_edges(nsdfg)
-                    if e.dst_conn == conn):
-                do_not_prune.add(conn)
-                continue
+            if not self.permissive:
+                if any(
+                        state.in_degree(state.memlet_path(e)[0].src) > 0 for e in state.in_edges(nsdfg)
+                        if e.dst_conn == conn):
+                    do_not_prune.add(conn)
+                    continue
             for e in state.in_edges_by_connector(nsdfg, conn):
                 state.remove_memlet_path(e, remove_orphans=True)
 
         for conn in prune_out:
-            if any(
-                    state.out_degree(state.memlet_path(e)[-1].dst) > 0 for e in state.out_edges(nsdfg)
-                    if e.src_conn == conn):
-                do_not_prune.add(conn)
-                continue
+            if not self.permissive:
+                if any(
+                        state.out_degree(state.memlet_path(e)[-1].dst) > 0 for e in state.out_edges(nsdfg)
+                        if e.src_conn == conn):
+                    do_not_prune.add(conn)
+                    continue
             for e in state.out_edges_by_connector(nsdfg, conn):
                 state.remove_memlet_path(e, remove_orphans=True)
 
