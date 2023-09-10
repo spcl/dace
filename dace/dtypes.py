@@ -731,6 +731,64 @@ class vector(typeclass):
         self._veclen = val
 
 
+class fixedlenarray(typeclass):
+    """
+    A data type for a fixed-length array of an existing typeclass.
+
+    Example use: `dace.fixedlenarray(dace.float32, 4)` becomes float[4].
+    """
+    def __init__(self, dtype: typeclass, array_length: int):
+        self.atype = dtype
+        self.type = dtype.type
+        self._arraylen = array_length
+        self.bytes = dtype.bytes * array_length
+        self.dtype = self
+
+    def to_json(self):
+        return {'type': 'fixedlenarray', 'dtype': self.atype.to_json(), 'elements': str(self.arraylen)}
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        from dace.symbolic import pystr_to_symbolic
+        return fixedlenarray(json_to_typeclass(json_obj['dtype'], context), pystr_to_symbolic(json_obj['elements']))
+
+    @property
+    def ctype(self):
+        from dace.symbolic import issymbolic
+        if issymbolic(self.arraylen) or self.arraylen == 0 or (self.arraylen < 0) == True:
+            return f'{self.atype.ctype}[]'
+        return f'{self.atype.ctype}[{self.arraylen}]'
+
+    @property
+    def ctype_unaligned(self):
+        return self.ctype
+
+    def as_ctypes(self):
+        """ Returns the ctypes version of the typeclass. """
+        return _FFI_CTYPES[self.type] * self.arraylen
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(self.as_ctypes())
+
+    def as_arg(self, name):
+        from dace.symbolic import issymbolic
+        if issymbolic(self.arraylen) or self.arraylen == 0 or (self.arraylen < 0) == True:
+            return self.atype.as_arg(name) + '[]'
+        return self.atype.as_arg(name) + f'[{self.arraylen}]'
+
+    @property
+    def base_type(self):
+        return self.atype
+
+    @property
+    def arraylen(self):
+        return self._arraylen
+
+    @arraylen.setter
+    def arraylen(self, val):
+        self._arraylen = val
+
+
 class stringtype(pointer):
     """
     A specialization of the string data type to improve 
