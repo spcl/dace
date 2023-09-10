@@ -103,7 +103,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     if state.in_degree(node) > 0:
                         return False
                     # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
+                    if any(rb != 0 for rb, _, _ in e.data.subset):
                         return False
                     if e.dst_conn in nested_sdfg.sdfg.arrays:
                         # Do not accept views. TODO(later): Improve
@@ -119,7 +119,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     if state.out_degree(node) > 0:
                         return False
                     # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
+                    if any(rb != 0 for rb, _, _ in e.data.subset):
                         return False
                     if e.src_conn in nested_sdfg.sdfg.arrays:
                         # Do not accept views. TODO(later): Improve
