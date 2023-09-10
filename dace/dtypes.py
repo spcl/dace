@@ -765,6 +765,8 @@ class struct(typeclass):
         self.ctype = name
         self.ctype_unaligned = name
         self.dtype = self
+        self.packed = False
+        self.opaque = False
         self._parse_field_and_types(**fields_and_types)
 
     @property
@@ -777,7 +779,9 @@ class struct(typeclass):
             'name': self.name,
             'data': [(k, v.to_json()) for k, v in self._data.items()],
             'length': [(k, v) for k, v in self._length.items()],
-            'bytes': self.bytes
+            'bytes': self.bytes,
+            'packed': self.packed,
+            'opaque': self.opaque,
         }
 
     @staticmethod
@@ -791,6 +795,8 @@ class struct(typeclass):
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
         ret._length = {k: v for k, v in json_obj['length']}
         ret.bytes = json_obj['bytes']
+        ret.packed = json_obj['packed']
+        ret.opaque = json_obj['opaque']
 
         return ret
 
@@ -811,7 +817,7 @@ class struct(typeclass):
                 #     if str(sym) not in fields_and_types.keys():
                 #         raise ValueError(f"Symbol {sym} in {k}'s length {l} is not a field of struct {self.name}")
                 self._data[k] = t
-                self._length[k] = l
+                self._length[k] = str(l)
                 self.bytes += t.bytes
             else:
                 if isinstance(v, pointer):
@@ -845,11 +851,15 @@ class struct(typeclass):
         return numpy.dtype(self.as_ctypes())
 
     def emit_definition(self):
-        return """struct {name} {{
+        if self.opaque:
+            return f'struct {self.name};'
+
+        return """struct {packing}{name} {{
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            packing=('__attribute__ ((packed)) ' if self.packed else ''),
+            typ='\n'.join([f"    {t.as_arg(tname)};" for tname, t in self._data.items()]),
         )
 
 

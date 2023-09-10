@@ -48,9 +48,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
         else:
             if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
                 if 'descr' in interface:
-                    dtype = dtypes.struct('unnamed',
-                                          **{k: dtypes.typeclass(numpy.dtype(v).type)
-                                             for k, v in interface['descr']})
+                    dtype = dtypes.struct('unnamed', **{
+                        k: dtypes.typeclass(numpy.dtype(v).type)
+                        for k, v in interface['descr']
+                    })
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
@@ -254,7 +255,7 @@ class Data:
                  rather than a set of strings.
         """
         result = set()
-        if self.transient or all_symbols:
+        if (self.transient and not isinstance(self, View)) or all_symbols:
             for s in self.shape:
                 if isinstance(s, sp.Basic):
                     result |= set(s.free_symbols)
@@ -376,6 +377,7 @@ class Structure(Data):
                                   from_json=_arrays_from_json,
                                   to_json=_arrays_to_json)
     name = Property(dtype=str, desc="Structure type name")
+    packed = Property(dtype=bool, desc="Whether the structure is tightly packed", default=False)
 
     def __init__(self,
                  members: Union[Dict[str, Data], List[Tuple[str, Data]]],
@@ -384,6 +386,7 @@ class Structure(Data):
                  storage: dtypes.StorageType = dtypes.StorageType.Default,
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 packed: bool = False,
                  debuginfo: dtypes.DebugInfo = None):
 
         self.members = OrderedDict(members)
@@ -391,6 +394,13 @@ class Structure(Data):
             v.transient = transient
 
         self.name = name
+
+        shape = (1, )
+        self.packed = packed
+        super(Structure, self).__init__(self.get_dtype(), shape, transient, storage, location, lifetime, debuginfo)
+
+    def get_dtype(self):
+        # Create typeclass struct on-the-fly based on current members
         fields_and_types = OrderedDict()
         symbols = set()
         for k, v in self.members.items():
@@ -410,7 +420,7 @@ class Structure(Data):
                 fields_and_types[k] = dtypes.typeclass(type(v))
             else:
                 raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
-        
+
         # NOTE: We will not store symbols in the dtype for now, but leaving it as a comment to investigate later.
         # NOTE: See discussion about data/object symbols.
         # for s in symbols:
@@ -421,10 +431,10 @@ class Structure(Data):
         #     else:
         #         fields_and_types[str(s)] = dtypes.int32
 
-        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
-        shape = (1,)
-        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
-    
+        stype = dtypes.struct(self.name, **fields_and_types)
+        stype.packed = self.packed
+        return dtypes.pointer(stype)
+
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj['type'] != 'Structure':
@@ -449,9 +459,21 @@ class Structure(Data):
         return 0
 
     @property
+    def optional(self) -> bool:
+        return False
+
+    @property
+    def pool(self) -> bool:
+        return False
+
+    @property
+    def may_alias(self) -> bool:
+        return False
+
+    @property
     def strides(self):
         return [1]
-    
+
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
@@ -861,7 +883,7 @@ class Array(Data):
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
-        if self.transient or all_symbols:
+        if (self.transient and not isinstance(self, View)) or all_symbols:
             if isinstance(self.total_size, sp.Expr):
                 result |= set(self.total_size.free_symbols)
         return result
@@ -1101,9 +1123,10 @@ class StructArray(Array):
             dtype = stype.dtype
         else:
             dtype = dtypes.int8
-        super(StructArray, self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset,
-                                          may_alias, lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
-    
+        super(StructArray,
+              self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
+                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
@@ -1118,7 +1141,7 @@ class StructArray(Array):
             ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
         if ret.total_size == 0:
             ret.total_size = _prod(ret.shape)
-        
+
         return ret
 
 
