@@ -539,7 +539,11 @@ class CPPUnparser:
             if result.find("b'") >= 0:
                 self.write(result)
             else:
-                self.write(result.replace('\'', '\"'))
+                towrite = result
+                if result.startswith("'"):
+                    towrite = result[1:-1].replace('"', '\\"')
+                    towrite = f'"{towrite}"'
+                self.write(towrite)
 
     def _Constant(self, t):
         value = t.value
