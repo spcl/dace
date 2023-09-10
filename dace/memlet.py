@@ -531,9 +531,9 @@ class Memlet(object):
             from dace.sdfg import nodes
             if isinstance(edge.dst, nodes.CodeNode) or isinstance(edge.src, nodes.CodeNode):
                 view_edge = True
-            elif edge.dst_conn == 'views' and isinstance(edge.dst, nodes.AccessNode):
+            elif edge.dst_conn and isinstance(edge.dst, nodes.AccessNode):
                 view_edge = True
-            elif edge.src_conn == 'views' and isinstance(edge.src, nodes.AccessNode):
+            elif edge.src_conn and isinstance(edge.src, nodes.AccessNode):
                 view_edge = True
 
         if not view_edge:
