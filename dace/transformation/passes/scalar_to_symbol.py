@@ -85,6 +85,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
+        if isinstance(desc, (dt.View, dt.StructureView)):
+            continue
         if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
