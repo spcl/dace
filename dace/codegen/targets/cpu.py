@@ -213,6 +213,30 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write)
+
+        # Test for struct views
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.StructArray)):
+            vdesc = sdfg.arrays[viewed_dnode.data]
+            ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
+            field_name = None
+            if is_write and mpath[-1].dst_conn:
+                field_name = mpath[-1].dst_conn
+            elif not is_write and mpath[0].src_conn:
+                field_name = mpath[0].src_conn
+
+            if field_name is not None:
+                if isinstance(vdesc, data.StructArray):
+                    offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                    arrexpr = f'{ptrname}[{offset}]'
+                    stype = vdesc.stype
+                else:
+                    arrexpr = f'{ptrname}'
+                    stype = vdesc
+
+                value = f'{arrexpr}->{field_name}'
+                if isinstance(stype.members[field_name], data.Scalar):
+                    value = '&' + value
+
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
@@ -500,18 +524,23 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
+        # Special case for structures
+        operator = 'delete[]'
+        if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
+            operator = 'delete'
+
         if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % alloc_name, sdfg, state_id, node)
+            callsite_stream.write(f'{operator} {alloc_name};\n', sdfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
-                """#pragma omp parallel
+                f"""#pragma omp parallel
                 {{
-                    delete[] {name};
-                }}""".format(name=alloc_name),
+                    {operator} {alloc_name};
+                }}""",
                 sdfg,
                 state_id,
                 node,
@@ -955,6 +984,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
+                if isinstance(conntype, dtypes.pointer) and sdfg.arrays[memlet.data].dtype == conntype:
+                    is_scalar = True  # Pointer to pointer assignment
                 is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
 
                 if is_scalar and not memlet.dynamic and not is_stream:
@@ -1481,12 +1512,15 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
-            ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
-            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                                          dtypes.AllocationLifetime.External)
-            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
+            if not isinstance(desc.dtype, dtypes.pointer):
+                ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
+                is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
+                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
+            else:
+                callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', sdfg, state_id, src_node)
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg, state_id, src_node)
 
