@@ -5,47 +5,6 @@ import dace.dtypes as dtypes
 from mpi4py import MPI
 import time
 
-def dist_mat_mult(a_mat, b_mat, c_mat, comm_rank, comm_size):
-  grid_dim = int(np.floor(np.sqrt(comm_size)))
-  grid_i = comm_rank // grid_dim
-  grid_j = comm_rank % grid_dim
-
-  local_i_dim = a_mat.shape[0]
-  local_j_dim = b_mat.shape[1]
-  local_k_dim = a_mat.shape[1]
-
-  whole_i_dim = grid_dim * a_mat.shape[0]
-  whole_j_dim = grid_dim * b_mat.shape[1]
-  whole_k_dim = grid_dim * a_mat.shape[1]
-
-  # local buffers for remote fetching
-  foreign_a_mat = np.zeros(a_mat.shape, dtype=np.int32)
-  foreign_b_mat = np.zeros(b_mat.shape, dtype=np.int32)
-
-  # RMA windows
-  a_win = MPI.Win.Create(a_mat, comm=comm_world)
-  b_win = MPI.Win.Create(b_mat, comm=comm_world)
-  for i in range(whole_i_dim // local_i_dim):
-    for j in range(whole_j_dim // local_j_dim):
-      for k in range(whole_k_dim // local_k_dim):
-        # check if this process owns this chunk of data
-        if i == grid_i and j == grid_j:
-          target_rank_a = i * grid_dim + k
-          target_rank_b = k * grid_dim + j
-          a_win.Lock(target_rank_a)
-          b_win.Lock(target_rank_b)
-
-          a_win.Get(foreign_a_mat, target_rank=target_rank_a)
-          b_win.Get(foreign_b_mat, target_rank=target_rank_b)
-
-          a_win.Flush(target_rank_a)
-          b_win.Flush(target_rank_b)
-
-          a_win.Unlock(target_rank_a)
-          b_win.Unlock(target_rank_b)
-
-          c_mat += np.matmul(foreign_a_mat, foreign_b_mat)
-
 
 def matrix_mul(comm_world, a, b):
   # check if matrix multiplication is valid
@@ -60,12 +19,66 @@ def matrix_mul(comm_world, a, b):
   b_mat = np.array(b + comm_rank, dtype=np.int32)
   c_mat = np.zeros((a_mat.shape[0], b_mat.shape[1]), dtype=np.int32)
 
-  start = time.time()
-  dist_mat_mult(a_mat, b_mat, c_mat, comm_rank, comm_size)
-  time_con = time.time() - start
+  @dace.program
+  def dist_mat_mult(a_mat: dace.int32[a_mat.shape[0], a_mat.shape[1]],
+                    b_mat: dace.int32[b_mat.shape[0], b_mat.shape[1]],
+                    c_mat: dace.int32[a_mat.shape[0], b_mat.shape[1]],
+                    comm_rank: dace.int32,
+                    comm_size: dace.int32):
+    grid_dim = int(np.floor(np.sqrt(comm_size)))
+    grid_i = comm_rank // grid_dim
+    grid_j = comm_rank % grid_dim
 
-  # to ensure every process completed the calculation
-  comm_world.Barrier()
+    local_i_dim = a_mat.shape[0]
+    local_j_dim = b_mat.shape[1]
+    local_k_dim = a_mat.shape[1]
+
+    whole_i_dim = grid_dim * a_mat.shape[0]
+    whole_j_dim = grid_dim * b_mat.shape[1]
+    whole_k_dim = grid_dim * a_mat.shape[1]
+
+    # local buffers for remote fetching
+    foreign_a_mat = np.zeros(a_mat.shape, dtype=np.int32)
+    foreign_b_mat = np.zeros(b_mat.shape, dtype=np.int32)
+
+    # RMA windows
+    a_win = MPI.Win.Create(a_mat, comm=comm_world)
+    b_win = MPI.Win.Create(b_mat, comm=comm_world)
+    for i in range(whole_i_dim // local_i_dim):
+      for j in range(whole_j_dim // local_j_dim):
+        for k in range(whole_k_dim // local_k_dim):
+          # check if this process owns this chunk of data
+          if i == grid_i and j == grid_j:
+            target_rank_a = i * grid_dim + k
+            target_rank_b = k * grid_dim + j
+            a_win.Lock(target_rank_a)
+            a_win.Get(foreign_a_mat, target_rank=target_rank_a)
+            a_win.Flush(target_rank_a)
+            a_win.Unlock(target_rank_a)
+
+            b_win.Lock(target_rank_b)
+            b_win.Get(foreign_b_mat, target_rank=target_rank_b)
+            b_win.Flush(target_rank_b)
+            b_win.Unlock(target_rank_b)
+
+            c_mat += foreign_a_mat @ foreign_b_mat
+
+    # as MPI barrier
+    # to ensure every process completed the calculation
+    a_win.Fence(0)
+    a_win.Fence(0)
+
+  sdfg = None
+  if comm_rank == 0:
+    # ValueError: Node type "Win_lock" not supported for promotion
+    sdfg = dist_mat_mult.to_sdfg(simplify=False)
+  func = utils.distributed_compile(sdfg, comm_world)
+
+  start = time.time()
+
+  func(a_mat=a_mat, b_mat=b_mat, c_mat=c_mat, comm_rank=comm_rank, comm_size=comm_size)
+
+  time_con = time.time() - start
 
   return c_mat, time_con
 
