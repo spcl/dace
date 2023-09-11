@@ -915,6 +915,20 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
+def get_last_rma_op(sdfg: SDFG,
+                    cur_op_name: str,
+                    window_name: str):
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(cur_op_name) - 1]
+
+    return last_rma_op_name
+
+
 @oprepo.replaces('mpi4py.MPI.Win.Create')
 @oprepo.replaces('dace.Win.Create')
 def _rma_window_create(pv: ProgramVisitor,
@@ -986,13 +1000,7 @@ def _rma_fence(pv: ProgramVisitor,
     fence_node = Win_fence(fence_name, window_name)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    if len(cur_window_rma_ops) == 1:
-        last_rma_op_name = window_name
-    else:
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(fence_name) - 1]
+    last_rma_op_name = get_last_rma_op(sdfg, fence_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1046,13 +1054,7 @@ def _rma_flush(pv: ProgramVisitor,
     flush_node = Win_flush(flush_name, window_name)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    if len(cur_window_rma_ops) == 1:
-        last_rma_op_name = window_name
-    else:
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(flush_name) - 1]
+    last_rma_op_name = get_last_rma_op(sdfg, flush_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1104,13 +1106,7 @@ def _rma_free(pv: ProgramVisitor,
     free_node = Win_free(free_name, window_name)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    if len(cur_window_rma_ops) == 1:
-        last_rma_op_name = window_name
-    else:
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(free_name) - 1]
+    last_rma_op_name = get_last_rma_op(sdfg, free_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1165,13 +1161,7 @@ def _rma_lock(pv: ProgramVisitor,
     _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    if len(cur_window_rma_ops) == 1:
-        last_rma_op_name = window_name
-    else:
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(lock_name) - 1]
+    last_rma_op_name = get_last_rma_op(sdfg, lock_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1237,13 +1227,7 @@ def _rma_unlock(pv: ProgramVisitor,
     unlock_node = Win_unlock(unlock_name, window_name)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    if len(cur_window_rma_ops) == 1:
-        last_rma_op_name = window_name
-    else:
-        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(unlock_name) - 1]
+    last_rma_op_name = get_last_rma_op(sdfg, unlock_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
