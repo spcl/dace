@@ -8,6 +8,7 @@ from typing import Any, Dict
 import astunparse
 import dace
 from dace.dtypes import Language
+from dace.properties import make_properties, Property
 from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -68,6 +69,7 @@ class CPPInliner():
         return re.sub(r'\b%s\b' % re.escape(self.inline_target), '(' + self.inline_val + ')', code)
 
 
+@make_properties
 class TaskletFusion(pm.SingleStateTransformation):
     """
     Fuses two connected Tasklets.
@@ -143,6 +145,11 @@ class TaskletFusion(pm.SingleStateTransformation):
     t1 = pm.PatternNode(nodes.Tasklet)
     data = pm.PatternNode(nodes.AccessNode)
     t2 = pm.PatternNode(nodes.Tasklet)
+
+    new_name = Property(dtype=str,
+                        default=None,
+                        allow_none=True,
+                        desc='New name to give tasklet. If None, fuses tasklet names')
 
     @classmethod
     def expressions(cls):
@@ -263,8 +270,12 @@ class TaskletFusion(pm.SingleStateTransformation):
         else:
             raise ValueError(f'Cannot inline tasklet with language {t1.language}')
 
-        new_tasklet = graph.add_tasklet(t1.label + '_fused_' + t2.label, inputs, t2.out_connectors, new_code_str,
-                                        t1.language)
+        if self.new_name:
+            new_name = self.new_name
+        else:
+            new_name = t1.label + '_fused_' + t2.label
+
+        new_tasklet = graph.add_tasklet(new_name, inputs, t2.out_connectors, new_code_str, t1.language)
 
         for in_edge in graph.in_edges(t1):
             if in_edge.src_conn is None and isinstance(in_edge.src, dace.nodes.EntryNode):
