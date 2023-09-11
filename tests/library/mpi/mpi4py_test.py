@@ -52,6 +52,7 @@ def test_RMA_put():
         win.Fence(0)
         win.Put(send_buf, target_rank=rank)
         win.Fence(0)
+        win.Free()
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
@@ -157,6 +158,8 @@ def test_passive_RMA_put():
         # as MPI barrier
         win.Fence(0)
         win.Fence(0)
+
+        win.Free()
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")

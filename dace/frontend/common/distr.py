@@ -1082,6 +1082,58 @@ def _rma_flush(pv: ProgramVisitor,
     return window_name
 
 
+@oprepo.replaces_method('RMA_window', 'Free')
+def _rma_free(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              window_name: str,
+              assertion: Union[str, sp.Expr, Number] = 0):
+    """ Adds a RMA free to the DaCe Program.
+
+        :param window_name: The name of the window to be freed.
+        :return: Name of the free.
+    """
+
+    from dace.libraries.mpi.nodes.win_free import Win_free
+
+    # fine a new free name
+    free_name = sdfg.add_rma_ops(window_name, "free")
+
+    _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
+
+    free_node = Win_free(free_name, window_name)
+
+    # check for the last RMA operation
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(free_name) - 1]
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for window free ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   free_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(free_name, dace.int32, transient=True)
+    wnode = state.add_write(free_name)
+    state.add_edge(free_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(free_name, scal))
+
+    return window_name
+
+
 @oprepo.replaces_method('RMA_window', 'Lock')
 def _rma_lock(pv: ProgramVisitor,
               sdfg: SDFG,
