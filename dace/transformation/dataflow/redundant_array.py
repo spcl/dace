@@ -196,6 +196,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
+            return False
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
@@ -647,6 +651,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # Make sure that the candidate is a transient variable
         if not out_desc.transient:
+            return False
+
+        # Skip structure views
+        if isinstance(in_desc, data.StructureView) or isinstance(out_desc, data.StructureView):
             return False
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
@@ -1473,6 +1481,8 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Ensure view
         if not isinstance(desc, data.View):
+            return False
+        if isinstance(desc, data.StructureView):
             return False
 
         # Get viewed node and non-viewed edges
