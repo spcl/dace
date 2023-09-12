@@ -915,9 +915,20 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
-def get_last_rma_op(sdfg: SDFG,
-                    cur_op_name: str,
-                    window_name: str):
+def _get_last_rma_op(sdfg: SDFG,
+                     cur_op_name: str,
+                     window_name: str,
+                     is_trans: bool = False):
+    """ Get last RMA operation name of a window from the SDFG.
+        And do some logical checks if is_trans is True.
+
+        :param sdfg: The sdfg for searching.
+        :param cur_op_name: current operation in the window.
+        :param window_name: The RMA window name for searching.
+        :param is_trans: check RMA sync is exist before op if this param is true
+        :return: Name of the last RMA operation.
+    """
+
     all_rma_ops_name = list(sdfg._rma_ops.keys())
     cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
                            if f"{window_name}_" in rma_op]
@@ -925,6 +936,19 @@ def get_last_rma_op(sdfg: SDFG,
         last_rma_op_name = window_name
     else:
         last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(cur_op_name) - 1]
+
+    if is_trans:
+        # if only odd number of fences or locks,
+        # that means we're in a ongoing epoch
+        # if even number,
+        # that means this operation might have corrupted sync
+        cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
+                            if f"{window_name}_fence" in rma_op]
+        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
+                                    if "lock" in rma_op]
+        if len(cur_window_fences) % 2 == 0 and len(cur_window_passive_syncs) % 2 == 0:
+            # if we don't have even number of syncs, give user a warning
+            print("You might have a bad synchronization of RMA calls!")
 
     return last_rma_op_name
 
@@ -1000,7 +1024,7 @@ def _rma_fence(pv: ProgramVisitor,
     fence_node = Win_fence(fence_name, window_name)
 
     # check for the last RMA operation
-    last_rma_op_name = get_last_rma_op(sdfg, fence_name, window_name)
+    last_rma_op_name = _get_last_rma_op(sdfg, fence_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1054,7 +1078,7 @@ def _rma_flush(pv: ProgramVisitor,
     flush_node = Win_flush(flush_name, window_name)
 
     # check for the last RMA operation
-    last_rma_op_name = get_last_rma_op(sdfg, flush_name, window_name)
+    last_rma_op_name = _get_last_rma_op(sdfg, flush_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1106,7 +1130,7 @@ def _rma_free(pv: ProgramVisitor,
     free_node = Win_free(free_name, window_name)
 
     # check for the last RMA operation
-    last_rma_op_name = get_last_rma_op(sdfg, free_name, window_name)
+    last_rma_op_name = _get_last_rma_op(sdfg, free_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1161,7 +1185,7 @@ def _rma_lock(pv: ProgramVisitor,
     _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
 
     # check for the last RMA operation
-    last_rma_op_name = get_last_rma_op(sdfg, lock_name, window_name)
+    last_rma_op_name = _get_last_rma_op(sdfg, lock_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1227,7 +1251,7 @@ def _rma_unlock(pv: ProgramVisitor,
     unlock_node = Win_unlock(unlock_name, window_name)
 
     # check for the last RMA operation
-    last_rma_op_name = get_last_rma_op(sdfg, unlock_name, window_name)
+    last_rma_op_name = _get_last_rma_op(sdfg, unlock_name, window_name)
 
     last_rma_op_node = state.add_read(last_rma_op_name)
     last_rma_op_desc = sdfg.arrays[last_rma_op_name]
@@ -1277,26 +1301,7 @@ def _rma_put(pv: ProgramVisitor,
     put_name = sdfg.add_rma_ops(window_name, "put")
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
-                           if f"{window_name}_fence" in rma_op]
-
-    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(put_name) - 1]
-
-    # if only odd number of fences,
-    # that means we're in a ongoing epoch
-    if len(cur_window_fences) % 2 == 0:
-        # if even number of fences,
-        # that means this operation is either a passive sync. one or a corrupted one
-        # same logic applies to passive sync.
-        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
-                                    if "lock" in rma_op]
-        # if we don't have even number of syncs, give user a warning
-        if len(cur_window_passive_syncs) % 2 == 0:
-            print("You might have a bad synchronization of RMA calls!")
-
+    last_rma_op_name = _get_last_rma_op(sdfg, put_name, window_name, is_trans=True)
 
     put_node = Win_put(put_name, window_name)
 
@@ -1355,25 +1360,7 @@ def _rma_get(pv: ProgramVisitor,
     get_name = sdfg.add_rma_ops(window_name, "get")
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
-                           if f"{window_name}_fence" in rma_op]
-
-    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(get_name) - 1]
-
-    # if only odd number of fences,
-    # that means we're in a ongoing epoch
-    if len(cur_window_fences) % 2 == 0:
-        # if even number of fences,
-        # that means this operation is either a passive sync. one or a corrupted one
-        # same logic applies to passive sync.
-        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
-                                    if "lock" in rma_op]
-        # if we don't have even number of syncs, give user a warning
-        if len(cur_window_passive_syncs) % 2 == 0:
-            print("You might have a bad synchronization of RMA calls!")
+    last_rma_op_name = _get_last_rma_op(sdfg, get_name, window_name, is_trans=True)
 
     get_node = Win_get(get_name, window_name)
 
@@ -1437,25 +1424,7 @@ def _rma_accumulate(pv: ProgramVisitor,
         op = _mpi4py_to_MPI(MPI, op)
 
     # check for the last RMA operation
-    all_rma_ops_name = list(sdfg._rma_ops.keys())
-    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
-                           if f"{window_name}_" in rma_op]
-    cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
-                           if f"{window_name}_fence" in rma_op]
-
-    last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(accumulate_name) - 1]
-
-    # if only odd number of fences,
-    # that means we're in a ongoing epoch
-    if len(cur_window_fences) % 2 == 0:
-        # if even number of fences,
-        # that means this operation is either a passive sync. one or a corrupted one
-        # same logic applies to passive sync.
-        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
-                                    if "lock" in rma_op]
-        # if we don't have even number of syncs, give user a warning
-        if len(cur_window_passive_syncs) % 2 == 0:
-            print("You might have a bad synchronization of RMA calls!")
+    last_rma_op_name = _get_last_rma_op(sdfg, accumulate_name, window_name, is_trans=True)
 
     accumulate_node = Win_accumulate(accumulate_name, window_name, op)
 
