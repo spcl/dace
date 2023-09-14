@@ -14,6 +14,7 @@ from dace.sdfg import SDFG, nodes, graph as gr
 import time
 from typing import Set, Tuple, Union, List, Iterable, Dict, Optional
 import warnings
+import logging
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
@@ -31,6 +32,8 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 # FPGA AutoOpt
 from dace.transformation.auto import fpga as fpga_auto_opt
 
+logger = logging.getLogger(__name__)
+
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
@@ -45,7 +48,7 @@ def get_composite_fusion(k_caching_args: Optional[Dict[str, int]] = None):
     cf = CompositeFusion()
     if k_caching_args is not None:
         cf.subgraph_fusion_properties = {}
-        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential']:
+        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential', 'disjoint_subsets']:
             cf.subgraph_fusion_properties[key] = k_caching_args[key]
         cf.subgraph_fusion_properties['change_init_outside'] = True
 
@@ -142,9 +145,12 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             fusion_condition.expansion_split = not permutations_only
 
         condition_function = lambda sdfg, subgraph: fusion_condition.can_be_applied(sdfg, subgraph)
+        logger.debug("Enumerate greedly in sdfg: %s graph: %s using subgraph with %i nodes", sdfg.name, graph.name,
+                     len(subgraph.nodes()))
         enumerator = GreedyEnumerator(sdfg, graph, subgraph, condition_function=condition_function)
         for map_entries in enumerator:
             if len(map_entries) > 1:
+                logger.debug("Setup up composite fusion for maps: %s", map_entries)
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = get_composite_fusion(k_caching_args)
                 cf.setup_match(current_subgraph)

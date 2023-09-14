@@ -14,8 +14,11 @@ import dace.sdfg.nodes as nodes
 from collections import deque, defaultdict, ChainMap
 from typing import Set, Union, List, Callable
 import itertools
+import logging
 
 import heapq
+
+logger = logging.getLogger(__name__)
 
 
 class QueuedEntry:
@@ -104,12 +107,14 @@ class GreedyEnumerator(Enumerator):
                     add_current_map = True
                 else:
                     subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, current_set | {current_map})
+                    logger.debug("Check for new map: %s and existing maps: %s", current_map, current_set)
                     if self._condition_function(self._sdfg, subgraph):
                         add_current_map = True
 
                 if add_current_map:
                     # add it to current set and continue BFS
                     added.add(current_map)
+                    logger.debug("Add current map: %s", current_map)
                     current_set.add(current_map)
                     # recurse further
                     for current_neighbor_map in self._adjacency_list[current_map]:

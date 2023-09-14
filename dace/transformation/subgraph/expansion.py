@@ -155,6 +155,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         """
 
         maps = [entry.map for entry in map_entries]
+        logger.debug("Maps before: %s", maps)
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
         if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):

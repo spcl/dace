@@ -923,7 +923,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
+        logger.debug("nsdfg parent state: %s, nsdfg: %s, state: %s and %i nodes", nsdfg.sdfg.parent, nsdfg, state,
+                     len(nsdfg.sdfg.nodes()))
         for nstate in nsdfg.sdfg.nodes():
+            logger.debug("%s: check data nodes: %s", nstate, nstate.data_nodes())
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
                     continue
@@ -934,23 +937,31 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     if e.data.data not in write_set:
                         # Skip data which is not in the read and write set of the state -> there also won't be a
                         # connector
+                        logger.debug("%s: skip %s as not in read or write set", nstate, dnode)
                         continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
                         memlet, ns, indices = out_candidates[e.data.data]
+                        logger.debug("%s: Load memlet: %s, ns: %s, indices: %s using edge: %s -> %s", nstate, memlet,
+                                     ns, indices, e.src, e.dst)
                         # Try to find dimensions in which there is a mismatch
                         # and remove them from list
                         for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
                             if s1 != s2 and i in indices:
+                                logger.debug("%s: Remove index %i from indices as %s != %s", dnode, i, s1, s2)
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
+                        logger.debug("%s: Update %s in out_candidates to indices: %s", nstate, e.data.data, indices)
                         out_candidates[e.data.data] = (memlet, ns, indices)
                         continue
+                    logger.debug("%s: Add %s from edge %s -> %s to out_candidates with indices: %s", nstate,
+                                 e.data.data, e.src, e.dst, set(range(len(e.data.subset))))
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
                     if e.data.data not in read_set:
+                        logger.debug("%s: skip %s as not in read or write set", nstate, dnode)
                         # Skip data which is not in the read and write set of the state -> there also won't be a
                         # connector
                         continue
@@ -958,15 +969,21 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     # candidates
                     if e.data.data in in_candidates:
                         memlet, ns, indices = in_candidates[e.data.data]
+                        logger.debug("%s: Load memlet: %s, ns: %s, indices: %s using edge: %s -> %s", nstate, memlet,
+                                     ns, indices, e.src, e.dst)
                         # Try to find dimensions in which there is a mismatch
                         # and remove them from list
                         for i, (s1, s2) in enumerate(zip(e.data.subset, memlet.subset)):
                             if s1 != s2 and i in indices:
+                                logger.debug("%s: Remove index %i from indices as %s != %s", dnode, i, s1, s2)
                                 indices.remove(i)
                         if len(indices) == 0:
                             ignore.add(e.data.data)
+                        logger.debug("%s: Update %s in in_candidates to indices: %s", nstate, e.data.data, indices)
                         in_candidates[e.data.data] = (memlet, ns, indices)
                         continue
+                    logger.debug("%s: Add %s from edge %s -> %s to in_candidates with indices: %s", nstate, e.data,
+                                 e.src, e.dst, set(range(len(e.data.subset))))
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
         # Check read memlets in interstate edges for candidates
@@ -991,6 +1008,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
             s2, nstate2, ind2 = out_candidates[cand]
             indices = ind1 & ind2
             if any(s1.subset[ind] != s2.subset[ind] for ind in indices):
+                logger.debug("Ignore %s as in and out subsets are not the same: %s, %s for indices %s", cand, s1, s2,
+                             indices)
                 ignore.add(cand)
             in_candidates[cand] = (s1, nstate1, indices)
             out_candidates[cand] = (s2, nstate2, indices)
@@ -999,7 +1018,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         def _check_cand(candidates, outer_edges):
             for cname, (cand, nstate, indices) in candidates.items():
                 if all(me == 0 for i, me in enumerate(cand.subset.min_element()) if i in indices):
-                    # logger.debug("Ignore %s as all min elements are 0. cand: %s, nstate: %s", cname, cand, nstate)
+                    logger.debug("Ignore %s as all min elements are 0. cand: %s, nstate: %s, min_elements: %s, "
+                                 "indices: %s", cname, cand, nstate, cand.subset.min_element(), indices)
                     ignore.add(cname)
                     continue
 
@@ -1007,11 +1027,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 try:
                     outer_edge = next(iter(outer_edges(nsdfg, cname)))
                 except StopIteration:  # Connector does not exist on this side
-                    # logger.debug("Ignore %s as connector does not exist", cname)
+                    logger.debug("Ignore %s as connector does not exist", cname)
                     ignore.add(cname)
                     continue
                 if any(me != 0 for i, me in enumerate(outer_edge.data.subset.min_element()) if i in indices):
-                    # logger.debug("Ignore %s as some outer memlets begin with 0", cname)
+                    logger.debug("Ignore %s as some outer memlets begin with 0", cname)
                     ignore.add(cname)
                     continue
 
@@ -1028,7 +1048,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         [cand], nsdfg.sdfg.arrays[cname], sorted(nstate.ranges.keys()),
                         subsets.Range([v.ndrange()[0] for _, v in sorted(nstate.ranges.items())]))
                     if all(me == 0 for i, me in enumerate(memlet.subset.min_element()) if i in indices):
-                        # logger.debug("Ignore %s due to wrt loops", cname)
+                        logger.debug("Ignore %s due to wrt loops", cname)
                         ignore.add(cname)
                         continue
 
@@ -1041,7 +1061,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 # in "defined_symbols"
                 missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
-                    # logger.debug("Ignore %s due to missing symbols: %s", cname, missing_symbols)
+                    logger.debug("Ignore %s due to missing symbols: %s", cname, missing_symbols)
                     ignore.add(cname)
                     continue
 
@@ -1081,7 +1101,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
                 except StopIteration:
                     continue
+                logger.debug("Refine memlet for data: %s refine: %s, outer_edge: %s, indices: %s", aname, refine,
+                             outer_edge, indices)
                 new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
+                logger.debug("New memlet for outer edge: %s", new_memlet)
                 outer_edge.data.subset = subsets.Range([
                     ns if i in indices else os
                     for i, (os, ns) in enumerate(zip(outer_edge.data.subset, new_memlet.subset))
@@ -1092,7 +1115,9 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 for nstate in nsdfg.nodes():
                     for e in nstate.edges():
                         if e.data.data == aname:
+                            logger.debug("Add offset to subset in edge: %s using %s", e, refine.subset)
                             e.data.subset.offset(refine.subset, True, indices)
+                            logger.debug("Edge with offset: %s", e)
                 # Refine accesses in interstate edges
                 refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
                 for isedge in nsdfg.edges():
@@ -1106,6 +1131,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     else:
                         raise NotImplementedError
                 refined.add(aname)
+                logger.debug("Refined memlet for data: %s, refine: %s, outer_edge: %s", aname, refine, outer_edge)
 
         # Proceed symmetrically on incoming and outgoing edges
         _offset_refine(torefine_in, state.in_edges_by_connector)

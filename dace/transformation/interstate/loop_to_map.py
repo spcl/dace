@@ -107,14 +107,17 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         guard = self.loop_guard
         begin = self.loop_begin
+        logger.debug("Consider guard: %s, begin: %s", guard, begin)
 
         # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
+            logger.debug("Rejected: Guard state contains dataflow")
             return False
 
         # If loop cannot be detected, fail
         found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
+            logger.debug("Rejected: No loop detected")
             return False
         
         if permissive:
@@ -126,6 +129,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # scalar
         for expr in (start, end, step):
             if symbolic.contains_sympy_functions(expr):
+                logger.debug("Rejected: Contains symbols")
                 return False
 
         in_order_states = list(cfg.stateorder_topological_sort(sdfg))
@@ -133,6 +137,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         loop_end_idx = in_order_states.index(body_end)
 
         if loop_end_idx < loop_begin_idx:  # Malformed loop
+            logger.debug("Rejected: Malformed loop")
             return False
 
         # Find all loop-body states
@@ -165,7 +170,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     if not k in fsyms:
                         assigned_symbols.add(k)
                 if assigned_symbols & used_before_assignment:
+                    logger.debug("Rejected: Symobl read before assigned: %s", assigned_symbols & used_before_assignment)
                     return False
+
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
 
@@ -194,6 +201,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     for e in state.in_edges(dn):
                         if e.data.dynamic and e.data.wcr is None:
                             # If pointers are involved, give up
+                            logger.debug("Rejected: Pointers")
                             return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
@@ -202,6 +210,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                                logger.debug("Rejected: check range with itersym: %s, dst_subset: %s, edge: %s", itersym,
+                                             dst_subset, e)
                                 return False
                         # End of check
 
@@ -220,6 +230,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
                                                      e.data, src_subset):
+                            logger.debug("Rejected: Data race")
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -231,6 +242,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
+                    logger.debug("Rejected: Data race in inserstate edge")
                     return False
 
         # Check that the iteration variable and other symbols are not used on other edges or states
@@ -244,12 +256,14 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Check state contents
             if symbols_that_may_be_used & state.free_symbols:
+                logger.debug("Rejected: Symbols: state contents")
                 return False
 
             # Check inter-state edges
             reassigned_symbols: Set[str] = None
             for e in sdfg.out_edges(state):
                 if symbols_that_may_be_used & e.data.read_symbols():
+                    logger.debug("Rejected: Symbols: Interstate edges")
                     return False
 
                 # Check for symbols that are set by all outgoing edges
@@ -480,8 +494,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 del sdfg.arrays[name]
 
             # Add NestedSDFG node
-            logger.debug("Add nsdfg with read: %s and writes: %s", read_set, write_set)
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
+            logger.debug("Add nsdfg with read: %s and writes: %s and name: %s", read_set, write_set, cnode.label)
             self.nsdfg = cnode
             if sdfg.parent:
                 for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
@@ -515,6 +529,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         symbols_to_remove = set()
         if len(isedge.data.assignments) > 0:
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
+            logger.debug("Created nested SDFG with name %s as edge %s -> %s has assignment %s", nsdfg.label,
+                         isedge.src, isedge.dst, isedge.data.assignments)
             self.nsdfg = nsdfg
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
