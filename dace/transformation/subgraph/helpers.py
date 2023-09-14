@@ -15,6 +15,7 @@ from collections import defaultdict
 import copy
 from typing import List, Union, Dict, Tuple, Set, Optional
 from sympy import S
+import sympy
 
 import dace.libraries.standard as stdlib
 
@@ -360,20 +361,87 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                                 new_range = (0, dim_size - S.One, *rng[2:])
                             else:
                                 # Should not reach that state
-                                # TODO: Add warning/error: Can not shrink size with modulo for array if there is a
-                                # memlet which has a range where one index is neither the full size of the dimension
-                                # or just one index
-                                import sys
-                                print(
-                                    f"ERROR: Can not reduce size of {data_name} to {data_shape} while being used as a"
+                                logger.error(
+                                    f"Can not reduce size of {data_name} to {data_shape} while being used as a"
                                     f" circular buffer as edge {edge.src} -> {edge.dst} ({edge.data}) has a dimension"
                                     f" where neither the full size of dimension or just one index is used ({index}-th "
-                                    f"dimension)", file=sys.stderr)
-                                print(f"rng[1]-rng[0] + 1={(rng[1]-rng[0]+S.One).evalf(subs=graph.parent.constants)}, "
-                                      f"dim_size: {dim_size.evalf(subs=graph.parent.constants)}")
-                                assert False
+                                    f"dimension)")
+                                logger.error(
+                                    f"rng[1]-rng[0] + 1={(rng[1]-rng[0]+S.One).evalf(subs=graph.parent.constants)}, "
+                                    f"dim_size: {dim_size.evalf(subs=graph.parent.constants)}"
+                                )
+                                # assert False
                             if edge.data.data == data_name:
                                 edge.data.subset.ranges[index] = new_range
                             else:
                                 edge.data.other_subset.ranges[index] = new_range
                         changed_edges.add(graph.edge_id(edge))
+
+
+def remove_min_max(rng: subsets.Range):
+    """
+    Removes the min or max operation. Assumes that we only want the 2nd argument of the operation.
+
+    :param rng: The ranges where min/max will be removed in the start/end values
+    :type rng: subsets.Range
+    """
+    def extract(elem: dace.symbolic.SymbolicType):
+        if isinstance(elem, sympy.Min) or isinstance(elem, sympy.Max):
+            # we assume that the start/end value of the loop is always the first argument
+            return elem.args[1]
+        else:
+            return elem
+
+    for index, (start, end, step) in enumerate(rng):
+        rng[index] = (extract(start), extract(end), step)
+
+
+def is_map_init(state: SDFGState, map_exit: nodes.MapEntry, array_shape: List[Union[int, dace.symbol]]) -> bool:
+    """
+    Check if the given map_exit is part of the initialisation (setting to 0) of an array. Recurses into itself if there
+    are several stacked maps.
+
+    :param state: The state containing the given map
+    :type state: SDFGState
+    :param map_exit: The map exit to start from
+    :type map_exit: nodes.MapEntry
+    :param array_shape: The shape of the array initialised
+    :type array_shape: List[Union[int, dace.symbol]]
+    :return: True if the maps initialises, False otherwise
+    :rtype: bool
+    """
+
+    # Init maps can only be stacked if there are no other edges, except one going to the next map
+    if len(state.in_edges(map_exit)) > 1:
+        return False
+
+    # All map ranges need to correspond to an array dimension
+    for rng, itervar in zip(map_exit.map.range, map_exit.map.params):
+        # step must be 1
+        if rng[2] != 1:
+            return False
+        memlet = state.in_edges(map_exit)[0].data
+
+        # Get the dimension indices where the iteration variable is used
+        memlet_idx_itervar = []
+        for idx, (memlet_start, memlet_end, memlet_step) in enumerate(memlet.subset):
+            if memlet_step != 1:
+                return False
+            if str(itervar) in str(memlet_start):
+                memlet_idx_itervar.append(idx)
+
+        # Expect that only one memlet dimension uses the itervar
+        if len(memlet_idx_itervar) != 1:
+            return False
+
+        # The map range needs to correspond to the array shape at the dimension found before using the memlet
+        if rng[1] - rng[0] != array_shape[memlet_idx_itervar[0]]:
+            return False
+        del array_shape[memlet_idx_itervar[0]]
+
+    # Go to the next node
+    next_node = state.in_edges(map_exit)[0].src
+    if isinstance(next_node, nodes.MapExit):
+        return is_map_init(state, next_node, array_shape)
+    elif isinstance(next_node, nodes.Tasklet):
+        return next_node.code.as_string.split('= ')[1] == '0'

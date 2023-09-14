@@ -215,7 +215,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
         # 1.6 check that we only deal with compressible transients
 
-        subgraph_contains_data = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,
+        subgraph_contains_data, _ = SubgraphFusion.determine_compressible_nodes(sdfg, graph, intermediate_nodes,
                                                                              map_entries, map_exits)
         if any([s == False for s in subgraph_contains_data.values()]):
             return False
