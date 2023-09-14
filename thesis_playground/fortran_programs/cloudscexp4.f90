@@ -539,8 +539,8 @@ PROGRAM CLOUDPROGRAM
   LOGICAL              :: LDSLPHY 
   LOGICAL              :: LDMAINCALL       ! T if main call to cloudsc
   REAL(KIND=JPRB)      ::PEXTRA(KLON,KLEV,KFLDX,NBLOCKS) ! extra fields
-  INTEGER(KIND=JPIM),PARAMETER    :: NPROMA =128
-   INTEGER(KIND=JPIM),PARAMETER    :: NGPTOT =1024
+  INTEGER(KIND=JPIM),PARAMETER    :: NPROMA =1
+  INTEGER(KIND=JPIM),PARAMETER    :: NGPTOT =1024
 
 
   CALL CLOUDSCOUTER4(NBLOCKS, NGPTOT, NPROMA,    KLON,    KLEV,&
@@ -648,12 +648,12 @@ USE YOECLDP  , ONLY : NCLV, NCLDQL,NCLDQI,NCLDQR,NCLDQS, NCLDQV,RAMID,&
 !USE YOMJFH   , ONLY : N_VMASS
   IMPLICIT NONE
   SAVE
-  INTEGER(KIND=JPIM)  :: KLON            ! Number of grid points
-  INTEGER(KIND=JPIM)    :: KLEV           ! Number of levels
-  INTEGER(KIND=JPIM)  :: NCLV            ! Number of levels
-  INTEGER(KIND=JPIM)   :: KIDIA 
-  INTEGER(KIND=JPIM)    :: KFDIA
-  INTEGER(KIND=JPIM)   :: NBLOCKS 
+  INTEGER(KIND=JPIM)   :: KLON            ! Number columns in a column group
+  INTEGER(KIND=JPIM)   :: KLEV            ! Number of vertical levels
+  INTEGER(KIND=JPIM)   :: NCLV            ! Number of microphysics variables
+  INTEGER(KIND=JPIM)   :: NBLOCKS         ! Number of column groups
+  INTEGER(KIND=JPIM)   :: NPROMA          ! Expected to be 1, related to number of columns in group
+  INTEGER(KIND=JPIM)   :: NGPTOT          ! Unused
 
   REAL(KIND=JPRB)       :: PLCRIT_AER(KLON,KLEV,NBLOCKS) 
   REAL(KIND=JPRB)       :: PICRIT_AER(KLON,KLEV,NBLOCKS) 
@@ -729,19 +729,8 @@ USE YOECLDP  , ONLY : NCLV, NCLDQL,NCLDQI,NCLDQR,NCLDQS, NCLDQV,RAMID,&
   LOGICAL              :: LDMAINCALL       ! T if main call to cloudsc
   REAL(KIND=JPRB)      ::PEXTRA(KLON,KLEV,KFLDX,NBLOCKS) ! extra fields
   INTEGER(KIND=JPIM) :: IBL
-  INTEGER(KIND=JPIM),PARAMETER  :: NGPTOT,NPROMA 
 
   DO IBL=1,NBLOCKS
-      !JKGLO=(IBL-1)*NPROMA+1
-
-      
-      !ICEND=MIN(NPROMA,NGPTOT-JKGLO+1)
-      !ICEND=MIN(128,65536-JKGLO+1)
-      !ICEND=128
-      !-- These were uninitialized : meaningful only when we compare error differences
-      !PCOVPTOT(:,:,IBL) = 0.0
-      !tendency_loc_cld(:,:,NCLV,IBL) = 0.0
-
       CALL CLOUDSC(1,    NPROMA,    KLON,    KLEV,&
       & PTSPHY,&
       & PT(:,:,IBL), PQ(:,:,IBL),&
@@ -1081,7 +1070,7 @@ INTEGER(KIND=JPIM) :: NCLDQR
 INTEGER(KIND=JPIM) :: NCLDQS
 INTEGER(KIND=JPIM) :: NCLDQV
 
-INTEGER(KIND=JPIM) :: IBL,ICEND, NGPTOT, NPROMA
+INTEGER(KIND=JPIM) :: IBL,ICEND, NPROMA
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PLCRIT_AER(KLON,KLEV) 
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PICRIT_AER(KLON,KLEV) 
 REAL(KIND=JPRB)   ,INTENT(IN)    :: PRE_ICE(KLON,KLEV) 
