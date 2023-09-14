@@ -3,8 +3,9 @@ from argparse import ArgumentParser
 import dace
 from utils.log import setup_logging
 from execute.parameters import ParametersProvider
+from execute.my_auto_opt import auto_optimize_phase_2
 from utils.cli_frontend import add_cloudsc_size_arguments
-from utils.general import reset_graph_files, optimize_sdfg
+from utils.general import reset_graph_files, optimize_sdfg, replace_symbols_by_values
 
 
 def main():
@@ -43,10 +44,13 @@ def main():
     print(f"Use {params} for specialisation")
     add_args['symbols'] = params.get_dict()
     add_args['k_caching'] = args.k_caching
-    add_args['change_stride'] = args.change_stride
+    # add_args['change_stride'] = args.change_stride
     if args.no_outer_loop_first:
         add_args['outside_first'] = False
-    sdfg = optimize_sdfg(sdfg, device, verbose_name=verbose_name, **add_args)
+    # sdfg = optimize_sdfg(sdfg, device, verbose_name=verbose_name, **add_args)
+
+    replace_symbols_by_values(sdfg, {'NCLDQR': str(params['NCLDQR'])})
+    sdfg = auto_optimize_phase_2(sdfg, device, program=verbose_name, **add_args)
 
 
 if __name__ == '__main__':
