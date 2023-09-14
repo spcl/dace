@@ -15,14 +15,14 @@ def matrix_mul(comm_world, a, b):
   comm_rank = comm_world.Get_rank()
   comm_size = comm_world.Get_size()
 
-  a_mat = np.array(a + comm_rank, dtype=np.int32)
-  b_mat = np.array(b + comm_rank, dtype=np.int32)
-  c_mat = np.zeros((a_mat.shape[0], b_mat.shape[1]), dtype=np.int32)
+  a_mat = np.array(a + comm_rank, dtype=np.float32)
+  b_mat = np.array(b + comm_rank, dtype=np.float32)
+  c_mat = np.zeros((a_mat.shape[0], b_mat.shape[1]), dtype=np.float32)
 
   @dace.program
-  def dist_mat_mult(a_mat: dace.int32[a_mat.shape[0], a_mat.shape[1]],
-                    b_mat: dace.int32[b_mat.shape[0], b_mat.shape[1]],
-                    c_mat: dace.int32[a_mat.shape[0], b_mat.shape[1]],
+  def dist_mat_mult(a_mat: dace.float32[a_mat.shape[0], a_mat.shape[1]],
+                    b_mat: dace.float32[b_mat.shape[0], b_mat.shape[1]],
+                    c_mat: dace.float32[a_mat.shape[0], b_mat.shape[1]],
                     comm_rank: dace.int32,
                     comm_size: dace.int32):
     grid_dim = int(np.floor(np.sqrt(comm_size)))
@@ -38,8 +38,8 @@ def matrix_mul(comm_world, a, b):
     whole_k_dim = grid_dim * a_mat.shape[1]
 
     # local buffers for remote fetching
-    foreign_a_mat = np.zeros(a_mat.shape, dtype=np.int32)
-    foreign_b_mat = np.zeros(b_mat.shape, dtype=np.int32)
+    foreign_a_mat = np.zeros(a_mat.shape, dtype=np.float32)
+    foreign_b_mat = np.zeros(b_mat.shape, dtype=np.float32)
 
     # RMA windows
     a_win = MPI.Win.Create(a_mat, comm=comm_world)
@@ -92,22 +92,22 @@ if __name__ == "__main__":
   grid_i = comm_rank // grid_dim
   grid_j = comm_rank % grid_dim
 
-  dim_1 = 256
-  dim_2 = 256
+  dim_1 = 1024
+  dim_2 = 1024
 
-  a = np.ones((dim_1, dim_2), dtype=np.int32)
-  b = np.ones((dim_2, dim_1), dtype=np.int32)
+  a = np.ones((dim_1, dim_2), dtype=np.float32)
+  b = np.ones((dim_2, dim_1), dtype=np.float32)
 
   c_mat, time_con = matrix_mul(comm_world, a, b)
   # print(comm_rank, c_mat)
   # print(comm_rank, "matrix_mul time:", time_con)
 
-  whole_a = np.ones((dim_1 * grid_dim, dim_2 * grid_dim), dtype=np.int32)
+  whole_a = np.ones((dim_1 * grid_dim, dim_2 * grid_dim), dtype=np.float32)
   for i in range(grid_dim):
     for j in range(grid_dim):
       whole_a[i * dim_1:(i+1) * dim_1, j * dim_2:(j+1) * dim_2] += i * grid_dim + j
 
-  whole_b = np.ones((dim_2 * grid_dim, dim_1 * grid_dim), dtype=np.int32)
+  whole_b = np.ones((dim_2 * grid_dim, dim_1 * grid_dim), dtype=np.float32)
   for i in range(grid_dim):
     for j in range(grid_dim):
       whole_b[i * dim_2:(i+1) * dim_2, j * dim_1:(j+1) * dim_1] += i * grid_dim + j
