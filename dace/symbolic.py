@@ -1027,6 +1027,15 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                   self.visit(node.orelse)],
                             keywords=[])
         return ast.copy_location(new_node, node)
+    
+    def visit_Subscript(self, node):
+        if isinstance(node.value, ast.Attribute):
+            attr = ast.Subscript(value=ast.Name(id=node.value.attr, ctx=ast.Load()), slice=node.slice, ctx=ast.Load())
+            new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
+                                args=[self.visit(node.value.value), self.visit(attr)],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        return self.generic_visit(node)
 
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
