@@ -5,7 +5,7 @@ import dace
 
 from execute.parameters import ParametersProvider
 from utils.run_config import RunConfig
-from utils.generate_sdfg import get_optimised_sdfg
+from utils.generate_sdfg import get_optimised_sdfg, remove_basic_sdfg
 from utils.general import get_programs_data, get_sdfg, reset_graph_files, read_source, enable_debug_flags, \
                           optimize_sdfg, save_graph
 from utils.cli_frontend import add_cloudsc_size_arguments
@@ -36,6 +36,7 @@ def main():
     parser.add_argument('--log-level', default='info')
     parser.add_argument('--transfer-to-gpu', default=False, action='store_true',
                         help='Disable setting storage location for input arrays to GPU global')
+    parser.add_argument('--clear-basic-graph', action='store_true', default=False, help="Remove stored basic SDFG")
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
@@ -53,6 +54,7 @@ def main():
     if args.verbose_name is not None:
         verbose_name = args.verbose_name
     reset_graph_files(verbose_name)
+
 
     programs = get_programs_data()['programs']
     fsource = read_source(args.program)
@@ -79,11 +81,15 @@ def main():
     run_config = RunConfig()
     run_config.set_from_args(args)
     run_config.device = device
+
+    if args.clear_basic_graph:
+        remove_basic_sdfg(args.program, run_config, ['NBLOCKS'])
+
     sdfg = get_optimised_sdfg(args.program, run_config, params, ['NBLOCKS'], verbose_name=verbose_name,
                               storage_on_gpu=not args.transfer_to_gpu)
     save_graph(sdfg, verbose_name, "after_auto_opt")
-    if not args.only_graph:
-        sdfg.compile()
+    # if not args.only_graph:
+    #     sdfg.compile()
 
 
 if __name__ == '__main__':
