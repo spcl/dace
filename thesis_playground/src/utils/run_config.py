@@ -39,7 +39,7 @@ class RunConfig:
             self.k_caching = True
         if 'change_stride' in args_dict and args_dict['change_stride']:
             self.change_stride = True
-        if 'no-outer-loop-first' in args_dict and args_dict['no-outer-loop-first']:
+        if 'no_outer_loop_first' in args_dict and args_dict['no_outer_loop_first']:
             self.outside_loop_first = False
 
     def __len__(self):

@@ -5,7 +5,7 @@ import dace
 from dace.sdfg import nodes, SDFG
 from dace.dtypes import ScheduleType
 
-from utils.general import replace_symbols_by_values
+from utils.general import replace_symbols_by_values, reset_graph_files
 from utils.paths import get_basic_sdfg_dir
 from utils.general import get_programs_data, read_source, get_sdfg, save_graph
 from utils.run_config import RunConfig
@@ -66,6 +66,9 @@ def generate_basic_sdfg(
     else:
         program_name = program
 
+    verbose_name = f"basic_{program}"
+    reset_graph_files(verbose_name)
+
     logger.debug(f"program name: {program_name}")
     fsource = read_source(program)
     sdfg = get_sdfg(fsource, program_name)
@@ -77,13 +80,17 @@ def generate_basic_sdfg(
         add_args['symbols'] = params_dict
     add_args['outside_first'] = run_config.outside_loop_first
     logger.debug(f"Optimise SDFG for phase 1 (no device) ignoring {params_to_ignore}")
+    save_graph(sdfg, verbose_name, "before_replace_symbols_by_values")
     replace_symbols_by_values(sdfg, {
+        'NPROMA': str(params['NPROMA']),
         'NCLV': str(params['NCLV']),
         'NCLDQI': str(params['NCLDQI']),
+        'NCLDQR': str(params['NCLDQR']),
         'NCLDQL': str(params['NCLDQL']),
         'NCLDQS': str(params['NCLDQS']),
         'NCLDQV': str(params['NCLDQV'])})
-    auto_optimize_phase_1(sdfg, **add_args)
+    save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
+    auto_optimize_phase_1(sdfg, program=verbose_name, **add_args)
     return sdfg
 
 
@@ -154,6 +161,22 @@ def get_basic_sdfg(
     sdfg = generate_basic_sdfg(program, run_config, params, params_to_ignore)
     sdfg.save(path)
     return sdfg
+
+
+def remove_basic_sdfg(program: str, run_config: RunConfig, params_to_ignore: List[str] = []):
+    """
+    Removes the basic sdfg if already computed and stored. Needs to be done if the source code changes.
+
+    :param program: The name of the program
+    :type program: str
+    :param run_config: The run_config
+    :type run_config: RunConfig
+    :param params_to_ignore: Parameters not specialised, defaults to []
+    :type params_to_ignore: List[str], optional
+    """
+    path = get_path_of_basic_sdfg(program, run_config, params_to_ignore)
+    if os.path.exists(path):
+        os.remove(path)
 
 
 def get_optimised_sdfg(
