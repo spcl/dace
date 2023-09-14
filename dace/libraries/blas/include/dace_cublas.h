@@ -21,8 +21,10 @@ static void CheckCublasError(cublasStatus_t const& status) {
 }
 
 static cublasHandle_t CreateCublasHandle(int device) {
-  if (cudaSetDevice(device) != cudaSuccess) {
-    throw std::runtime_error("Failed to set CUDA device.");
+  if (device >= 0) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
   }
   cublasHandle_t handle;
   CheckCublasError(cublasCreate(&handle));
@@ -65,8 +67,10 @@ class _CublasConstants {
   }
 
   _CublasConstants(int device) {
-    if (cudaSetDevice(device) != cudaSuccess) {
-      throw std::runtime_error("Failed to set CUDA device.");
+    if (device >= 0) {
+      if (cudaSetDevice(device) != cudaSuccess) {
+        throw std::runtime_error("Failed to set CUDA device.");
+      }
     }
     // Allocate constant zero with the largest used size
     cudaMalloc(&zero_, sizeof(cuDoubleComplex) * 1);

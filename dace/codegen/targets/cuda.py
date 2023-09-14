@@ -1337,10 +1337,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             for c in components:
 
                 has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
+                # If a global is modified, execute once per global state,
+                # if a shared memory element is modified, execute once per block,
+                # if a local scalar is modified, execute in every thread.
                 if not has_map:
-                    callsite_stream.write("if (blockIdx.x == 0 "
-                                          "&& threadIdx.x == 0) "
-                                          "{  // sub-graph begin", sdfg, state.node_id)
+                    written_nodes = [n for n in c if state.in_degree(n) > 0 and isinstance(n, dace.nodes.AccessNode)]
+
+                    # The order of the branching below matters - it reduces the scope with every detected write
+                    write_scope = 'thread'  # General case acts in every thread
+                    if any(sdfg.arrays[n.data].storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
+                           for n in written_nodes):
+                        write_scope = 'grid'
+                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.GPU_Shared for n in written_nodes):
+                        write_scope = 'block'
+                    if any(sdfg.arrays[n.data].storage == dtypes.StorageType.Register for n in written_nodes):
+                        write_scope = 'thread'
+
+                    if write_scope == 'grid':
+                        callsite_stream.write("if (blockIdx.x == 0 "
+                                            "&& threadIdx.x == 0) "
+                                            "{  // sub-graph begin", sdfg, state.node_id)
+                    elif write_scope == 'block':
+                        callsite_stream.write("if (threadIdx.x == 0) "
+                                            "{  // sub-graph begin", sdfg, state.node_id)
+                    else:
+                        callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
                 else:
                     callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
 
@@ -1963,6 +1984,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                               kernel_params: list, function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Get the thread/block index type
+        ttype = Config.get('compiler', 'cuda', 'thread_id_type')
+        tidtype = getattr(dtypes, ttype, False)
+        if not isinstance(tidtype, dtypes.typeclass):
+            raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
+                             'See ``dace.dtypes`` for available types (for example ``int32``).')
+
         # allocating shared memory for dynamic threadblock maps
         if has_dtbmap:
             kernel_stream.write(
@@ -2025,8 +2053,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
             if len(krange) > 3:
@@ -2045,8 +2073,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
         # Dispatch internal code
         assert CUDACodeGen._in_device_code is False

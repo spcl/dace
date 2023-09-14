@@ -133,7 +133,7 @@ class AST_translator:
             for i in node:
                 self.translate(i, sdfg)
         else:
-            warnings.warn("WARNING:", node.__class__.__name__)
+            warnings.warn(f"WARNING: {node.__class__.__name__}")
 
     def ast2sdfg(self, node: ast_internal_classes.Program_Node, sdfg: SDFG):
         """
@@ -463,6 +463,7 @@ class AST_translator:
                                 if i.type == "ALL":
                                     shape.append(array.shape[indices])
                                     mysize = mysize * array.shape[indices]
+                                    index_list.append(None)
                                 else:
                                     raise NotImplementedError("Index in ParDecl should be ALL")
                             else:
@@ -1014,10 +1015,46 @@ class AST_translator:
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
 
+def create_ast_from_string(
+    source_string: str,
+    sdfg_name: str,
+    transform: bool = False,
+    normalize_offsets: bool = False
+):
+    """
+    Creates an AST from a Fortran file in a string
+    :param source_string: The fortran file as a string
+    :param sdfg_name: The name to be given to the resulting SDFG
+    :return: The resulting AST
+
+    """
+    parser = pf().create(std="f2008")
+    reader = fsr(source_string)
+    ast = parser(reader)
+    tables = SymbolTable
+    own_ast = ast_components.InternalFortranAst(ast, tables)
+    program = own_ast.create_ast(ast)
+
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    functions_and_subroutines = functions_and_subroutines_builder.nodes
+
+    if transform:
+        program = ast_transforms.functionStatementEliminator(program)
+        program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+        program = ast_transforms.CallExtractor().visit(program)
+        program = ast_transforms.SignToIf().visit(program)
+        program = ast_transforms.ArrayToLoop(program).visit(program)
+        program = ast_transforms.SumToLoop(program).visit(program)
+        program = ast_transforms.ForDeclarer().visit(program)
+        program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
+    return (program, own_ast)
 
 def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
+    normalize_offsets: bool = False
 ):
     """
     Creates an SDFG from a fortran file in a string
@@ -1039,10 +1076,10 @@ def create_sdfg_from_string(
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop().visit(program)
-    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+    program = ast_transforms.SumToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor().visit(program)
+    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
@@ -1081,10 +1118,10 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop().visit(program)
-    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+    program = ast_transforms.SumToLoop(program).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor().visit(program)
+    program = ast_transforms.IndexExtractor(program).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program

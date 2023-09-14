@@ -409,14 +409,12 @@ class StateGraphView(object):
     ###################################################################
     # Query, subgraph, and replacement methods
 
-    @property
-    def free_symbols(self) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
         """
-        Returns a set of symbol names that are used, but not defined, in
-        this graph view (SDFG state or subgraph thereof).
+        Returns a set of symbol names that are used in the state.
 
-        :note: Assumes that the graph is valid (i.e., without undefined or
-               overlapping symbols).
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
         """
         state = self.graph if isinstance(self, SubgraphView) else self
         sdfg = state.parent
@@ -429,7 +427,7 @@ class StateGraphView(object):
                 new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
-                freesyms |= set(map(str, n.desc(sdfg).free_symbols))
+                freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
             elif (isinstance(n, nd.Tasklet) and n.language == dtypes.Language.Python):
                 # Consider callbacks defined as symbols as free
                 for stmt in n.code.code:
@@ -438,14 +436,41 @@ class StateGraphView(object):
                                 and astnode.func.id in sdfg.symbols):
                             freesyms.add(astnode.func.id)
 
-            freesyms |= n.free_symbols
+            if hasattr(n, 'used_symbols'):
+                freesyms |= n.used_symbols(all_symbols)
+            else:
+                freesyms |= n.free_symbols
+
         # Free symbols from memlets
+        def _is_leaf_memlet(e):
+            if isinstance(e.src, nd.ExitNode) and e.src_conn and e.src_conn.startswith('OUT_'):
+                return False
+            if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
+                return False
+            return True
+        
         for e in self.edges():
-            freesyms |= e.data.free_symbols
+            # If used for code generation, only consider memlet tree leaves
+            if not all_symbols and not _is_leaf_memlet(e):
+                continue
+
+            freesyms |= e.data.used_symbols(all_symbols)
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
         return freesyms - new_symbols
+    
+    @property
+    def free_symbols(self) -> Set[str]:
+        """
+        Returns a set of symbol names that are used, but not defined, in
+        this graph view (SDFG state or subgraph thereof).
+
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        return self.used_symbols(all_symbols=True)
+
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
         """
@@ -502,13 +527,23 @@ class StateGraphView(object):
             # is read is not counted in the read set
             for n in utils.dfs_topological_sort(sg, sources=sg.source_nodes()):
                 if isinstance(n, nd.AccessNode):
-                    for e in sg.in_edges(n):
+                    in_edges = sg.in_edges(n)
+                    out_edges = sg.out_edges(n)
+                    # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
+                    for out_edge in list(out_edges):
+                        for in_edge in list(in_edges):
+                            if (in_edge.data.data == out_edge.data.data and
+                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                                out_edges.remove(out_edge)
+                                break
+
+                    for e in in_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
-                    for e in sg.out_edges(n):
+                    for e in out_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue

@@ -10,7 +10,7 @@ from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 import itertools
 import functools
 import sympy
-from sympy import ceiling
+from sympy import ceiling, Symbol
 from sympy.concrete.summations import Sum
 import warnings
 import networkx as nx
@@ -564,8 +564,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
     Annotate each valid for loop construct with its loop variable ranges.
 
     :param sdfg: The SDFG in which to look.
-    :param unannotated_cycle_states: List of states in cycles without valid
-                                     for loop ranges.
+    :param unannotated_cycle_states: List of lists. Each sub-list contains the states of one unannotated cycle.
     """
 
     # We import here to avoid cyclic imports.
@@ -656,7 +655,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             res = find_for_loop(sdfg, guard, begin, itervar=itvar)
             if res is None:
                 # No range detected, mark as unbounded.
-                unannotated_cycle_states.extend(cycle)
+                unannotated_cycle_states.append(cycle)
             else:
                 itervar, rng, _ = res
 
@@ -678,10 +677,10 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
         else:
             # There's no guard state, so this cycle marks all states in it as
             # dynamically unbounded.
-            unannotated_cycle_states.extend(cycle)
+            unannotated_cycle_states.append(cycle)
 
 
-def propagate_states(sdfg) -> None:
+def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
 
@@ -732,6 +731,9 @@ def propagate_states(sdfg) -> None:
            once.
 
     :param sdfg: The SDFG to annotate.
+    :param concretize_dynamic_unbounded: If True, we annotate dyncamic unbounded states with symbols of the
+                                         form "num_execs_{sdfg_id}_{loop_start_state_id}". Hence, for each
+                                         unbounded loop its states will have the same number of symbolic executions.
     :note: This operates on the SDFG in-place.
     """
 
@@ -763,6 +765,9 @@ def propagate_states(sdfg) -> None:
     # cycle should be marked as unannotated.
     unannotated_cycle_states = []
     _annotate_loop_ranges(sdfg, unannotated_cycle_states)
+    if not concretize_dynamic_unbounded:
+        # Flatten the list. This keeps the old behavior of propagate_states.
+        unannotated_cycle_states = [state for cycle in unannotated_cycle_states for state in cycle]
 
     # Keep track of states that fully merge a previous conditional split. We do
     # this so we can remove the dynamic executions flag for those states.
@@ -804,7 +809,7 @@ def propagate_states(sdfg) -> None:
                 # The only exception to this rule: If the state is in an
                 # unannotated loop, i.e. should be annotated as dynamic
                 # unbounded instead, we do that.
-                if (state in unannotated_cycle_states):
+                if (not concretize_dynamic_unbounded) and state in unannotated_cycle_states:
                     state.executions = 0
                     state.dynamic_executions = True
                 else:
@@ -876,17 +881,39 @@ def propagate_states(sdfg) -> None:
                 else:
                     # Conditional split or unannotated (dynamic unbounded) loop.
                     unannotated_loop_edge = None
-                    for oedge in out_edges:
-                        if oedge.dst in unannotated_cycle_states:
-                            # This is an unannotated loop down this branch.
-                            unannotated_loop_edge = oedge
+                    if concretize_dynamic_unbounded:
+                        to_remove = []
+                        for oedge in out_edges:
+                            for cycle in unannotated_cycle_states:
+                                if oedge.dst in cycle:
+                                    # This is an unannotated loop down this branch.
+                                    unannotated_loop_edge = oedge
+                                    # remove cycle, since it is now annotated with symbol
+                                    to_remove.append(cycle)
+
+                        for c in to_remove:
+                            unannotated_cycle_states.remove(c)
+                    else:
+                        for oedge in out_edges:
+                            if oedge.dst in unannotated_cycle_states:
+                                # This is an unannotated loop down this branch.
+                                unannotated_loop_edge = oedge
 
                     if unannotated_loop_edge is not None:
                         # Traverse as an unbounded loop.
                         out_edges.remove(unannotated_loop_edge)
                         for oedge in out_edges:
                             traversal_q.append((oedge.dst, state.executions, False, itvar_stack))
-                        traversal_q.append((unannotated_loop_edge.dst, 0, True, itvar_stack))
+                        if concretize_dynamic_unbounded:
+                            # Here we introduce the num_exec symbol and propagate it down the loop.
+                            # We can always assume these symbols to be non-negative.
+                            traversal_q.append(
+                                (unannotated_loop_edge.dst,
+                                 Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
+                                        nonnegative=True), False, itvar_stack))
+                        else:
+                            # Propagate dynamic unbounded.
+                            traversal_q.append((unannotated_loop_edge.dst, 0, True, itvar_stack))
                     else:
                         # Traverse as a conditional split.
                         proposed_executions = state.executions
@@ -1458,8 +1485,8 @@ def propagate_subset(memlets: List[Memlet],
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    elif symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                        for s in new_memlet.volume.free_symbols):
+    if symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
+                                                      for s in new_memlet.volume.free_symbols):
         new_memlet.dynamic = True
         new_memlet.volume = 0
 

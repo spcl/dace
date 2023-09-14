@@ -83,7 +83,10 @@ class DaCeCodeGenerator(object):
         k = id(obj)
         if k in self.fsyms:
             return self.fsyms[k]
-        result = obj.free_symbols
+        if hasattr(obj, 'used_symbols'):
+            result = obj.used_symbols(all_symbols=False)
+        else:
+            result = obj.free_symbols
         self.fsyms[k] = result
         return result
 
@@ -151,15 +154,23 @@ class DaCeCodeGenerator(object):
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
+        
+        def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
+            if isinstance(dtype, dtypes.pointer):
+                wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
+            elif isinstance(dtype, dtypes.struct):
+                for field in dtype.fields.values():
+                    wrote_something = _emit_definitions(field, wrote_something)
+            if hasattr(dtype, 'emit_definition'):
+                if not wrote_something:
+                    global_stream.write("", sdfg)
+                global_stream.write(dtype.emit_definition(), sdfg)
+            return wrote_something
 
         # Emit unique definitions
         wrote_something = False
         for typ in datatypes:
-            if hasattr(typ, 'emit_definition'):
-                if not wrote_something:
-                    global_stream.write("", sdfg)
-                wrote_something = True
-                global_stream.write(typ.emit_definition(), sdfg)
+            wrote_something = _emit_definitions(typ, wrote_something)
         if wrote_something:
             global_stream.write("", sdfg)
 
@@ -461,7 +472,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state,
+            cft = cflow.GeneralBlock(dispatch_state, None,
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [], False)
 
@@ -739,7 +750,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                     instances = access_instances[sdfg.sdfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
-                    if isinstance(desc, data.View):
+                    if isinstance(desc, (data.StructureView, data.View)):
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
