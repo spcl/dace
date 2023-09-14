@@ -731,7 +731,12 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # return {sympy.Symbol(str(self))}
+        # NOTE: This makes it possible to easily pass validation checks such as:
+        #           Are all interstate edge read symbols already defined?
+        #       However, it may fail when we want to reconstruct the read memlets
+        # TODO: Find a better way to do this
+        return self.args[0].free_symbols
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
