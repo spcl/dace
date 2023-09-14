@@ -295,6 +295,7 @@ custom_parameters = {
         'KIDIA': 1,
         'NBLOCKS': 2000,
         'NCLDTOP': 25,
+        'NPROMA': 1
     },
 }
 
