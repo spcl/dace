@@ -1092,9 +1092,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for start, end, step in rng:
                         # Check if the itervar of the map is in the memlet range
                         if itervar in str(start) and map_start_value is not None:
-                            start = sympy.Max(map_start_value, start)
+                            start = sympy.Max(map_start_value + start - dace.symbol(itervar), start)
                         if itervar in str(end) and map_end_value is not None:
-                            end = sympy.Min(map_end_value, end)
+                            end = sympy.Min(map_end_value + end - dace.symbol(itervar), end)
                         new_rng.append((start, end, step))
                     edge.data.subset = subsets.Range(new_rng)
 
