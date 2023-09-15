@@ -29,7 +29,7 @@ class ExpandWinCreateMPI(ExpandTransformation):
 
         code = f"""
             MPI_Win_create(_win_buffer,
-                           {win_buf_count_str},
+                           {win_buf_count_str} * sizeof({win_buffer_dtype}),
                            sizeof({win_buffer_dtype}),
                            MPI_INFO_NULL,
                            {comm},
