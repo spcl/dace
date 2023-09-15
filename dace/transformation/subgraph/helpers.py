@@ -343,15 +343,28 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                         for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
 
                             if isinstance(edge.dst, nodes.NestedSDFG):
+                                rng = copy.deepcopy(edge.data.subset)
+                                remove_min_max(rng)
+                                # Make sure to add the symbols into the nested sdfg symbol map if there are any
+                                # in the offset
+                                for symbol in rng.free_symbols:
+                                    if str(symbol) not in edge.dst.sdfg.symbols:
+                                        edge.dst.sdfg.add_symbol(symbol, int)
+                                    if str(symbol) not in edge.dst.symbol_mapping:
+                                        edge.dst.symbol_mapping[symbol] = symbol
+
                                 for state in edge.dst.sdfg.states():
                                     if state not in changed_states:
                                         changed_states.add(state)
                                         add_modulo_to_all_memlets(state, data_name, data_shape,
-                                                                  [start for start, _, _ in edge.data.subset.ranges])
+                                                                  [start for start, _, _ in rng.ranges])
                             if edge.data.data == data_name:
-                                rng = edge.data.subset.ranges[index]
+                                rng = copy.deepcopy(edge.data.subset)
                             else:
-                                rng = edge.data.other_subset.ranges[index]
+                                rng = copy.deepcopy(edge.data.other_subset)
+
+                            remove_min_max(rng)
+                            rng = rng.ranges[index]
                             if rng[0] == rng[1]:
                                 # case that in this dimension we only need one index
                                 new_range = ((offset + rng[0]) % dim_size, (offset + rng[1]) % dim_size, *rng[2:])

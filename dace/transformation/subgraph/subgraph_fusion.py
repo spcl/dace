@@ -293,6 +293,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         except NotImplementedError:
             return False
 
+        logger.debug("Invariant dimensions: %s", invariant_dimensions)
+
         # Dict with arrays which can not be completely removed but need to be shrank
         self.arrays_as_circular_buffer = {}
         for node in intermediate_nodes:
@@ -849,7 +851,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         (node in intermediate_nodes or scope_dict[node] in map_entries):
                         data_counter_subgraph[node.data] += 1
                     elif node.data not in init_maps and len(state.in_edges(node)) == 1:
-                        if isinstance(state.in_edges(node)[0].src, nodes.MapEntry):
+                        if isinstance(state.in_edges(node)[0].src, nodes.MapExit):
                             init_map_candidate = state.in_edges(node)[0].src
                             if helpers.is_map_init(state, init_map_candidate, sdfg.arrays[node.data].shape):
                                 init_maps[node.data] = (state, init_map_candidate.map)
@@ -1077,23 +1079,24 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 nsdfg.symbol_mapping = dcpy(graph.parent.parent_nsdfg_node.symbol_mapping)
 
         for itervar in map_entry.map.params:
-            if itervar not in nsdfg.free_symbols:
-                if itervar not in nsdfg.sdfg.symbols:
-                    nsdfg.sdfg.add_symbol(itervar, int)
+            if itervar not in nsdfg.sdfg.symbols:
+                nsdfg.sdfg.add_symbol(itervar, int)
+            if itervar not in nsdfg.symbol_mapping:
                 nsdfg.symbol_mapping[itervar] = itervar
 
             # Change memlets going into/out of the nsdfg, to reflect the access pattern by the guard state before
             for edge in [*graph.in_edges(nsdfg), *graph.out_edges(nsdfg)]:
-                rng = edge.data.subset
-                new_rng = []
-                for start, end, step in rng:
-                    # Check if the itervar of the map is in the memlet range
-                    if itervar in str(start) and map_start_value is not None:
-                        start = sympy.Max(map_start_value, start)
-                    if itervar in str(end) and map_end_value is not None:
-                        end = sympy.Min(map_end_value, end)
-                    new_rng.append((start, end, step))
-                edge.data.subset = subsets.Range(new_rng)
+                if edge.data.data is not None:
+                    rng = edge.data.subset
+                    new_rng = []
+                    for start, end, step in rng:
+                        # Check if the itervar of the map is in the memlet range
+                        if itervar in str(start) and map_start_value is not None:
+                            start = sympy.Max(map_start_value, start)
+                        if itervar in str(end) and map_end_value is not None:
+                            end = sympy.Min(map_end_value, end)
+                        new_rng.append((start, end, step))
+                    edge.data.subset = subsets.Range(new_rng)
 
         # If the condition edge uses a symbol which uses a different name inside the nsdfg, change the name
         # accordingly
@@ -1107,7 +1110,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         old_start_state = nsdfg.sdfg.start_state
         guard_state = nsdfg.sdfg.add_state(f"guard_{map_entry.map.label}", is_start_state=True)
         nsdfg.sdfg.add_edge(guard_state, old_start_state, condition_edge)
-
 
     def fuse(self,
              sdfg: dace.sdfg.SDFG,
@@ -1383,19 +1385,29 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         min_offsets = dict()
 
         # do one pass to compress all transient arrays
-        def change_data(transient_array, shape, strides, total_size, offset, lifetime, storage):
-            if shape is not None:
-                transient_array.shape = shape
-            if strides is not None:
-                transient_array.strides = strides
-            if total_size is not None:
-                transient_array.total_size = total_size
-            if offset is not None:
-                transient_array.offset = offset
-            if lifetime is not None:
-                transient_array.lifetime = lifetime
-            if storage is not None:
-                transient_array.storage = storage
+        def change_data(data_name, sdfg, shape, strides, total_size, offset, lifetime, storage):
+            if data_name in sdfg.arrays:
+                transient_array = sdfg.arrays[data_name]
+                logger.debug("Change shape of %s from %s to %s on sdfg: %s", data_name, transient_array.shape, shape, sdfg.label)
+                if shape is not None:
+                    transient_array.shape = shape
+                if strides is not None:
+                    transient_array.strides = strides
+                if total_size is not None:
+                    transient_array.total_size = total_size
+                if offset is not None:
+                    transient_array.offset = offset
+                if lifetime is not None:
+                    transient_array.lifetime = lifetime
+                if storage is not None:
+                    transient_array.storage = storage
+
+                # recurse into all nsdfg
+                for state in sdfg.states():
+                    for node in state.nodes():
+                        if isinstance(node, nodes.NestedSDFG):
+                            # Will ignore if an array has a different shape inside a nsdfg
+                            change_data(data_name, node.sdfg, shape, strides, total_size, offset, lifetime, storage)
 
         data_intermediate = set([node.data for node in intermediate_nodes])
 
@@ -1419,6 +1431,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # Make 0-based
                         target_subset_curr.offset(desc.offset, False)
                         target_subset_curr.pop(invariant_dimensions[data_name])
+                        helpers.remove_min_max(target_subset_curr)
                         target_subset = subsets.union(target_subset, \
                                                       target_subset_curr)
                     except StopIteration:
@@ -1464,8 +1477,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_offset = desc.offset
 
                 # compress original shape
-                logger.debug("Change shape of %s from %s to %s", data_name, desc.shape, new_data_shape)
-                change_data(desc,
+                change_data(data_name,
+                            sdfg,
                             shape=new_data_shape,
                             strides=new_data_strides,
                             total_size=new_data_totalsize,
