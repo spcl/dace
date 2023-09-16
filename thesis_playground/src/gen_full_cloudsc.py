@@ -85,6 +85,8 @@ def action_gen_graph(args):
 
 def main():
     parser = ArgumentParser(description="Generate SDFG or code of the full cloudsc code")
+    parser.add_argument('--log-level', default='info')
+    parser.add_argument('--log-file', default=None)
     subparsers = parser.add_subparsers(
             title="Commands",
             help="See the help of the respective command")
@@ -92,7 +94,6 @@ def main():
     gen_parser = subparsers.add_parser('gen', description="Generate SDFG")
     gen_parser.add_argument('opt_level')
     gen_parser.add_argument('--version', default=4, type=int)
-    gen_parser.add_argument('--log-level', default='info')
     gen_parser.set_defaults(func=action_gen_graph)
 
     compile_parser = subparsers.add_parser('compile', description="Compile code from SDFG")
@@ -102,6 +103,10 @@ def main():
     compile_parser.set_defaults(func=action_compile)
 
     args = parser.parse_args()
+    add_args = {}
+    if args.log_file is not None:
+        add_args['full_logfile'] = args.log_file
+    setup_logging(level=args.log_level.upper())
     args.func(args)
 
 
