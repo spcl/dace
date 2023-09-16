@@ -11,11 +11,12 @@ class RunConfig:
     change_stride: bool
     outside_loop_first: bool
     move_assignment_outside: bool
+    full_cloudsc_fixes: bool
 
     def __init__(self, pattern: str = None, use_dace_auto_opt: bool = False,
                  device: dace.DeviceType = dace.DeviceType.GPU, specialise_symbols: bool = True,
                  k_caching: bool = False, change_stride: bool = False, outside_loop_first: bool = True,
-                 move_assignment_outside: bool = True):
+                 move_assignment_outside: bool = True, full_cloudsc_fixes: bool = False):
         self.pattern = pattern
         self.use_dace_auto_opt = use_dace_auto_opt
         self.device = device
@@ -24,6 +25,7 @@ class RunConfig:
         self.change_stride = change_stride
         self.outside_loop_first = outside_loop_first
         self.move_assignment_outside = move_assignment_outside
+        self.full_cloudsc_fixes = full_cloudsc_fixes
 
     def set_from_args(self, args: Namespace):
         keys = ['pattern', 'use_dace_auto_opt']

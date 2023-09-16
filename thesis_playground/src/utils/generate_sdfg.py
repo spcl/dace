@@ -179,23 +179,17 @@ def remove_basic_sdfg(program: str, run_config: RunConfig, params_to_ignore: Lis
         os.remove(path)
 
 
-def get_optimised_sdfg(
-        program: str,
+def optimise_basic_sdfg(
+        sdfg: SDFG,
         run_config: RunConfig,
         params: ParametersProvider,
         params_to_ignore: List[str] = [],
         instrument: bool = True,
         verbose_name: Optional[str] = None,
         storage_on_gpu: bool = True
-        ) -> SDFG:
-    logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
-    sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
+        ):
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "basic_sdfg")
-
-    # symbols_to_replace = {k: str(v) for k, v in params.get_dict().items()}
-    # del symbols_to_replace['NBLOCKS']
-    # replace_symbols_by_values(sdfg, symbols_to_replace)
 
     add_args = {}
     if run_config.specialise_symbols:
@@ -204,6 +198,7 @@ def get_optimised_sdfg(
     add_args['move_assignments_outside'] = run_config.move_assignment_outside
     add_args['program'] = verbose_name
     add_args['storage_on_gpu'] = storage_on_gpu
+    add_args['full_cloudsc_fixes'] = run_config.full_cloudsc_fixes
     logger.debug("Continue optimisation after getting basic SDFG")
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "before_phase_2")
@@ -236,3 +231,17 @@ def get_optimised_sdfg(
         logger.debug("Instrument SDFG")
         sdfg.instrument = dace.InstrumentationType.Timer
     return sdfg
+
+
+def get_optimised_sdfg(
+        program: str,
+        run_config: RunConfig,
+        params: ParametersProvider,
+        params_to_ignore: List[str] = [],
+        instrument: bool = True,
+        verbose_name: Optional[str] = None,
+        storage_on_gpu: bool = True
+        ) -> SDFG:
+    logger.debug(f"SDFG for {program} using {run_config} and ignore {params_to_ignore}")
+    sdfg = get_basic_sdfg(program, run_config, params, params_to_ignore)
+    return optimise_basic_sdfg(sdfg, run_config, params, params_to_ignore, instrument, verbose_name, storage_on_gpu)
