@@ -96,10 +96,10 @@ def main():
     gen_parser.set_defaults(func=action_gen_graph)
 
     compile_parser = subparsers.add_parser('compile', description="Compile code from SDFG")
-    compile_parser.add_argument('opt-level')
+    compile_parser.add_argument('opt_level')
     compile_parser.add_argument('--version', default=4, type=int)
     compile_parser.add_argument('--debug-build', action='store_true', default=False)
-    gen_parser.set_defaults(func=action_compile)
+    compile_parser.set_defaults(func=action_compile)
 
     args = parser.parse_args()
     args.func(args)
