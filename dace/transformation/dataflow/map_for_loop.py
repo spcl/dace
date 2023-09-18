@@ -79,7 +79,8 @@ class MapToForLoop(transformation.SingleStateTransformation):
         # End of dynamic input range
 
         # Create a loop inside the nested SDFG
-        loop_result = nsdfg.add_loop(None, nstate, None, loop_idx, replace_param(loop_from),
+        loop_result = nsdfg.add_loop(nsdfg.add_state(f"before_{loop_idx}"), nstate,
+                                     nsdfg.add_state(f"after_{loop_idx}"), loop_idx, replace_param(loop_from),
                                      '%s < %s' % (loop_idx, replace_param(loop_to + 1)),
                                      '%s + %s' % (loop_idx, replace_param(loop_step)))
         # store as object fields for external access
