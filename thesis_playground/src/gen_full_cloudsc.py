@@ -33,6 +33,10 @@ opt_levels = {
     "all": {
         "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
         "name": "all_opt"
+        },
+    "all-custom": {
+        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
+        "name": "all_opt_custom"
         }
 }
 
@@ -49,6 +53,7 @@ def get_program_name(args) -> str:
 
 def action_compile(args):
     program = get_program_name(args)
+    remove_build_folder(program)
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
     sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}.sdfg")
     logger.info("Load SDFG from %s", sdfg_file)
@@ -77,7 +82,6 @@ def action_gen_graph(args):
     params = ParametersProvider(program, update={'NBLOCKS': 16384, 'NCLDTOP': 25})
     run_config = opt_levels[args.opt_level]["run_config"]
     logger.debug(run_config)
-    remove_build_folder(program)
     sdfg = get_basic_sdfg(program, run_config, params, ['NBLOCKS'])
     # NCLDQR got forgotten in the basic sdfg
     replace_symbols_by_values(sdfg, {'NCLDQR': str(params['NCLDQR'])})
