@@ -2168,7 +2168,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             after_state = self.add_state()
 
         # Create guard state
-        guard = self.add_state("guard")
+        guard = self.add_state(f"guard_{loop_var}")
 
         # Loop initialization
         init = None if initialize_expr is None else {loop_var: initialize_expr}
