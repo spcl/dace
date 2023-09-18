@@ -339,9 +339,31 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
 
+    Uses evaluate_if_possible but checks that all free symbols inside the given expression are defined in the given
+    symbol mapping.
+
     :param expr: The expression to evaluate.
     :param symbols: A mapping of symbols to their values.
     :return: A constant value based on ``expr`` and ``symbols``.
+    """
+    if issymbolic(expr, set(map(str, symbols.keys()))):
+        raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
+    return evaluate_if_possible(expr, symbols)
+
+
+def evaluate_if_possible(expr: Union[sympy.Basic, int, float],
+                         symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
+        Union[int, float, numpy.number, sympy.Basic]:
+    """
+    Tries to evaluate an expression to a constant based on a mapping from symbols. Returns another expression if not all
+    symbols are in the given constants
+
+    :param expr: The expression to evaluate
+    :type expr: Union[sympy.Basic, int, float]
+    :param symbols: A mapping of symbols to their values
+    :type symbols: Dict[Union[symbol, str], Union[int, float]]
+    :return: A constant value or an expression
+    :rtype: Union[int, float, numpy.number, sympy.Basic]
     """
     if isinstance(expr, list):
         return [evaluate(e, symbols) for e in expr]
@@ -349,8 +371,6 @@ def evaluate(expr: Union[sympy.Basic, int, float],
         return tuple(evaluate(e, symbols) for e in expr)
     if isinstance(expr, SymExpr):
         return evaluate(expr.expr, symbols)
-    if issymbolic(expr, set(map(str, symbols.keys()))):
-        raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
 
@@ -1377,6 +1397,6 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     if is_length:
         for arg in args:
             facts += [sympy.Q.integer(arg), sympy.Q.positive(arg)]
-    
+
     with sympy.assuming(*facts):
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))

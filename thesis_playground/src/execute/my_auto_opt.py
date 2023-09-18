@@ -696,7 +696,8 @@ def k_caching_prototype_v1(sdfg: SDFG,
             'max_difference_end': 1,
             'disjoint_subsets': False,
             'is_map_sequential': lambda map: (str(map.range.ranges[0][1]) == 'KLEV' or map.range.ranges[0][1] ==
-                                              symbols['KLEV'])},
+                                              symbols['KLEV']),
+            'fixed_new_shapes': {'ZQXN2D': [symbols['KLON'], 1, symbols['NCLV']]}},
             symbols, program)
     else:
         # Fuse maps to create one big KLEV-map

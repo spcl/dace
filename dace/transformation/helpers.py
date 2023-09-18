@@ -1268,11 +1268,13 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.nodes():
+                    logger.debug("Visit node: %s in nsdfg: %s", nstate, node.sdfg.label)
                     ntree = nstate.scope_tree()[None]
                     ntree.state = nstate
                     treenode.children.append(ntree)
         for child in treenode.children:
-            traverse(getattr(child, 'state', state), child)
+            if hasattr(child, 'state') and child.state != state:
+                traverse(getattr(child, 'state', state), child)
 
     traverse(state, stree)
     return stree
@@ -1281,8 +1283,8 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
 def get_internal_scopes(state: SDFGState,
                         entry: nodes.EntryNode,
                         immediate: bool = False) -> List[Tuple[SDFGState, nodes.EntryNode]]:
-    """ 
-    Returns all internal scopes within a given scope, including if they 
+    """
+    Returns all internal scopes within a given scope, including if they
     reside in nested SDFGs.
 
     :param state: State in which entry node resides.

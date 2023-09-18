@@ -48,8 +48,10 @@ def get_composite_fusion(k_caching_args: Optional[Dict[str, int]] = None):
     cf = CompositeFusion()
     if k_caching_args is not None:
         cf.subgraph_fusion_properties = {}
-        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential', 'disjoint_subsets']:
-            cf.subgraph_fusion_properties[key] = k_caching_args[key]
+        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential', 'disjoint_subsets',
+                    'fixed_new_shapes']:
+            if key in k_caching_args:
+                cf.subgraph_fusion_properties[key] = k_caching_args[key]
         cf.subgraph_fusion_properties['change_init_outside'] = True
 
     return cf

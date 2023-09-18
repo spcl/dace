@@ -409,7 +409,11 @@ def remove_min_max(rng: subsets.Range):
         rng[index] = (extract(start), extract(end), step)
 
 
-def is_map_init(state: SDFGState, map_exit: nodes.MapEntry, array_shape: List[Union[int, dace.symbol]]) -> bool:
+def is_map_init(state: SDFGState, map_exit: nodes.MapEntry,
+                array_shape: List[Union[int, dace.symbol]],
+                symbols: Dict[str, int],
+                found_shape_idx: List[int] = []
+                ) -> Tuple[bool, List[Tuple[nodes.Map, int]]]:
     """
     Check if the given map_exit is part of the initialisation (setting to 0) of an array. Recurses into itself if there
     are several stacked maps.
@@ -421,40 +425,57 @@ def is_map_init(state: SDFGState, map_exit: nodes.MapEntry, array_shape: List[Un
     :param array_shape: The shape of the array initialised
     :type array_shape: List[Union[int, dace.symbol]]
     :return: True if the maps initialises, False otherwise
+    :param symbols: Symbol mapping used to evaluate shape and ranges if required
+    :type symobls: Dict[str, int]
+    :param found_shape_idx: List of already found indices of the array_shape. Used when recursing into iself, optional,
+    defaults to []
+    :type found_shape_idx: List[int]
     :rtype: bool
     """
 
     # Init maps can only be stacked if there are no other edges, except one going to the next map
     if len(state.in_edges(map_exit)) > 1:
-        return False
+        return (False, [])
 
     # All map ranges need to correspond to an array dimension
     for rng, itervar in zip(map_exit.map.range, map_exit.map.params):
         # step must be 1
         if rng[2] != 1:
-            return False
+            return (False, [])
         memlet = state.in_edges(map_exit)[0].data
 
         # Get the dimension indices where the iteration variable is used
         memlet_idx_itervar = []
         for idx, (memlet_start, memlet_end, memlet_step) in enumerate(memlet.subset):
             if memlet_step != 1:
-                return False
+                return (False, [])
             if str(itervar) in str(memlet_start):
                 memlet_idx_itervar.append(idx)
 
         # Expect that only one memlet dimension uses the itervar
         if len(memlet_idx_itervar) != 1:
-            return False
+            return (False, [])
 
         # The map range needs to correspond to the array shape at the dimension found before using the memlet
-        if rng[1] - rng[0] != array_shape[memlet_idx_itervar[0]]:
-            return False
-        del array_shape[memlet_idx_itervar[0]]
+        if (dace.symbolic.evaluate_if_possible(rng[1] - rng[0] + 1, symbols) !=
+                dace.symbolic.evaluate_if_possible(array_shape[memlet_idx_itervar[0]], symbols)):
+            return (False, [])
+        else:
+            found_shape_idx.append(memlet_idx_itervar[0])
 
     # Go to the next node
     next_node = state.in_edges(map_exit)[0].src
     if isinstance(next_node, nodes.MapExit):
-        return is_map_init(state, next_node, array_shape)
+        is_init, maps = is_map_init(state, next_node, array_shape, symbols)
+        maps.append((map_exit.map, memlet_idx_itervar[0]))
+        return (is_init, maps)
     elif isinstance(next_node, nodes.Tasklet):
-        return next_node.code.as_string.split('= ')[1] == '0'
+        # Check that all dimensions which are bigger than one have been initialised
+        found_all_dimensions = True
+        for idx in range(len(array_shape)):
+            if (idx not in found_shape_idx and dace.symbolic.evaluate_if_possible(array_shape[idx], symbols) != 1.0):
+                found_all_dimensions = False
+
+        # For it to be an init map, the tasklet needs to set to 0 and all dimensions need to be covered
+        return ((next_node.code.as_string.split('= ')[1] == '0.0' and found_all_dimensions), [(map_exit.map,
+                                                                                               memlet_idx_itervar[0])])
