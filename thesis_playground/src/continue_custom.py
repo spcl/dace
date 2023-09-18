@@ -1,23 +1,53 @@
 from argparse import ArgumentParser
+import os
 import logging
 import dace
+from dace.sdfg import SDFG
+from dace.dtypes import ScheduleType
 from dace.transformation.auto.auto_optimize import greedy_fuse
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation import helpers as xfh
-from dace.sdfg.nodes import NestedSDFG
+from dace.sdfg.nodes import NestedSDFG, MapEntry
 from dace.transformation.optimizer import Optimizer
 from dace.transformation.interstate import MoveLoopIntoMap, LoopUnroll, StateFusion
+from dace.transformation.dataflow import MapToForLoop
 from dace.transformation.interstate.loop_detection import find_for_loop
 
 from execute.parameters import ParametersProvider
-from execute.my_auto_opt import auto_optimize_phase_2, make_outermost_map
-from utils.general import save_graph
+from execute.my_auto_opt import auto_optimize_phase_2, make_outermost_map, apply_subgraph_fusion, is_map_over_symbol, \
+                                k_caching_prototype_v1_fuse, change_strides
+from utils.general import save_graph, replace_symbols_by_values
 from utils.log import setup_logging
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import reset_graph_files
+from utils.paths import get_full_cloudsc_log_dir
 
 logger = logging.getLogger(__name__)
+
+def continue_full_cloudsc_fuse(sdfg: SDFG, device: dace.DeviceType, verbose_name: str):
+    validate = True
+    validate_all = True
+    params = ParametersProvider('cloudscexp4')
+    symbols = params.get_dict()
+    full_cloudsc_fixes = True
+    program = verbose_name
+    k_caching_prototype_v1_fuse(sdfg, validate, validate_all, device, symbols, program, full_cloudsc_fixes)
+    save_graph(sdfg, verbose_name, "after_fuse")
+    auto_optimize_phase_2(sdfg, device, program, validate, validate_all, symbols, k_caching=False,
+                          move_assignments_outside=True, storage_on_gpu=False, full_cloudsc_fixes=True, skip_fusing=True)
+
+    schedule = ScheduleType.GPU_Device if device == dace.DeviceType.GPU else ScheduleType.Default
+    schedule = ScheduleType.Default
+    logger.info("Change strides using schedule %s", schedule)
+    sdfg = change_strides(sdfg, ('NBLOCKS', ), schedule)
+    logger.info("Set gpu block size to (32, 1, 1)")
+    for state in sdfg.states():
+        for node, state in state.all_nodes_recursive():
+            if isinstance(node, MapEntry):
+                logger.debug(f"Set block size for {node}")
+                node.map.gpu_block_size = (32, 1, 1)
+    sdfg.save(os.path.join(get_full_cloudsc_log_dir(), "cloudscexp4_all_opt_custom.sdfg"))
 
 
 def main():
@@ -47,65 +77,44 @@ def main():
         reset_graph_files(verbose_name)
 
     sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_file)
+    sdfg.validate()
     params = ParametersProvider('cloudscexp4')
     symbols = params.get_dict()
     validate_all = True
 
-    cloudsc_state = sdfg.find_state('stateCLOUDSC')
-    cloudsc_nsdfg = [n for n in cloudsc_state.nodes() if isinstance(n, NestedSDFG)][0]
+    continue_full_cloudsc_fuse(sdfg, device, verbose_name)
 
-    # make_outermost_map(sdfg, symbols, 'KLEV', allowed_difference=1)
-    # save_graph(sdfg, verbose_name, "after_make_klev_outermost")
+    # sdfg.apply_transformations_repeated([StateFusion])
+    # sdfg.apply_gpu_transformations()
+    # save_graph(sdfg, verbose_name, "after_gpu_transformations")
+    # apply_subgraph_fusion(sdfg, {
+    #     'max_difference_start': symbols['NCLDTOP']+1,
+    #     'max_difference_end': 1,
+    #     'disjoint_subsets': False,
+    #     'is_map_sequential': lambda map: (str(map.range.ranges[0][1]) == 'KLEV' or map.range.ranges[0][1] ==
+    #                                       symbols['KLEV']),
+    #     'fixed_new_shapes': {'ZQXN2D': [symbols['KLON'], 1, symbols['NCLV']]}
+    #     },
+    #         symbols, verbose_name)
 
-    # sdfg.apply_transformations_repeated([RefineNestedAccess])
-    # if verbose_name:
-    #     save_graph(sdfg, verbose_name, "after_refine_nested_access")
-    # return 0
-
-    # single_state_body_5 = cloudsc_nsdfg.sdfg.find_state('single_state_body_5')
-
-    # loop_body_nsdfg = [n for n in single_state_body_5.nodes() if isinstance(n, NestedSDFG)][0]
-    # print()
-
-    # loop_body_nsdfg.sdfg.apply_transformations_repeated([RefineNestedAccess], states=[
-    #     loop_body_nsdfg.sdfg.find_state('single_state_body_20')
-    #     ])
-
-    # cloudsc_nsdfg.sdfg.apply_transformations_repeated([RefineNestedAccess], states=[
-    #     single_state_body_5
-    #     ])
-
-    # This fails, but why is the loop it fails for not converted to a map in the first place?
-    # SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
-    # if program is not None:
-    #     save_graph(sdfg, program, "after_simplify")
-
-    # for s in sdfg.sdfg_list:
-    #     xfh.split_interstate_edges(s)
-    # save_graph(sdfg, verbose_name, "after_splitting_interstate_edges")
-    # count = sdfg.apply_transformations_repeated([LoopToMap])
-    # logger.info("Applied LoopToMap transformation %s times", count)
-    # # can_be_applied is never called? Pattern never matches???!?
-    # save_graph(sdfg, verbose_name, "after_loop_to_map")
-
-    sdfg.apply_transformations_repeated([StateFusion])
-    save_graph(sdfg, verbose_name, "after_state_fusion")
-
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
-        'max_difference_end': 1, 'max_difference_start': 0, 'disjoint_subsets': False,
-                'is_map_sequential': lambda map: False})
-    save_graph(sdfg, verbose_name, "after_greedy_fuse")
-
-    for i in range(1):
-        greedy_fuse(sdfg, device=device, validate_all=validate_all, k_caching_args={
-            'max_difference_start': symbols['NCLDTOP']+1,
-            'max_difference_end': 1,
-            'disjoint_subsets': False,
-            'is_map_sequential': lambda map: (str(map.range.ranges[0][1]) == 'KLEV' or map.range.ranges[0][1] ==
-                                              symbols['KLEV'])
-        })
-
-        save_graph(sdfg, verbose_name, "after_greedy_fuse")
+    # continue_search = True
+    # while continue_search:
+    #     xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=[MapToForLoop], permissive=True)]
+    #     logger.debug("Found %i many possible transformations to transform map back to for-loop", len(xforms))
+    #     continue_search = False
+    #     for xf in xforms:
+    #         # expect that maps only have one dimension, as we did the MapExpansion transformation before
+    #         xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
+    #         xf_state = xf_sdfg.find_state(xf.state_id)
+    #         if is_map_over_symbol(xf.map_entry.map.range, symbols, 'KLEV', 1):
+    #             continue_search = True
+    #             logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
+    #             xf.apply(xf_state, xf_sdfg)
+    #             if verbose_name is not None:
+    #                 save_graph(sdfg, verbose_name, "after_map_to_for_loop")
+    #             break
+    # sdfg.validate()
+    # save_graph(sdfg, verbose_name, "after_map_to_for_loop")
 
 
 if __name__ == '__main__':

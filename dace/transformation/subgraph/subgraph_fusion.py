@@ -96,7 +96,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
     fixed_new_shapes = Property(
             dtype=Dict,
             desc="Dictionary with array names and their new shapes, if they are compressible. If an array is not listed "
-            "here will compute the new shape automatically",
+            "here will compute the new shape automatically.",
             default={})
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
@@ -406,7 +406,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         return False
             if node.data in self.arrays_as_circular_buffer:
                 if not self._check_memlet_sizes_for_circular_buffer(graph, node.data, self.arrays_as_circular_buffer):
-                    logger.debug("Rejected: Memlet sizes wrong for circualr buffer for node datra: %s")
+                    logger.debug("Rejected: Memlet sizes wrong for circular buffer for node datra: %s")
                     return False
 
         logger.debug("Check 2.4")
@@ -756,7 +756,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             graph.remove_edge(edge)
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
+    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet,
+                            min_offset):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs 
         adjacent to its corresponding access nodes, applied during post-processing 
@@ -770,32 +771,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                        access node with the corresponding data name
         """
         # check whether array needs to change
-        if len(sdfg.data(name).shape) != len(nsdfg.data(nname).shape):
-            subset_copy = dcpy(memlet.subset)
-            non_ones = subset_copy.squeeze()
-            strides = []
-            total_size = 1
+        helpers.adjust_data_shape_if_needed(nsdfg, sdfg.data(name), nname, memlet)
+        # for state in nsdfg.states():
+        #     for access_node in state.data_nodes():
+        #         if access_node.data == nname:
 
-            if non_ones:
-                strides = []
-                total_size = 1
-                for (i, (sh, st)) in enumerate(zip(sdfg.data(name).shape, sdfg.data(name).strides)):
-                    if i in non_ones:
-                        strides.append(st)
-                        total_size *= sh
-            else:
-                strides = [1]
-                total_size = 1
-
-            if isinstance(nsdfg.data(nname), data.Array):
-                nsdfg.data(nname).strides = tuple(strides)
-                nsdfg.data(nname).total_size = total_size
-
-        else:
-            if isinstance(nsdfg.data(nname), data.Array):
-                nsdfg.data(nname).strides = sdfg.data(name).strides
-                nsdfg.data(nname).total_size = sdfg.data(name).total_size
-
+        min_offset = [off_a + off_b for off_a, off_b in zip(min_offset, nsdfg.data(nname).offset)]
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
             for nnode in ngraph.nodes():
@@ -803,10 +784,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # trace and recurse if necessary
                     for e in chain(ngraph.out_edges(nnode), ngraph.in_edges(nnode)):
                         for te in ngraph.memlet_tree(e):
+                            # if te.data.data == nnode.data:
+                            #     te.data.subset.offset(min_offset, True)
+                            # elif te.data.other_subset:
+                            #     te.data.other_subset.offset(min_offset, True)
                             if isinstance(te.dst, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data)
+                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data, min_offset)
                             if isinstance(te.src, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data)
+                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data, min_offset)
 
     @staticmethod
     def determine_compressible_nodes(sdfg: dace.sdfg.SDFG,
@@ -1094,25 +1079,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 nsdfg.symbol_mapping[itervar] = itervar
 
             # Change memlets going into/out of the nsdfg, to reflect the access pattern by the guard state before
-            for edge in [*graph.in_edges(nsdfg), *graph.out_edges(nsdfg)]:
-                if edge.data.data is not None:
-                    rng = edge.data.subset
-                    new_rng = []
-                    for start, end, step in rng:
-                        one_elem = False
-                        if start==end:
-                            one_elem = True
-                        # Check if the itervar of the map is in the memlet range
-                        if itervar in str(start) and map_start_value is not None:
-                            start = sympy.Max(map_start_value + start - dace.symbol(itervar), start)
-                            if one_elem:
-                                end = start
-                        if itervar in str(end) and map_end_value is not None:
-                            end = sympy.Min(map_end_value + end - dace.symbol(itervar), end)
-                            if one_elem:
-                                start = end
-                        new_rng.append((start, end, step))
-                    edge.data.subset = subsets.Range(new_rng)
+            # for edge in [*graph.in_edges(nsdfg), *graph.out_edges(nsdfg)]:
+            #     if edge.data.data is not None:
+            #         rng = edge.data.subset
+            #         new_rng = []
+            #         for start, end, step in rng:
+            #             one_elem = False
+            #             if start==end:
+            #                 one_elem = True
+            #             # Check if the itervar of the map is in the memlet range
+            #             if itervar in str(start) and map_start_value is not None:
+            #                 start = sympy.Max(map_start_value + start - dace.symbol(itervar), start)
+            #                 if one_elem:
+            #                     end = start
+            #             if itervar in str(end) and map_end_value is not None:
+            #                 end = sympy.Min(map_end_value + end - dace.symbol(itervar), end)
+            #                 if one_elem:
+            #                     start = end
+            #             new_rng.append((start, end, step))
+            #         edge.data.subset = subsets.Range(new_rng)
 
         # If the condition edge uses a symbol which uses a different name inside the nsdfg, change the name
         # accordingly
@@ -1490,6 +1475,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             new_data_shape.append(sz)
                         else:
                             new_data_shape.append(target_subset.size()[index])
+                            if target_subset.size()[index] != 1 and data_name not in self.arrays_as_circular_buffer:
+                                # Empty list as the shape has already been adjusted
+                                self.arrays_as_circular_buffer[data_name] = []
                             index += 1
 
                     if data_name in self.arrays_as_circular_buffer:
@@ -1549,53 +1537,57 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             # intermediate_nodes is a set -> each data node only appears only once. Need to find all the other access
             # nodes to the same data
-            for access_node in graph.data_nodes():
-                # circular buffers are treated differently, they need to add modulos
-                if access_node.data == node.data and node.data not in self.arrays_as_circular_buffer:
+            # for access_node in graph.data_nodes():
+            #     # circular buffers are treated differently, they need to add modulos
+            # if access_node.data == node.data and node.data not in self.arrays_as_circular_buffer:
+            if node.data not in self.arrays_as_circular_buffer:
+                access_node = node
 
-                    # all incoming edges to node
-                    in_edges = graph.in_edges(access_node)
-                    # outgoing edges going to another fused part
-                    out_edges = graph.out_edges(access_node)
+                # all incoming edges to node
+                in_edges = graph.in_edges(access_node)
+                # outgoing edges going to another fused part
+                out_edges = graph.out_edges(access_node)
 
-                    # memlets of all in between transients:
-                    # offset memlets if array has been compressed
-                    if subgraph_contains_data[node.data] and isinstance(sdfg.data(node.data), dace.data.Array):
-                        # get min_offset
-                        min_offset = min_offsets[node.data]
-                        # re-add invariant dimensions with offset 0
-                        for iedge in in_edges:
-                            for edge in graph.memlet_tree(iedge):
-                                if edge.data.data == node.data:
-                                    edge.data.subset.offset(min_offset, True)
-                                elif edge.data.other_subset:
-                                    edge.data.other_subset.offset(min_offset, True)
+                # memlets of all in between transients:
+                # offset memlets if array has been compressed
+                if subgraph_contains_data[node.data] and isinstance(sdfg.data(node.data), dace.data.Array):
+                    # get min_offset
+                    min_offset = min_offsets[node.data]
+                    # re-add invariant dimensions with offset 0
+                    for iedge in in_edges:
+                        for edge in graph.memlet_tree(iedge):
+                            if edge.data.data == node.data:
+                                edge.data.subset.offset(min_offset, True)
+                            elif edge.data.other_subset:
+                                edge.data.other_subset.offset(min_offset, True)
+                        # nested SDFG: adjust arrays connected
+                        if isinstance(iedge.src, nodes.NestedSDFG):
+                            nsdfg = iedge.src.sdfg
+                            nested_data_name = edge.src_conn
+                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data,
+                                                     min_offsets[node.data])
+
+                    for cedge in out_edges:
+                        for edge in graph.memlet_tree(cedge):
+                            if edge.data.data == node.data:
+                                edge.data.subset.offset(min_offset, True)
+                            elif edge.data.other_subset:
+                                edge.data.other_subset.offset(min_offset, True)
                             # nested SDFG: adjust arrays connected
-                            if isinstance(iedge.src, nodes.NestedSDFG):
-                                nsdfg = iedge.src.sdfg
-                                nested_data_name = edge.src_conn
-                                self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data)
+                            if isinstance(edge.dst, nodes.NestedSDFG):
+                                nsdfg = edge.dst.sdfg
+                                nested_data_name = edge.dst_conn
+                                self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data,
+                                                         min_offsets[node.data])
 
-                        for cedge in out_edges:
-                            for edge in graph.memlet_tree(cedge):
-                                if edge.data.data == node.data:
-                                    edge.data.subset.offset(min_offset, True)
-                                elif edge.data.other_subset:
-                                    edge.data.other_subset.offset(min_offset, True)
-                                # nested SDFG: adjust arrays connected
-                                if isinstance(edge.dst, nodes.NestedSDFG):
-                                    nsdfg = edge.dst.sdfg
-                                    nested_data_name = edge.dst_conn
-                                    self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data)
-
-                        # if in_edges has several entries:
-                        # put other_subset into out_edges for correctness
-                        if len(in_edges) > 1:
-                            for oedge in out_edges:
-                                if oedge.dst == global_map_exit and \
-                                                    oedge.data.other_subset is None:
-                                    oedge.data.other_subset = dcpy(oedge.data.subset)
-                                    oedge.data.other_subset.offset(min_offset, False)
+                    # if in_edges has several entries:
+                    # put other_subset into out_edges for correctness
+                    if len(in_edges) > 1:
+                        for oedge in out_edges:
+                            if oedge.dst == global_map_exit and \
+                                                oedge.data.other_subset is None:
+                                oedge.data.other_subset = dcpy(oedge.data.subset)
+                                oedge.data.other_subset.offset(min_offset, False)
         # consolidate edges if desired
         if self.consolidate:
             consolidate_edges_scope(graph, global_map_entry)

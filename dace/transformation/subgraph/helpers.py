@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Subgraph Transformation Helper API """
-from dace import dtypes, registry, symbolic, subsets
+from dace import dtypes, registry, symbolic, subsets, data
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, SDFGState
@@ -313,6 +313,58 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     return SubgraphView(graph, list(node_set))
 
 
+def adjust_data_shape_if_needed(nsdfg: SDFG, new_desc: data.Array, nname: str, memlet: Memlet):
+    """
+    Changes the data shape and stride in the given sdfg to match the given array desc. Only changes something if the
+    shape length differs. Is used to propagate change in shape into nested SDFG.
+
+    :param nsdfg: The (nested) SDFG to change in data in
+    :type nsdfg: SDFG
+    :param new_desc: The array description to change it to
+    :type new_desc: data.Array
+    :param nname: The name of the array in the given (nested) SDFG
+    :type nname: str
+    :param memlet: Memlet adjacent to the nested SDFG that leads to the  access node with the corresponding data name
+    :type memlet: Memlet
+    """
+    # check whether array needs to change
+    if len(new_desc.shape) != len(nsdfg.data(nname).shape):
+        # Case where nsdfg array as fewer dimensions
+        subset_copy = copy.deepcopy(memlet.subset)
+        non_ones = subset_copy.squeeze()
+        strides = []
+        shape = []
+        total_size = 1
+
+        if non_ones:
+            strides = []
+            total_size = 1
+            for (i, (sh, st)) in enumerate(zip(new_desc.shape, new_desc.strides)):
+                if i in non_ones:
+                    shape.append(sh)
+                    strides.append(st)
+                    total_size *= sh
+                else:
+                    shape.append(1)
+                    strides.append(1)
+        else:
+            strides = [1]
+            total_size = 1
+            shape = [1]
+
+        if isinstance(nsdfg.data(nname), data.Array):
+            nsdfg.data(nname).strides = tuple(strides)
+            nsdfg.data(nname).total_size = total_size
+            nsdfg.data(nname).shape = tuple(shape)
+
+    else:
+        # Otherwise can just copy
+        if isinstance(nsdfg.data(nname), data.Array):
+            nsdfg.data(nname).strides = new_desc.strides
+            nsdfg.data(nname).total_size = new_desc.total_size
+            nsdfg.data(nname).shape = new_desc.shape
+
+
 def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_shape: Tuple[symbolic.symbol],
                               offsets: Optional[Tuple[symbolic.symbol]] = None):
     """
@@ -352,6 +404,9 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                                         edge.dst.sdfg.add_symbol(symbol, int)
                                     if str(symbol) not in edge.dst.symbol_mapping:
                                         edge.dst.symbol_mapping[symbol] = symbol
+
+                                adjust_data_shape_if_needed(edge.dst.sdfg, graph.parent.data(data_name), data_name,
+                                                            edge.data)
 
                                 for state in edge.dst.sdfg.states():
                                     if state not in changed_states:

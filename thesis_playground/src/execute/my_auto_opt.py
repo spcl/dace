@@ -189,7 +189,8 @@ def auto_optimize_phase_2(sdfg: SDFG,
                           k_caching: bool = False,
                           move_assignments_outside: bool = True,
                           storage_on_gpu: bool = True,
-                          full_cloudsc_fixes: bool = False
+                          full_cloudsc_fixes: bool = False,
+                          skip_fusing: bool = False
                           ) -> SDFG:
     """
     Perform optimisations which are device/architectrie specific. Works inplace on the given SDFG
@@ -219,14 +220,15 @@ def auto_optimize_phase_2(sdfg: SDFG,
     logger.debug(f"Program: {program}")
     if symbols:
         specialise_symbols(sdfg, symbols)
-    if k_caching:
-        k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program, full_cloudsc_fixes)
-    else:
-        greedy_fuse(sdfg, device=device, validate_all=validate_all)
-        # fuse stencils greedily
-        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
-        if program is not None:
-            save_graph(sdfg, program, "after_greedy_fuse")
+    if not skip_fusing:
+        if k_caching:
+            k_caching_prototype_v1(sdfg, validate, validate_all, device, symbols, program, full_cloudsc_fixes)
+        else:
+            greedy_fuse(sdfg, device=device, validate_all=validate_all)
+            # fuse stencils greedily
+            greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+            if program is not None:
+                save_graph(sdfg, program, "after_greedy_fuse")
 
     # Move Loops inside Maps when possible
     # from dace.transformation.interstate import MoveLoopIntoMap, StateFusion
@@ -561,7 +563,7 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
     return transformation_class
 
 
-def k_caching_prototype_v1(sdfg: SDFG,
+def k_caching_prototype_v1_prepare_fusion(sdfg: SDFG,
                            validate: bool,
                            validate_all: bool,
                            device: dace.DeviceType,
@@ -569,23 +571,20 @@ def k_caching_prototype_v1(sdfg: SDFG,
                            program: Optional[str] = None,
                            full_cloudsc_fixes: bool = False):
     """
-    Performs K-caching on the given SDFG by mergen all KLEV loops into one and shrink any intermediate arrays.
+    K-Caching: Steps before fusion
 
-    :param sdfg: The SDFG to act upon
-    :type sdfg: SDFG
-    :param validate: If True, validates the SDFG after all transformations
-                     have been applied, defaults to True
-    :type validate: bool, optional
-    :param validate_all: If True, validates the SDFG after every step, defaults to True
-    :type validate_all: bool, optional
-    :param device: The device to optimise fort
+    :param validate: [TODO:description]
+    :type validate: bool
+    :param validate_all: [TODO:description]
+    :type validate_all: bool
+    :param device: [TODO:description]
     :type device: dace.DeviceType
-    :param symbols: Dictionary of symbols to specialise and their valeus
+    :param symbols: [TODO:description]
     :type symbols: Dict[str, int]
-    :param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
+    :param program: [TODO:description], defaults to None
     :type program: Optional[str], optional
-    :param full_cloudsc_fixes: Set to true if fixes for full cloudsc sdfg should be generated, defaults to False
-    :type full_cloudsc_fixes: bool
+    :param full_cloudsc_fixes: [TODO:description], defaults to False
+    :type full_cloudsc_fixes: bool, optional
     """
     sdfg.add_symbol('NCLDTOP', int)
     sdfg.simplify()
@@ -670,6 +669,30 @@ def k_caching_prototype_v1(sdfg: SDFG,
 
     sdfg.validate()
 
+
+def k_caching_prototype_v1_fuse(sdfg: SDFG,
+                                validate: bool,
+                                validate_all: bool,
+                                device: dace.DeviceType,
+                                symbols: Dict[str, int],
+                                program: Optional[str] = None,
+                                full_cloudsc_fixes: bool = False):
+    """
+    K-Caching: Fusing step
+
+    :param validate: [TODO:description]
+    :type validate: bool
+    :param validate_all: [TODO:description]
+    :type validate_all: bool
+    :param device: [TODO:description]
+    :type device: dace.DeviceType
+    :param symbols: [TODO:description]
+    :type symbols: Dict[str, int]
+    :param program: [TODO:description], defaults to None
+    :type program: Optional[str], optional
+    :param full_cloudsc_fixes: [TODO:description], defaults to False
+    :type full_cloudsc_fixes: bool, optional
+    """
     if full_cloudsc_fixes:
         # Fix one memlet, which is not tight enough as it includes a read, which is written just before. The memlet is the
         # one going from map to nsdfg
@@ -735,6 +758,37 @@ def k_caching_prototype_v1(sdfg: SDFG,
     #                 save_graph(sdfg, program, "after_map_to_for_loop")
     #             break
     sdfg.validate()
+
+
+def k_caching_prototype_v1(sdfg: SDFG,
+                           validate: bool,
+                           validate_all: bool,
+                           device: dace.DeviceType,
+                           symbols: Dict[str, int],
+                           program: Optional[str] = None,
+                           full_cloudsc_fixes: bool = False):
+    """
+    Performs K-caching on the given SDFG by mergen all KLEV loops into one and shrink any intermediate arrays.
+
+:param sdfg: The SDFG to act upon
+:type sdfg: SDFG
+:param validate: If True, validates the SDFG after all transformations
+                 have been applied, defaults to True
+:type validate: bool, optional
+:param validate_all: If True, validates the SDFG after every step, defaults to True
+:type validate_all: bool, optional
+:param device: The device to optimise fort
+:type device: dace.DeviceType
+:param symbols: Dictionary of symbols to specialise and their valeus
+:type symbols: Dict[str, int]
+:param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
+:type program: Optional[str], optional
+:param full_cloudsc_fixes: Set to true if fixes for full cloudsc sdfg should be generated, defaults to False
+:type full_cloudsc_fixes: bool
+    """
+    k_caching_prototype_v1_prepare_fusion(sdfg, validate, validate_all, device, symbols, program, full_cloudsc_fixes)
+    k_caching_prototype_v1_fuse(sdfg, validate, validate_all, device, symbols, program, full_cloudsc_fixes)
+
     logger.debug("Done with K-Caching")
 
 
