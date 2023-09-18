@@ -1268,7 +1268,6 @@ def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = No
         for node in snodes:
             if isinstance(node, nodes.NestedSDFG):
                 for nstate in node.sdfg.nodes():
-                    logger.debug("Visit node: %s in nsdfg: %s", nstate, node.sdfg.label)
                     ntree = nstate.scope_tree()[None]
                     ntree.state = nstate
                     treenode.children.append(ntree)
