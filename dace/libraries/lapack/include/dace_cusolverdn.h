@@ -1,4 +1,4 @@
-// Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+// Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
 #include <cuda_runtime.h>
@@ -21,8 +21,10 @@ static void CheckCusolverDnError(cusolverStatus_t const& status) {
 }
 
 static cusolverDnHandle_t CreateCusolverDnHandle(int device) {
-  if (cudaSetDevice(device) != cudaSuccess) {
-    throw std::runtime_error("Failed to set CUDA device.");
+  if (device >= 0) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
   }
   cusolverDnHandle_t handle;
   CheckCusolverDnError(cusolverDnCreate(&handle));

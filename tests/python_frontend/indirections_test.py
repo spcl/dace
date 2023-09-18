@@ -60,6 +60,23 @@ def test_indirection_scalar_nsdfg():
 
 
 @dc.program
+def indirection_scalar2_nsdfg(A: dc.float64[10], x: dc.int32[10]):
+    B = np.empty_like(A)
+    for i in dc.map[0:A.shape[0]]:
+        a = x[i]
+        B[i] = A[a]
+        B[i] = A[a]
+    return B
+
+
+def test_indirection_scalar2_nsdfg():
+    A = np.random.randn(10).astype(np.float64)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    res = indirection_scalar2_nsdfg(A, x)
+    assert (np.allclose(res, A[x]))
+
+
+@dc.program
 def indirection_scalar_assign_nsdfg(A: dc.float64[10], x: dc.int32[10]):
     B = np.empty_like(A)
     # TODO: This doesn't work with 0:A.shape[0]
@@ -169,6 +186,7 @@ def test_indirection_scalar_range():
 
 
 def test_indirection_scalar_range_nsdfg():
+
     @dc.program
     def indirection_scalar_range_nsdfg(A: dc.float64[10], x: dc.int32[11]):
         B = np.empty_like(A)
@@ -369,11 +387,33 @@ def test_spmv():
         assert (np.allclose(y, ref))
 
 
+def test_indirection_size_1():
+
+    def compute_index(scal: dc.int32[5]):
+        result = 0
+        with dace.tasklet:
+            s << scal
+            r >> result
+            r = s[1] + 1 - 1
+        return result
+
+    @dc.program
+    def tester(a: dc.float64[1, 2, 3], scal: dc.int32[5]):
+        ind = compute_index(scal)
+        a[0, ind, 0] = 1
+
+    arr = np.random.rand(1, 2, 3)
+    scal = np.array([1, 1, 1, 1, 1], dtype=np.int32)
+    tester(arr, scal)
+    assert arr[0, 1, 0] == 1
+
+
 if __name__ == "__main__":
     test_indirection_scalar()
     test_indirection_scalar_assign()
     test_indirection_scalar_augassign()
     test_indirection_scalar_nsdfg()
+    test_indirection_scalar2_nsdfg()
     test_indirection_scalar_assign_nsdfg()
     test_indirection_scalar_augassign_nsdfg()
     test_indirection_scalar_multi()
@@ -393,3 +433,4 @@ if __name__ == "__main__":
     test_indirection_array_nested()
     test_indirection_array_nested_nsdfg()
     test_spmv()
+    test_indirection_size_1()

@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace.library
 
 
@@ -24,7 +24,7 @@ class cuSolverDn:
     def handle_setup_code(node):
         location = node.location
         if not location or "gpu" not in node.location:
-            location = 0
+            location = -1  # -1 means current device
         else:
             try:
                 location = int(location["gpu"])

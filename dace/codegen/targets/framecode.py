@@ -20,7 +20,6 @@ from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -83,7 +82,10 @@ class DaCeCodeGenerator(object):
         k = id(obj)
         if k in self.fsyms:
             return self.fsyms[k]
-        result = obj.free_symbols
+        if hasattr(obj, 'used_symbols'):
+            result = obj.used_symbols(all_symbols=False)
+        else:
+            result = obj.free_symbols
         self.fsyms[k] = result
         return result
 
@@ -151,15 +153,23 @@ class DaCeCodeGenerator(object):
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
+        
+        def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
+            if isinstance(dtype, dtypes.pointer):
+                wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
+            elif isinstance(dtype, dtypes.struct):
+                for field in dtype.fields.values():
+                    wrote_something = _emit_definitions(field, wrote_something)
+            if hasattr(dtype, 'emit_definition'):
+                if not wrote_something:
+                    global_stream.write("", sdfg)
+                global_stream.write(dtype.emit_definition(), sdfg)
+            return wrote_something
 
         # Emit unique definitions
         wrote_something = False
         for typ in datatypes:
-            if hasattr(typ, 'emit_definition'):
-                if not wrote_something:
-                    global_stream.write("", sdfg)
-                wrote_something = True
-                global_stream.write(typ.emit_definition(), sdfg)
+            wrote_something = _emit_definitions(typ, wrote_something)
         if wrote_something:
             global_stream.write("", sdfg)
 
@@ -296,8 +306,9 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
     return __state;
 }}
 
-DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
+DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 {{
+    int __err = 0;
 """, sdfg)
 
         # Instrumentation saving
@@ -316,7 +327,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
-                callsite_stream.write('__dace_exit_%s(__state);' % target.target_name, sdfg)
+                callsite_stream.write(
+                    f'''
+    int __err_{target.target_name} = __dace_exit_{target.target_name}(__state);
+    if (__err_{target.target_name}) {{
+        __err = __err_{target.target_name};
+    }}
+''', sdfg)
         for env in reversed(self.environments):
             finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
             if finalize_code:
@@ -324,7 +341,59 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
-        callsite_stream.write('delete __state;\n}\n', sdfg)
+        callsite_stream.write('delete __state;\n', sdfg)
+        callsite_stream.write('return __err;\n}\n', sdfg)
+
+    def generate_external_memory_management(self, sdfg: SDFG, callsite_stream: CodeIOStream):
+        """
+        If external data descriptors are found in the SDFG (or any nested SDFGs),
+        this function will generate exported functions to (1) get the required memory size
+        per storage location (``__dace_get_external_memory_size_<STORAGE>``, where ``<STORAGE>``
+        can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
+        pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
+        """
+        
+        # Collect external arrays
+        ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
+        for subsdfg, aname, arr in sdfg.arrays_recursive():
+            if arr.lifetime == dtypes.AllocationLifetime.External:
+                ext_arrays[arr.storage].append((subsdfg, aname, arr))
+
+        # Only generate functions as necessary
+        if not ext_arrays:
+            return
+
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparams_comma = (', ' + initparams) if initparams else ''
+
+        for storage, arrays in ext_arrays.items():
+            size = 0
+            for subsdfg, aname, arr in arrays:
+                size += arr.total_size * arr.dtype.bytes
+
+            # Size query functions
+            callsite_stream.write(
+                f'''
+DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({sdfg.name}_t *__state{initparams_comma})
+{{
+    return {sym2cpp(size)};
+}}
+''', sdfg)
+
+            # Pointer set functions
+            callsite_stream.write(
+                f'''
+DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__state, char *ptr{initparams_comma})
+{{''', sdfg)
+            
+            offset = 0
+            for subsdfg, aname, arr in arrays:
+                allocname = f'__state->__{subsdfg.sdfg_id}_{aname}'
+                callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
+                offset += arr.total_size * arr.dtype.bytes
+            
+            # Footer
+            callsite_stream.write('}', sdfg)
 
     def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
 
@@ -402,7 +471,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state,
+            cft = cflow.GeneralBlock(dispatch_state, None,
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [], False)
 
@@ -425,7 +494,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
             if sdfg.parent_nsdfg_node is None:
                 return TOP_SCHEDULE
-            return (sdfg.parent_nsdfg_node.schedule or TOP_SCHEDULE)
+
+            # Go one SDFG up
+            pstate = sdfg.parent
+            pscope = pstate.entry_node(sdfg.parent_nsdfg_node)
+            if pscope is not None:
+                return self._get_schedule(pscope)
+            return self._get_schedule(pstate)
         else:
             raise TypeError
 
@@ -512,7 +587,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
 
             # Cases
-            if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                 # Persistent memory is allocated in initialization code and
                 # exists in the library state structure
 
@@ -674,7 +749,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     instances = access_instances[sdfg.sdfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
-                    if isinstance(desc, data.View):
+                    if isinstance(desc, (data.StructureView, data.View)):
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
@@ -859,6 +934,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
+            self.generate_external_memory_management(sdfg, footer_stream)
 
             header_global_stream.write(global_stream.getvalue())
             header_global_stream.write(footer_global_stream.getvalue())

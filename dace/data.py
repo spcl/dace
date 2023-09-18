@@ -1,10 +1,11 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import copy as cp
 import ctypes
 import functools
-import re
+
+from collections import OrderedDict
 from numbers import Number
-from typing import Any, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy
 import sympy as sp
@@ -17,8 +18,8 @@ except (ModuleNotFoundError, ImportError):
 import dace.dtypes as dtypes
 from dace import serialize, symbolic
 from dace.codegen import cppunparse
-from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty, Property,
-                             ReferenceProperty, ShapeProperty, SubsetProperty, SymbolicProperty, TypeClassProperty,
+from dace.properties import (DebugInfoProperty, DictProperty, EnumProperty, ListProperty, NestedDataClassProperty,
+                             OrderedDictProperty, Property, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              make_properties)
 
 
@@ -243,14 +244,26 @@ class Data:
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
 
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        """
+        Returns a set of symbols that are used by this data descriptor.
+
+        :param all_symbols: Include not-strictly-free symbols that are used by this data descriptor,
+                            e.g., shape and size of a global array.
+        :return: A set of symbols that are used by this data descriptor. NOTE: The results are symbolic
+                 rather than a set of strings.
+        """
+        result = set()
+        if self.transient or all_symbols:
+            for s in self.shape:
+                if isinstance(s, sp.Basic):
+                    result |= set(s.free_symbols)
+        return result
+
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
         """ Returns a set of undefined symbols in this data descriptor. """
-        result = set()
-        for s in self.shape:
-            if isinstance(s, sp.Basic):
-                result |= set(s.free_symbols)
-        return result
+        return self.used_symbols(all_symbols=True)
 
     def __repr__(self):
         return 'Abstract Data Container, DO NOT USE'
@@ -340,6 +353,157 @@ class Data:
         new_desc = cp.deepcopy(self)
         new_desc.storage = storage
         return new_desc
+
+
+def _arrays_to_json(arrays):
+    if arrays is None:
+        return None
+    return [(k, serialize.to_json(v)) for k, v in arrays.items()]
+
+
+def _arrays_from_json(obj, context=None):
+    if obj is None:
+        return {}
+    return OrderedDict((k, serialize.from_json(v, context)) for k, v in obj)
+
+
+@make_properties
+class Structure(Data):
+    """ Base class for structures. """
+
+    members = OrderedDictProperty(default=OrderedDict(),
+                                  desc="Dictionary of structure members",
+                                  from_json=_arrays_from_json,
+                                  to_json=_arrays_to_json)
+    name = Property(dtype=str, desc="Structure type name")
+
+    def __init__(self,
+                 members: Union[Dict[str, Data], List[Tuple[str, Data]]],
+                 name: str = 'Structure',
+                 transient: bool = False,
+                 storage: dtypes.StorageType = dtypes.StorageType.Default,
+                 location: Dict[str, str] = None,
+                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 debuginfo: dtypes.DebugInfo = None):
+
+        self.members = OrderedDict(members)
+        for k, v in self.members.items():
+            v.transient = transient
+
+        self.name = name
+        fields_and_types = OrderedDict()
+        symbols = set()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (v.dtype, str(v.total_size))
+            elif isinstance(v, Array):
+                symbols |= v.free_symbols
+                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+            elif isinstance(v, Scalar):
+                symbols |= v.free_symbols
+                fields_and_types[k] = v.dtype
+            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+                symbols |= v.free_symbols
+                fields_and_types[k] = symbolic.symtype(v)
+            elif isinstance(v, (int, numpy.integer)):
+                fields_and_types[k] = dtypes.typeclass(type(v))
+            else:
+                raise TypeError(f"Attribute {k}'s value {v} has unsupported type: {type(v)}")
+        
+        # NOTE: We will not store symbols in the dtype for now, but leaving it as a comment to investigate later.
+        # NOTE: See discussion about data/object symbols.
+        # for s in symbols:
+        #     if str(s) in fields_and_types:
+        #         continue
+        #     if hasattr(s, "dtype"):
+        #         fields_and_types[str(s)] = s.dtype
+        #     else:
+        #         fields_and_types[str(s)] = dtypes.int32
+
+        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        shape = (1,)
+        super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+    
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'Structure':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = Structure({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    @property
+    def total_size(self):
+        return -1
+
+    @property
+    def offset(self):
+        return [0]
+
+    @property
+    def start_offset(self):
+        return 0
+
+    @property
+    def strides(self):
+        return [1]
+    
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        """ Returns a set of undefined symbols in this data descriptor. """
+        result = set()
+        for k, v in self.members.items():
+            result |= v.free_symbols
+        return result
+
+    def __repr__(self):
+        return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if not with_types or for_call:
+            return name
+        return self.dtype.as_arg(name)
+
+    def __getitem__(self, s):
+        """ This is syntactic sugar that allows us to define an array type
+            with the following syntax: ``Structure[N,M]``
+            :return: A ``data.StructArray`` data descriptor.
+        """
+        if isinstance(s, list) or isinstance(s, tuple):
+            return StructArray(self, tuple(s))
+        return StructArray(self, (s, ))
+
+
+@make_properties
+class StructureView(Structure):
+    """ 
+    Data descriptor that acts as a reference (or view) of another structure.
+    """
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'StructureView':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = StructureView({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
 
 
 @make_properties
@@ -689,19 +853,22 @@ class Array(Data):
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
-    @property
-    def free_symbols(self):
-        result = super().free_symbols
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        result = super().used_symbols(all_symbols)
         for s in self.strides:
             if isinstance(s, sp.Expr):
                 result |= set(s.free_symbols)
-        if isinstance(self.total_size, sp.Expr):
-            result |= set(self.total_size.free_symbols)
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
-
+        if self.transient or all_symbols:
+            if isinstance(self.total_size, sp.Expr):
+                result |= set(self.total_size.free_symbols)
         return result
+
+    @property
+    def free_symbols(self):
+        return self.used_symbols(all_symbols=True)
 
     def _set_shape_dependent_properties(self, shape, strides, total_size, offset):
         """
@@ -890,16 +1057,69 @@ class Stream(Data):
 
         return True
 
-    @property
-    def free_symbols(self):
-        result = super().free_symbols
-        if isinstance(self.buffer_size, sp.Expr):
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        result = super().used_symbols(all_symbols)
+        if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
             result |= set(self.buffer_size.free_symbols)
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
 
         return result
+
+    @property
+    def free_symbols(self):
+        return self.used_symbols(all_symbols=True)
+
+
+@make_properties
+class StructArray(Array):
+    """ Array of Structures. """
+
+    stype = NestedDataClassProperty(allow_none=True, default=None)
+
+    def __init__(self,
+                 stype: Structure,
+                 shape,
+                 transient=False,
+                 allow_conflicts=False,
+                 storage=dtypes.StorageType.Default,
+                 location=None,
+                 strides=None,
+                 offset=None,
+                 may_alias=False,
+                 lifetime=dtypes.AllocationLifetime.Scope,
+                 alignment=0,
+                 debuginfo=None,
+                 total_size=-1,
+                 start_offset=None,
+                 optional=None,
+                 pool=False):
+
+        self.stype = stype
+        if stype:
+            dtype = stype.dtype
+        else:
+            dtype = dtypes.int8
+        super(StructArray, self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset,
+                                          may_alias, lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+    
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        # Create dummy object
+        ret = cls(None, ())
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        # Default shape-related properties
+        if not ret.offset:
+            ret.offset = [0] * len(ret.shape)
+        if not ret.strides:
+            # Default strides are C-ordered
+            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
+        if ret.total_size == 0:
+            ret.total_size = _prod(ret.shape)
+        
+        return ret
 
 
 @make_properties

@@ -20,6 +20,11 @@ class ExpandIrecvMPI(ExpandTransformation):
 
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
+        
+        comm = "MPI_COMM_WORLD"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
+
         code = ""
         if ddt is not None:
             code = f"""static MPI_Datatype newtype;
@@ -33,7 +38,7 @@ class ExpandIrecvMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0  #this is here because the frontend already changes the pointer
-        code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, _src, _tag, MPI_COMM_WORLD, _request);"
+        code += f"MPI_Irecv(_buffer, {count_str}, {mpi_dtype_str}, int(_src), int(_tag), {comm}, _request);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
@@ -58,8 +63,11 @@ class Irecv(MPINode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, *args, **kwargs):
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer", "_request"}, **kwargs)
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """

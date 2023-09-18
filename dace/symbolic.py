@@ -4,7 +4,7 @@ from functools import lru_cache
 import sympy
 import pickle
 import re
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, Union
 import warnings
 import numpy
 
@@ -359,6 +359,14 @@ def evaluate(expr: Union[sympy.Basic, int, float],
             sval.get() if isinstance(sval, symbol) else sval
             for sname, sval in symbols.items()}
 
+    # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
+    syms = {
+        k: v
+        for k, v in syms.items() if not (v is None or isinstance(v, (Callable, Iterable))) or isinstance(v, str)
+    }
+    # Convert strings to SymPy symbols (for SymPy 1.12)
+    syms = {k: sympy.Symbol(v) if isinstance(v, str) else v for k, v in syms.items()}
+
     return expr.subs(syms)
 
 
@@ -649,6 +657,21 @@ class AND(sympy.Function):
 
     def _eval_is_boolean(self):
         return True
+
+class IfExpr(sympy.Function):
+
+    @classmethod
+    def eval(cls, x, y, z):
+        """
+        Evaluates a ternary operator.
+
+        :param x: Predicate.
+        :param y: If true return this.
+        :param z: If false return this.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Boolean:
+            return (y if x else z)
 
 
 class BitwiseAnd(sympy.Function):
@@ -960,6 +983,9 @@ class SympyBooleanConverter(ast.NodeTransformer):
     def visit_NameConstant(self, node):
         return self.visit_Constant(node)
 
+    def visit_IfExp(self, node):
+        new_node = ast.Call(func=ast.Name(id='IfExpr', ctx=ast.Load), args=[node.test, node.body, node.orelse], keywords=[])
+        return ast.copy_location(new_node, node)
 
 class BitwiseOpConverter(ast.NodeTransformer):
     """ 
@@ -1042,6 +1068,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'RightShift': RightShift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
+        'IfExpr': IfExpr,
         'Mod': sympy.Mod,
     }
     # _clash1 enables all one-letter variables like N as symbols
@@ -1051,7 +1078,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     if isinstance(expr, str):
         # Sympy processes "not/and/or" as direct evaluation. Replace with
         # And/Or(x, y), Not(x)
-        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
+        if re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b', expr):
             expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
 
         # NOTE: If the expression contains bitwise operations, replace them with user-functions.
@@ -1329,3 +1356,27 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
         # We subtract and compare to zero according to the SymPy documentation
         # (https://docs.sympy.org/latest/tutorial/gotchas.html).
         return (a - b).simplify() != 0
+
+
+def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[bool, None]:
+    """
+    Compares 2 symbolic expressions and returns True if they are equal, False if they are inequal,
+    and None if the comparison is inconclusive.
+
+    :param a: First symbolic expression.
+    :param b: Second symbolic expression.
+    :param is_length: If True, the assumptions that a, b are integers and positive are made.
+    """
+
+    args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+
+    if any([args is None for args in args]):
+        return False
+
+    facts = []
+    if is_length:
+        for arg in args:
+            facts += [sympy.Q.integer(arg), sympy.Q.positive(arg)]
+    
+    with sympy.assuming(*facts):
+        return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))

@@ -569,6 +569,11 @@ namespace dace
         {
           return std::log(a);
         }
+        template<typename T>
+        DACE_CONSTEXPR DACE_HDFI T log10(const T& a)
+        {
+          return std::log10(a);
+        }
     }
 
     namespace cmath

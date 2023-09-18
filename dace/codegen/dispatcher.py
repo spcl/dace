@@ -19,12 +19,13 @@ class DefinedType(aenum.AutoNumberEnum):
     
         :see: DefinedMemlets
     """
-    Pointer = ()
-    Scalar = ()
-    Stream = ()
-    StreamArray = ()
-    FPGA_ShiftRegister = ()
-    ArrayInterface = ()
+    Pointer = ()  # Pointer
+    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
+    Object = ()   # An object moved by reference
+    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    StreamArray = ()  # An array of Streams
+    FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
+    ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 
 class DefinedMemlets:
@@ -32,6 +33,7 @@ class DefinedMemlets:
         referenced correctly in nested scopes and SDFGs.
         The ones defined in the first (top) scope, refer to global variables.
     """
+
     def __init__(self):
         self._scopes = [(None, {}, True), (None, {}, True)]
 
@@ -142,6 +144,7 @@ class DefinedMemlets:
 class TargetDispatcher(object):
     """ Dispatches sub-SDFG generation (according to scope),
         storage<->storage copies, and storage<->tasklet copies to targets. """
+
     def __init__(self, framecode):
         # Avoid import loop
         from dace.codegen.targets import framecode as fc
@@ -215,7 +218,8 @@ class TargetDispatcher(object):
         """
 
         if not hasattr(dispatcher, "generate_state"):
-            raise TypeError("State dispatcher \"{}\" does not " "implement \"generate_state\"".format(dispatcher))
+            raise TypeError("State dispatcher \"{}\" does not "
+                            "implement \"generate_state\"".format(dispatcher))
         if predicate is None:
             self._generic_state_dispatcher = dispatcher
         else:
@@ -241,7 +245,8 @@ class TargetDispatcher(object):
             :see: TargetCodeGenerator
         """
         if not hasattr(dispatcher, "generate_node"):
-            raise TypeError("Node dispatcher must " "implement \"generate_node\"")
+            raise TypeError("Node dispatcher must "
+                            "implement \"generate_node\"")
         if predicate is None:
             self._generic_node_dispatcher = dispatcher
         else:
@@ -448,9 +453,12 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for data allocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             declaration_stream = CodeIOStream()
             callsite_stream = self.frame._initcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            declaration_stream = CodeIOStream()
+            callsite_stream = CodeIOStream()
         else:
             declaration_stream = callsite_stream
 
@@ -468,8 +476,10 @@ class TargetDispatcher(object):
         """ Dispatches a code generator for a data deallocation. """
         self._used_targets.add(self._array_dispatchers[datadesc.storage])
 
-        if datadesc.lifetime is dtypes.AllocationLifetime.Persistent:
+        if datadesc.lifetime == dtypes.AllocationLifetime.Persistent:
             callsite_stream = self.frame._exitcode
+        elif datadesc.lifetime == dtypes.AllocationLifetime.External:
+            return
 
         self._array_dispatchers[datadesc.storage].deallocate_array(sdfg, dfg, state_id, node, datadesc, function_stream,
                                                                    callsite_stream)
@@ -495,11 +505,11 @@ class TargetDispatcher(object):
             dst_is_data = True
 
         # Skip copies to/from views where edge matches
-        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
+        if src_is_data and isinstance(src_node.desc(sdfg), (dt.StructureView, dt.View)):
             e = sdutil.get_view_edge(state, src_node)
             if e is edge:
                 return None
-        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
+        if dst_is_data and isinstance(dst_node.desc(sdfg), (dt.StructureView, dt.View)):
             e = sdutil.get_view_edge(state, dst_node)
             if e is edge:
                 return None

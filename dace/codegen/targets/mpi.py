@@ -46,7 +46,7 @@ int __dace_comm_rank = 0;
 {file_header}
 
 DACE_EXPORTED int __dace_init_mpi({sdfg.name}_t *__state{params});
-DACE_EXPORTED void __dace_exit_mpi({sdfg.name}_t *__state);
+DACE_EXPORTED int __dace_exit_mpi({sdfg.name}_t *__state);
 
 int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
     int isinit = 0;
@@ -66,12 +66,13 @@ int __dace_init_mpi({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-void __dace_exit_mpi({sdfg.name}_t *__state) {{
+int __dace_exit_mpi({sdfg.name}_t *__state) {{
     MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
+    return 0;
 }}
 """.format(params=params_comma, sdfg=sdfg, file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
         return [codeobj]

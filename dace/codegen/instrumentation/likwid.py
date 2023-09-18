@@ -4,13 +4,63 @@
 """
 
 import dace
-from dace import dtypes, registry
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.config import Config
-
-from dace.transformation import helpers as xfh
+import os
+import ctypes.util
 
 from pathlib import Path
+
+from dace import dtypes, registry, library
+from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.config import Config
+from dace.transformation import helpers as xfh
+
+
+@library.environment
+class LIKWID:
+    """ 
+    An environment for LIKWID
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    headers = ["likwid.h"]
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = []
+
+    @staticmethod
+    def cmake_includes():
+        # Anaconda
+        if 'CONDA_PREFIX' in os.environ:
+            base_path = os.environ['CONDA_PREFIX']
+            # Anaconda on Windows
+            candpath = os.path.join(base_path, 'Library', 'include')
+            if os.path.isfile(os.path.join(candpath, 'likwid.h')):
+                return [candpath]
+            # Anaconda on other platforms
+            candpath = os.path.join(base_path, 'include')
+            if os.path.isfile(os.path.join(candpath, 'likwid.h')):
+                return [candpath]
+
+        return []
+
+    @staticmethod
+    def cmake_libraries():
+        path = ctypes.util.find_library('likwid')
+        if path:
+            return [path]
+
+        return []
+
+    @staticmethod
+    def is_installed():
+        return len(LIKWID.cmake_libraries()) > 0
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_CPU)
@@ -19,34 +69,28 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         the Likwid tool.
     """
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._likwid_used = False
         self._regions = []
-
-    def configure_likwid(self):
-        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_PERFMON -fopenmp ')
-
-        # Link with liblikwid
-        Config.append('compiler', 'cpu', 'libs', value=' likwid ')
 
         try:
             self._default_events = Config.get('instrumentation', 'likwid', 'default_events')
         except KeyError:
             self._default_events = "CLOCK"
 
-        self._likwid_used = True
-
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is not None:
             return
 
         # Configure CMake project and counters
-        self.configure_likwid()
-
+        self._likwid_used = LIKWID.is_installed()
         if not self._likwid_used:
             return
+
+        codegen.dispatcher.used_environments.add(LIKWID.full_class_path())
+        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_PERFMON -fopenmp ')
 
         self.codegen = codegen
 
@@ -62,7 +106,7 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
 #include <string>
 #include <sys/types.h>
 
-#define MAX_NUM_EVENTS 64
+#define MAX_NUM_EVENTS 256
 '''
         global_stream.write(header_code, sdfg)
 
@@ -276,28 +320,22 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
         self._likwid_used = False
         self._regions = []
 
-    def configure_likwid(self):
-        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_NVMON ')
-
-        # Link with liblikwid
-        Config.append('compiler', 'cpu', 'libs', value=' likwid ')
-
         try:
             self._default_events = Config.get('instrumentation', 'likwid', 'default_events')
         except KeyError:
             self._default_events = "FLOPS_SP"
-
-        self._likwid_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is not None:
             return
 
         # Configure CMake project and counters
-        self.configure_likwid()
-
+        self._likwid_used = LIKWID.is_installed()
         if not self._likwid_used:
             return
+
+        codegen.dispatcher.used_environments.add(LIKWID.full_class_path())
+        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_NVMON ')
 
         self.codegen = codegen
 

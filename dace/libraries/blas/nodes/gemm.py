@@ -1,8 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from typing import Any, Dict, Optional
 from dace import dtypes, memlet as mm, properties, data as dt
-from dace.symbolic import symstr
+from dace.symbolic import symstr, equal
 import dace.library
 from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
@@ -13,7 +12,7 @@ from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
-from numbers import Number
+import warnings
 
 
 def _is_complex(dtype):
@@ -65,7 +64,13 @@ class ExpandGemmPure(ExpandTransformation):
         else:
             trans_shape_b = shape_b
 
-        if (len(trans_shape_a) != 2 or len(trans_shape_b) != 2 or trans_shape_a[1] != trans_shape_b[0]):
+        if len(trans_shape_a) != 2 or len(trans_shape_b) != 2:
+            raise SyntaxError("Matrix sizes must match")
+        res = equal(trans_shape_a[1], trans_shape_b[0])
+        if res is None:
+            warnings.warn(f"First matrix columns {trans_shape_a[1]} may not match "
+                          f"second matrix rows {trans_shape_b[0]}", UserWarning)
+        elif not res:
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
         shape_c = (M, N)
@@ -87,7 +92,7 @@ class ExpandGemmPure(ExpandTransformation):
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        if node.beta != 0:
+        if '_cin' in node.in_connectors:
             sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
@@ -179,11 +184,11 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         code = ''
         if dtype in (dace.complex64, dace.complex128):
             code = f'''
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
+            {dtype.ctype} __alpha = {alpha};
+            {dtype.ctype} __beta = {beta};
             '''
-            opt['alpha'] = '&alpha'
-            opt['beta'] = '&beta'
+            opt['alpha'] = '&__alpha'
+            opt['beta'] = '&__beta'
 
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
                  "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
@@ -282,12 +287,12 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
             # Set pointer mode to host
             call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
+            {dtype.ctype} __alpha = {alpha};
+            {dtype.ctype} __beta = {beta};
             '''
             call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
-            alpha = f'({cdtype} *)&alpha'
-            beta = f'({cdtype} *)&beta'
+            alpha = f'({cdtype} *)&__alpha'
+            beta = f'({cdtype} *)&__beta'
         else:
             alpha = constants[node.alpha]
             beta = constants[node.beta]
@@ -1032,25 +1037,39 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
-        if size0[1] != size1[0]:
-            raise ValueError("Inputs to matrix-matrix product "
-                             "must agree in the k-dimension")
+        res = equal(size0[1], size1[0])
+        if res is None:
+            warnings.warn(f'First matrix columns {size0[1]} and second matrix rows {size1[0]} may not match',
+                          UserWarning)
+        elif not res:
+            raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size3 = out_subset.size()
-        if size2 is not None and size2 != size3:
-            raise ValueError("Input C matrix must match output matrix.")
+        if size2 is not None:
+            res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
+            fail = any([r is False for r in res])
+            success = all([r is True for r in res])
+            if fail:
+                raise ValueError("Input C matrix must match output matrix.")
+            elif not success:
+                warnings.warn(f"Size of input C matrix {size2} may not match output matrix size {size3}", UserWarning)
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
-        if len(size3) == 2 and list(size3) != [size0[-2], size1[-1]]:
-            raise ValueError("Output to matrix-matrix product must agree in the m and n "
-                             "dimensions")
+        if len(size3) == 2:
+            res = [equal(s0, s1) for s0, s1 in zip(size3, [size0[-2], size1[-1]])]
+            fail = any([r is False for r in res])
+            success = all([r is True for r in res])
+            if fail:
+                raise ValueError("Output to matrix-matrix product must agree in the m and n dimensions")
+            elif not success:
+                warnings.warn(f'Size of output {size3} may not match input {size0} @ {size1}', UserWarning)
 
 
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemv_libnode(pv: 'ProgramVisitor',
+def gemm_libnode(pv: 'ProgramVisitor',
                  sdfg: SDFG,
                  state: SDFGState,
                  A,

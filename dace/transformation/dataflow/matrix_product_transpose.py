@@ -17,10 +17,11 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         T(A) @ T(B) = T(B @ A)
     """
     import dace.libraries.blas as blas  # Avoid slow imports
+    import dace.libraries.standard as std  # Avoid slow imports
 
-    transpose_a = transformation.PatternNode(blas.Transpose)
+    transpose_a = transformation.PatternNode(std.Transpose)
     at = transformation.PatternNode(nodes.AccessNode)
-    transpose_b = transformation.PatternNode(blas.Transpose)
+    transpose_b = transformation.PatternNode(std.Transpose)
     bt = transformation.PatternNode(nodes.AccessNode)
     a_times_b = transformation.PatternNode(blas.MatMul)
 
@@ -57,7 +58,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        import dace.libraries.blas as blas
+        import dace.libraries.standard as std
 
         transpose_a = self.transpose_a
         _at = self.at
@@ -82,7 +83,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
             break
         tmp_name, tmp_arr = sdfg.add_temp_transient(shape, a_times_b.dtype)
         tmp_acc = graph.add_access(tmp_name)
-        transpose_c = blas.Transpose('_Transpose_', a_times_b.dtype)
+        transpose_c = std.Transpose('_Transpose_', a_times_b.dtype)
         for edge in graph.out_edges(a_times_b):
             _, _, dst, dst_conn, memlet = edge
             graph.remove_edge(edge)

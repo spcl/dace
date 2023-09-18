@@ -1,13 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic
+from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
+from sympy import floor
 from typing import Dict
 
 gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
@@ -162,6 +163,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         output_nodes = []
         global_code_nodes: Dict[sd.SDFGState, nodes.Tasklet] = defaultdict(list)
 
+        # Propagate memlets to ensure that we can find the true array subsets that are written.
+        propagate_memlets_sdfg(sdfg)
+
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -191,11 +195,14 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 1: Create cloned GPU arrays and replace originals
 
+        data_already_on_gpu = {}
+
         cloned_arrays = {}
         for inodename, inode in set(input_nodes):
-            if isinstance(inode, data.Scalar):  # Scalars can remain on host
-                continue
             if inode.storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[inodename] = None
+                continue
+            if isinstance(inode, data.Scalar):  # Scalars can remain on host
                 continue
             newdesc = inode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
@@ -204,15 +211,50 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             cloned_arrays[inodename] = name
 
         for onodename, onode in set(output_nodes):
-            if onodename in cloned_arrays:
-                continue
             if onode.storage == dtypes.StorageType.GPU_Global:
+                data_already_on_gpu[onodename] = None
+                continue
+            if onodename in cloned_arrays:
                 continue
             newdesc = onode.clone()
             newdesc.storage = dtypes.StorageType.GPU_Global
             newdesc.transient = True
             name = sdfg.add_datadesc('gpu_' + onodename, newdesc, find_new_name=True)
             cloned_arrays[onodename] = name
+
+            # The following ensures that when writing to a subset of an array, we don't overwrite the rest of the array
+            # when copying back to the host. This is done by adding the array to the `inputs_nodes,` which will copy
+            # the entire array to the GPU.
+            if (onodename, onode) not in input_nodes:
+                found_full_write = False
+                full_subset = sbs.Range.from_array(onode)
+                try:
+                    for state in sdfg.nodes():
+                        for node in state.nodes():
+                            if (isinstance(node, nodes.AccessNode) and node.data == onodename):
+                                for e in state.in_edges(node):
+                                    if e.data.get_dst_subset(e, state) == full_subset:
+                                        is_full = True
+                                        for pe in state.memlet_tree(e):
+                                            vol = pe.data.volume
+                                            size = pe.data.get_dst_subset(pe, state).num_elements()
+                                            if pe.data.dynamic or vol / size != floor(vol / size):
+                                                is_full = False
+                                                break
+                                        if not is_full:
+                                            continue
+                                        found_full_write = True
+                                        raise StopIteration
+                except StopIteration:
+                    assert found_full_write
+                if not found_full_write:
+                    input_nodes.append((onodename, onode))
+
+        for edge in sdfg.edges():
+            memlets = edge.data.get_read_memlets(sdfg.arrays)
+            for mem in memlets:
+                if sdfg.arrays[mem.data].storage == dtypes.StorageType.GPU_Global:
+                    data_already_on_gpu[mem.data] = None
 
         # Replace nodes
         for state in sdfg.nodes():
@@ -427,7 +469,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges
 
-        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys())
+        cloned_data = set(cloned_arrays.keys()).union(gpu_scalars.keys()).union(data_already_on_gpu.keys())
 
         for state in list(sdfg.nodes()):
             arrays_used = set()
@@ -458,6 +500,17 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             desc.transient = True
                             hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
                             gpu_scalars[nname] = hostname
+                        else:
+                            desc = sdfg.arrays[hostname]
+                        devicename = nname
+                    elif nname in data_already_on_gpu:
+                        hostname = data_already_on_gpu[nname]
+                        if not hostname:
+                            desc = sdfg.arrays[nname].clone()
+                            desc.storage = dtypes.StorageType.CPU_Heap
+                            desc.transient = True
+                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
+                            data_already_on_gpu[nname] = hostname
                         else:
                             desc = sdfg.arrays[hostname]
                         devicename = nname
