@@ -83,7 +83,8 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
-            result = obj.used_symbols(all_symbols=False)[0]
+            intermediate = obj.used_symbols(all_symbols=False)
+            result = intermediate[0] if type(intermediate) is tuple else intermediate
         else:
             result = obj.free_symbols
         self.fsyms[k] = result
