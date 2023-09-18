@@ -20,6 +20,16 @@ opt_levels = {
                                 move_assignment_outside=False, full_cloudsc_fixes=True),
         "name": "baseline"
         },
+    "k-caching": {
+        "run_config": RunConfig(k_caching=True, change_stride=False, outside_loop_first=False,
+                                move_assignment_outside=False, full_cloudsc_fixes=True),
+        "name": "k_caching"
+        },
+    "change-strides": {
+        "run_config": RunConfig(k_caching=False, change_stride=True, outside_loop_first=False,
+                                move_assignment_outside=False, full_cloudsc_fixes=True),
+        "name": "change_strides"
+        },
     "all": {
         "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
         "name": "all_opt"
