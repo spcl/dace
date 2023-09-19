@@ -68,7 +68,7 @@ class SymbolAccessSets(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             adesc = set(sdfg.arrays.keys())
             result: Dict[Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]] = {}
-            for cfg in sdfg.all_cfgs_recursive(recurse_into_sdfgs=False):
+            for cfg in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
                 for block in cfg.nodes():
                     readset = block.free_symbols
                     # No symbols may be written to inside states.

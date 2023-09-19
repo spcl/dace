@@ -3,7 +3,6 @@ from dace.sdfg.nodes import MapEntry
 import dace
 from dace.transformation.interstate import TrivialLoopElimination
 from dace.symbolic import pystr_to_symbolic
-import unittest
 import numpy as np
 
 I = dace.symbol("I")
@@ -17,21 +16,19 @@ def trivial_loop(data: dace.float64[I, J]):
             data[i, j] = data[i, j] + data[i - 1, j]
 
 
-class TrivialLoopEliminationTest(unittest.TestCase):
+def test_semantic_eq():
+    A1 = np.random.rand(16, 16)
+    A2 = np.copy(A1)
 
-    def test_semantic_eq(self):
-        A1 = np.random.rand(16, 16)
-        A2 = np.copy(A1)
+    sdfg = trivial_loop.to_sdfg(simplify=False)
+    sdfg(A1, I=A1.shape[0], J=A1.shape[1])
 
-        sdfg = trivial_loop.to_sdfg(simplify=False)
-        sdfg(A1, I=A1.shape[0], J=A1.shape[1])
+    count = sdfg.apply_transformations(TrivialLoopElimination)
+    assert (count > 0)
+    sdfg(A2, I=A1.shape[0], J=A1.shape[1])
 
-        count = sdfg.apply_transformations(TrivialLoopElimination)
-        self.assertGreater(count, 0)
-        sdfg(A2, I=A1.shape[0], J=A1.shape[1])
-
-        self.assertTrue(np.allclose(A1, A2))
+    assert np.allclose(A1, A2)
 
 
 if __name__ == '__main__':
-    unittest.main()
+    test_semantic_eq()

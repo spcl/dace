@@ -31,7 +31,7 @@ from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
-from dace.sdfg import SDFG, SDFGState, ControlFlowGraph, ControlFlowBlock, LoopScopeBlock, ScopeBlock
+from dace.sdfg import SDFG, SDFGState, ControlFlowBlock, LoopScopeBlock, ScopeBlock
 from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
@@ -2170,7 +2170,7 @@ class ProgramVisitor(ExtNodeVisitor):
                          body: List[ast.AST],
                          name: str,
                          lineno: int,
-                         parent: ControlFlowGraph,
+                         parent: ScopeBlock,
                          unconnected_last_block=True,
                          extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
         """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,

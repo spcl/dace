@@ -968,7 +968,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     def __init__(self,
                  label: str='',
-                 parent: Optional['ControlFlowBlock']=None,
+                 parent: Optional['ScopeBlock']=None,
                  sdfg: Optional['dace.SDFG'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -2228,97 +2228,19 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
 
 @make_properties
-class ControlFlowGraph(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView):
+class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView, ControlFlowBlock):
 
-    def __init__(self):
-        super(ControlFlowGraph, self).__init__()
+    def __init__(self,
+                 label: str='',
+                 parent: Optional['ScopeBlock']=None,
+                 sdfg: Optional['dace.SDFG'] = None):
+        OrderedDiGraph.__init__(self)
+        ControlGraphView.__init__(self)
+        ControlFlowBlock.__init__(self, label, parent, sdfg)
 
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
-
-    ###################################################################
-    # Traversal methods
-
-    def all_cfgs_recursive(self, recurse_into_sdfgs=True) -> Iterator['ControlFlowGraph']:
-        """ Iterate over this and all nested CFGs. """
-        yield self
-        for block in self.nodes():
-            if isinstance(block, SDFGState) and recurse_into_sdfgs:
-                for node in block.nodes():
-                    if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_cfgs_recursive()
-            elif isinstance(block, ControlFlowGraph):
-                yield from block.all_cfgs_recursive()
-
-    def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
-        """ Iterate over this and all nested SDFGs. """
-        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=True):
-            if isinstance(cfg, dace.SDFG):
-                yield cfg
-
-    def all_states_recursive(self) -> Iterator[SDFGState]:
-        """ Iterate over all states in this control flow graph. """
-        for block in self.nodes():
-            if isinstance(block, SDFGState):
-                yield block
-            elif isinstance(block, ControlFlowGraph):
-                yield from block.all_states_recursive()
-
-    def all_control_flow_blocks_recursive(self, recurse_into_sdfgs=True) -> Iterator[ControlFlowBlock]:
-        """ Iterate over all control flow blocks in this control flow graph. """
-        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
-            for block in cfg.nodes():
-                yield block
-
-    def all_interstate_edges_recursive(self, recurse_into_sdfgs=True) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
-        """ Iterate over all interstate edges in this control flow graph. """
-        for cfg in self.all_cfgs_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
-            for edge in cfg.edges():
-                yield edge
-
-    ###################################################################
-    # Getters & setters, overrides
-
-    @property
-    def start_block(self):
-        """ Returns the starting block of this ControlFlowGraph. """
-        if self._cached_start_block is not None:
-            return self._cached_start_block
-
-        source_nodes = self.source_nodes()
-        if len(source_nodes) == 1:
-            self._cached_start_block = source_nodes[0]
-            return source_nodes[0]
-        # If the starting block is ambiguous allow manual override.
-        if self._start_block is not None:
-            self._cached_start_block = self.node(self._start_block)
-            return self._cached_start_block
-        raise ValueError('Ambiguous or undefined starting block for ControlFlowGraph, '
-                         'please use "is_start_block=True" when adding the '
-                         'starting block with "add_state" or "add_node"')
-
-    @start_block.setter
-    def start_block(self, block_id):
-        """ Manually sets the starting block of this ControlFlowGraph.
-
-            :param block_id: The node ID (use `node_id(block)`) of the block to set.
-        """
-        if block_id < 0 or block_id >= self.number_of_nodes():
-            raise ValueError('Invalid state ID')
-        self._start_block = block_id
-        self._cached_start_block = self.node(block_id)
-
-
-@make_properties
-class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
-
-    def __init__(self,
-                 label: str='',
-                 parent: Optional['ControlFlowBlock']=None,
-                 sdfg: Optional['dace.SDFG'] = None):
-        ControlFlowGraph.__init__(self)
-        ControlFlowBlock.__init__(self, label, parent, sdfg)
 
     def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
@@ -2359,6 +2281,92 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         self.add_node(state, is_start_block=is_start_block)
         return state
 
+    def add_state_before(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+        """ Adds a new SDFG state before an existing state, reconnecting predecessors to it instead.
+
+            :param state: The state to prepend the new state before.
+            :param label: State label.
+            :param is_start_state: If True, resets scope block starting state to this state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.in_edges(state):
+            self.remove_edge(e)
+            self.add_edge(e.src, new_state, e.data)
+        # Add unconditional connection between the new state and the current
+        self.add_edge(new_state, state, dace.sdfg.InterstateEdge())
+        return new_state
+
+    def add_state_after(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
+        """ Adds a new SDFG state after an existing state, reconnecting it to the successors instead.
+
+            :param state: The state to append the new state after.
+            :param label: State label.
+            :param is_start_state: If True, resets SDFG starting state to this state.
+            :return: A new SDFGState object.
+        """
+        new_state = self.add_state(label, is_start_state)
+        # Reconnect
+        for e in self.out_edges(state):
+            self.remove_edge(e)
+            self.add_edge(new_state, e.dst, e.data)
+        # Add unconditional connection between the current and the new state
+        self.add_edge(state, new_state, dace.sdfg.InterstateEdge())
+        return new_state
+
+    def add_loop(
+        self,
+        before_state: SDFGState,
+        after_state: SDFGState,
+        loop_var: str,
+        initialize_expr: str,
+        condition_expr: str,
+        increment_expr: str,
+        inverted: bool = False,
+    ):
+        """
+        Helper function that adds a looping state machine around a given state (or sequence of states).
+
+        :param before_state: The state after which the loop should begin, or None if the loop is the first state
+                             (creates an empty state).
+        :param loop_state: The state that begins the loop. See also ``loop_end_state`` if the loop is multi-state.
+        :param after_state: The state that should be invoked after the loop ends, or None if the program should
+                            terminate (creates an empty state).
+        :param loop_var: A name of an inter-state variable to use for the loop. If None, ``initialize_expr`` and
+                         ``increment_expr`` must be None.
+        :param initialize_expr: A string expression that is assigned to ``loop_var`` before the loop begins. If None,
+                                does not define an expression.
+        :param condition_expr: A string condition that occurs every loop iteration. If None, loops forever (undefined
+                               behavior).
+        :param increment_expr: A string expression that is assigned to ``loop_var`` after every loop iteration. If None,
+                               does not define an expression.
+        :param loop_end_state: If the loop wraps multiple states, the state where the loop iteration ends. If None, sets
+                               the end state to ``loop_state`` as well.
+        :return: A 3-tuple of (``before_state``, generated loop guard state, ``after_state``).
+        """
+        # Argument checks
+        if loop_var is None and (initialize_expr or increment_expr):
+            raise ValueError("Cannot initalize or increment an empty loop variable")
+
+        loop_scope = LoopScopeBlock(loop_var=loop_var,
+                                    initialize_expr=initialize_expr,
+                                    update_expr=increment_expr,
+                                    condition_expr=condition_expr,
+                                    inverted=inverted)
+
+        # Handling empty states
+        if before_state is None:
+            before_state = self.add_state()
+        if after_state is None:
+            after_state = self.add_state()
+
+        self.add_node(loop_scope)
+        self.add_edge(before_state, loop_scope)
+        self.add_edge(loop_scope, after_state)
+
+        return before_state, loop_scope, after_state
+
     @abc.abstractmethod
     def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set()
@@ -2394,10 +2402,50 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
         return free_syms, defined_syms, used_before_assignment
 
     def to_json(self, parent=None):
-        graph_json = ControlFlowGraph.to_json(self)
+        graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
         return graph_json
+
+    ###################################################################
+    # Traversal methods
+
+    def all_state_scopes_recursive(self, recurse_into_sdfgs=True) -> Iterator['ScopeBlock']:
+        """ Iterate over this and all nested state scopes. """
+        yield self
+        for block in self.nodes():
+            if isinstance(block, SDFGState) and recurse_into_sdfgs:
+                for node in block.nodes():
+                    if isinstance(node, nd.NestedSDFG):
+                        yield from node.sdfg.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
+            elif isinstance(block, ScopeBlock):
+                yield from block.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
+
+    def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
+        """ Iterate over this and all nested SDFGs. """
+        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=True):
+            if isinstance(cfg, dace.SDFG):
+                yield cfg
+
+    def all_states_recursive(self) -> Iterator[SDFGState]:
+        """ Iterate over all states in this control flow graph. """
+        for block in self.nodes():
+            if isinstance(block, SDFGState):
+                yield block
+            elif isinstance(block, ScopeBlock):
+                yield from block.all_states_recursive()
+
+    def all_control_flow_blocks_recursive(self, recurse_into_sdfgs=True) -> Iterator[ControlFlowBlock]:
+        """ Iterate over all control flow blocks in this control flow graph. """
+        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+            for block in cfg.nodes():
+                yield block
+
+    def all_interstate_edges_recursive(self, recurse_into_sdfgs=True) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
+        """ Iterate over all interstate edges in this control flow graph. """
+        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+            for edge in cfg.edges():
+                yield edge
 
     ###################################################################
     # Getters & setters, overrides
@@ -2407,6 +2455,35 @@ class ScopeBlock(ControlFlowGraph, ControlFlowBlock):
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} ({self.label})'
+
+    @property
+    def start_block(self):
+        """ Returns the starting block of this ControlFlowGraph. """
+        if self._cached_start_block is not None:
+            return self._cached_start_block
+
+        source_nodes = self.source_nodes()
+        if len(source_nodes) == 1:
+            self._cached_start_block = source_nodes[0]
+            return source_nodes[0]
+        # If the starting block is ambiguous allow manual override.
+        if self._start_block is not None:
+            self._cached_start_block = self.node(self._start_block)
+            return self._cached_start_block
+        raise ValueError('Ambiguous or undefined starting block for ControlFlowGraph, '
+                         'please use "is_start_block=True" when adding the '
+                         'starting block with "add_state" or "add_node"')
+
+    @start_block.setter
+    def start_block(self, block_id):
+        """ Manually sets the starting block of this ControlFlowGraph.
+
+            :param block_id: The node ID (use `node_id(block)`) of the block to set.
+        """
+        if block_id < 0 or block_id >= self.number_of_nodes():
+            raise ValueError('Invalid state ID')
+        self._start_block = block_id
+        self._cached_start_block = self.node(block_id)
 
 
 @make_properties
@@ -2424,7 +2501,7 @@ class LoopScopeBlock(ScopeBlock):
                  condition_expr: str,
                  update_expr: str,
                  label: str = '',
-                 parent: Optional[ControlFlowGraph] = None,
+                 parent: Optional[ScopeBlock] = None,
                  sdfg: Optional['dace.SDFG'] = None,
                  inverted: bool = False):
         super(LoopScopeBlock, self).__init__(label, parent, sdfg)

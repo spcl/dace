@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopScopeBlock
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopScopeBlock, ScopeBlock
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -1206,7 +1206,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for cfg in sdfg.all_cfgs_recursive():
+        for cfg in sdfg.all_state_scopes_recursive():
             fusible_states += cfg.number_of_edges()
 
     if progress is True:
@@ -1216,7 +1216,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
-        for cfg in sd.all_cfgs_recursive(recurse_into_sdfgs=False):
+        for cfg in sd.all_state_scopes_recursive(recurse_into_sdfgs=False):
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0
@@ -1476,6 +1476,47 @@ def _tswds_state(
     yield from _traverse(None, symbols)
 
 
+def _tswds_scope_block(
+    sdfg: SDFG,
+    scope: ScopeBlock,
+    symbols: Dict[str, dtypes.typeclass],
+    recursive: bool,
+) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    # Add symbols from inter-state edges along the state machine
+    start_block = scope.start_block
+    visited = set()
+    visited_edges = set()
+    for edge in sdfg.dfs_edges(start_block):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            if isinstance(edge.src, SDFGState):
+                yield from _tswds_state(sdfg, edge.src, symbols, recursive)
+            else:
+                yield from _tswds_scope_block(sdfg, edge.src, symbols, recursive)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+            else:
+                yield from _tswds_scope_block(sdfg, edge.dst, symbols, recursive)
+
+    # If there is only one state, the DFS will miss it
+    if start_block not in visited:
+        if isinstance(start_block, SDFGState):
+            yield from _tswds_state(sdfg, start_block, symbols, recursive)
+        else:
+            yield from _tswds_scope_block(sdfg, start_block, symbols, recursive)
+
+
 def traverse_sdfg_with_defined_symbols(
         sdfg: SDFG,
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
@@ -1490,30 +1531,7 @@ def traverse_sdfg_with_defined_symbols(
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
-    # Add symbols from inter-state edges along the state machine
-    start_state = sdfg.start_state
-    visited = set()
-    visited_edges = set()
-    for edge in sdfg.dfs_edges(start_state):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
-
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
-
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols, recursive)
+    yield from _tswds_scope_block(sdfg, sdfg, symbols, recursive)
 
 
 def is_fpga_kernel(sdfg, state):

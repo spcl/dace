@@ -164,7 +164,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Symbols
         outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
-        for cf in sdfg.all_cfgs_recursive(recurse_into_sdfgs=False):
+        for cf in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
             for ise in cf.edges():
                 outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
@@ -189,12 +189,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect and modify interstate edges as necessary
 
         outer_assignments = set()
-        for cf in sdfg.all_cfgs_recursive():
+        for cf in sdfg.all_state_scopes_recursive():
             for e in cf.edges():
                 outer_assignments |= e.data.assignments.keys()
 
         inner_assignments = set()
-        for cf in nsdfg.all_cfgs_recursive():
+        for cf in nsdfg.all_state_scopes_recursive():
             for e in cf.edges():
                 inner_assignments |= e.data.assignments.keys()
 
@@ -237,7 +237,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
-        for cf in nsdfg.all_cfgs_recursive():
+        for cf in nsdfg.all_state_scopes_recursive():
             for nblock in cf.nodes():
                 for node in nblock.nodes():
                     if isinstance(node, nodes.AccessNode):
@@ -413,7 +413,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #                                     e.data, outer_edge.data)
 
         # Replace nested SDFG parents and SDFG pointers.
-        for cf in nsdfg.all_cfgs_recursive():
+        for cf in nsdfg.all_state_scopes_recursive():
             for nblock in cf.nodes():
                 nblock.parent = cf
                 nblock.sdfg = sdfg

@@ -1110,7 +1110,7 @@ class SDFG(ScopeBlock):
 
         # Verify that there are no access nodes that use this data
         if validate:
-            for state in self.nodes():
+            for state in self.states():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError(f"Cannot remove data descriptor "
@@ -1222,9 +1222,9 @@ class SDFG(ScopeBlock):
             self._cached_start_block = None
         return super().remove_node(node)
 
-    def states(self):
-        """ Alias that returns the nodes (states) in this SDFG. """
-        return self.nodes()
+    def states(self) -> Iterator[SDFGState]:
+        """ Returns the states in this SDFG, recursing into state scope blocks. """
+        return self.all_states_recursive()
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within
@@ -1507,46 +1507,6 @@ class SDFG(ScopeBlock):
 
     # Dynamic SDFG creation API
     ##############################
-    def add_state(self, label=None, is_start_block=False) -> 'SDFGState':
-        return super().add_state(label, is_start_block)
-
-    def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state before an existing state, reconnecting
-            predecessors to it instead.
-
-            :param state: The state to prepend the new state before.
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        new_state = self.add_state(label, is_start_state)
-        # Reconnect
-        for e in self.in_edges(state):
-            self.remove_edge(e)
-            self.add_edge(e.src, new_state, e.data)
-        # Add unconditional connection between the new state and the current
-        self.add_edge(new_state, state, InterstateEdge())
-        return new_state
-
-    def add_state_after(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state after an existing state, reconnecting
-            it to the successors instead.
-
-            :param state: The state to append the new state after.
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        new_state = self.add_state(label, is_start_state)
-        # Reconnect
-        for e in self.out_edges(state):
-            self.remove_edge(e)
-            self.add_edge(new_state, e.dst, e.data)
-        # Add unconditional connection between the current and the new state
-        self.add_edge(state, new_state, InterstateEdge())
-        return new_state
 
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
@@ -1993,69 +1953,6 @@ class SDFG(ScopeBlock):
         self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
         return rdistrarray_name
 
-    def add_loop(
-        self,
-        before_state,
-        after_state,
-        loop_var: str,
-        initialize_expr: str,
-        condition_expr: str,
-        increment_expr: str,
-        inverted: bool = False,
-    ):
-        """
-        Helper function that adds a looping state machine around a
-        given state (or sequence of states).
-
-        :param before_state: The state after which the loop should
-                             begin, or None if the loop is the first
-                             state (creates an empty state).
-        :param loop_state: The state that begins the loop. See also
-                           ``loop_end_state`` if the loop is multi-state.
-        :param after_state: The state that should be invoked after
-                            the loop ends, or None if the program
-                            should terminate (creates an empty state).
-        :param loop_var: A name of an inter-state variable to use
-                         for the loop. If None, ``initialize_expr``
-                         and ``increment_expr`` must be None.
-        :param initialize_expr: A string expression that is assigned
-                                to ``loop_var`` before the loop begins.
-                                If None, does not define an expression.
-        :param condition_expr: A string condition that occurs every
-                               loop iteration. If None, loops forever
-                               (undefined behavior).
-        :param increment_expr: A string expression that is assigned to
-                               ``loop_var`` after every loop iteration.
-                               If None, does not define an expression.
-        :param loop_end_state: If the loop wraps multiple states, the
-                               state where the loop iteration ends.
-                               If None, sets the end state to
-                               ``loop_state`` as well.
-        :return: A 3-tuple of (``before_state``, generated loop guard state,
-                 ``after_state``).
-        """
-        # Argument checks
-        if loop_var is None and (initialize_expr or increment_expr):
-            raise ValueError("Cannot initalize or increment an empty loop variable")
-
-        loop_scope = LoopScopeBlock(loop_var=loop_var,
-                                    initialize_expr=initialize_expr,
-                                    update_expr=increment_expr,
-                                    condition_expr=condition_expr,
-                                    inverted=inverted)
-
-        # Handling empty states
-        if before_state is None:
-            before_state = self.add_state()
-        if after_state is None:
-            after_state = self.add_state()
-
-        self.add_node(loop_scope)
-        self.add_edge(before_state, loop_scope)
-        self.add_edge(loop_scope, after_state)
-
-        return before_state, loop_scope, after_state
-
     # SDFG queries
     ##############################
 
@@ -2254,7 +2151,7 @@ class SDFG(ScopeBlock):
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
             nodes) according to data on the memlets. """
-        for cf in self.all_cfgs_recursive():
+        for cf in self.all_state_scopes_recursive():
             for block in cf.nodes():
                 if isinstance(block, SDFGState):
                     block.fill_scope_connectors()

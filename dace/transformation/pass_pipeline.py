@@ -3,7 +3,7 @@
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
 from dace import properties, serialize
-from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
+from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil, ScopeBlock
 
 from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
@@ -299,6 +299,56 @@ class ScopePass(Pass):
 
         :param scope: The entry node of the scope to apply the pass to.
         :param state: The parent SDFG state of the given scope.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: Some object if pass was applied, or None if nothing changed.
+        """
+        raise NotImplementedError
+
+
+@properties.make_properties
+class ControlFlowScopePass(Pass):
+    """
+    A specialized Pass type that applies to each control flow scope (i.e., CFG) separately. Such a pass is
+    realized by implementing the ``apply`` method, which accepts a CFG and the SDFG it belongs to.
+    
+    :see: Pass
+    """
+
+    CATEGORY: str = 'Helper'
+
+    def apply_pass(
+        self,
+        sdfg: SDFG,
+        pipeline_results: Dict[str, Any],
+    ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
+        """
+        Applies the pass to the CFGs of the given SDFG by calling ``apply`` on each CFG.
+
+        :param sdfg: The SDFG to apply the pass to.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :return: A dictionary of ``{entry node: return value}`` for visited CFGs with a non-None return value, or None
+                 if nothing was returned.
+        """
+        result = {}
+        for scope_block in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
+            retval = self.apply(scope_block, scope_block.sdfg, pipeline_results)
+            if retval is not None:
+                result[scope_block] = retval
+
+        if not result:
+            return None
+        return result
+
+    def apply(self, scope_block: ScopeBlock, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        """
+        Applies this pass on the given scope.
+
+        :param scope_block: The control flow scope block to apply the pass to.
+        :param sdfg: The parent SDFG of the given scope.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.

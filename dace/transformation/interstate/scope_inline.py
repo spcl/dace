@@ -4,7 +4,7 @@
 from typing import Any, Set, Optional
 
 from dace.frontend.python import astutils
-from dace.sdfg import SDFG, ControlFlowGraph, InterstateEdge, SDFGState
+from dace.sdfg import SDFG, InterstateEdge, SDFGState, ScopeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.nodes import CodeBlock
 from dace.sdfg.state import LoopScopeBlock, ScopeBlock
@@ -26,10 +26,10 @@ class LoopScopeInline(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.block)]
 
-    def can_be_applied(self, graph: ControlFlowGraph, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: ScopeBlock, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         return True
 
-    def apply(self, graph: ControlFlowGraph, sdfg: SDFG) -> Optional[int]:
+    def apply(self, graph: ScopeBlock, sdfg: SDFG) -> Optional[int]:
         parent: ScopeBlock = graph
 
         internal_start = self.block.start_block

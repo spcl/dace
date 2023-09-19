@@ -17,12 +17,12 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
-    #ScalarToSymbolPromotion,
+    ScalarToSymbolPromotion,
     FuseStates,
     #OptionalArrayInference,
     #ConstantPropagation,
     #DeadDataflowElimination,
-    #DeadStateElimination,
+    DeadStateElimination,
     #RemoveUnusedSymbols,
     #ArrayElimination,
     #ConsolidateEdges,

@@ -646,7 +646,7 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -656,7 +656,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     """
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state, label=label)
+    newstate = state.parent.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
