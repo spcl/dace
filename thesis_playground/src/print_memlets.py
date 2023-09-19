@@ -93,10 +93,17 @@ def main():
     parser = ArgumentParser(description="List all in and outging memlets from/to the AccessNodes of an array")
     parser.add_argument('sdfg_file', type=str, help='Path to the sdfg file to load')
     parser.add_argument('--array', type=str, help='Name of the array', default=None)
+    parser.add_argument('--temporary-arrays', action='store_true', default=False)
     args = parser.parse_args()
     sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_file)
+    temp_arrays = ['ZLIQFRAC', 'ZPFPLSX', 'ZFOEALFA', 'ZAORIG', 'ZQSLIQ', 'ZLNEG', 'ZFOEEW', 'ZFOEEWMT', 'ZQX0', 'ZA',
+                   'ZQX', 'ZQSICE', 'ZICEFRAC', 'ZQXN2D']
 
-    if args.array is not None:
+    if args.temporary_arrays:
+        for array in temp_arrays:
+            print(f"*** {array} ***")
+            print_memlet_of_arrays(sdfg, array)
+    elif args.array is not None:
         print_memlet_of_arrays(sdfg, args.array)
     else:
         find_all_strange_memlets(sdfg, 'fixed_memlets.sdfg')

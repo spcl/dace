@@ -27,30 +27,35 @@ def print_all_shapes(sdfg: SDFG):
 
 
 def print_shapes_detail(sdfg: SDFG, data_name: str):
-    shapes = {}
+    data = []
     for node, state in sdfg.all_nodes_recursive():
         if (isinstance(node, nodes.AccessNode)
-           and node.data == data_name):
+           and node.data == data_name
+           and isinstance(state.parent.arrays[node.data], Array)):
 
             shape = state.parent.arrays[node.data].shape
-            if shape not in shapes:
-                shapes[shape] = []
-            shapes[shape].append(state)
+            stride = state.parent.arrays[node.data].strides
+            data.append([state, state.parent.label, shape, stride])
 
-    shapes_array = []
-    for shape in shapes:
-        shapes_array.append([shape, *shapes[shape]])
-    print(tabulate(shapes_array, headers=["shape", "states"]))
+    print(tabulate(data, headers=["state", "sdfg", "shape", "stride"]))
 
 
 def main():
     parser = ArgumentParser(description="List all in and outging memlets from/to the AccessNodes of an array")
     parser.add_argument('sdfg_file', type=str, help='Path to the sdfg file to load')
     parser.add_argument('--array', type=str, help='Name of the array', default=None)
+    parser.add_argument('--temporary-arrays', action='store_true', default=False)
     args = parser.parse_args()
     sdfg = SDFG.from_file(args.sdfg_file)
 
-    if args.array is None:
+    temp_arrays = ['ZLIQFRAC', 'ZPFPLSX', 'ZFOEALFA', 'ZAORIG', 'ZQSLIQ', 'ZLNEG', 'ZFOEEW', 'ZFOEEWMT', 'ZQX0', 'ZA',
+                   'ZQX', 'ZQSICE', 'ZICEFRAC', 'ZQXN2D']
+
+    if args.temporary_arrays:
+        for array in temp_arrays:
+            print(f"*** {array} ***")
+            print_shapes_detail(sdfg, array)
+    elif args.array is None:
         print_all_shapes(sdfg)
     else:
         print_shapes_detail(sdfg, args.array)
