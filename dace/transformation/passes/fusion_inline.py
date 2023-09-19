@@ -131,19 +131,19 @@ class FixNestedSDFGReferences(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         modified = 0
-        for node, state in sdfg.all_nodes_recursive():
+        for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             was_modified = False
             if node.sdfg.parent_nsdfg_node is not node:
                 was_modified = True
                 node.sdfg.parent_nsdfg_node = node
-            if node.sdfg.parent is not state:
+            if node.sdfg.parent is not parent:
                 was_modified = True
-                node.sdfg.parent = state
-            if node.sdfg.parent_sdfg is not state.parent:
+                node.sdfg.parent = parent
+            if node.sdfg.parent_sdfg is not parent.sdfg:
                 was_modified = True
-                node.sdfg.parent_sdfg = state.parent
+                node.sdfg.parent_sdfg = parent.sdfg
 
             if was_modified:
                 modified += 1

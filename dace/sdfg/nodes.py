@@ -262,9 +262,8 @@ class AccessNode(Node):
     def __label__(self, sdfg, state):
         return self.data
 
-    def desc(self, sdfg):
-        from dace.sdfg import SDFGState, ScopeSubgraphView
-        if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
+    def desc(self, sdfg: Union['dace.sdfg.SDFG', 'dace.sdfg.SDFGState', 'dace.sdfg.ScopeSubgraphView']):
+        if not isinstance(sdfg, dace.sdfg.SDFG):
             sdfg = sdfg.sdfg
         return sdfg.arrays[self.data]
 

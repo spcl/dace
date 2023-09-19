@@ -378,7 +378,7 @@ def _get_storage_from_parent(data_name: str, sdfg: SDFG) -> dtypes.StorageType:
     """
     nsdfg_node = sdfg.parent_nsdfg_node
     parent_state = sdfg.parent
-    parent_sdfg = parent_state.parent
+    parent_sdfg = parent_state.sdfg
 
     # Find data descriptor in parent SDFG
     if data_name in nsdfg_node.in_connectors:

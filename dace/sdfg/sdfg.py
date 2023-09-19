@@ -2016,6 +2016,7 @@ class SDFG(ScopeBlock):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
+        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2028,6 +2029,10 @@ class SDFG(ScopeBlock):
 
         ############################
         # DaCe Compilation Process #
+
+        # Convert any scope blocks to old-school state machines for now.
+        # TODO: Adapt codegen to deal wiht scope blocks instead.
+        sdutils.inline_loop_blocks(self)
 
         if self._regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
