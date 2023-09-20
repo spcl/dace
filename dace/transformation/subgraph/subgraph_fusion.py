@@ -756,8 +756,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             graph.remove_edge(edge)
         return ret
 
-    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet,
-                            min_offset):
+    def adjust_arrays_nsdfg(self, sdfg: dace.sdfg.SDFG, nsdfg: nodes.NestedSDFG, name: str, nname: str, memlet: Memlet):
         """
         DFS to replace strides and volumes of data that exhibits nested SDFGs 
         adjacent to its corresponding access nodes, applied during post-processing 
@@ -772,11 +771,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         """
         # check whether array needs to change
         helpers.adjust_data_shape_if_needed(nsdfg, sdfg.data(name), nname, memlet)
-        # for state in nsdfg.states():
-        #     for access_node in state.data_nodes():
-        #         if access_node.data == nname:
 
-        min_offset = [off_a + off_b for off_a, off_b in zip(min_offset, nsdfg.data(nname).offset)]
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
             for nnode in ngraph.nodes():
@@ -789,9 +784,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             # elif te.data.other_subset:
                             #     te.data.other_subset.offset(min_offset, True)
                             if isinstance(te.dst, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data, min_offset)
+                                self.adjust_arrays_nsdfg(nsdfg, te.dst.sdfg, nname, te.dst_conn, te.data)
                             if isinstance(te.src, nodes.NestedSDFG):
-                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data, min_offset)
+                                self.adjust_arrays_nsdfg(nsdfg, te.src.sdfg, nname, te.src_conn, te.data)
 
     @staticmethod
     def determine_compressible_nodes(sdfg: dace.sdfg.SDFG,
@@ -1556,29 +1551,27 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # re-add invariant dimensions with offset 0
                     for iedge in in_edges:
                         for edge in graph.memlet_tree(iedge):
+                            # nested SDFG: adjust arrays connected
+                            if isinstance(edge.src, nodes.NestedSDFG):
+                                nsdfg = edge.src.sdfg
+                                nested_data_name = edge.src_conn
+                                self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data)
                             if edge.data.data == node.data:
                                 edge.data.subset.offset(min_offset, True)
                             elif edge.data.other_subset:
                                 edge.data.other_subset.offset(min_offset, True)
-                        # nested SDFG: adjust arrays connected
-                        if isinstance(iedge.src, nodes.NestedSDFG):
-                            nsdfg = iedge.src.sdfg
-                            nested_data_name = edge.src_conn
-                            self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, iedge.data,
-                                                     min_offsets[node.data])
 
                     for cedge in out_edges:
                         for edge in graph.memlet_tree(cedge):
-                            if edge.data.data == node.data:
-                                edge.data.subset.offset(min_offset, True)
-                            elif edge.data.other_subset:
-                                edge.data.other_subset.offset(min_offset, True)
                             # nested SDFG: adjust arrays connected
                             if isinstance(edge.dst, nodes.NestedSDFG):
                                 nsdfg = edge.dst.sdfg
                                 nested_data_name = edge.dst_conn
-                                self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data,
-                                                         min_offsets[node.data])
+                                self.adjust_arrays_nsdfg(sdfg, nsdfg, node.data, nested_data_name, edge.data)
+                            if edge.data.data == node.data:
+                                edge.data.subset.offset(min_offset, True)
+                            elif edge.data.other_subset:
+                                edge.data.other_subset.offset(min_offset, True)
 
                     # if in_edges has several entries:
                     # put other_subset into out_edges for correctness
