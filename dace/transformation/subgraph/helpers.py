@@ -381,38 +381,50 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
     :param offsets: Offsets for each dimension, if None will be zero. Used when dealing with nested SDFGs, defaults to None
     :type offsets: Optional[Tuple[dace.symbolic.symbol]], optional
     """
+    logger.debug("%s: graph: %s, data_shape: %s, offsets: %s", data_name, graph, data_shape, offsets)
     if offsets is None:
         offsets = [S.Zero] * len(data_shape)
     # Need to change each edge only once
     changed_edges = set()
     # Need to recusively call each state only once
     changed_states = set()
+    changed_nsdfg = set()
     for node in graph.nodes():
         if isinstance(node, nodes.AccessNode):
             for io_edge in [*graph.in_edges(node), *graph.out_edges(node)]:
                 for edge in graph.memlet_tree(io_edge):
                     if edge.data.data == data_name and graph.edge_id(edge) not in changed_edges:
+                        nsdfg = None
+                        # assume that there are no direct memlets between two nsdfg, there is at least one access node
+                        # between
+                        if isinstance(edge.dst, nodes.NestedSDFG):
+                            nsdfg = edge.dst
+                        if isinstance(edge.src, nodes.NestedSDFG):
+                            nsdfg = edge.src
+
+                        if nsdfg is not None and nsdfg not in changed_nsdfg:
+                            changed_nsdfg.add(nsdfg)
+                            rng = copy.deepcopy(edge.data.subset)
+                            remove_min_max(rng)
+                            # Make sure to add the symbols into the nested sdfg symbol map if there are any
+                            # in the offset
+                            for symbol in rng.free_symbols:
+                                if str(symbol) not in nsdfg.sdfg.symbols:
+                                    nsdfg.sdfg.add_symbol(symbol, int)
+                                if str(symbol) not in nsdfg.symbol_mapping:
+                                    nsdfg.symbol_mapping[symbol] = symbol
+
+                            adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
+                                                        edge.data)
+
+                            for state in nsdfg.sdfg.states():
+                                if state not in changed_states:
+                                    changed_states.add(state)
+                                    add_modulo_to_all_memlets(state, data_name, data_shape,
+                                                              nsdfg.sdfg.data(data_name).offset)
+
                         for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
 
-                            if isinstance(edge.dst, nodes.NestedSDFG):
-                                rng = copy.deepcopy(edge.data.subset)
-                                remove_min_max(rng)
-                                # Make sure to add the symbols into the nested sdfg symbol map if there are any
-                                # in the offset
-                                for symbol in rng.free_symbols:
-                                    if str(symbol) not in edge.dst.sdfg.symbols:
-                                        edge.dst.sdfg.add_symbol(symbol, int)
-                                    if str(symbol) not in edge.dst.symbol_mapping:
-                                        edge.dst.symbol_mapping[symbol] = symbol
-
-                                adjust_data_shape_if_needed(edge.dst.sdfg, graph.parent.data(data_name), data_name,
-                                                            edge.data)
-
-                                for state in edge.dst.sdfg.states():
-                                    if state not in changed_states:
-                                        changed_states.add(state)
-                                        add_modulo_to_all_memlets(state, data_name, data_shape,
-                                                                  [start for start, _, _ in rng.ranges])
                             if edge.data.data == data_name:
                                 rng = copy.deepcopy(edge.data.subset)
                             else:
