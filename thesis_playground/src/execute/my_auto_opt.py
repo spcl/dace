@@ -55,10 +55,10 @@ def apply_subgraph_fusion(
     cloudsc_state = sdfg.find_state('stateCLOUDSC')
     cloudsc_nsdfg = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
     upper_state = cloudsc_nsdfg.sdfg.find_state('_state_l1733_c1733_0')
-    lower_state = cloudsc_nsdfg.sdfg.find_state('single_state_body_15__for_it_14_4')
+    lower_state = cloudsc_nsdfg.sdfg.find_state('single_state_body_8__for_it_14_4')
     transformations = [xform for xform in Optimizer(sdfg).get_pattern_matches(patterns=[StateFusion], permissive=True)]
     for xf in transformations:
-        if xf.first_state.name =='_state_l1733_c1733_0' and xf.second_state.name == 'single_state_body_15__for_it_14_4':
+        if xf.first_state.name =='_state_l1733_c1733_0' and xf.second_state.name == 'single_state_body_8__for_it_14_4':
             xf_sdfg = sdfg.sdfg_list[xf.sdfg_id]
             xf_state = xf_sdfg.find_state(xf.state_id)
             xf.apply(xf_state, xf_sdfg)
@@ -694,20 +694,35 @@ def k_caching_prototype_v1_fuse(sdfg: SDFG,
     :type full_cloudsc_fixes: bool, optional
     """
     if full_cloudsc_fixes:
-        # Fix one memlet, which is not tight enough as it includes a read, which is written just before. The memlet is the
-        # one going from map to nsdfg
+        # Fix some memlets, which are not tight enough, going from the map to the nsdfg
+        # The one for ZPFPLS includes a read, which is written just before. The memlet is the
         cloudsc_state = sdfg.find_state('stateCLOUDSC')
         cloudsc_nsdfg = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
-        state = cloudsc_nsdfg.sdfg.find_state('single_state_body_15__for_it_14_4')
+        state = cloudsc_nsdfg.sdfg.find_state('single_state_body_8__for_it_14_4')
         maps = [n for n in state.nodes() if isinstance(n, nodes.MapEntry)]
         for m in maps:
-            if m.label == 'single_state_body_2_map':
+            if m.label == 'single_state_body_map':
                 map = m
         for edge in state.out_edges(map):
+            #ZPFPLSX
             if edge.data.data == 'ZPFPLSX':
                 logger.debug("ZPFPLSX edge: %s", edge.data.subset)
                 edge.data.subset[1] = (edge.data.subset[1][0], edge.data.subset[1][0], edge.data.subset[1][2])
                 logger.debug("ZPFPLSX edge after fixing: %s", edge.data.subset)
+            # ZQX
+            # if edge.data.data == "ZQX":
+            #     logger.debug("Change ZQX edges")
+            #     edge.data.subset[1] = (edge.data.subset[1][1], edge.data.subset[1][1], edge.data.subset[1][2])
+            #     nsdfg = edge.dst
+            #     nstate = nsdfg.sdfg.find_state('single_state_body_48')
+            #     nmap = [n for n in nstate.nodes() if isinstance(n, nodes.MapEntry) and n.label ==
+            #             'single_state_body_49_map'][0]
+            #     for ie in nstate.in_edges(nmap):
+            #         if ie.data.data == "ZQX":
+            #             ie.data.subset[1] = (edge.data.subset[1][1], edge.data.subset[1][1], edge.data.subset[1][2])
+            #     for oe in nstate.on_edges(nmap):
+            #         if oe.data.data == "ZQX":
+            #             oe.data.subset[1] = (edge.data.subset[1][1], edge.data.subset[1][1], edge.data.subset[1][2])
 
         if program is not None:
             save_graph(sdfg, program, "after_memlet_fixing")

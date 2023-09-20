@@ -276,7 +276,7 @@ custom_parameters = {
         'KFDIA': 1,
         'KIDIA': 1,
         'NBLOCKS': 2000,
-        'NCLDTOP': 25,
+        'NCLDTOP': 15,
     },
     'cloudscexp3':
     {
@@ -285,7 +285,7 @@ custom_parameters = {
         'KFDIA': 1,
         'KIDIA': 1,
         'NBLOCKS': 2000,
-        'NCLDTOP': 25,
+        'NCLDTOP': 15,
     },
     'cloudscexp4':
     {
@@ -294,7 +294,7 @@ custom_parameters = {
         'KFDIA': 1,
         'KIDIA': 1,
         'NBLOCKS': 2000,
-        'NCLDTOP': 25,
+        'NCLDTOP': 15,
         'NPROMA': 1
     },
 }
