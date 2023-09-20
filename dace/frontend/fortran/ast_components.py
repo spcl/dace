@@ -1,6 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from fparser.two.Fortran2008 import Fortran2008 as f08
-from fparser.two import Fortran2008
+from fparser.two import Fortran2008 as f08
 from fparser.two import Fortran2003 as f03
 from fparser.two import symbol_table
 
@@ -608,7 +607,7 @@ class InternalFortranAst:
             if i.string.lower() == "parameter":
                 symbol = True
 
-            if isinstance(i, Fortran2008.Attr_Spec_List):
+            if isinstance(i, f08.Attr_Spec_List):
 
                 dimension_spec = get_children(i, "Dimension_Attr_Spec")
                 if len(dimension_spec) == 0:
@@ -1052,7 +1051,7 @@ class InternalFortranAst:
 
         decls = [self.create_ast(i) for i in node.children if isinstance(i, f08.Type_Declaration_Stmt)]
 
-        uses = [self.create_ast(i) for i in node.children if isinstance(i, f08.Use_Stmt)]
+        uses = [self.create_ast(i) for i in node.children if isinstance(i, f03.Use_Stmt)]
         tmp = [self.create_ast(i) for i in node.children]
         typedecls = [i for i in tmp if isinstance(i, ast_internal_classes.Type_Decl_Node)]
         symbols = []
