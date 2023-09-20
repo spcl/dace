@@ -1486,7 +1486,7 @@ def _tswds_scope_block(
     start_block = scope.start_block
     visited = set()
     visited_edges = set()
-    for edge in sdfg.dfs_edges(start_block):
+    for edge in scope.dfs_edges(start_block):
         # Source -> inter-state definition -> Destination
         visited_edges.add(edge)
         # Source
