@@ -1074,25 +1074,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 nsdfg.symbol_mapping[itervar] = itervar
 
             # Change memlets going into/out of the nsdfg, to reflect the access pattern by the guard state before
-            # for edge in [*graph.in_edges(nsdfg), *graph.out_edges(nsdfg)]:
-            #     if edge.data.data is not None:
-            #         rng = edge.data.subset
-            #         new_rng = []
-            #         for start, end, step in rng:
-            #             one_elem = False
-            #             if start==end:
-            #                 one_elem = True
-            #             # Check if the itervar of the map is in the memlet range
-            #             if itervar in str(start) and map_start_value is not None:
-            #                 start = sympy.Max(map_start_value + start - dace.symbol(itervar), start)
-            #                 if one_elem:
-            #                     end = start
-            #             if itervar in str(end) and map_end_value is not None:
-            #                 end = sympy.Min(map_end_value + end - dace.symbol(itervar), end)
-            #                 if one_elem:
-            #                     start = end
-            #             new_rng.append((start, end, step))
-            #         edge.data.subset = subsets.Range(new_rng)
+            for edge in [*graph.in_edges(nsdfg), *graph.out_edges(nsdfg)]:
+                if edge.data.data is not None:
+                    rng = edge.data.subset
+                    new_rng = []
+                    for start, end, step in rng:
+                        one_elem = False
+                        if start==end:
+                            one_elem = True
+                        # Check if the itervar of the map is in the memlet range
+                        if itervar in str(start) and map_start_value is not None:
+                            start = sympy.Max(0, start)
+                            if one_elem:
+                                end = start
+                        if itervar in str(end) and map_end_value is not None:
+                            end = sympy.Min(map_end_value, end)
+                            if one_elem:
+                                start = end
+                        new_rng.append((start, end, step))
+                    edge.data.subset = subsets.Range(new_rng)
 
         # If the condition edge uses a symbol which uses a different name inside the nsdfg, change the name
         # accordingly
