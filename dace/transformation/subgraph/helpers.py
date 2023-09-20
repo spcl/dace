@@ -421,7 +421,7 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                                 if state not in changed_states:
                                     changed_states.add(state)
                                     add_modulo_to_all_memlets(state, data_name, data_shape,
-                                                              nsdfg.sdfg.data(data_name).offset)
+                                                              [start for start, _, _ in rng.ranges])
 
                         for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
 
