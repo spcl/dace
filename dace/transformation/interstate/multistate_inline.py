@@ -237,31 +237,30 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # All transients become transients of the parent (if data already
         # exists, find new name)
-        for cf in nsdfg.all_state_scopes_recursive():
-            for nblock in cf.nodes():
-                for node in nblock.nodes():
-                    if isinstance(node, nodes.AccessNode):
-                        datadesc = nsdfg.arrays[node.data]
-                        if node.data not in transients and datadesc.transient:
-                            new_name = node.data
+        for state in nsdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode):
+                    datadesc = nsdfg.arrays[node.data]
+                    if node.data not in transients and datadesc.transient:
+                        new_name = node.data
+                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
+                            new_name = f'{nsdfg.label}_{node.data}'
+
+                        name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
+                        transients[node.data] = name
+
+            # All transients of edges between code nodes are also added to parent
+            for edge in state.edges():
+                if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
+                    if edge.data.data is not None:
+                        datadesc = nsdfg.arrays[edge.data.data]
+                        if edge.data.data not in transients and datadesc.transient:
+                            new_name = edge.data.data
                             if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
-                                new_name = f'{nsdfg.label}_{node.data}'
+                                new_name = f'{nsdfg.label}_{edge.data.data}'
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
-                            transients[node.data] = name
-
-                # All transients of edges between code nodes are also added to parent
-                for edge in nblock.edges():
-                    if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
-                        if edge.data.data is not None:
-                            datadesc = nsdfg.arrays[edge.data.data]
-                            if edge.data.data not in transients and datadesc.transient:
-                                new_name = edge.data.data
-                                if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
-                                    new_name = f'{nsdfg.label}_{edge.data.data}'
-
-                                name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
-                                transients[edge.data.data] = name
+                            transients[edge.data.data] = name
 
 
         # All constants (and associated transients) become constants of the parent
@@ -413,11 +412,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #                                     e.data, outer_edge.data)
 
         # Replace nested SDFG parents and SDFG pointers.
-        for cf in nsdfg.all_state_scopes_recursive():
-            for nblock in cf.nodes():
-                nblock.parent = cf
-                nblock.sdfg = sdfg
-                for node in nblock.nodes():
+        for n in nsdfg.nodes():
+            n.parent = outer_state.parent
+        for block in nsdfg.all_control_flow_blocks_recursive(recurse_into_sdfgs=False):
+            block.sdfg = outer_state.sdfg
+            if isinstance(block, SDFGState):
+                for node in block.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         node.sdfg.parent_sdfg = sdfg
                         node.sdfg.parent_nsdfg_node = node

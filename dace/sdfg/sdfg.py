@@ -1261,7 +1261,8 @@ class SDFG(ScopeBlock):
         # Add free state symbols
         used_before_assignment = set()
 
-        b_free_syms, b_defined_syms, b_used_before_syms = super().used_symbols(all_symbols)
+        b_free_syms, b_defined_syms, b_used_before_syms = super().used_symbols(all_symbols, defined_syms, free_syms,
+                                                                               used_before_assignment)
         free_syms |= b_free_syms
         defined_syms |= b_defined_syms
         used_before_assignment |= b_used_before_syms
@@ -2030,16 +2031,16 @@ class SDFG(ScopeBlock):
         ############################
         # DaCe Compilation Process #
 
-        # Convert any scope blocks to old-school state machines for now.
-        # TODO: Adapt codegen to deal wiht scope blocks instead.
-        sdutils.inline_loop_blocks(self)
-
         if self._regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
+
+            # Convert any scope blocks to old-school state machines for now.
+            # TODO: Adapt codegen to deal wiht scope blocks instead.
+            sdutils.inline_loop_blocks(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0

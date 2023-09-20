@@ -2368,10 +2368,14 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         return before_state, loop_scope, after_state
 
     @abc.abstractmethod
-    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
-        defined_syms = set()
-        free_syms = set()
-        used_before_assignment = set()
+    def used_symbols(self,
+                     all_symbols: bool,
+                     defined_syms: Optional[Set]=None,
+                     free_syms: Optional[Set]=None,
+                     used_before_assignment: Optional[Set]=None) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         try:
             ordered_blocks = self.topological_sort(self.start_block)

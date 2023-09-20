@@ -73,7 +73,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
     propagate_memlets_sdfg(sdfg)
 
     # Verify all memlet subsets and volumes in the main state of the program, i.e. around the NSDFG.
-    map_state = sdfg.states()[1]
+    map_state = list(sdfg.states())[1]
     i = dace.symbol('i')
     j = dace.symbol('j')
 
