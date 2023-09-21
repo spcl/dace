@@ -99,6 +99,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             "here will compute the new shape automatically.",
             default={})
 
+    blacklisted_arrays = ['ZPFPLSX', 'ZLIQFRAC', 'ZPFPLSX', 'ZFOEALFA', 'ZAORIG', 'ZQSLIQ', 'ZLNEG', 'ZFOEEW', 'ZFOEEWMT', 'ZQX0', 'ZA',
+                          'ZQX', 'ZQSICE', 'ZICEFRAC', 'ZQXN2D']
+
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
             if abs(rng[0] - orng[0]) > self.max_difference_start or \
@@ -388,6 +391,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     differences = self._can_intermediate_array_be_transformed(sdfg, graph, node, lower_subset,
                                                                               union_upper, lower_map_ranges)
                     if differences is not None:
+                        logger.debug("%s: Use as circular buffer with difference %s", node.data, differences)
                         if node.data in self.arrays_as_circular_buffer:
                             for index, diff in differences:
                                 self.arrays_as_circular_buffer[
@@ -1406,10 +1410,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 #             change_data(data_name, node.sdfg, shape, strides, total_size, offset, lifetime, storage)
 
         data_intermediate = set([node.data for node in intermediate_nodes])
+        data_intermediate -= set(self.blacklisted_arrays)
+        intermediate_nodes = [n for n in intermediate_nodes if n.data not in self.blacklisted_arrays]
 
         for data_name in data_intermediate:
             desc = sdfg.data(data_name)
-            if subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array):
+            if (subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array) 
+                and data_name not in self.arrays_as_circular_buffer):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
 
@@ -1514,10 +1521,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
 
         # Add modulo operations to the memlets with the data which is shrank but needs to be used as a circular buffer
-        for data_name in self.arrays_as_circular_buffer:
-            if data_name in subgraph_contains_data and subgraph_contains_data[data_name]:
-                logger.debug("Add modulo to memlets of %s", data_name)
-                helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
+        # for data_name in self.arrays_as_circular_buffer:
+        #     if data_name in subgraph_contains_data and subgraph_contains_data[data_name]:
+        #         logger.debug("Add modulo to memlets of %s", data_name)
+        #         helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
 
         for node in intermediate_nodes:
             # memlets of created transient:
