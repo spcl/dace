@@ -24,7 +24,7 @@ def test_fortran_code(code: str, name: str):
     save_graph(sdfg, "test_loop_map", f"{name}_initial")
 
     sdfg.apply_transformations_repeated([LoopToMap])
-    # sdfg.simplify()
+    sdfg.simplify()
     save_graph(sdfg, "test_loop_map", f"{name}_loop_to_map")
 
     sdfg.apply_transformations_repeated([MapToForLoop])
