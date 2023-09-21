@@ -9,23 +9,32 @@ from utils.general import save_graph, reset_graph_files
 
 
 def test_parallel_sdfg(sdfg: SDFG):
-    nblocks = 8
-    klev = 15
-    inp = np.asfortranarray(np.zeros((nblocks, klev), dtype=np.float32))
+    nblocks = 5
+    klev = 7
+    inp = np.asfortranarray(np.ones((nblocks, klev), dtype=np.float32))
     sdfg(INP1=inp, NBLOCKS=nblocks, KLEV=klev)
     np.set_printoptions(formatter={'all': lambda x: f"{x:.4f}"})
     inp_expected = np.reshape(np.arange(0, nblocks*klev, like=inp), (nblocks, klev))
-    print(f"PASS: {np.allclose(inp, inp_expected)}")
+    if np.allclose(inp, inp_expected):
+        print("SUCCESS")
+    else:
+        print("FAIL")
+        print("Output")
+        print(inp)
+        print("Expected")
+        print(inp_expected)
 
 
 def test_fortran_code(code: str, name: str):
     sdfg = fortran_parser.create_sdfg_from_string(code, "test_loop_map_parallel")
     sdfg.simplify()
     save_graph(sdfg, "test_loop_map", f"{name}_initial")
+    test_parallel_sdfg(sdfg)
 
     sdfg.apply_transformations_repeated([LoopToMap])
-    sdfg.simplify()
-    save_graph(sdfg, "test_loop_map", f"{name}_loop_to_map")
+    save_graph(sdfg, "test_loop_map", f"{name}_after_loop_to_map")
+    # sdfg.simplify()
+    save_graph(sdfg, "test_loop_map", f"{name}_after_simplify")
 
     sdfg.apply_transformations_repeated([MapToForLoop])
     # sdfg.simplify()
@@ -59,8 +68,35 @@ def main():
         ENDDO
     END SUBROUTINE foo_test_function
     """
+
+    fortran_code_dependency = """
+    PROGRAM foo
+        IMPLICIT NONE
+        REAL INP1(NBLOCKS, KLEV)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 8
+
+
+        CALL foo_test_function(NBLOCKS, KLEV, INP1)
+
+    END PROGRAM
+
+    SUBROUTINE foo_test_function(NBLOCKS, KLEV, INP1)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 1
+        REAL INP1(NBLOCKS, KLEV)
+
+        DO JN=1,NBLOCKS
+            DO JK=2,KLEV
+                INP1(JN, JK) = (JN-1) * KLEV + (JK-1)
+            ENDDO
+        ENDDO
+    END SUBROUTINE foo_test_function
+    """
+
     reset_graph_files("test_loop_map")
     test_fortran_code(fortran_code_parallel, "parallel")
+    # test_fortran_code(fortran_code_dependency, "dependency")
 
 
 if __name__ == '__main__':
