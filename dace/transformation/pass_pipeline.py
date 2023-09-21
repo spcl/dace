@@ -322,6 +322,7 @@ class ControlFlowScopePass(Pass):
         self,
         sdfg: SDFG,
         pipeline_results: Dict[str, Any],
+        **kwargs,
     ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
         """
         Applies the pass to the CFGs of the given SDFG by calling ``apply`` on each CFG.
@@ -335,7 +336,8 @@ class ControlFlowScopePass(Pass):
         """
         result = {}
         for scope_block in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
-            retval = self.apply(scope_block, scope_block.sdfg, pipeline_results)
+            retval = self.apply(scope_block, scope_block if isinstance(scope_block, SDFG) else scope_block.sdfg,
+                                pipeline_results, **kwargs)
             if retval is not None:
                 result[scope_block] = retval
 

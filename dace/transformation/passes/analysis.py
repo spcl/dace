@@ -5,7 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowBlock
+from dace.sdfg.state import ControlFlowBlock, ScopeBlock
 from dace.sdfg.analysis import cfg
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
@@ -37,9 +37,16 @@ class StateReachability(ppl.Pass):
         reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             reachable[sdfg.sdfg_id] = {}
-            tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
-            for state in sdfg.nodes():
-                reachable[sdfg.sdfg_id][state] = set(tc.successors(state))
+            for scope in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
+                tc: nx.DiGraph = nx.transitive_closure(scope.nx)
+                for block in scope.nodes():
+                    reach_set = set()
+                    for reached in tc.successors(block):
+                        if isinstance(reached, ScopeBlock):
+                            reach_set.update(reached.all_states_recursive())
+                        else:
+                            reach_set.add(reached)
+                    reachable[sdfg.sdfg_id][block] = reach_set
         return reachable
 
 
@@ -84,7 +91,7 @@ class SymbolAccessSets(ppl.Pass):
 @properties.make_properties
 class AccessSets(ppl.Pass):
     """
-    Evaluates memory access sets (which arrays/data descriptors are read/written in each state).
+    Evaluates memory access sets (which arrays/data descriptors are read/written in each control flow block).
     """
 
     CATEGORY: str = 'Analysis'
@@ -96,26 +103,32 @@ class AccessSets(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.AccessNodes
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]]:
         """
-        :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
+        :return: A dictionary mapping each control flow block to a tuple of its (read, written) data descriptors.
         """
-        top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
+        top_result: Dict[int, Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
+            result: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]] = {}
+            for state in sdfg.states():
                 readset, writeset = set(), set()
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
                         writeset.add(anode.data)
                     if state.out_degree(anode) > 0:
                         readset.add(anode.data)
-
                 result[state] = (readset, writeset)
+
+            for scope in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
+                readset, writeset = set(), set()
+                for substate in scope.all_states_recursive():
+                    readset.update(result[substate][0])
+                    writeset.update(result[substate][1])
+                result[scope] = (readset, writeset)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in sdfg.all_interstate_edges_recursive(recurse_into_sdfgs=False):
                 fsyms = e.data.free_symbols & anames
                 if fsyms:
                     result[e.src][0].update(fsyms)
@@ -148,13 +161,13 @@ class FindAccessStates(ppl.Pass):
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, Set[SDFGState]] = defaultdict(set)
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for anode in state.data_nodes():
                     result[anode.data].add(state)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in sdfg.all_interstate_edges_recursive(recurse_into_sdfgs=False):
                 fsyms = e.data.free_symbols & anames
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
@@ -189,7 +202,7 @@ class FindAccessNodes(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = defaultdict(
                 lambda: defaultdict(lambda: [set(), set()]))
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for anode in state.data_nodes():
                     if state.in_degree(anode) > 0:
                         result[anode.data][state][1].add(anode)
@@ -200,10 +213,10 @@ class FindAccessNodes(ppl.Pass):
 
 
 @properties.make_properties
-class SymbolWriteScopes(ppl.Pass):
+class SymbolWriteScopes(ppl.Pass): # TODO: adapt
     """
     For each symbol, create a dictionary mapping each writing interstate edge to that symbol to the set of interstate
-    edges and states reading that symbol that are dominated by that write.
+    edges and control flow blocks reading that symbol that are dominated by that write.
     """
 
     CATEGORY: str = 'Analysis'
@@ -260,7 +273,7 @@ class SymbolWriteScopes(ppl.Pass):
             idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
             all_doms = cfg.all_dominators(sdfg, idom)
             symbol_access_sets: Dict[
-                Union[SDFGState, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]
+                Union[ControlFlowBlock, Edge[InterstateEdge]], Tuple[Set[str], Set[str]]
             ] = pipeline_results[SymbolAccessSets.__name__][sdfg.sdfg_id]
             state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.sdfg_id]
 
@@ -305,7 +318,7 @@ class SymbolWriteScopes(ppl.Pass):
 
 
 @properties.make_properties
-class ScalarWriteShadowScopes(ppl.Pass):
+class ScalarWriteShadowScopes(ppl.Pass): # TODO: Adapt
     """
     For each scalar or array of size 1, create a dictionary mapping writes to that data container to the set of reads
     and writes that are dominated by that write.

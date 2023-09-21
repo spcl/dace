@@ -87,6 +87,14 @@ class BlockGraphView(abc.ABC):
     def edges(self) -> List[SomeEdgeT]:
         ...
 
+    @overload
+    def in_degree(self, node: SomeNodeT) -> int:
+        ...
+
+    @overload
+    def out_degree(self, node: SomeNodeT) -> int:
+        ...
+
     ###################################################################
     # Traversal methods
 
