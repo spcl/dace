@@ -393,36 +393,10 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
         if isinstance(node, nodes.AccessNode):
             for io_edge in [*graph.in_edges(node), *graph.out_edges(node)]:
                 for edge in graph.memlet_tree(io_edge):
+
+
                     if edge.data.data == data_name and graph.edge_id(edge) not in changed_edges:
-                        nsdfg = None
-                        # assume that there are no direct memlets between two nsdfg, there is at least one access node
-                        # between
-                        if isinstance(edge.dst, nodes.NestedSDFG):
-                            nsdfg = edge.dst
-                        if isinstance(edge.src, nodes.NestedSDFG):
-                            nsdfg = edge.src
-
-                        if nsdfg is not None and nsdfg not in changed_nsdfg:
-                            changed_nsdfg.add(nsdfg)
-                            rng = copy.deepcopy(edge.data.subset)
-                            remove_min_max(rng)
-                            # Make sure to add the symbols into the nested sdfg symbol map if there are any
-                            # in the offset
-                            for symbol in rng.free_symbols:
-                                if str(symbol) not in nsdfg.sdfg.symbols:
-                                    nsdfg.sdfg.add_symbol(symbol, int)
-                                if str(symbol) not in nsdfg.symbol_mapping:
-                                    nsdfg.symbol_mapping[symbol] = symbol
-
-                            adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
-                                                        edge.data)
-
-                            for state in nsdfg.sdfg.states():
-                                if state not in changed_states:
-                                    changed_states.add(state)
-                                    add_modulo_to_all_memlets(state, data_name, data_shape,
-                                                              [start for start, _, _ in rng.ranges])
-
+                        new_ranges = []
                         for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
 
                             if edge.data.data == data_name:
@@ -451,10 +425,44 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                                     f"dim_size: {dim_size.evalf(subs=graph.parent.constants)}"
                                 )
                                 # assert False
-                            if edge.data.data == data_name:
-                                edge.data.subset.ranges[index] = new_range
-                            else:
-                                edge.data.other_subset.ranges[index] = new_range
+                            new_ranges.append(new_range)
+
+                        nsdfg = None
+                        # assume that there are no direct memlets between two nsdfg, there is at least one access node
+                        # between
+                        if isinstance(edge.dst, nodes.NestedSDFG):
+                            nsdfg = edge.dst
+                        if isinstance(edge.src, nodes.NestedSDFG):
+                            nsdfg = edge.src
+
+                        if nsdfg is not None and nsdfg not in changed_nsdfg:
+                            changed_nsdfg.add(nsdfg)
+                            rng = copy.deepcopy(edge.data.subset)
+                            remove_min_max(rng)
+                            # Make sure to add the symbols into the nested sdfg symbol map if there are any
+                            # in the offset
+                            for symbol in rng.free_symbols:
+                                if str(symbol) not in nsdfg.sdfg.symbols:
+                                    nsdfg.sdfg.add_symbol(symbol, int)
+                                if str(symbol) not in nsdfg.symbol_mapping:
+                                    nsdfg.symbol_mapping[symbol] = symbol
+
+                            adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
+                                                        edge.data)
+
+                            for state in nsdfg.sdfg.states():
+                                if state not in changed_states:
+                                    changed_states.add(state)
+                                    new_offsets = [S.Zero] * len(data_shape)
+                                    for idx, new_rng in enumerate(new_ranges):
+                                        if new_rng[0] != new_rng[1]:
+                                            new_offsets[idx] = rng.ranges[idx][0]
+                                    add_modulo_to_all_memlets(state, data_name, data_shape, new_offsets)
+
+                        if edge.data.data == data_name:
+                            edge.data.subset.ranges = new_ranges
+                        else:
+                            edge.data.other_subset.ranges = new_ranges
                         changed_edges.add(graph.edge_id(edge))
 
 
@@ -546,3 +554,4 @@ def is_map_init(state: SDFGState, map_exit: nodes.MapEntry,
         # For it to be an init map, the tasklet needs to set to 0 and all dimensions need to be covered
         return ((next_node.code.as_string.split('= ')[1] == '0.0' and found_all_dimensions), [(map_exit.map,
                                                                                                memlet_idx_itervar[0])])
+    return (False, [])
