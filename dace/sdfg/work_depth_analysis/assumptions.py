@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import sympy as sp
-from typing import Tuple, Dict
+from typing import Dict
 
 
 class UnionFind:
