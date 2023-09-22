@@ -3,14 +3,14 @@ import logging
 from datetime import datetime
 import os
 import dace
+from dace.config import Config
 
-from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg
+from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg, get_path_of_basic_sdfg
 from utils.general import remove_build_folder, enable_debug_flags, reset_graph_files, replace_symbols_by_values
 from utils.log import setup_logging
 from utils.run_config import RunConfig
 from utils.paths import get_full_cloudsc_log_dir, get_verbose_graphs_dir
 from execute.parameters import ParametersProvider
-from print_memlets import find_all_strange_memlets
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +52,15 @@ def get_program_name(args) -> str:
 
 
 def action_compile(args):
+    # HACK: Remove -O3 to avoid failing
+    Config.set('compiler', 'cpu', 'args', value='-std=c++14 -fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label')
     program = get_program_name(args)
     remove_build_folder(program)
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
-    sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}.sdfg")
+    if args.sdfg_file is None:
+        sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}.sdfg")
+    else:
+        sdfg_file = args.sdfg_file
     logger.info("Load SDFG from %s", sdfg_file)
     sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
     if args.debug_build:
@@ -79,8 +84,12 @@ def action_gen_graph(args):
     logger.info("Use program: %s", program)
     reset_graph_files(verbose_name)
 
-    params = ParametersProvider(program, update={'NBLOCKS': 16384, 'NCLDTOP': 25})
+
+    params = ParametersProvider(program, update={'NBLOCKS': 16384})
     run_config = opt_levels[args.opt_level]["run_config"]
+    device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
+    device = device_map[args.device]
+    run_config.device = device
     logger.debug(run_config)
     sdfg = get_basic_sdfg(program, run_config, params, ['NBLOCKS'])
     # NCLDQR got forgotten in the basic sdfg
@@ -97,6 +106,22 @@ def action_gen_graph(args):
     sdfg.save(sdfg_path)
 
 
+def action_change_ncldtop(args):
+    setup_logging(level="DEBUG")
+    program = 'cloudscexp4'
+    run_config = opt_levels[args.opt_level]["run_config"]
+    logger.debug(run_config)
+    params = ParametersProvider(program, update={'NBLOCKS': 16384})
+    basic_sdfg = get_basic_sdfg(program, run_config, params, ['NBLOCKS'])
+
+    # Change value of NCLDTOP
+    print(basic_sdfg.constants['NCLDTOP'])
+    for nsdfg in basic_sdfg.sdfg_list:
+        nsdfg.add_constant('NCLDTOP', 15)
+    print(basic_sdfg.constants['NCLDTOP'])
+    basic_sdfg.save(get_path_of_basic_sdfg(program, run_config, ['NBLOCKS']))
+
+
 def main():
     parser = ArgumentParser(description="Generate SDFG or code of the full cloudsc code")
     parser.add_argument('--log-level', default='info')
@@ -109,12 +134,19 @@ def main():
     gen_parser.add_argument('opt_level')
     gen_parser.add_argument('--version', default=4, type=int)
     gen_parser.set_defaults(func=action_gen_graph)
+    gen_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
 
     compile_parser = subparsers.add_parser('compile', description="Compile code from SDFG")
     compile_parser.add_argument('opt_level')
     compile_parser.add_argument('--version', default=4, type=int)
     compile_parser.add_argument('--debug-build', action='store_true', default=False)
+    compile_parser.add_argument('--sdfg-file', default=None, help="Take non default SDFG file from here")
     compile_parser.set_defaults(func=action_compile)
+
+    change_parser = subparsers.add_parser('change', description="Change NCLDTOP in basic SDFG")
+    change_parser.add_argument('opt_level')
+    change_parser.add_argument('--version', default=4, type=int)
+    change_parser.set_defaults(func=action_change_ncldtop)
 
     args = parser.parse_args()
     add_args = {}
@@ -124,13 +156,5 @@ def main():
     args.func(args)
 
 
-def load_basic_sdfg():
-    setup_logging(level="DEBUG")
-    program = 'cloudscexp4'
-    run_config = RunConfig(k_caching=True, change_stride=True, outside_loop_first=False)
-    params = ParametersProvider(program, update={'NBLOCKS': 16384})
-    basic_sdfg = get_basic_sdfg(program, run_config, params, ['NBLOCKS'])
-
 if __name__ == '__main__':
     main()
-    # load_basic_sdfg()
