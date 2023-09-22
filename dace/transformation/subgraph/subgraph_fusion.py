@@ -1409,9 +1409,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 #             # Will ignore if an array has a different shape inside a nsdfg
                 #             change_data(data_name, node.sdfg, shape, strides, total_size, offset, lifetime, storage)
 
+        intermediate_nodes = [n for n in intermediate_nodes if n.data not in self.blacklisted_arrays]
         data_intermediate = set([node.data for node in intermediate_nodes])
         data_intermediate -= set(self.blacklisted_arrays)
-        intermediate_nodes = [n for n in intermediate_nodes if n.data not in self.blacklisted_arrays]
+        logger.debug("Intermediate data: %s, intermediate nodes: %s, blacklisted arrays: %s", data_intermediate,
+                     intermediate_nodes, self.blacklisted_arrays)
 
         for data_name in data_intermediate:
             desc = sdfg.data(data_name)
