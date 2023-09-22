@@ -129,6 +129,220 @@ class ArrayFission(ppl.Pass):
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
 
+def _insert_phi_nodes(
+    sdfg: SDFG,
+    anames: List[str],
+    write_approximation: dict[Edge, Memlet],
+    loop_write_approximation: dict[SDFGState, dict[str, Memlet]],
+    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]
+    ) -> Tuple[Dict[SDFGState, Dict[str, Dict]],
+               Dict[str, set[SDFGState]],
+               Dict[str, set[SDFGState]]]:
+
+    phi_nodes: Dict[SDFGState, Dict[str, Dict]] = defaultdict(None)
+
+    for state in sdfg.states():
+        phi_nodes[state] = {}
+
+    # maps each variable to its defining writes that don't involve phi-nodes
+    def_states: Dict[str, set[SDFGState]] = {}
+
+    # maps each variable to its defining writes that involve phi-nodes
+    def_states_phi: Dict[str, set[SDFGState]] = {}
+
+    dominance_frontiers = nx.dominance.dominance_frontiers(sdfg.nx, sdfg.start_state)
+
+    for loopheader, write_dict in loop_write_approximation.items():
+        if loopheader not in sdfg.states():
+            continue
+
+        for var, memlet in write_dict.items():
+            if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
+                continue
+            if var not in anames:
+                continue
+            if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
+                phi_nodes[loopheader][var] = {
+                    "name": var,
+                    "variables": set(),
+                    "descriptor": None,
+                    "path_conditions": {}
+                }
+                if var not in def_states_phi:
+                    def_states_phi[var] = set()
+                def_states_phi[var].add(loopheader)
+
+    # insert phi nodes
+    for var in anames:
+        desc = sdfg.arrays[var]
+        array_set = subsets.Range.from_array(desc)
+        phi_states = set()
+        # array of states that define/fully overwrite the array
+        defining_states = set()
+
+        for state in sdfg.states():
+            # iterate over access nodes to the array in the current state and check if it
+            # fully overwrites the array with the write underapproximation
+
+            # loopheaders that have phi nodes are also defining states
+            if state in phi_nodes.keys():
+                if var in phi_nodes[state].keys():
+                    defining_states.add(state)
+            # check if there's even a write to the descriptor in the current state
+            write_nodes = access_nodes[var][state][1]
+            if len(write_nodes) == 0:
+                continue
+
+            for node in write_nodes:
+                # if any of the edges fully overwrites the array add the state to
+                # the defining states
+                if any(write_approximation[e].subset.covers_precise(array_set)
+                        for e in state.in_edges(node)):
+                    defining_states.add(state)
+                    break
+
+        def_states[var] = defining_states.copy()
+
+        while defining_states:
+            current_state = next(iter(defining_states))
+            dominance_frontier = dominance_frontiers[current_state]
+
+            for frontier_state in dominance_frontier:
+                # check if this state was already handled
+                if frontier_state in phi_states:
+                    continue
+                phi_nodes[frontier_state][var] = {
+                    "name": var,
+                    "variables": set(),
+                    "descriptor": None,
+                    "path_conditions": {}
+                }
+                phi_states.add(frontier_state)
+                if frontier_state not in defining_states:
+                    defining_states.add(frontier_state)
+
+            defining_states.remove(current_state)
+
+        for state, phi_dict in phi_nodes.items():
+            if var not in phi_dict.keys():
+                continue
+            if var not in def_states_phi:
+                def_states_phi[var] = set()
+            def_states_phi[var].add(state)
+
+    return (phi_nodes, def_states, def_states_phi)
+
+def _rename(
+        sdfg: SDFG,
+        write_approximation: dict[Edge, Memlet],
+        immediate_dominators: dict[SDFGState, SDFGState],
+        phi_nodes: Dict[SDFGState, Dict[str, Dict]],
+        anames: List[str]
+):
+    # dictionary mapping each variable from the original SDFG to a dictionary mapping
+    # each state to the last definition of that variable in that state
+    last_defs: Dict[str, Dict[SDFGState, str]] = defaultdict(None)
+
+    # dictionary mapping each state to the set of its immediate dominators
+    immediate_dominated = defaultdict(None)
+    for node, dom_node in immediate_dominators.items():
+        if dom_node not in immediate_dominated:
+            immediate_dominated[dom_node] = set()
+        immediate_dominated[dom_node].add(node)
+    
+    # helper function to find the reaching definition given an AccessNode and a state in the
+    # original SDFG
+    def find_reaching_def(state: SDFGState, var: str):
+        if var in last_defs and state in last_defs[var]:
+            return last_defs[var][state]
+        # if there is a phi node for the variable in the same state, return the variable
+        # name defined by the phi node
+        if phi_nodes[state].get(var):
+            return phi_nodes[state][var]["name"]
+        # otherwise return the last definition of the immediate dominator
+        idom = immediate_dominators[state]
+        if var in last_defs and idom in last_defs[var]:
+            return last_defs[var][idom]
+        # in case the state is the initial state and there isn't any reaching definition
+        # in the current state just return the original variable
+        return var
+
+    def update_last_def(state: SDFGState, new_def: str, original_name: str):
+        if not last_defs.get(original_name):
+            last_defs[original_name] = {}
+        last_defs[original_name][state] = new_def
+
+    # traverse the dominator tree depth first and rename all variables
+    dom_tree_dfs = _dict_dfs(immediate_dominated, sdfg.start_state)
+    for current_state in dom_tree_dfs:
+        # rename the phi nodes
+        for var in anames:
+            # check if there is a phi node for the current variable in the current state
+            if not phi_nodes[current_state].get(var):
+                continue
+
+            newdesc = sdfg.arrays[var].clone()
+            newname = sdfg.add_datadesc(var, newdesc, find_new_name=True)
+            phi_nodes[current_state][var]["descriptor"] = newdesc
+            phi_nodes[current_state][var]["name"] = newname
+
+            update_last_def(current_state, newname, var)
+
+        # rename data nodes
+        # get topological ordering of nodes in the dataflowgraph
+        renamed = defaultdict(None)
+        toposort = list(nx.topological_sort(current_state.nx))
+        for node in toposort:
+            if not isinstance(node, nd.AccessNode):
+                continue
+            var = node.data
+            if var not in anames:
+                continue
+            array = sdfg.arrays[var]
+            array_set = subsets.Range.from_array(array)
+            # if array is not fully overwritten at this access node treat it as a use
+            # otherwise as a def also make sure that this is the first (and last)
+            # renaming in this state
+            iedges = current_state.in_edges(node)
+            if (any(write_approximation[e].subset.covers_precise(array_set) for e in iedges) and
+                    not renamed.get(var)):
+                # rename the variable to the reaching definition
+                newdesc = array.clone()
+                newname = sdfg.add_datadesc(
+                    var, newdesc, find_new_name=True)
+                update_last_def(current_state, newname, var)
+                renamed[var] = True
+            else:
+                newname = find_reaching_def(current_state, var)
+
+            _rename_node(current_state, node, newname)
+
+        # if last definition in this state has not been defined yet, define it here
+        for var in anames:
+            if not last_defs.get(var):
+                last_defs[var] = {}
+            if not last_defs[var].get(current_state):
+                last_defs[var][current_state] = find_reaching_def(
+                    current_state, var)
+
+        # rename occurences of variables in successors of current state
+        successors = [e.dst for e in sdfg.out_edges(current_state)]
+        for successor in successors:
+            for var in anames:
+                if not phi_nodes[successor].get(var):
+                    continue
+                newname = last_defs[var][current_state]
+                phi_nodes[successor][var]["variables"].add(newname)
+
+        # iterate over all the outgoing interstate edges of the current state and
+        # rename all the occurences of the original variable to the last definition
+        # in the current state
+        rename_dict = {}
+        for var in last_defs.keys():
+            rename_dict[var] = last_defs[var][current_state]
+        for oedge in sdfg.out_edges(current_state):
+            oedge.data.replace_dict(rename_dict)
+
 def _eliminate_phi_nodes(
     sdfg: SDFG,
     phi_nodes: Dict[SDFGState, Dict[str, Dict]],
@@ -255,7 +469,7 @@ def _eliminate_phi_nodes(
                             continue
                         _rename_node(other_state, an, newname)
 
-                    # rename all accesses to the parameters by interstateedges
+                    # rename all accesses to the parameters by interstate edges
                     other_accesses = access_sets[other_state]
                     if original_var in other_accesses[0]:
                         out_edges = sdfg.out_edges(other_state)
@@ -292,222 +506,6 @@ def _eliminate_phi_nodes(
             sdfg.remove_data(parameter)
         except ValueError:
             continue
-
-def _rename(
-        sdfg: SDFG,
-        write_approximation: dict[Edge, Memlet],
-        immediate_dominators: dict[SDFGState, SDFGState],
-        phi_nodes: Dict[SDFGState, Dict[str, Dict]],
-        anames: List[str]
-):
-    # dictionary mapping each variable from the original SDFG to a dictionary mapping
-    # each state to the last definition of that variable in that state
-    last_defs: Dict[str, Dict[SDFGState, str]] = defaultdict(None)
-
-    # dictionary mapping each state to the set of its immediate dominators
-    immediate_dominated = defaultdict(None)
-    for node, dom_node in immediate_dominators.items():
-        if dom_node not in immediate_dominated:
-            immediate_dominated[dom_node] = set()
-        immediate_dominated[dom_node].add(node)
-    
-    # helper function to find the reaching definition given an AccessNode and a state in the
-    # original SDFG
-    def find_reaching_def(state: SDFGState, var: str):
-        if var in last_defs and state in last_defs[var]:
-            return last_defs[var][state]
-        # if there is a phi node for the variable in the same state, return the variable
-        # name defined by the phi node
-        if phi_nodes[state].get(var):
-            return phi_nodes[state][var]["name"]
-        # otherwise return the last definition of the immediate dominator
-        idom = immediate_dominators[state]
-        if var in last_defs and idom in last_defs[var]:
-            return last_defs[var][idom]
-        # in case the state is the initial state and there isn't any reaching definition
-        # in the current state just return the original variable
-        return var
-
-    def update_last_def(state: SDFGState, new_def: str, original_name: str):
-        if not last_defs.get(original_name):
-            last_defs[original_name] = {}
-        last_defs[original_name][state] = new_def
-
-
-
-    # traverse the dominator tree depth first and rename all variables
-    dom_tree_dfs = _dict_dfs(immediate_dominated, sdfg.start_state)
-    for current_state in dom_tree_dfs:
-        # rename the phi nodes
-        for var in anames:
-            # check if there is a phi node for the current variable in the current state
-            if not phi_nodes[current_state].get(var):
-                continue
-
-            newdesc = sdfg.arrays[var].clone()
-            newname = sdfg.add_datadesc(var, newdesc, find_new_name=True)
-            phi_nodes[current_state][var]["descriptor"] = newdesc
-            phi_nodes[current_state][var]["name"] = newname
-
-            update_last_def(current_state, newname, var)
-
-        # rename data nodes
-        # get topological ordering of nodes in the dataflowgraph
-        renamed = defaultdict(None)
-        toposort = list(nx.topological_sort(current_state.nx))
-        for node in toposort:
-            if not isinstance(node, nd.AccessNode):
-                continue
-            var = node.data
-            if var not in anames:
-                continue
-            array = sdfg.arrays[var]
-            array_set = subsets.Range.from_array(array)
-            # if array is not fully overwritten at this access node treat it as a use
-            # otherwise as a def also make sure that this is the first (and last)
-            # renaming in this state
-            iedges = current_state.in_edges(node)
-            if (any(write_approximation[e].subset.covers_precise(array_set) for e in iedges) and
-                    not renamed.get(var)):
-                # rename the variable to the reaching definition
-                newdesc = array.clone()
-                newname = sdfg.add_datadesc(
-                    var, newdesc, find_new_name=True)
-                update_last_def(current_state, newname, var)
-                renamed[var] = True
-            else:
-                newname = find_reaching_def(current_state, var)
-
-            _rename_node(current_state, node, newname)
-
-        # if last definition in this state has not been defined yet, define it here
-        for var in anames:
-            if not last_defs.get(var):
-                last_defs[var] = {}
-            if not last_defs[var].get(current_state):
-                last_defs[var][current_state] = find_reaching_def(
-                    current_state, var)
-
-        # rename occurences of variables in successors of current state
-        successors = [e.dst for e in sdfg.out_edges(current_state)]
-        for successor in successors:
-            for var in anames:
-                if not phi_nodes[successor].get(var):
-                    continue
-                newname = last_defs[var][current_state]
-                phi_nodes[successor][var]["variables"].add(newname)
-
-        # iterate over all the outgoing interstate edges of the current state and
-        # rename all the occurences of the original variable to the last definition
-        # in the current state
-        rename_dict = {}
-        for var in last_defs.keys():
-            rename_dict[var] = last_defs[var][current_state]
-        for oedge in sdfg.out_edges(current_state):
-            oedge.data.replace_dict(rename_dict)
-
-def _insert_phi_nodes(
-    sdfg: SDFG,
-    anames: List[str],
-    write_approximation: dict[Edge, Memlet],
-    loop_write_approximation: dict[SDFGState, dict[str, Memlet]],
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]
-    ) -> Tuple[Dict[SDFGState, Dict[str, Dict]],
-               Dict[str, set[SDFGState]],
-               Dict[str, set[SDFGState]]]:
-
-    phi_nodes: Dict[SDFGState, Dict[str, Dict]] = defaultdict(None)
-
-    for state in sdfg.states():
-        phi_nodes[state] = {}
-
-    # maps each variable to its defining writes that don't involve phi-nodes
-    def_states: Dict[str, set[SDFGState]] = {}
-
-    # maps each variable to its defining writes that involve phi-nodes
-    def_states_phi: Dict[str, set[SDFGState]] = {}
-
-    dominance_frontiers = nx.dominance.dominance_frontiers(sdfg.nx, sdfg.start_state)
-
-    for loopheader, write_dict in loop_write_approximation.items():
-        if loopheader not in sdfg.states():
-            continue
-
-        for var, memlet in write_dict.items():
-            if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
-                continue
-            if var not in anames:
-                continue
-            if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
-                phi_nodes[loopheader][var] = {
-                    "name": var,
-                    "variables": set(),
-                    "descriptor": None,
-                    "path_conditions": {}
-                }
-                if var not in def_states_phi:
-                    def_states_phi[var] = set()
-                def_states_phi[var].add(loopheader)
-
-    # insert phi nodes
-    for var in anames:
-        desc = sdfg.arrays[var]
-        array_set = subsets.Range.from_array(desc)
-        phi_states = set()
-        # array of states that define/fully overwrite the array
-        defining_states = set()
-
-        for state in sdfg.states():
-            # iterate over access nodes to the array in the current state and check if it
-            # fully overwrites the array with the write underapproximation
-
-            # loopheaders that have phi nodes are also defining states
-            if state in phi_nodes.keys():
-                if var in phi_nodes[state].keys():
-                    defining_states.add(state)
-            # check if there's even a write to the descriptor in the current state
-            write_nodes = access_nodes[var][state][1]
-            if len(write_nodes) == 0:
-                continue
-
-            for node in write_nodes:
-                # if any of the edges fully overwrites the array add the state to
-                # the defining states
-                if any(write_approximation[e].subset.covers_precise(array_set)
-                        for e in state.in_edges(node)):
-                    defining_states.add(state)
-                    break
-
-        def_states[var] = defining_states.copy()
-
-        while defining_states:
-            current_state = next(iter(defining_states))
-            dominance_frontier = dominance_frontiers[current_state]
-
-            for frontier_state in dominance_frontier:
-                # check if this state was already handled
-                if frontier_state in phi_states:
-                    continue
-                phi_nodes[frontier_state][var] = {
-                    "name": var,
-                    "variables": set(),
-                    "descriptor": None,
-                    "path_conditions": {}
-                }
-                phi_states.add(frontier_state)
-                if frontier_state not in defining_states:
-                    defining_states.add(frontier_state)
-
-            defining_states.remove(current_state)
-
-        for state, phi_dict in phi_nodes.items():
-            if var not in phi_dict.keys():
-                continue
-            if var not in def_states_phi:
-                def_states_phi[var] = set()
-            def_states_phi[var].add(state)
-
-    return (phi_nodes, def_states, def_states_phi)
 
 def _rename_node(state: SDFGState, node: nd.AccessNode, newname: str):
 # helper function that traverses memlet trees of all incoming and outgoing
