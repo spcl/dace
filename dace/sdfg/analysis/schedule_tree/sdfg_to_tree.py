@@ -7,7 +7,7 @@ from dace import data, subsets, symbolic
 from dace.codegen import control_flow as cf
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
-from dace.sdfg import utils as sdutil, graph as gr
+from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
 from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
@@ -19,6 +19,11 @@ from dace.memlet import Memlet
 import time
 import sys
 
+NODE_TO_SCOPE_TYPE = {
+    dace.nodes.MapEntry: tn.MapScope,
+    dace.nodes.ConsumeEntry: tn.ConsumeScope,
+    dace.nodes.PipelineEntry: tn.PipelineScope,
+}
 
 def dealias_sdfg(sdfg: SDFG):
     for nsdfg in sdfg.all_sdfgs_recursive():
@@ -68,8 +73,35 @@ def dealias_sdfg(sdfg: SDFG):
                     nsdfg.arrays[name] = child_arr
                 for state in nsdfg.states():
                     for e in state.edges():
-                        if e.data.data in child_names:
-                            e.data = unsqueeze_memlet(e.data, parent_edges[e.data.data].data)
+                        if not state.is_leaf_memlet(e):
+                            continue
+
+                        mpath = state.memlet_path(e)
+                        src, dst = mpath[0].src, mpath[-1].dst
+
+                        # We need to take directionality of the memlet into account and unsqueeze either to source or
+                        # destination subset
+                        if isinstance(src, nd.AccessNode) and src.data in child_names:
+                            src_data = src.data
+                            new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
+                        else:
+                            src_data = None
+                            new_src_memlet = e.data
+                            # We need to take directionality of the memlet into account
+                        if isinstance(dst, nd.AccessNode) and dst.data in child_names:
+                            dst_data = dst.data
+                            new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
+                        else:
+                            dst_data = None
+                            new_dst_memlet = e.data
+
+                        e.data.src_subset = new_src_memlet.subset
+                        e.data.dst_subset = new_dst_memlet.subset
+                        if e.data.data == src_data:
+                            e.data.data = new_src_memlet.data
+                        elif e.data.data == dst_data:
+                            e.data.data = new_dst_memlet.data
+
                 for e in nsdfg.edges():
                     repl_dict = dict()
                     syms = e.data.read_symbols()
@@ -145,7 +177,6 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
     :param input_mapping: A mapping from internal data descriptor names to external input memlets.
     :param output_mapping: A mapping from internal data descriptor names to external output memlets.
     """
-    # TODO: Support Interstate edges
     for state in sdfg.states():
         for e in state.edges():
             mpath = state.memlet_path(e)
@@ -153,18 +184,34 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
             dst = mpath[-1].dst
             memlet = e.data
             if isinstance(src, dace.nodes.AccessNode) and src.data in input_mapping:
-                memlet = unsqueeze_memlet(memlet, input_mapping[src.data], use_src_subset=True)
+                src_data = src.data
+                src_memlet = unsqueeze_memlet(memlet, input_mapping[src.data], use_src_subset=True)
+            else:
+                src_data = None
+                src_memlet = None
             if isinstance(dst, dace.nodes.AccessNode) and dst.data in output_mapping:
-                memlet = unsqueeze_memlet(memlet, output_mapping[dst.data], use_dst_subset=True)
+                dst_data = dst.data
+                dst_memlet = unsqueeze_memlet(memlet, output_mapping[dst.data], use_dst_subset=True)
+            else:
+                dst_data = None
+                dst_memlet = None
 
-            # Other cases
-            if memlet is e.data:
+            # Other cases (code->code)
+            if src_data is None and dst_data is None:
                 if e.data.data in input_mapping:
                     memlet = unsqueeze_memlet(memlet, input_mapping[e.data.data])
                 elif e.data.data in output_mapping:
                     memlet = unsqueeze_memlet(memlet, output_mapping[e.data.data])
-
-            e.data = memlet
+                e.data = memlet
+            else:
+                if src_memlet is not None:
+                    memlet.src_subset = src_memlet.subset
+                if dst_memlet is not None:
+                    memlet.dst_subset = dst_memlet.subset
+                if memlet.data == src_data:
+                    memlet.data = src_memlet.data
+                elif memlet.data == dst_data:
+                    memlet.data = dst_memlet.data
 
     for e in sdfg.edges():
         repl_dict = dict()
@@ -178,13 +225,22 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 if memlet.data in output_mapping:
                     mapping = output_mapping
 
-                repl_dict[str(memlet)] = unsqueeze_memlet(memlet, mapping[memlet.data])
+                repl_dict[str(memlet)] = str(unsqueeze_memlet(memlet, mapping[memlet.data]))
                 if memlet.data in syms:
                     syms.remove(memlet.data)
         for s in syms:
             if s in input_mapping:
                 repl_dict[s] = str(input_mapping[s])
-        e.data.replace_dict(repl_dict)
+
+        # Manual replacement with strings
+        # TODO(later): Would be MUCH better to use e.data.replace_dict(repl_dict, replace_keys=False)
+        for find, replace in repl_dict.items():
+            for k, v in e.data.assignments.items():
+                if find in v:
+                    e.data.assignments[k] = v.replace(find, replace)
+            condstr = e.data.condition.as_string
+            if find in condstr:
+                e.data.condition.as_string = condstr.replace(find, replace)
 
 
 def remove_name_collisions(sdfg: SDFG):
@@ -381,11 +437,6 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     :return: A string for the whole state
     """
     result: List[tn.ScheduleTreeNode] = []
-    NODE_TO_SCOPE_TYPE = {
-        dace.nodes.MapEntry: tn.MapScope,
-        dace.nodes.ConsumeEntry: tn.ConsumeScope,
-        dace.nodes.PipelineEntry: tn.PipelineScope,
-    }
     sdfg = state.parent
 
     edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode] = prepare_schedule_tree_edges(state)

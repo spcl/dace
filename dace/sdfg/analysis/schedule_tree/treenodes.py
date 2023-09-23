@@ -67,7 +67,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
         for child in self.children:
             yield from child.preorder_traversal()
 
-    # TODO: Get input/output memlets?
+    # TODO: Helper function that gets input/output memlets of the scope
 
 
 @dataclass

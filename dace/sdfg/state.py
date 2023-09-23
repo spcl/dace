@@ -411,6 +411,14 @@ class StateGraphView(object):
     ###################################################################
     # Query, subgraph, and replacement methods
 
+    def is_leaf_memlet(self, e):
+        if isinstance(e.src, nd.ExitNode) and e.src_conn and e.src_conn.startswith('OUT_'):
+            return False
+        if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
+            return False
+        return True
+    
+
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         """
         Returns a set of symbol names that are used in the state.
@@ -444,16 +452,9 @@ class StateGraphView(object):
                 freesyms |= n.free_symbols
 
         # Free symbols from memlets
-        def _is_leaf_memlet(e):
-            if isinstance(e.src, nd.ExitNode) and e.src_conn and e.src_conn.startswith('OUT_'):
-                return False
-            if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
-                return False
-            return True
-        
         for e in self.edges():
             # If used for code generation, only consider memlet tree leaves
-            if not all_symbols and not _is_leaf_memlet(e):
+            if not all_symbols and not self.is_leaf_memlet(e):
                 continue
 
             freesyms |= e.data.used_symbols(all_symbols)

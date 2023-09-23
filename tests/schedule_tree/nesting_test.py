@@ -8,7 +8,6 @@ from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree
 from dace.transformation.dataflow import RemoveSliceView
 
 import pytest
-from typing import List
 
 N = dace.symbol('N')
 T = dace.symbol('T')
@@ -231,5 +230,6 @@ if __name__ == '__main__':
     test_stree_copy_different_scope(True)
     test_dealias_nested_call()
     test_dealias_nested_call_samearray()
-    test_dealias_memlet_composition()
+    test_dealias_memlet_composition(False)
+    test_dealias_memlet_composition(True)
     test_dealias_interstate_edge()
