@@ -78,6 +78,7 @@ import ast
 import numpy as np
 import os
 import tokenize
+import warnings
 
 import sympy
 import dace
@@ -733,6 +734,21 @@ class CPPUnparser:
         if isinstance(t.n, complex):
             dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
+        # Handle large integer values
+        if isinstance(t.n, int):
+            bits = t.n.bit_length()
+            if bits == 32:  # Integer, potentially unsigned
+                if t.n >= 0:  # unsigned
+                    repr_n += 'U'
+                else:  # signed, 64-bit
+                    repr_n += 'LL'
+            elif 32 < bits <= 63:
+                repr_n += 'LL'
+            elif bits == 64 and t.n >= 0:
+                repr_n += 'ULL'
+            elif bits >= 64:
+                warnings.warn(f'Value wider than 64 bits encountered in expression ({t.n}), emitting as-is')
+
         if repr_n.endswith("j"):
             self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
         else:
@@ -831,8 +847,23 @@ class CPPUnparser:
         self.write(")")
 
     unop = {"Invert": "~", "Not": "!", "UAdd": "+", "USub": "-"}
+    unop_lambda = {'Invert': (lambda x: ~x), 'Not': (lambda x: not x), 'UAdd': (lambda x: +x), 'USub': (lambda x: -x)}
 
     def _UnaryOp(self, t):
+        # Dispatch constants after applying the operation
+        if sys.version_info[:2] < (3, 8):
+            if isinstance(t.operand, ast.Num):
+                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.n)
+                newnode = ast.Num(n=newval)
+                self.dispatch(newnode)
+                return
+        else:
+            if isinstance(t.operand, ast.Constant):
+                newval = self.unop_lambda[t.op.__class__.__name__](t.operand.value)
+                newnode = ast.Constant(value=newval)
+                self.dispatch(newnode)
+                return
+
         self.write("(")
         self.write(self.unop[t.op.__class__.__name__])
         self.write(" ")

@@ -1477,8 +1477,8 @@ def propagate_subset(memlets: List[Memlet],
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    elif symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                        for s in new_memlet.volume.free_symbols):
+    if symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
+                                                      for s in new_memlet.volume.free_symbols):
         new_memlet.dynamic = True
         new_memlet.volume = 0
 
