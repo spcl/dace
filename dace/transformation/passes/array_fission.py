@@ -15,6 +15,12 @@ from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
 from dace.transformation.passes import analysis as ap
 
 
+class PhiNode():
+    def __init__(self, name: str, variables: set[str]):
+        self.name = name
+        self.variables = variables
+
+
 class ArrayFission(ppl.Pass):
     """
     Fission transient arrays that are dominated by full writes 
@@ -65,7 +71,7 @@ class ArrayFission(ppl.Pass):
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]
                           ] = pipeline_results[ap.AccessSets.__name__][sdfg.sdfg_id]
         # list of original array names in the sdfg that fissioning is performed on
-        anames: List[str] = [aname for aname, a in sdfg.arrays.items(
+        array_variable_names: List[str] = [aname for aname, a in sdfg.arrays.items(
         ) if a.transient and not a.total_size == 1]
 
         # dictionary that stores "virtual" phi nodes for each variable and SDFGstate
@@ -84,7 +90,7 @@ class ArrayFission(ppl.Pass):
 
         phi_nodes, def_states, def_states_phi = _insert_phi_nodes(
             sdfg,
-            anames,
+            array_variable_names,
             write_approximation,
             loop_write_approximation,
             access_nodes,
@@ -94,7 +100,7 @@ class ArrayFission(ppl.Pass):
             sdfg,
             write_approximation,
             phi_nodes,
-            anames
+            array_variable_names
         )
 
         _eliminate_phi_nodes(
@@ -119,7 +125,6 @@ class ArrayFission(ppl.Pass):
                     current_defs.add(an.data)
             if len(current_defs) > 1:
                 definitions[var] = current_defs
-
         results = definitions
         return results
 
@@ -129,7 +134,7 @@ class ArrayFission(ppl.Pass):
 
 def _insert_phi_nodes(
     sdfg: SDFG,
-    anames: List[str],
+    array_variable_names: List[str],
     write_approximation: dict[Edge, Memlet],
     loop_write_approximation: dict[SDFGState, dict[str, Memlet]],
     access_nodes: Dict[str, Dict[SDFGState,
@@ -147,10 +152,10 @@ def _insert_phi_nodes(
     defining_states_phi: Dict[str, set[SDFGState]] = {}
 
     defining_states_phi = _insert_phi_nodes_loopheaders(
-        sdfg, anames, loop_write_approximation, phi_nodes)
+        sdfg, array_variable_names, loop_write_approximation, phi_nodes)
 
     defining_states = _find_defining_states(
-        sdfg, anames, phi_nodes, access_nodes, write_approximation)
+        sdfg, array_variable_names, phi_nodes, access_nodes, write_approximation)
 
     _insert_phi_nodes_regular(sdfg, defining_states,
                               phi_nodes, defining_states_phi)
@@ -162,7 +167,7 @@ def _rename(
         sdfg: SDFG,
         write_approximation: Dict[Edge, Memlet],
         phi_nodes: Dict[SDFGState, Dict[str, Dict]],
-        anames: List[str]
+        array_variable_names: List[str]
 ):
     # dictionary mapping each variable from the original SDFG to a dictionary mapping
     # each state to the last definition of that variable in that state
@@ -172,10 +177,10 @@ def _rename(
     # traverse the dominator tree depth first and rename all variables
     dom_tree_dfs = _dominator_tree_DFS_order(sdfg, immediate_dominators)
     for current_state in dom_tree_dfs:
-        _rename_DFG_and_interstate_edges(sdfg, current_state, anames, phi_nodes, write_approximation,
+        _rename_DFG_and_interstate_edges(sdfg, current_state, array_variable_names, phi_nodes, write_approximation,
                                          last_defs, immediate_dominators)
         _propagate_new_names_to_phi_nodes(sdfg, current_state,
-                                          anames, phi_nodes, last_defs)
+                                          array_variable_names, phi_nodes, last_defs)
 
 
 def _eliminate_phi_nodes(
@@ -379,20 +384,19 @@ def _find_reaching_def(
 def _rename_DFG_and_interstate_edges(
         sdfg: SDFG,
         state: SDFGState,
-        anames: List[str],
+        array_variable_names: List[str],
         phi_nodes: Dict[SDFGState, Dict[str, Dict]],
         write_approximation:  Dict[Edge, Memlet],
         last_defs: Dict[str, Dict[SDFGState, str]],
         immediate_dominators: Dict[SDFGState, SDFGState]
 ):
 
-    for var in anames:
+    for var in array_variable_names:
         # check if there is a phi node for the current variable in the current state
         if not phi_nodes[state].get(var):
             continue
         newdesc = sdfg.arrays[var].clone()
         newname = sdfg.add_datadesc(var, newdesc, find_new_name=True)
-        phi_nodes[state][var]["descriptor"] = newdesc
         phi_nodes[state][var]["name"] = newname
         _update_last_def(state, newname, var, last_defs)
     # rename data nodes
@@ -403,7 +407,7 @@ def _rename_DFG_and_interstate_edges(
         if not isinstance(node, nd.AccessNode):
             continue
         var = node.data
-        if var not in anames:
+        if var not in array_variable_names:
             continue
         # if array is not fully overwritten at this access node treat it as a use
         # otherwise as a def also make sure that this is the first (and last)
@@ -424,7 +428,7 @@ def _rename_DFG_and_interstate_edges(
                 state, var, last_defs, phi_nodes, immediate_dominators)
         _rename_node(state, node, newname)
     # define last definition in this state if it has not been defined yet
-    for var in anames:
+    for var in array_variable_names:
         if not last_defs.get(var):
             last_defs[var] = {}
         if not last_defs[var].get(state):
@@ -443,13 +447,13 @@ def _rename_DFG_and_interstate_edges(
 def _propagate_new_names_to_phi_nodes(
         sdfg: SDFG,
         state: SDFGState,
-        anames: List[str],
+        array_variable_names: List[str],
         phi_nodes: Dict[SDFGState, Dict[str, Dict]],
         last_defs: Dict[str, Dict[SDFGState, str]]):
     # propagate last definition in state to phi nodes in successor states
     successors = [edge.dst for edge in sdfg.out_edges(state)]
     for successor in successors:
-        for var in anames:
+        for var in array_variable_names:
             if not phi_nodes[successor].get(var):
                 continue
             newname = last_defs[var][state]
@@ -518,14 +522,14 @@ def _conditional_dfs(graph: SDFG, start: SDFG = None, condition=None):
 
 def _find_defining_states(
         sdfg: SDFG,
-        anames: List[str],
+        array_variable_names: List[str],
         phi_nodes: Dict[SDFGState, Dict[str, Dict]],
         access_nodes:  Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
         write_approximation: dict[Edge, Memlet]
 ) -> Dict[str, set[SDFGState]]:
     def_states: Dict[str, Set[SDFGState]] = {}
 
-    for var in anames:
+    for var in array_variable_names:
         # iterate over access nodes to the array in the current state and check if it
         # fully overwrites the array with the write underapproximation
         desc = sdfg.arrays[var]
@@ -554,7 +558,7 @@ def _find_defining_states(
 
 def _insert_phi_nodes_loopheaders(
         sdfg: SDFG,
-        anames: List[str],
+        array_variable_names: List[str],
         loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]],
         phi_nodes: Dict[SDFGState, Dict[str, Dict]]
 ) -> Dict[str, Set[SDFGState]]:
@@ -565,14 +569,12 @@ def _insert_phi_nodes_loopheaders(
         for var, memlet in write_dict.items():
             if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
                 continue
-            if var not in anames:
+            if var not in array_variable_names:
                 continue
             if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
                 phi_nodes[loopheader][var] = {
                     "name": var,
-                    "variables": set(),
-                    "descriptor": None,
-                    "path_conditions": {}
+                    "variables": set()
                 }
                 if var not in def_states_phi:
                     def_states_phi[var] = set()
@@ -601,9 +603,7 @@ def _insert_phi_nodes_regular(
                     continue
                 phi_nodes[frontier_state][var] = {
                     "name": var,
-                    "variables": set(),
-                    "descriptor": None,
-                    "path_conditions": {}
+                    "variables": set()
                 }
                 phi_states.add(frontier_state)
                 if frontier_state not in defining_states:
