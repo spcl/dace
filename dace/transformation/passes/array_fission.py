@@ -39,7 +39,7 @@ class ArrayFission(ppl.Pass):
         self,
         sdfg: SDFG,
         pipeline_results: Dict[str, Any]
-        ) -> Optional[Dict[str, Set[str]]]:
+    ) -> Optional[Dict[str, Set[str]]]:
         """
         Rename scalars and arrays of size 1 based on dominated scopes.
 
@@ -54,23 +54,24 @@ class ArrayFission(ppl.Pass):
         results: Dict[str, Set[str]] = defaultdict(set)
         immediate_dominators = nx.dominance.immediate_dominators(
             sdfg.nx, sdfg.start_state)
-        write_approximation = pipeline_results[UnderapproximateWrites.__name__]["approximation"]
+        write_approximation: dict[Edge,
+                                  Memlet] = pipeline_results[UnderapproximateWrites.__name__]["approximation"]
         loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]
-            ] = pipeline_results[UnderapproximateWrites.__name__]["loop_approximation"]
+                                       ] = pipeline_results[UnderapproximateWrites.__name__]["loop_approximation"]
         loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]
-            ] = pipeline_results[UnderapproximateWrites.__name__]["loops"]
+                    ] = pipeline_results[UnderapproximateWrites.__name__]["loops"]
         access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]
-            ] = pipeline_results[ap.FindAccessNodes.__name__][sdfg.sdfg_id]
+                           ] = pipeline_results[ap.FindAccessNodes.__name__][sdfg.sdfg_id]
         state_reach: Dict[SDFGState, Set[SDFGState]
-            ] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
+                          ] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]
-            ] = pipeline_results[ap.AccessSets.__name__][sdfg.sdfg_id]
+                          ] = pipeline_results[ap.AccessSets.__name__][sdfg.sdfg_id]
         # list of original array names in the sdfg that fissioning is performed on
         anames: List[str] = [aname for aname, a in sdfg.arrays.items(
         ) if a.transient and not a.total_size == 1]
 
         # dictionary that stores "virtual" phi nodes for each variable and SDFGstate
-        # phi nodes are represented by dictionaries that containing:
+        # phi nodes are represented by dictionaries that contain:
         # - the variable defined by the phi-node
         # - the corresponding descriptor
         # - the definitions reaching the phi node
@@ -82,7 +83,7 @@ class ArrayFission(ppl.Pass):
 
         # maps each variable to it's defining writes that involve phi-nodes
         def_states_phi: Dict[str, Set[SDFGState]] = {}
-                
+
         phi_nodes, def_states, def_states_phi = _insert_phi_nodes(
             sdfg,
             anames,
@@ -97,7 +98,7 @@ class ArrayFission(ppl.Pass):
             immediate_dominators,
             phi_nodes,
             anames
-            )
+        )
 
         _eliminate_phi_nodes(
             sdfg,
@@ -129,33 +130,31 @@ class ArrayFission(ppl.Pass):
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
 
+
 def _insert_phi_nodes(
     sdfg: SDFG,
     anames: List[str],
     write_approximation: dict[Edge, Memlet],
     loop_write_approximation: dict[SDFGState, dict[str, Memlet]],
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]
-    ) -> Tuple[Dict[SDFGState, Dict[str, Dict]],
-               Dict[str, set[SDFGState]],
-               Dict[str, set[SDFGState]]]:
+    access_nodes: Dict[str, Dict[SDFGState,
+                                 Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]
+) -> Tuple[Dict[SDFGState, Dict[str, Dict]],
+           Dict[str, set[SDFGState]],
+           Dict[str, set[SDFGState]]]:
 
     phi_nodes: Dict[SDFGState, Dict[str, Dict]] = defaultdict(None)
-
     for state in sdfg.states():
         phi_nodes[state] = {}
-
     # maps each variable to its defining writes that don't involve phi-nodes
     def_states: Dict[str, set[SDFGState]] = {}
-
     # maps each variable to its defining writes that involve phi-nodes
     def_states_phi: Dict[str, set[SDFGState]] = {}
-
-    dominance_frontiers = nx.dominance.dominance_frontiers(sdfg.nx, sdfg.start_state)
+    dominance_frontiers = nx.dominance.dominance_frontiers(
+        sdfg.nx, sdfg.start_state)
 
     for loopheader, write_dict in loop_write_approximation.items():
         if loopheader not in sdfg.states():
             continue
-
         for var, memlet in write_dict.items():
             if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
                 continue
@@ -172,7 +171,7 @@ def _insert_phi_nodes(
                     def_states_phi[var] = set()
                 def_states_phi[var].add(loopheader)
 
-    # insert phi nodes
+    # insert phi nodes for each variable
     for var in anames:
         desc = sdfg.arrays[var]
         array_set = subsets.Range.from_array(desc)
@@ -180,15 +179,14 @@ def _insert_phi_nodes(
         # array of states that define/fully overwrite the array
         defining_states = set()
 
+        # iterate over access nodes to the array in the current state and check if it
+        # fully overwrites the array with the write underapproximation
         for state in sdfg.states():
-            # iterate over access nodes to the array in the current state and check if it
-            # fully overwrites the array with the write underapproximation
-
             # loopheaders that have phi nodes are also defining states
             if state in phi_nodes.keys():
                 if var in phi_nodes[state].keys():
                     defining_states.add(state)
-            # check if there's even a write to the descriptor in the current state
+            # check if there is a write to the descriptor in the current state
             write_nodes = access_nodes[var][state][1]
             if len(write_nodes) == 0:
                 continue
@@ -196,8 +194,8 @@ def _insert_phi_nodes(
             for node in write_nodes:
                 # if any of the edges fully overwrites the array add the state to
                 # the defining states
-                if any(write_approximation[e].subset.covers_precise(array_set)
-                        for e in state.in_edges(node)):
+                if any(write_approximation[edge].subset.covers_precise(array_set)
+                        for edge in state.in_edges(node)):
                     defining_states.add(state)
                     break
 
@@ -232,6 +230,7 @@ def _insert_phi_nodes(
 
     return (phi_nodes, def_states, def_states_phi)
 
+
 def _rename(
         sdfg: SDFG,
         write_approximation: dict[Edge, Memlet],
@@ -249,7 +248,7 @@ def _rename(
         if dom_node not in immediate_dominated:
             immediate_dominated[dom_node] = set()
         immediate_dominated[dom_node].add(node)
-    
+
     # helper function to find the reaching definition given an AccessNode and a state in the
     # original SDFG
     def find_reaching_def(state: SDFGState, var: str):
@@ -343,6 +342,7 @@ def _rename(
         for oedge in sdfg.out_edges(current_state):
             oedge.data.replace_dict(rename_dict)
 
+
 def _eliminate_phi_nodes(
     sdfg: SDFG,
     phi_nodes: Dict[SDFGState, Dict[str, Dict]],
@@ -357,7 +357,7 @@ def _eliminate_phi_nodes(
 
     # dictionary mapping each variable in the SDFG to the states that read from it.
     # For reads in edges only take outgoing edges into account
-    var_reads: Dict[str, Set[SDFGState]] = defaultdict(set)    
+    var_reads: Dict[str, Set[SDFGState]] = defaultdict(set)
     # Initialize var_reads
     for state in sdfg.nodes():
         for anode in state.data_nodes():
@@ -390,8 +390,8 @@ def _eliminate_phi_nodes(
                     node is state
                     or (node not in def_states_phi[original_var]
                         and node not in def_states[original_var])
-                    )
                 )
+            )
 
             candidate_states = sdfg.states()
             loop_states = []
@@ -407,16 +407,17 @@ def _eliminate_phi_nodes(
                 and original_var in loop_write_approximation[state]
                 and loop_write_approximation[state][original_var].subset.covers_precise(
                     subsets.Range.from_array(sdfg.arrays[original_var])
-                    )
-                ):
+                )
+            ):
 
                 _, _, loop_states, _, _ = loops[state]
                 # check if loop reads from outside the loop
                 if not any(
-                    newname in [a.label for a in access_nodes[original_var][s][0]]
-                    or s in var_reads[newname]
-                    for s in loop_states):
-                    
+                        newname in [
+                            a.label for a in access_nodes[original_var][s][0]]
+                        or s in var_reads[newname]
+                        for s in loop_states):
+
                     candidate_states = state_reach[state]
                     overwriting_loop = True
             # if the variable defined by the phi node is read by any other
@@ -436,7 +437,7 @@ def _eliminate_phi_nodes(
                 # rename all phi nodes and propagate
                 if (not other_state is state and
                     other_state in phi_nodes and
-                    original_var in phi_nodes[other_state]):
+                        original_var in phi_nodes[other_state]):
 
                     other_phi_node = phi_nodes[other_state][original_var]
                     new_variables = set()
@@ -478,8 +479,8 @@ def _eliminate_phi_nodes(
 
             # update var_read if any renaming was done
             if is_read:
-            # if a state read from the parameter it now reads from the variable
-            # defined by the current phi node
+                # if a state read from the parameter it now reads from the variable
+                # defined by the current phi node
                 for parameter in parameters:
                     if parameter is newname:
                         continue
@@ -492,7 +493,6 @@ def _eliminate_phi_nodes(
 
                     # try to remove renamed parameters from SDFG
                     to_remove.add(parameter)
-
 
             # remove the phi-node if it is not an overwriting loop.
             # If the latter is the case we keep it such that
@@ -507,9 +507,10 @@ def _eliminate_phi_nodes(
         except ValueError:
             continue
 
+
 def _rename_node(state: SDFGState, node: nd.AccessNode, newname: str):
-# helper function that traverses memlet trees of all incoming and outgoing
-# edges of an accessnode and renames it to newname
+    # helper function that traverses memlet trees of all incoming and outgoing
+    # edges of an accessnode and renames it to newname
     old_name = node.data
     node.data = newname
     for iedge in state.in_edges(node):
@@ -521,12 +522,13 @@ def _rename_node(state: SDFGState, node: nd.AccessNode, newname: str):
             if edge.data.data == old_name:
                 edge.data.data = newname
 
+
 def _dict_dfs(
         graph_dict: Dict[SDFGState, SDFGState],
         start: SDFGState
-        ) -> List[SDFGState]:
-# helper function that returns the nodes of a dictionary representing a tree
-# in DFS-order
+) -> List[SDFGState]:
+    # helper function that returns the nodes of a dictionary representing a tree
+    # in DFS-order
     stack = []
     visited = []
     stack.append(start)
@@ -543,6 +545,7 @@ def _dict_dfs(
                 stack.append(child)
     return visited
 
+
 def _conditional_dfs(graph: SDFG, start: SDFG = None, condition=None):
     successors = graph.successors
     visited = set()
@@ -554,4 +557,37 @@ def _conditional_dfs(graph: SDFG, start: SDFG = None, condition=None):
             visited.add(node)
             if condition(node):
                 stack.extend(iter(successors(node)))
-    return visited    
+    return visited
+
+
+def _find_defining_states(
+        sdfg: SDFG,
+        var: str,
+        phi_nodes: Dict[SDFGState, Dict[str, Dict]],
+        access_nodes:  Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
+        write_approximation: dict[Edge, Memlet]
+        ) -> set[SDFGState]:
+    desc = sdfg.arrays[var]
+    array_set = subsets.Range.from_array(desc)
+    defining_states = set()
+
+    # iterate over access nodes to the array in the current state and check if it
+    # fully overwrites the array with the write underapproximation
+    for state in sdfg.states():
+        # loopheaders that have phi nodes are also defining states
+        if state in phi_nodes.keys():
+            if var in phi_nodes[state].keys():
+                defining_states.add(state)
+        # check if there is a write to the descriptor in the current state
+        write_nodes = access_nodes[var][state][1]
+        if len(write_nodes) == 0:
+            continue
+        for node in write_nodes:
+            # if any of the edges fully overwrites the array add the state to
+            # the defining states
+            if any(write_approximation[edge].subset.covers_precise(array_set)
+                    for edge in state.in_edges(node)):
+                defining_states.add(state)
+                break
+
+    return defining_states
