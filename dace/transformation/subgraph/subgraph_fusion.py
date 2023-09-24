@@ -99,8 +99,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             "here will compute the new shape automatically.",
             default={})
 
-    blacklisted_arrays = ['ZPFPLSX', 'ZLIQFRAC', 'ZPFPLSX', 'ZFOEALFA', 'ZAORIG', 'ZQSLIQ', 'ZLNEG', 'ZFOEEW', 'ZFOEEWMT', 'ZQX0', 'ZA',
-                          'ZQX', 'ZQSICE', 'ZICEFRAC', 'ZQXN2D']
+    blacklisted_arrays = ['ZPFPLSX']
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
@@ -284,11 +283,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         try:
             node_config = SubgraphFusion.get_adjacent_nodes(sdfg, graph, map_entries)
         except NotImplementedError:
+            logger.debug("Rejected: SubgraphFusion.get_adjacent_nodes not implemented")
             return False
         in_nodes, intermediate_nodes, out_nodes = node_config
 
         # 2.2 topological feasibility:
         if not SubgraphFusion.check_topo_feasibility(sdfg, graph, map_entries, intermediate_nodes, out_nodes):
+            logger.debug("Rejected: topo feasibility")
             return False
 
         # 2.3 memlet feasibility
@@ -300,6 +301,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             invariant_dimensions = self.determine_invariant_dimensions(sdfg, graph, intermediate_nodes, map_entries,
                                                                        map_exits)
         except NotImplementedError:
+            logger.debug("Rejected: SubgraphFusion.determine_invariant_dimensions not implemented")
             return False
 
         logger.debug("Invariant dimensions: %s", invariant_dimensions)
@@ -338,6 +340,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                   "fused with incoming edges"
                                   "from outside the maps are not"
                                   "allowed yet.")
+                    logger.debug("Rejected nodes between two maps to be"
+                                  "fused with incoming edges"
+                                  "from outside the maps are not"
+                                  "allowed yet.")
                     return False
 
             # find lower_subsets
@@ -363,9 +369,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             try:
                 contiguous_upper = find_contiguous_subsets(upper_subsets)
                 if len(contiguous_upper) > 1:
+                    logger.debug("Rejected: upper subset not contiguous")
                     return False
             except TypeError:
                 warnings.warn('SubgraphFusion::Could not determine whether subset is continuous.'
+                              'Exiting Check with False.')
+                logger.ddebug('Rejected:Could not determine whether subset is continuous.'
                               'Exiting Check with False.')
                 return False
 
@@ -387,7 +396,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for lower_subset, lower_map_ranges in lower_subsets:
                 if not union_upper.covers(lower_subset):
                     logger.debug("Check if intermediate node %s can be transformed with lower subset %s and upper %s",
-                            node, lower_subset.ranges, union_upper.ranges)
+                                 node, lower_subset.ranges, union_upper.ranges)
                     differences = self._can_intermediate_array_be_transformed(sdfg, graph, node, lower_subset,
                                                                               union_upper, lower_map_ranges)
                     if differences is not None:
@@ -1184,7 +1193,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     edge.condition = CodeBlock(f"{map_param} >= {map_start}")
                     add_args['map_start_value'] = map_start
                 if map_end != global_map.range.ranges[idx][1]:
-                    condition_str = f"{map_param} < {map_end}"
+                    condition_str = f"{map_param} <= {map_end}"
                     add_args['map_end_value'] = map_end
                     if edge.condition.as_string != '1':
                         edge.condition = CodeBlock(f"({edge.condition.as_string}) and {condition_str}")
@@ -1417,8 +1426,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         for data_name in data_intermediate:
             desc = sdfg.data(data_name)
-            if (subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array) 
-                and data_name not in self.arrays_as_circular_buffer):
+            if (subgraph_contains_data[data_name] and isinstance(desc, dace.data.Array)):
                 all_nodes = [n for n in intermediate_nodes if n.data == data_name]
                 in_edges = list(chain(*(graph.in_edges(n) for n in all_nodes)))
 
@@ -1484,6 +1492,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 self.arrays_as_circular_buffer[data_name] = []
                             index += 1
 
+                    # TODO(Samuel): This can probably be removed
                     if data_name in self.arrays_as_circular_buffer:
                         for index, diff in enumerate(self.arrays_as_circular_buffer[data_name]):
                             new_data_shape[index] += diff
@@ -1495,6 +1504,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 new_data_offset = desc.offset
 
                 # compress original shape
+                # if data_name not in self.arrays_as_circular_buffer:
                 change_data(data_name,
                             sdfg,
                             shape=new_data_shape,
@@ -1503,6 +1513,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                             offset=new_data_offset,
                             lifetime=dtypes.AllocationLifetime.Scope,
                             storage=self.transient_allocation)
+
+                if data_name in self.arrays_as_circular_buffer:
+                    logger.debug("Add modulo to memlets of %s", data_name)
+                    helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
+
                 # If the compressed array is also initialised somewhere, change that map to the new size
                 if data_name in init_maps:
                     state, map_infos = init_maps[data_name]
@@ -1522,12 +1537,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if sdfg.data(data_name).lifetime == dtypes.AllocationLifetime.Scope:
                     sdfg.data(data_name).lifetime = dtypes.AllocationLifetime.State
 
-        # Add modulo operations to the memlets with the data which is shrank but needs to be used as a circular buffer
-        # for data_name in self.arrays_as_circular_buffer:
-        #     if data_name in subgraph_contains_data and subgraph_contains_data[data_name]:
-        #         logger.debug("Add modulo to memlets of %s", data_name)
-        #         helpers.add_modulo_to_all_memlets(graph, data_name, sdfg.data(data_name).shape)
-
         for node in intermediate_nodes:
             # memlets of created transient:
             # correct data names
@@ -1541,9 +1550,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
             # intermediate_nodes is a set -> each data node only appears only once. Need to find all the other access
             # nodes to the same data
-            # for access_node in graph.data_nodes():
-            #     # circular buffers are treated differently, they need to add modulos
-            # if access_node.data == node.data and node.data not in self.arrays_as_circular_buffer:
+            # circular buffers are treated differently, they need to add modulos
             if node.data not in self.arrays_as_circular_buffer:
                 access_node = node
 

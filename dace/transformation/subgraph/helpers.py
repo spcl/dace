@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Subgraph Transformation Helper API """
+import ast
 from dace import dtypes, registry, symbolic, subsets, data
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
@@ -7,6 +8,7 @@ from dace.sdfg import replace, SDFG, SDFGState
 from dace.properties import make_properties, Property
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.sdfg.graph import SubgraphView
+from dace.frontend.python import astutils
 import dace
 import logging
 from numbers import Number
@@ -396,36 +398,22 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
 
 
                     if edge.data.data == data_name and graph.edge_id(edge) not in changed_edges:
-                        new_ranges = []
-                        for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
+                        if edge.data.data == data_name:
+                            subset = copy.deepcopy(edge.data.subset)
+                        else:
+                            subset = copy.deepcopy(edge.data.other_subset)
+                        remove_min_max(subset)
 
-                            if edge.data.data == data_name:
-                                rng = copy.deepcopy(edge.data.subset)
-                            else:
-                                rng = copy.deepcopy(edge.data.other_subset)
-
-                            remove_min_max(rng)
-                            rng = rng.ranges[index]
-                            if rng[0] == rng[1]:
-                                # case that in this dimension we only need one index
-                                new_range = ((offset + rng[0]) % dim_size, (offset + rng[1]) % dim_size, *rng[2:])
-                            elif ((rng[1] - rng[0] + S.One).evalf(subs=graph.parent.constants) ==
-                                  dim_size.evalf(subs=graph.parent.constants)):
-                                # memlet goes over the whole new shape
-                                new_range = (0, dim_size - S.One, *rng[2:])
-                            else:
-                                # Should not reach that state
-                                logger.error(
-                                    f"Can not reduce size of {data_name} to {data_shape} while being used as a"
-                                    f" circular buffer as edge {edge.src} -> {edge.dst} ({edge.data}) has a dimension"
-                                    f" where neither the full size of dimension or just one index is used ({index}-th "
-                                    f"dimension)")
-                                logger.error(
-                                    f"rng[1]-rng[0] + 1={(rng[1]-rng[0]+S.One).evalf(subs=graph.parent.constants)}, "
-                                    f"dim_size: {dim_size.evalf(subs=graph.parent.constants)}"
-                                )
-                                # assert False
-                            new_ranges.append(new_range)
+                        try:
+                            new_ranges = get_range_with_modulo(subset, data_shape, offsets, graph.parent.constants)
+                            logger.debug("%s, change subset from %s to %s for edge %s -> %s", data_name, subset,
+                                         new_ranges, edge.src, edge.dst)
+                        except AssertionError:
+                            # Should not reach that state
+                            logger.error(
+                                f"Can not reduce size of {data_name} to {data_shape} while being used as a"
+                                f" circular buffer as edge {edge.src} -> {edge.dst} ({edge.data}) has a dimension"
+                                f" where neither the full size of dimension or just one index is used")
 
                         nsdfg = None
                         # assume that there are no direct memlets between two nsdfg, there is at least one access node
@@ -436,34 +424,122 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                             nsdfg = edge.src
 
                         if nsdfg is not None and nsdfg not in changed_nsdfg:
+                            logger.debug("Found nsdf: %s", nsdfg)
                             changed_nsdfg.add(nsdfg)
-                            rng = copy.deepcopy(edge.data.subset)
-                            remove_min_max(rng)
                             # Make sure to add the symbols into the nested sdfg symbol map if there are any
                             # in the offset
-                            for symbol in rng.free_symbols:
+                            symbols = []
+                            for offset in offsets:
+                                symbols.extend(offset.free_symbols)
+                            for symbol in symbols:
                                 if str(symbol) not in nsdfg.sdfg.symbols:
-                                    nsdfg.sdfg.add_symbol(symbol, int)
+                                    nsdfg.sdfg.add_symbol(str(symbol), int)
                                 if str(symbol) not in nsdfg.symbol_mapping:
-                                    nsdfg.symbol_mapping[symbol] = symbol
+                                    nsdfg.symbol_mapping[str(symbol)] = symbol
 
                             adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
                                                         edge.data)
 
+                            # Compute the offset for the nested SDFG based on the memlet going into the nested SDFG
+                            new_offsets = [S.Zero] * len(data_shape)
+                            for idx, new_rng in enumerate(new_ranges.ranges):
+                                if new_rng[0] != new_rng[1]:
+                                    new_offsets[idx] = subset.ranges[idx][0] + offsets[idx]
+                            # Adjust interstate edges inside the nested SDFG
+                            add_modulo_to_interstate_edges(nsdfg.sdfg, data_name, data_shape,
+                                                           copy.deepcopy(new_offsets))
+
+                            # Adjust memlets inside each state in the nested SDFG
                             for state in nsdfg.sdfg.states():
                                 if state not in changed_states:
                                     changed_states.add(state)
-                                    new_offsets = [S.Zero] * len(data_shape)
-                                    for idx, new_rng in enumerate(new_ranges):
-                                        if new_rng[0] != new_rng[1]:
-                                            new_offsets[idx] = rng.ranges[idx][0]
-                                    add_modulo_to_all_memlets(state, data_name, data_shape, new_offsets)
+                                    add_modulo_to_all_memlets(state, data_name, data_shape, copy.deepcopy(new_offsets))
 
                         if edge.data.data == data_name:
                             edge.data.subset.ranges = new_ranges
                         else:
                             edge.data.other_subset.ranges = new_ranges
                         changed_edges.add(graph.edge_id(edge))
+
+
+def get_range_with_modulo(rng: subsets.Range, data_shape: Tuple[symbolic.symbol], offsets: Tuple[symbolic.symbol],
+                          symbols: Dict[str, int]) -> subsets.Subset:
+    """
+    Returns a new range where modulo operations have been added in order to shrink the array to a circular buffer. Does
+    return a new range.
+
+    :param rng: The range to change
+    :type rng: subsets.Range
+    :param data_shape: Shape of the new array
+    :type data_shape: Tuple[dace.symbolic.symbol]
+    :param offsets: Offsets for each dimension, if None will be zero. Used when dealing with nested SDFGs, defaults to None
+    :type offsets: Optional[Tuple[dace.symbolic.symbol]], optional
+    :param symbols: Mapping of symbols to their values used when evaluating a range
+    :type symbols: Dict[str, int]
+    :return: The new subset
+    :rtype: subsets.Subset
+    """
+    new_ranges = []
+    for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
+        start, end, step = rng.ranges[index]
+        if start == end:
+            # case that in this dimension we only need one index
+            new_range = ((offset + start) % dim_size, (offset + end) % dim_size, step)
+        elif ((end - start + S.One).evalf(subs=symbols) ==
+              dim_size.evalf(subs=symbols)):
+            # memlet goes over the whole new shape
+            new_range = (0, dim_size - S.One, step)
+        else:
+            logger.error(
+                f"start - end + 1={(start - end + S.One).evalf(subs=symbols)}, "
+                f"dim_size: {dim_size.evalf(subs=symbols), index: {index}}"
+            )
+            raise AssertionError
+        new_ranges.append(new_range)
+    return subsets.Range(new_ranges)
+
+
+class ASTModuloAdder(ast.NodeTransformer):
+    def __init__(self, data_name: str, sdfg: SDFG, offsets: Tuple[symbolic.symbol], indices: Set[int] = None) -> None:
+        self.data_name = data_name
+        self.sdfg = sdfg
+        self.offsets = offsets
+        self.indices = indices
+
+    def visit_Subscript(self, node: ast.Subscript):
+        if astutils.rname(node.value) == self.data_name:
+            old_rng = subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays, without_array=True))
+            data_shape = self.sdfg.arrays[self.data_name].shape
+            new_rng = get_range_with_modulo(old_rng, data_shape, self.offsets, self.sdfg.constants)
+            logger.debug("%s: old_rng: %s, new_rng: %s", self.data_name, old_rng, new_rng)
+            return ast.copy_location(astutils.slice_to_subscript(self.data_name, new_rng), node)
+
+        return self.generic_visit(node)
+
+
+def add_modulo_to_interstate_edges(sdfg: SDFG, data_name: str, data_shape: Tuple[symbolic.symbol],
+                                   offsets: Optional[Tuple[symbolic.symbol]] = None):
+    """
+    Add modulo operations to interstate edges so that the array can be used as a circular buffer. Does not go into
+    nested SDFG. It expects that the array has already been reshaped in the SDFG given.
+
+    :param sdfg: The SDFG containing all interstate edges to check
+    :type sdfg: SDFG
+    :param data_name: Name of the array to be used as a circular buffer
+    :type data_name: str
+    :param data_shape: The new shape of the array as a circular buffer
+    :type data_shape: Tuple[symbolic.symbol]
+    :param offsets: offset to add, defaults to None
+    :type offsets: Optional[Tuple[symbolic.symbol]], optional
+    """
+    refiner = ASTModuloAdder(data_name, sdfg, offsets)
+    for edge in sdfg.edges():
+        if edge.data.condition.language is dtypes.Language.Python:
+            for i, stmt in enumerate(edge.data.condition.code):
+                edge.data.condition.code[i] = refiner.visit(stmt)
+        else:
+            logger.warning("Encountered edge to add modulo to whose condition is not in python. Can't change memory"
+                           "access. Edge: %s", edge)
 
 
 def remove_min_max(rng: subsets.Range):
@@ -480,8 +556,21 @@ def remove_min_max(rng: subsets.Range):
         else:
             return elem
 
-    for index, (start, end, step) in enumerate(rng):
-        rng[index] = (extract(start), extract(end), step)
+    while has_min_max(rng):
+        for index, (start, end, step) in enumerate(rng):
+            rng[index] = (extract(start), extract(end), step)
+
+
+def has_min_max(rng: subsets.Range):
+    """
+    Returns True if there is a min/max element inside the given subset
+
+    :param rng: The subset to check
+    :type rng: subsets.Range
+    """
+    elems = [s for s, _, _ in rng]
+    elems.extend([e for _, e, _ in rng])
+    return any(isinstance(elem, sympy.Min) or isinstance(elem, sympy.Max) for elem in elems)
 
 
 def is_map_init(state: SDFGState, map_exit: nodes.MapEntry,

@@ -119,8 +119,10 @@ class MultiExpansion(transformation.SubgraphTransformation):
 
                             if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
                                 warnings.warn("MultiExpansion::Contiguity fusion violation detected")
+                                logger.debug("Rejected: Contiguity fusion violation")
                                 return False
 
+        logger.debug("Successfull")
         return True
 
     def apply(self, sdfg, map_base_variables=None):
