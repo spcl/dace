@@ -21,8 +21,10 @@ from dace.sdfg import nodes, SDFGState, graph as gr
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.scope import ScopeTree
+from dace.sdfg.graph import Edge
 
-approximation_dict = {}
+
+approximation_dict: dict[Edge, Memlet]= {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
 loop_write_dict: dict[SDFGState, dict[str, Memlet]] = {}
