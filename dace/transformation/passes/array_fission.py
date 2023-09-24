@@ -17,8 +17,8 @@ from dace.transformation.passes import analysis as ap
 
 class _PhiNode():
     def __init__(self, name: str, variables: set[str]):
-        self.name = name
-        self.variables = variables
+        self.name: str = name
+        self.variables: set[str] = variables
 
 
 class ArrayFission(ppl.Pass):
@@ -249,73 +249,31 @@ def _eliminate_phi_nodes(
                     subsets.Range.from_array(sdfg.arrays[original_var])
                 )
             ):
-
                 _, _, loop_states, _, _ = loops[state]
                 # check if loop reads from outside the loop
                 if not any(
                         newname in [
-                            a.label for a in access_nodes[original_var][s][0]]
-                        or s in var_reads[newname]
-                        for s in loop_states):
+                            a.label for a in access_nodes[original_var][other_state][0]]
+                        or other_state in var_reads[newname]
+                        for other_state in loop_states):
 
                     candidate_states = state_reach[state]
                     overwriting_loop = True
             # if the variable defined by the phi node is read by any other
             # state we perform renaming in the whole SDFG
             # if not we only "rename" all the states that are reachable by the defined variable
-            elif not any(s in state_reach[state] or s is state for s in var_reads[newname]):
+            elif not any(other_state in state_reach[state] or other_state is state for other_state in var_reads[newname]):
                 candidate_states = reached_by_def
                 is_read = False
 
-            # make a dictionary that maps every parameter to newname for the
-            # renaming of InterstateEdges
-            rename_dict = {}
-            for parameter in parameters:
-                rename_dict[parameter] = newname
-            for other_state in candidate_states:
+            # rename phi nodes and propagate parameters
+            _rename_phi_related_phi_nodes(parameters, original_var, newname, candidate_states,
+                                          state, phi_nodes, reached_by_def, is_read, overwriting_loop)
 
-                # rename all phi nodes and propagate
-                if (not other_state is state and
-                    other_state in phi_nodes and
-                        original_var in phi_nodes[other_state]):
-
-                    other_phi_node = phi_nodes[other_state][original_var]
-                    new_variables = set()
-
-                    # if the variable defined by the other phi-node is in the parameters
-                    # rename the variable
-                    if other_phi_node.name in parameters and is_read and not overwriting_loop:
-                        other_phi_node.name = newname
-
-                    # propagate parameter or variable defined by phi node to other phi nodes
-                    # that can be reached by the definition
-                    if other_state in reached_by_def:
-                        if not is_read:
-                            new_variables.update(parameters)
-                        else:
-                            new_variables.add(newname)
-                    new_variables.update(other_phi_node.variables)
-                    other_phi_node.variables = new_variables
-                    phi_nodes[other_state][original_var] = other_phi_node
-
-                # only rename if newname is read by another state
-                if is_read:
-                    if overwriting_loop and other_state not in loop_states:
-                        continue
-                    # rename all accesses to the parameters by accessnodes
-                    reads, writes = access_nodes[original_var][other_state]
-                    ans = reads.union(writes)
-                    for an in ans:
-                        if not an.data in parameters:
-                            continue
-                        _rename_node(other_state, an, newname)
-
-                    # rename all accesses to the parameters by interstate edges
-                    other_accesses = access_sets[other_state]
-                    if original_var in other_accesses[0]:
-                        out_edges = sdfg.out_edges(other_state)
-                        for oedge in out_edges:
-                            oedge.data.replace_dict(rename_dict)
+            # rename accesses
+            if is_read:
+                _rename_phi_related_accesses(sdfg, parameters, original_var, newname, candidate_states,
+                                             loop_states, access_nodes, access_sets, overwriting_loop)
 
             # update var_read if any renaming was done
             if is_read:
@@ -346,6 +304,75 @@ def _eliminate_phi_nodes(
             sdfg.remove_data(parameter)
         except ValueError:
             continue
+
+
+def _rename_phi_related_accesses(
+    sdfg: SDFG,
+    phi_node_parameters: set[str],
+    original_variable: str,
+    new_name: str,
+    candidate_states: set[SDFGState],
+    loop_states: set[SDFGState],
+    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
+    access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]],
+    overwriting_loop: bool
+):
+    rename_dict = {}
+    for parameter in phi_node_parameters:
+        rename_dict[parameter] = new_name
+    for other_state in candidate_states:
+        if overwriting_loop and other_state not in loop_states:
+            continue
+        # rename all accesses to the parameters by accessnodes
+        reads, writes = access_nodes[original_variable][other_state]
+        ans = reads.union(writes)
+        for an in ans:
+            if not an.data in phi_node_parameters:
+                continue
+            _rename_node(other_state, an, new_name)
+
+        # rename all accesses to the parameters by interstate edges
+        other_accesses = access_sets[other_state]
+        if original_variable in other_accesses[0]:
+            for oedge in sdfg.out_edges(other_state):
+                oedge.data.replace_dict(rename_dict)
+
+
+def _rename_phi_related_phi_nodes(
+    phi_node_parameters: set[str],
+    original_variable: str,
+    new_name: str,
+    candidate_states: set[SDFGState],
+    phi_node_origin_state: SDFGState,
+    phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
+    reached_by_def: set[SDFGState],
+    is_read: bool,
+    is_overwriting_loop: bool
+):
+    for other_state in candidate_states:
+        # rename all phi nodes and propagate
+        if (not other_state is phi_node_origin_state and
+            other_state in phi_nodes and
+                original_variable in phi_nodes[other_state]):
+
+            other_phi_node = phi_nodes[other_state][original_variable]
+            new_variables = set()
+
+            # if the variable defined by the other phi-node is in the parameters
+            # rename the variable
+            if other_phi_node.name in phi_node_parameters and is_read and not is_overwriting_loop:
+                other_phi_node.name = new_name
+
+            # propagate parameter or variable defined by phi node to other phi nodes
+            # that can be reached by the definition
+            if other_state in reached_by_def:
+                if not is_read:
+                    new_variables.update(phi_node_parameters)
+                else:
+                    new_variables.add(new_name)
+            new_variables.update(other_phi_node.variables)
+            other_phi_node.variables = new_variables
+            phi_nodes[other_state][original_variable] = other_phi_node
 
 
 def _update_last_def(
