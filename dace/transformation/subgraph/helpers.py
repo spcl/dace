@@ -404,62 +404,64 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                             subset = copy.deepcopy(edge.data.other_subset)
                         remove_min_max(subset)
 
+                        new_ranges = None
                         try:
                             new_ranges = get_range_with_modulo(subset, data_shape, offsets, graph.parent.constants)
                             logger.debug("%s, change subset from %s to %s for edge %s -> %s", data_name, subset,
                                          new_ranges, edge.src, edge.dst)
+
+                            nsdfg = None
+                            # assume that there are no direct memlets between two nsdfg, there is at least one access
+                            # node between
+                            if isinstance(edge.dst, nodes.NestedSDFG):
+                                nsdfg = edge.dst
+                            if isinstance(edge.src, nodes.NestedSDFG):
+                                nsdfg = edge.src
+
+                            if nsdfg is not None and nsdfg not in changed_nsdfg:
+                                logger.debug("Found nsdf: %s", nsdfg)
+                                changed_nsdfg.add(nsdfg)
+                                # Make sure to add the symbols into the nested sdfg symbol map if there are any
+                                # in the offset
+                                symbols = []
+                                for offset in offsets:
+                                    symbols.extend(offset.free_symbols)
+                                for symbol in symbols:
+                                    if str(symbol) not in nsdfg.sdfg.symbols:
+                                        nsdfg.sdfg.add_symbol(str(symbol), int)
+                                    if str(symbol) not in nsdfg.symbol_mapping:
+                                        nsdfg.symbol_mapping[str(symbol)] = symbol
+
+                                adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
+                                                            edge.data)
+
+                                # Compute the offset for the nested SDFG based on the memlet going into the nested SDFG
+                                new_offsets = [S.Zero] * len(data_shape)
+                                for idx, new_rng in enumerate(new_ranges.ranges):
+                                    if new_rng[0] != new_rng[1]:
+                                        new_offsets[idx] = subset.ranges[idx][0] + offsets[idx]
+                                # Adjust interstate edges inside the nested SDFG
+                                add_modulo_to_interstate_edges(nsdfg.sdfg, data_name, data_shape,
+                                                               copy.deepcopy(new_offsets))
+
+                                # Adjust memlets inside each state in the nested SDFG
+                                for state in nsdfg.sdfg.states():
+                                    if state not in changed_states:
+                                        changed_states.add(state)
+                                        add_modulo_to_all_memlets(state, data_name, data_shape,
+                                                                  copy.deepcopy(new_offsets))
+
+                            if edge.data.data == data_name:
+                                edge.data.subset.ranges = new_ranges
+                            else:
+                                edge.data.other_subset.ranges = new_ranges
+                            changed_edges.add(graph.edge_id(edge))
                         except AssertionError:
                             # Should not reach that state
                             logger.error(
                                 f"Can not reduce size of {data_name} to {data_shape} while being used as a"
                                 f" circular buffer as edge {edge.src} -> {edge.dst} ({edge.data}) has a dimension"
                                 f" where neither the full size of dimension or just one index is used")
-
-                        nsdfg = None
-                        # assume that there are no direct memlets between two nsdfg, there is at least one access node
-                        # between
-                        if isinstance(edge.dst, nodes.NestedSDFG):
-                            nsdfg = edge.dst
-                        if isinstance(edge.src, nodes.NestedSDFG):
-                            nsdfg = edge.src
-
-                        if nsdfg is not None and nsdfg not in changed_nsdfg:
-                            logger.debug("Found nsdf: %s", nsdfg)
-                            changed_nsdfg.add(nsdfg)
-                            # Make sure to add the symbols into the nested sdfg symbol map if there are any
-                            # in the offset
-                            symbols = []
-                            for offset in offsets:
-                                symbols.extend(offset.free_symbols)
-                            for symbol in symbols:
-                                if str(symbol) not in nsdfg.sdfg.symbols:
-                                    nsdfg.sdfg.add_symbol(str(symbol), int)
-                                if str(symbol) not in nsdfg.symbol_mapping:
-                                    nsdfg.symbol_mapping[str(symbol)] = symbol
-
-                            adjust_data_shape_if_needed(nsdfg.sdfg, graph.parent.data(data_name), data_name,
-                                                        edge.data)
-
-                            # Compute the offset for the nested SDFG based on the memlet going into the nested SDFG
-                            new_offsets = [S.Zero] * len(data_shape)
-                            for idx, new_rng in enumerate(new_ranges.ranges):
-                                if new_rng[0] != new_rng[1]:
-                                    new_offsets[idx] = subset.ranges[idx][0] + offsets[idx]
-                            # Adjust interstate edges inside the nested SDFG
-                            add_modulo_to_interstate_edges(nsdfg.sdfg, data_name, data_shape,
-                                                           copy.deepcopy(new_offsets))
-
-                            # Adjust memlets inside each state in the nested SDFG
-                            for state in nsdfg.sdfg.states():
-                                if state not in changed_states:
-                                    changed_states.add(state)
-                                    add_modulo_to_all_memlets(state, data_name, data_shape, copy.deepcopy(new_offsets))
-
-                        if edge.data.data == data_name:
-                            edge.data.subset.ranges = new_ranges
-                        else:
-                            edge.data.other_subset.ranges = new_ranges
-                        changed_edges.add(graph.edge_id(edge))
 
 
 def get_range_with_modulo(rng: subsets.Range, data_shape: Tuple[symbolic.symbol], offsets: Tuple[symbolic.symbol],
@@ -492,7 +494,7 @@ def get_range_with_modulo(rng: subsets.Range, data_shape: Tuple[symbolic.symbol]
         else:
             logger.error(
                 f"start - end + 1={(start - end + S.One).evalf(subs=symbols)}, "
-                f"dim_size: {dim_size.evalf(subs=symbols), index: {index}}"
+                f"dim_size: {dim_size.evalf(subs=symbols)}, index: {index}"
             )
             raise AssertionError
         new_ranges.append(new_range)
