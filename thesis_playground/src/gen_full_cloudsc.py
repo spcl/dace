@@ -58,7 +58,7 @@ def action_compile(args):
     remove_build_folder(program)
     if args.sdfg_file is None:
         verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
-        sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device}.sdfg")
+        sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
     else:
         sdfg_file = args.sdfg_file
     logger.info("Load SDFG from %s", sdfg_file)
@@ -83,7 +83,7 @@ def action_gen_graph(args):
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
     logfile = os.path.join(
         get_full_cloudsc_log_dir(),
-        f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_{verbose_name}_{args.device}.log")
+        f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_{verbose_name}_{args.device.lower()}.log")
     setup_logging(level=args.log_level.upper(), logfile=logfile, full_logfile=f"{logfile}.all")
     logger.info("Use program: %s", program)
     reset_graph_files(verbose_name)
@@ -102,7 +102,7 @@ def action_gen_graph(args):
                                instrument=False,
                                storage_on_gpu=False)
     logger.info("Generated SDFG")
-    sdfg_path = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device}.sdfg")
+    sdfg_path = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
     logger.info("Save SDFG into %s", sdfg_path)
     sdfg.save(sdfg_path)
 
