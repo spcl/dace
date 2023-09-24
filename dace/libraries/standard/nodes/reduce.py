@@ -1578,7 +1578,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        ret = Reduce("lambda a, b: a", None)
+        ret = Reduce('reduce', 'lambda a, b: a', None)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
