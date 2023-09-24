@@ -88,17 +88,19 @@ def dealias_sdfg(sdfg: SDFG):
                             new_src_memlet = unsqueeze_memlet(e.data, parent_edges[src.data].data, use_src_subset=True)
                         else:
                             src_data = None
-                            new_src_memlet = e.data
+                            new_src_memlet = None
                             # We need to take directionality of the memlet into account
                         if isinstance(dst, nd.AccessNode) and dst.data in child_names:
                             dst_data = dst.data
                             new_dst_memlet = unsqueeze_memlet(e.data, parent_edges[dst.data].data, use_dst_subset=True)
                         else:
                             dst_data = None
-                            new_dst_memlet = e.data
+                            new_dst_memlet = None
 
-                        e.data.src_subset = new_src_memlet.subset
-                        e.data.dst_subset = new_dst_memlet.subset
+                        if new_src_memlet is not None:
+                            e.data.src_subset = new_src_memlet.subset
+                        if new_dst_memlet is not None:
+                            e.data.dst_subset = new_dst_memlet.subset
                         if e.data.data == src_data:
                             e.data.data = new_src_memlet.data
                         elif e.data.data == dst_data:
