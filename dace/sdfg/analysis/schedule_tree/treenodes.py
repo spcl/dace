@@ -375,6 +375,8 @@ class ScheduleNodeVisitor:
         """Visit a node."""
         if isinstance(node, list):
             return [self.visit(snode) for snode in node]
+        if isinstance(node, ScheduleTreeScope) and hasattr(self, 'visit_scope'):
+            return self.visit_scope(node)
 
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)

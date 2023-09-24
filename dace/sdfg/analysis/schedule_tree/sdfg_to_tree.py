@@ -16,6 +16,7 @@ from dace.transformation.helpers import unsqueeze_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
 
+import networkx as nx
 import time
 import sys
 
@@ -24,6 +25,7 @@ NODE_TO_SCOPE_TYPE = {
     dace.nodes.ConsumeEntry: tn.ConsumeScope,
     dace.nodes.PipelineEntry: tn.PipelineScope,
 }
+
 
 def dealias_sdfg(sdfg: SDFG):
     for nsdfg in sdfg.all_sdfgs_recursive():
@@ -345,10 +347,12 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
 def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]:
     """
     Creates a dictionary mapping edges to their corresponding schedule tree nodes, if relevant.
+    This handles view edges, reference sets, and dynamic map inputs.
 
     :param state: The state.
     """
     result: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode] = {}
+    scope_to_edges: Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]] = defaultdict(list)
     edges_to_ignore = set()
     sdfg = state.parent
 
@@ -378,6 +382,8 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.src)
                         result[e] = _make_view_node(state, e, e.src.data, viewed_node.data)
+                        scope = state.entry_node(e.dst if mtree.downwards else e.src)
+                        scope_to_edges[scope].append(e)
                         continue
             if isinstance(e.dst, dace.nodes.AccessNode):
                 desc = e.dst.desc(sdfg)
@@ -386,6 +392,8 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.dst)
                         result[e] = _make_view_node(state, e, e.dst.data, viewed_node.data)
+                        scope = state.entry_node(e.dst if mtree.downwards else e.src)
+                        scope_to_edges[scope].append(e)
                         continue
 
             # 2. Check for reference sets
@@ -395,6 +403,8 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                                           memlet=e.data,
                                           src_desc=sdfg.arrays[e.data.data],
                                           ref_desc=sdfg.arrays[e.dst.data])
+                scope = state.entry_node(e.dst if mtree.downwards else e.src)
+                scope_to_edges[scope].append(e)
                 continue
 
             # 3. Check for copies
@@ -426,7 +436,10 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
                 result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
-    return result
+            scope = state.entry_node(e.dst if mtree.downwards else e.src)
+            scope_to_edges[scope].append(e)
+
+    return result, scope_to_edges
 
 
 def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
@@ -439,8 +452,14 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     result: List[tn.ScheduleTreeNode] = []
     sdfg = state.parent
 
-    edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode] = prepare_schedule_tree_edges(state)
+    edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode]
+    scope_to_edges: Dict[nd.EntryNode, List[gr.MultiConnectorEdge[Memlet]]]
+    edge_to_stree, scope_to_edges = prepare_schedule_tree_edges(state)
     edges_to_ignore = set()
+
+    # Handle all unscoped edges to generate output views
+    views = _generate_views_in_scope(scope_to_edges[None], edge_to_stree, sdfg, state)
+    result.extend(views)
 
     scopes: List[List[tn.ScheduleTreeNode]] = []
     for node in sdutil.scope_aware_topological_sort(state):
@@ -452,6 +471,10 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                 if e in edge_to_stree:
                     result.append(edge_to_stree[e])
                     edges_to_ignore.add(e)
+
+            # Handle all scoped edges to generate (views)
+            views = _generate_views_in_scope(scope_to_edges[node], edge_to_stree, sdfg, state)
+            result.extend(views)
 
             # Create scope node and add to stack
             scopes.append(result)
@@ -466,6 +489,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
         elif isinstance(node, dace.nodes.NestedSDFG):
             nested_array_mapping_input = {}
             nested_array_mapping_output = {}
+            generated_nviews = set()
 
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
             replace_symbols_until_set(node)
@@ -490,12 +514,14 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                             nested_array_mapping_output[conn] = e.data
 
                 if no_mapping:  # Must use view (nview = nested SDFG view)
-                    result.append(
-                        tn.NView(target=conn,
-                                 source=e.data.data,
-                                 memlet=e.data,
-                                 src_desc=sdfg.arrays[e.data.data],
-                                 view_desc=node.sdfg.arrays[conn]))
+                    if conn not in generated_nviews:
+                        result.append(
+                            tn.NView(target=conn,
+                                     source=e.data.data,
+                                     memlet=e.data,
+                                     src_desc=sdfg.arrays[e.data.data],
+                                     view_desc=node.sdfg.arrays[conn]))
+                        generated_nviews.add(conn)
 
             replace_memlets(node.sdfg, nested_array_mapping_input, nested_array_mapping_output)
 
@@ -521,10 +547,13 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.AccessNode):
             # If one of the neighboring edges has a schedule tree node attached to it, use that
+            # (except for views, which were generated above)
             for e in state.all_edges(node):
                 if e in edges_to_ignore:
                     continue
                 if e in edge_to_stree:
+                    if isinstance(edge_to_stree[e], tn.ViewNode):
+                        continue
                     result.append(edge_to_stree[e])
                     edges_to_ignore.add(e)
 
@@ -533,11 +562,43 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     return result
 
 
+def _generate_views_in_scope(edges: List[gr.MultiConnectorEdge[Memlet]],
+                             edge_to_stree: Dict[gr.MultiConnectorEdge[Memlet], tn.ScheduleTreeNode], sdfg: SDFG,
+                             state: SDFGState) -> List[tn.ScheduleTreeNode]:
+    """
+    Generates all view and reference set edges in the correct order. This function is intended to be used
+    at the beginning of a scope.
+    """
+    result: List[tn.ScheduleTreeNode] = []
+
+    # Make a dependency graph of all the views
+    g = nx.DiGraph()
+    node_to_stree = {}
+    for e in edges:
+        if e not in edge_to_stree:
+            continue
+        st = edge_to_stree[e]
+        if not isinstance(st, tn.ViewNode):
+            continue
+        g.add_edge(st.source, st.target)
+        node_to_stree[st.target] = st
+
+    # Traverse in order and deduplicate
+    already_generated = set()
+    for n in nx.topological_sort(g):
+        if n in node_to_stree and n not in already_generated:
+            result.append(node_to_stree[n])
+            already_generated.add(n)
+
+    return result
+
+
 def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeScope:
     """
-    Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of the SDFG.
-    Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node, etc.) or
-    a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+    Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
+    the SDFG.
+    Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node, etc.)
+    or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
     
     It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
     erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the 

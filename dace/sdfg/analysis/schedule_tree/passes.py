@@ -51,10 +51,7 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
 
     class RemoveEmptyScopes(tn.ScheduleNodeTransformer):
 
-        def visit(self, node: tn.ScheduleTreeNode):
-            if not isinstance(node, tn.ScheduleTreeScope):
-                return super().visit(node)
-
+        def visit_scope(self, node: tn.ScheduleTreeScope):
             if len(node.children) == 0:
                 return None
 

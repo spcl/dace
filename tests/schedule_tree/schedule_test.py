@@ -128,7 +128,7 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(node, tn.NView) for node in stree.children)
+    assert isinstance(stree.children[0], tn.NView)
 
 
 def test_irreducible_sub_sdfg():
@@ -252,6 +252,29 @@ def test_dyn_map_range():
     assert isinstance(dynrangemap, tn.MapScope)
 
 
+def test_multiview():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [20, 20], dace.float64)
+    sdfg.add_view('Av', [400], dace.float64)
+    sdfg.add_view('Avv', [10, 40], dace.float64)
+    sdfg.add_view('Bv', [400], dace.float64)
+    sdfg.add_view('Bvv', [10, 40], dace.float64)
+    state = sdfg.add_state()
+    av = state.add_access('Av')
+    bv = state.add_access('Bv')
+    bvv = state.add_access('Bvv')
+    avv = state.add_access('Avv')
+    state.add_edge(state.add_read('A'), None, av, None, dace.Memlet('A[0:20, 0:20]'))
+    state.add_edge(av, None, avv, 'views', dace.Memlet('Av[0:400]'))
+    state.add_edge(avv, None, bvv, None, dace.Memlet('Avv[0:10, 0:40]'))
+    state.add_edge(bvv, 'views', bv, None, dace.Memlet('Bv[0:400]'))
+    state.add_edge(bv, 'views', state.add_write('B'), None, dace.Memlet('Bv[0:400]'))
+
+    stree = as_schedule_tree(sdfg)
+    assert [type(n) for n in stree.children] == [tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.ViewNode, tn.CopyNode]
+
+
 if __name__ == '__main__':
     test_for_in_map_in_for()
     test_libnode()
@@ -263,3 +286,4 @@ if __name__ == '__main__':
     test_reference()
     test_code_to_code()
     test_dyn_map_range()
+    test_multiview()

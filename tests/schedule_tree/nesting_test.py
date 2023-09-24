@@ -186,9 +186,8 @@ def test_dealias_memlet_composition(simplify):
         assert str(next(iter(tasklet.out_memlets.values()))) == 'a[N - 3, 1]'
     else:
         assert len(stree.children) == 3
-        # TODO: Should views precede tasklet?
         stree_nodes = list(stree.preorder_traversal())[1:]
-        assert [type(n) for n in stree_nodes] == [tn.TaskletNode, tn.ViewNode, tn.ViewNode]
+        assert [type(n) for n in stree_nodes] == [tn.ViewNode, tn.ViewNode, tn.TaskletNode]
 
 
 def test_dealias_interstate_edge():
