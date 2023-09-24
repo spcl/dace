@@ -118,7 +118,7 @@ class ConstantPropagation(ppl.Pass):
                     del edge.data.assignments[sym]
 
             # If symbols are never unknown any longer, remove from SDFG
-            fsyms = sdfg.free_symbols
+            fsyms = sdfg.used_symbols(all_symbols=False)
             result = {k: v for k, v in result.items() if k not in fsyms}
             for sym in result:
                 if sym in sdfg.symbols:
