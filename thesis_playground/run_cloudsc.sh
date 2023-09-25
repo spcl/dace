@@ -12,6 +12,7 @@ fi
 
 
 cd .dacecache/CLOUDSCOUTER4/build
+sh cmake_configure.sh
 make
 cd -
 
