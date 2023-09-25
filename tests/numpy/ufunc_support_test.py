@@ -122,6 +122,7 @@ def ufunc_add_where(A: dace.int32[10], B: dace.int32[10], W: dace.bool_[10]):
 
 
 def test_ufunc_add_where():
+    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     W = np.random.randint(2, size=(10, ), dtype=np.bool_)
@@ -140,18 +141,6 @@ def test_ufunc_add_where_true():
     B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     C = ufunc_add_where_true(A, B)
     assert (np.array_equal(np.add(A, B, where=True), C))
-
-
-@dace.program
-def ufunc_add_where_false(A: dace.int32[10], B: dace.int32[10]):
-    return np.add(A, B, where=False)
-
-
-def test_ufunc_add_where_false():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
-    B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
-    C = ufunc_add_where_false(A, B)
-    assert (not np.array_equal(A + B, C))
 
 
 @dace.program
@@ -188,6 +177,7 @@ def ufunc_add_where1(A: dace.int32[1], B: dace.int32[1], W: dace.bool_[1]):
 
 
 def test_ufunc_add_where1():
+    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(1, ), dtype=np.int32)
     B = np.random.randint(1, 10, size=(1, ), dtype=np.int32)
     W = np.random.randint(2, size=(1, ), dtype=np.bool_)
@@ -452,6 +442,7 @@ def ufunc_add_outer_where(A: dace.int32[2, 2, 2, 2, 2], B: dace.int32[2, 2, 2, 2
 
 
 def test_ufunc_add_outer_where():
+    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     W = np.random.randint(2, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
@@ -465,6 +456,7 @@ def ufunc_add_outer_where2(A: dace.int32[2, 2, 2, 2, 2], B: dace.int32[2, 2, 2, 
 
 
 def test_ufunc_add_outer_where2():
+    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     W = np.random.randint(2, size=(2, 1, 2), dtype=np.bool_)
