@@ -27,6 +27,7 @@ from dace.subsets import Range, Subset
 if TYPE_CHECKING:
     import dace.sdfg.scope
 
+
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
 
@@ -417,7 +418,6 @@ class StateGraphView(object):
         if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
             return False
         return True
-    
 
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         """
@@ -438,13 +438,23 @@ class StateGraphView(object):
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
-            elif (isinstance(n, nd.Tasklet) and n.language == dtypes.Language.Python):
-                # Consider callbacks defined as symbols as free
-                for stmt in n.code.code:
-                    for astnode in ast.walk(stmt):
-                        if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
-                                and astnode.func.id in sdfg.symbols):
-                            freesyms.add(astnode.func.id)
+            elif isinstance(n, nd.Tasklet):
+                if n.language == dtypes.Language.Python:
+                    # Consider callbacks defined as symbols as free
+                    for stmt in n.code.code:
+                        for astnode in ast.walk(stmt):
+                            if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
+                                    and astnode.func.id in sdfg.symbols):
+                                freesyms.add(astnode.func.id)
+                else:
+                    # Find all string tokens and filter them to sdfg.symbols, while ignoring connectors
+                    codesyms = symbolic.symbols_in_code(
+                        n.code.as_string,
+                        potential_symbols=sdfg.symbols.keys(),
+                        symbols_to_ignore=(n.in_connectors.keys() | n.out_connectors.keys() | n.ignored_symbols),
+                    )
+                    freesyms |= codesyms
+                    continue
 
             if hasattr(n, 'used_symbols'):
                 freesyms |= n.used_symbols(all_symbols)
@@ -462,7 +472,7 @@ class StateGraphView(object):
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
         return freesyms - new_symbols
-    
+
     @property
     def free_symbols(self) -> Set[str]:
         """
@@ -473,7 +483,6 @@ class StateGraphView(object):
                overlapping symbols).
         """
         return self.used_symbols(all_symbols=True)
-
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
         """
@@ -535,8 +544,8 @@ class StateGraphView(object):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data and
-                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                            if (in_edge.data.data == out_edge.data.data
+                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
                                 break
 
@@ -803,7 +812,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-    
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
