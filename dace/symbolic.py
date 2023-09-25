@@ -1401,4 +1401,6 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None,
     tokens = set(re.findall(_NAME_TOKENS, code))
     if potential_symbols is not None:
         tokens &= potential_symbols
+    if symbols_to_ignore is None:
+        return tokens
     return tokens - symbols_to_ignore
