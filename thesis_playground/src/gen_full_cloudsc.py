@@ -55,7 +55,7 @@ def action_compile(args):
     # HACK: Remove -O3 to avoid failing
     Config.set('compiler', 'cpu', 'args', value='-std=c++14 -fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label')
     program = get_program_name(args)
-    remove_build_folder(program)
+    remove_build_folder(dacecache_folder=program.upper())
     if args.sdfg_file is None:
         verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
         sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
