@@ -4941,10 +4941,6 @@ class ProgramVisitor(ExtNodeVisitor):
             # If this subscript originates from an external array, create the
             # subset in the edge going to the connector, as well as a local
             # reference to the subset
-            # old_node = node
-            # if isinstance(node.value, ast.Name):
-            #     true_node = copy.deepcopy(old_node)
-            #     true_node.value.id = true_name
             if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
@@ -4961,9 +4957,9 @@ class ProgramVisitor(ExtNodeVisitor):
                     rng.offset(rng, True)
                     return self.sdfg.arrays[true_name].dtype, rng.size()
                 if is_read:
-                    new_name, new_rng = self._add_read_access(true_name, rng, node)
+                    new_name, new_rng = self._add_read_access(name, rng, node)
                 else:
-                    new_name, new_rng = self._add_write_access(true_name, rng, node)
+                    new_name, new_rng = self._add_write_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
                 if new_rng.ranges == full_rng.ranges:
