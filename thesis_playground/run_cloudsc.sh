@@ -1,6 +1,19 @@
-cloudsc_path='/users/msamuel/dwarf-p-cloudsc-dace'
+cloudsc_path='/home/samuel/Documents/Schulisches/Studium/ETH/MasterCode/MasterThesis/dwarf-p-cloudsc-dace'
 dace_signature_file='full_cloudsc_logs/signature_dace_cloudscexp4.txt'
 cloudsc_version=4
+NBLOCKS=16384
+# NBLOCKS=1
+
+result_dir=$PWD
+result_filename="result.txt"
+if [ "$#" -eq 1 ]; then
+    result_filename=$1
+fi
+
+
+cd .dacecache/CLOUDSCOUTER4/build
+make
+cd -
 
 echo "Using signature file at $dace_signature_file"
 
@@ -69,6 +82,8 @@ echo "}" >> $adapter_file
 
 current_dir=$PWD
 cd "$cloudsc_path/build"
-make && ./bin/dwarf-cloudsc-fortran 1 16384 1
+make && OMP_NUM_THREADS=1 ./bin/dwarf-cloudsc-fortran 1 $NBLOCKS 1 > "$result_dir/$result_filename"
 cd $current_dir
+echo "Saved result into $result_dir/$result_filename"
+cat "$result_dir/$result_filename"
 
