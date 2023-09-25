@@ -585,11 +585,6 @@ class NestedSDFG(CodeNode):
 
         keys_to_use = set(self.symbol_mapping.keys())
 
-        free_syms = set().union(*(map(str,
-                                      pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
-                                *(map(str,
-                                      pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
-
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
