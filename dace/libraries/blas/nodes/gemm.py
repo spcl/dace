@@ -184,11 +184,11 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
         code = ''
         if dtype in (dace.complex64, dace.complex128):
             code = f'''
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
+            {dtype.ctype} __alpha = {alpha};
+            {dtype.ctype} __beta = {beta};
             '''
-            opt['alpha'] = '&alpha'
-            opt['beta'] = '&beta'
+            opt['alpha'] = '&__alpha'
+            opt['beta'] = '&__beta'
 
         code += ("cblas_{func}(CblasColMajor, {ta}, {tb}, "
                  "{M}, {N}, {K}, {alpha}, {x}, {lda}, {y}, {ldb}, {beta}, "
@@ -287,12 +287,12 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
             # Set pointer mode to host
             call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
+            {dtype.ctype} __alpha = {alpha};
+            {dtype.ctype} __beta = {beta};
             '''
             call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
-            alpha = f'({cdtype} *)&alpha'
-            beta = f'({cdtype} *)&beta'
+            alpha = f'({cdtype} *)&__alpha'
+            beta = f'({cdtype} *)&__beta'
         else:
             alpha = constants[node.alpha]
             beta = constants[node.beta]
