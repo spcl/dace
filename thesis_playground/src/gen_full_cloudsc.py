@@ -31,7 +31,7 @@ opt_levels = {
         "name": "change_strides"
         },
     "all": {
-        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=False, full_cloudsc_fixes=True),
+        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
         "name": "all_opt"
         },
     "all-custom": {
@@ -52,8 +52,6 @@ def get_program_name(args) -> str:
 
 
 def action_compile(args):
-    # HACK: Remove -O3 to avoid failing
-    Config.set('compiler', 'cpu', 'args', value='-std=c++14 -fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label')
     program = get_program_name(args)
     remove_build_folder(program)
     if args.sdfg_file is None:
@@ -80,10 +78,10 @@ def action_gen_graph(args):
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
     device = device_map[args.device]
     program = get_program_name(args)
-    verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
+    verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}_{args.device.lower()}"
     logfile = os.path.join(
         get_full_cloudsc_log_dir(),
-        f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_{verbose_name}_{args.device.lower()}.log")
+        f"{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}_{verbose_name}.log")
     setup_logging(level=args.log_level.upper(), logfile=logfile, full_logfile=f"{logfile}.all")
     logger.info("Use program: %s", program)
     reset_graph_files(verbose_name)
@@ -102,7 +100,7 @@ def action_gen_graph(args):
                                instrument=False,
                                storage_on_gpu=False)
     logger.info("Generated SDFG")
-    sdfg_path = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
+    sdfg_path = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}.sdfg")
     logger.info("Save SDFG into %s", sdfg_path)
     sdfg.save(sdfg_path)
 
