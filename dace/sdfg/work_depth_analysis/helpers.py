@@ -328,4 +328,6 @@ def find_loop_guards_tails_exits(sdfg_nx: nx.DiGraph):
                 # now we have a triple (node, oNode, exitCandidates)
                 nodes_oNodes_exits.append((node, oNode, exitCandidates))
 
+    # remove artificial end node
+    sdfg_nx.remove_node(artificial_end_node)
     return nodes_oNodes_exits
