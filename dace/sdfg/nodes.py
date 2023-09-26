@@ -342,6 +342,10 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+                                  'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
+                                  'tasklets, where only string analysis is possible; and to skip globals in Python '
+                                  'tasklets that should not be given as parameters to the SDFG.')
 
     def __init__(self,
                  label,
@@ -355,6 +359,7 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location=None,
                  side_effects=None,
+                 ignored_symbols=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -365,6 +370,7 @@ class Tasklet(CodeNode):
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.side_effects = side_effects
+        self.ignored_symbols = ignored_symbols or set()
         self.debuginfo = debuginfo
 
     @property
@@ -393,7 +399,11 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+        symbols_to_ignore = self.in_connectors.keys() | self.out_connectors.keys()
+        symbols_to_ignore |= self.ignored_symbols
+
+        return self.code.get_free_symbols(symbols_to_ignore)
+
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -581,16 +591,19 @@ class NestedSDFG(CodeNode):
         return ret
 
     def used_symbols(self, all_symbols: bool) -> Set[str]:
-        free_syms = set().union(*(map(str,
-                                      pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
-                                *(map(str,
-                                      pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+        free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+
+        keys_to_use = set(self.symbol_mapping.keys())
 
         # Filter out unused internal symbols from symbol mapping
         if not all_symbols:
             internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
-            free_syms &= internally_used_symbols
-        
+            keys_to_use &= internally_used_symbols
+
+        free_syms |= set().union(*(map(str,
+                                       pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
+                                   if k in keys_to_use))
+
         return free_syms
 
     @property
@@ -640,7 +653,7 @@ class NestedSDFG(CodeNode):
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
-        
+
         # Validate inout connectors
         from dace.sdfg import utils  # Avoids circular import
         inout_connectors = self.in_connectors.keys() & self.out_connectors.keys()

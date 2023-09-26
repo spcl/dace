@@ -1562,13 +1562,14 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     identity = Property(allow_none=True)
 
     def __init__(self,
+                 name,
                  wcr='lambda a, b: a',
                  axes=None,
                  identity=None,
                  schedule=dtypes.ScheduleType.Default,
                  debuginfo=None,
                  **kwargs):
-        super().__init__(name='Reduce', **kwargs)
+        super().__init__(name=name, **kwargs)
         self.wcr = wcr
         self.axes = axes
         self.identity = identity
@@ -1577,7 +1578,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        ret = Reduce("lambda a, b: a", None)
+        ret = Reduce('reduce', 'lambda a, b: a', None)
         dace.serialize.set_properties_from_json(ret, json_obj, context=context)
         return ret
 
