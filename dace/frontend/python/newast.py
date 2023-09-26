@@ -2510,6 +2510,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
+        side_effects = None
         if isinstance(node, ast.FunctionDef) and \
             hasattr(node, 'decorator_list') and \
             isinstance(node.decorator_list, list) and \
@@ -2521,6 +2522,19 @@ class ProgramVisitor(ExtNodeVisitor):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
+
+        # Extract arguments from with statement
+        if isinstance(node, ast.With):
+            expr = node.items[0].context_expr
+            if isinstance(expr, ast.Call):
+                args = astutils.parse_function_arguments(expr, ['language', 'side_effects'])
+                langArg = args.get('language', None)
+                side_effects = args.get('side_effects', None)
+                langInf = astutils.evalnode(langArg, {**self.globals, **self.defined})
+                if isinstance(langInf, str):
+                    langInf = dtypes.Language[langInf]
+
+                side_effects = astutils.evalnode(side_effects, {**self.globals, **self.defined})
 
         ttrans = TaskletTransformer(self,
                                     self.defined,
@@ -2535,6 +2549,9 @@ class ProgramVisitor(ExtNodeVisitor):
                                     accesses=self.accesses,
                                     symbols=self.symbols)
         node, inputs, outputs, self.accesses = ttrans.parse_tasklet(node, name)
+
+        if side_effects is not None:
+            node.side_effects = side_effects
 
         # Convert memlets to their actual data nodes
         for i in inputs.values():
