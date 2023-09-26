@@ -4,6 +4,8 @@ from datetime import datetime
 import os
 import dace
 from dace.config import Config
+from dace.sdfg import SDFG
+from dace import nodes
 
 from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg, get_path_of_basic_sdfg
 from utils.general import remove_build_folder, enable_debug_flags, reset_graph_files, replace_symbols_by_values
@@ -51,6 +53,20 @@ def get_program_name(args) -> str:
     return program
 
 
+def instrument_sdfg(sdfg: SDFG, opt_level: str):
+    if opt_level == 'k-caching':
+        cloudsc_state = sdfg.find_state('stateCLOUDSC')
+        nblocks_map = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.MapEntry) and n.label == 'stateCLOUDSC_map'][0]
+        nblocks_map.instrument = dace.InstrumentationType.Timer
+    if opt_level in ['all', 'change-strides']:
+        changed_strides_state = sdfg.find_state('with_changed_strides')
+        nsdfg_changed_strides = [n for n in changed_strides_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
+        nblocks_map = [n for n in nsdfg_changed_strides.find_state('CLOUDSCOUTER4_copyin').nodes()
+                       if isinstance(n, nodes.mapEntry) and n.label == 'stateCLOUDSC_map'][0]
+        sdfg.find_state('transform_data').instrument = dace.InstrumentationType.Timer
+        sdfg.find_state('transform_data_back').instrument = dace.InstrumentationType.Timer
+
+
 def action_compile(args):
     program = get_program_name(args)
     remove_build_folder(dacecache_folder=program.upper())
@@ -67,6 +83,10 @@ def action_compile(args):
     logger.info("Build into %s", sdfg.build_folder)
     if args.build_dir is not None:
         sdfg.build_folder = args.build_dir
+    else:
+        sdfg.build_folder = os.path.abspath(sdfg.build_folder)
+    if args.instrument:
+        instrument_sdfg(sdfg, args.opt_level)
     sdfg.compile()
     signature_file = os.path.join(get_full_cloudsc_log_dir(), f"signature_dace_{program}.txt")
     logger.info("Write signature file into %s", signature_file)
@@ -121,6 +141,23 @@ def action_change_ncldtop(args):
     basic_sdfg.save(get_path_of_basic_sdfg(program, run_config, ['NBLOCKS']))
 
 
+def action_profile(args):
+    program = get_program_name(args)
+    remove_build_folder(dacecache_folder=program.upper())
+    verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
+    sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
+    logger.info("Load SDFG from %s", sdfg_file)
+    sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
+    reports = sdfg.get_instrumentation_reports()
+    # data = []
+    for report in reports:
+        print(report)
+        # data.append({'measurement': '})
+
+    if args.clear:
+        sdfg.clear_instrumentation_reports()
+
+
 def main():
     parser = ArgumentParser(description="Generate SDFG or code of the full cloudsc code")
     parser.add_argument('--log-level', default='info')
@@ -142,12 +179,20 @@ def main():
     compile_parser.add_argument('--sdfg-file', default=None, help="Take non default SDFG file from here")
     compile_parser.add_argument('--build-dir', default=None, help="Folder to build & generate the DaCe code into")
     compile_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
+    compile_parser.add_argument('--instrument', action='store_true', default=False, help='Instrument SDFG')
     compile_parser.set_defaults(func=action_compile)
 
     change_parser = subparsers.add_parser('change', description="Change NCLDTOP in basic SDFG")
     change_parser.add_argument('opt_level')
     change_parser.add_argument('--version', default=4, type=int)
     change_parser.set_defaults(func=action_change_ncldtop)
+
+    profile_parser = subparsers.add_parser('profile', description="Read instrumentation reports")
+    profile_parser.add_argument('opt_level')
+    profile_parser.add_argument('--version', default=4, type=int)
+    profile_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
+    profile_parser.add_argument('--clear', action='store_true', default=False, help='Clear instrumentation reports')
+    profile_parser.set_defaults(func=action_profile)
 
     args = parser.parse_args()
     add_args = {}
