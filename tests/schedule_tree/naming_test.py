@@ -169,10 +169,7 @@ def test_edgecase_symbol_mapping():
     assert stree.children[2].value.as_string in ('k', '(N + 1)')
 
 
-def test_clash_iteration_symbols():
-    sdfg = _nested_irreducible_loops()
-
-    stree = as_schedule_tree(sdfg)
+def _check_for_name_clashes(stree: tn.ScheduleTreeNode):
 
     def _traverse(node: tn.ScheduleTreeScope, scopes: List[str]):
         for child in node.children:
@@ -181,10 +178,22 @@ def test_clash_iteration_symbols():
                 if itervar in scopes:
                     raise NameError('Nested scope redefines iteration variable')
                 _traverse(child, scopes + [itervar])
+            elif isinstance(child, tn.MapScope):
+                itervars = child.node.map.params
+                if any(itervar in scopes for itervar in itervars):
+                    raise NameError('Nested scope redefines iteration variable')
+                _traverse(child, scopes + itervars)
             elif isinstance(child, tn.ScheduleTreeScope):
                 _traverse(child, scopes)
 
     _traverse(stree, [])
+
+
+def test_clash_iteration_symbols():
+    sdfg = _nested_irreducible_loops()
+
+    stree = as_schedule_tree(sdfg)
+    _check_for_name_clashes(stree)
 
 
 if __name__ == '__main__':

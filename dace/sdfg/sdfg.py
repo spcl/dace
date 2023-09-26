@@ -1392,9 +1392,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         return self.used_symbols(all_symbols=True)
 
-    def get_all_symbols(self) -> Set[str]:
+    def get_all_toplevel_symbols(self) -> Set[str]:
         """
-        Returns a set of all symbol names that are used by the SDFG.
+        Returns a set of all symbol names that are used by the SDFG's state machine.
+        This includes all symbols in the descriptor repository and interstate edges,
+        whether free or defined. Used to identify duplicates when, e.g., inlining or
+        dealiasing a set of nested SDFGs.
         """
         # Exclude constants and data descriptor names
         exclude = set(self.arrays.keys()) | set(self.constants_prop.keys())

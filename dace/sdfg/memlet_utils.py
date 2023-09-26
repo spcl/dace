@@ -1,12 +1,8 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
-from dace.frontend.python import astutils, memlet_parser
-from dace.sdfg import SDFG, SDFGState, nodes
-from dace.sdfg import graph as gr
-from dace.sdfg import utils as sdutil
-from dace.properties import CodeBlock
-from dace import data, subsets, Memlet
+from dace.frontend.python import memlet_parser
+from dace import data, Memlet
 from typing import Callable, Dict, Optional, Set, Union
 
 

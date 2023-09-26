@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from collections import defaultdict
 import copy
 from typing import Dict, List, Set
@@ -28,6 +28,15 @@ NODE_TO_SCOPE_TYPE = {
 
 
 def dealias_sdfg(sdfg: SDFG):
+    """
+    Renames all data containers in an SDFG tree (i.e., nested SDFGs) to use the same data descriptors
+    as the top-level SDFG. This function takes care of offsetting memlets and internal
+    uses of arrays such that there is one naming system, and no aliasing of managed memory.
+
+    This function operates in-place.
+
+    :param sdfg: The SDFG to operate on.
+    """
     for nsdfg in sdfg.all_sdfgs_recursive():
 
         if not nsdfg.parent:
@@ -243,7 +252,7 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                 repl_dict[s] = str(input_mapping[s])
 
         # Manual replacement with strings
-        # TODO(later): Would be MUCH better to use e.data.replace_dict(repl_dict, replace_keys=False)
+        # TODO(later): Would be MUCH better to use MemletReplacer / e.data.replace_dict(repl_dict, replace_keys=False)
         for find, replace in repl_dict.items():
             for k, v in e.data.assignments.items():
                 if find in v:
@@ -288,8 +297,8 @@ def remove_name_collisions(sdfg: SDFG):
                 name = new_name
             identifiers_seen.add(name)
 
-        # Rename duplicate symbols
-        for name in nsdfg.get_all_symbols():
+        # Rename duplicate top-level symbols
+        for name in nsdfg.get_all_toplevel_symbols():
             # Will already be renamed during conversion
             if parent_node is not None and name in parent_node.symbol_mapping:
                 continue
@@ -487,10 +496,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Create scope node and add to stack
             scopes.append(result)
             subnodes = []
-            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node,
-                                                         sdfg=state.parent,
-                                                         top_level=False,
-                                                         children=subnodes))
+            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node, children=subnodes))
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
@@ -540,7 +546,6 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
             result.append(tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
-            # result.append(tn.TaskletNode(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.LibraryNode):
             # NOTE: LibraryNodes do not necessarily have connectors
             if node.in_connectors:
@@ -552,7 +557,6 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             else:
                 out_memlets = set([e.data for e in state.out_edges(node)])
             result.append(tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
-            # result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.AccessNode):
             # If one of the neighboring edges has a schedule tree node attached to it, use that
             # (except for views, which were generated above)
@@ -650,7 +654,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                 subnodes.extend(totree(n, node))
             if not node.sequential:
                 # Nest in general block
-                result = [tn.GBlock(sdfg, top_level=False, children=subnodes)]
+                result = [tn.GBlock(children=subnodes)]
             else:
                 # Use the sub-nodes directly
                 result = subnodes
@@ -683,39 +687,32 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:
                             # Conditional state in sequential block! Add "if not condition goto exit"
                             result.append(
-                                tn.StateIfScope(sdfg=sdfg,
-                                                top_level=False,
-                                                condition=CodeBlock(negate_expr(e.data.condition)),
+                                tn.StateIfScope(condition=CodeBlock(negate_expr(e.data.condition)),
                                                 children=[tn.GotoNode(target=None)]))
                             result.extend(edge_body)
                         else:
                             # Add "if condition" with the body above
-                            result.append(
-                                tn.StateIfScope(sdfg=sdfg,
-                                                top_level=False,
-                                                condition=e.data.condition,
-                                                children=edge_body))
+                            result.append(tn.StateIfScope(condition=e.data.condition, children=edge_body))
                     else:
                         result.extend(edge_body)
 
         elif isinstance(node, cf.ForScope):
-            result.append(tn.ForScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
+            result.append(tn.ForScope(header=node, children=totree(node.body)))
         elif isinstance(node, cf.IfScope):
-            result.append(tn.IfScope(sdfg=sdfg, top_level=False, condition=node.condition, children=totree(node.body)))
+            result.append(tn.IfScope(condition=node.condition, children=totree(node.body)))
             if node.orelse is not None:
-                result.append(tn.ElseScope(sdfg=sdfg, top_level=False, children=totree(node.orelse)))
+                result.append(tn.ElseScope(children=totree(node.orelse)))
         elif isinstance(node, cf.IfElseChain):
             # Add "if" for the first condition, "elif"s for the rest
-            result.append(
-                tn.IfScope(sdfg=sdfg, top_level=False, condition=node.body[0][0], children=totree(node.body[0][1])))
+            result.append(tn.IfScope(condition=node.body[0][0], children=totree(node.body[0][1])))
             for cond, body in node.body[1:]:
-                result.append(tn.ElifScope(sdfg=sdfg, top_level=False, condition=cond, children=totree(body)))
+                result.append(tn.ElifScope(condition=cond, children=totree(body)))
             # "else goto exit"
-            result.append(tn.ElseScope(sdfg=sdfg, top_level=False, children=[tn.GotoNode(target=None)]))
+            result.append(tn.ElseScope(children=[tn.GotoNode(target=None)]))
         elif isinstance(node, cf.WhileScope):
-            result.append(tn.WhileScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
+            result.append(tn.WhileScope(header=node, children=totree(node.body)))
         elif isinstance(node, cf.DoWhileScope):
-            result.append(tn.DoWhileScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
+            result.append(tn.DoWhileScope(header=node, children=totree(node.body)))
         else:
             # e.g., "SwitchCaseScope"
             raise tn.UnsupportedScopeException(type(node).__name__)
@@ -726,7 +723,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
         return result
 
     # Recursive traversal of the control flow tree
-    result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
+    result = tn.ScheduleTreeScope(children=totree(cfg))
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)

@@ -1,16 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
-from dace.dtypes import TYPECLASS_TO_STRING
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG, InterstateEdge
+from dace.sdfg import InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from functools import reduce
-from typing import Dict, Iterator, List, Optional, Set, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Set, Union
 
 INDENTATION = '  '
 
@@ -21,8 +18,6 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
-    # sdfg: SDFG
-    # sdfg: Optional[SDFG] = field(default=None, init=False)
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
 
     def as_string(self, indent: int = 0):
@@ -37,18 +32,12 @@ class ScheduleTreeNode:
 
 @dataclass
 class ScheduleTreeScope(ScheduleTreeNode):
-    sdfg: SDFG
-    top_level: bool
     children: List['ScheduleTreeNode']
     containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
     symbols: Optional[Dict[str, symbol]] = field(default_factory=dict, init=False)
 
     def __init__(self,
-                 sdfg: Optional[SDFG] = None,
-                 top_level: Optional[bool] = False,
                  children: Optional[List['ScheduleTreeNode']] = None):
-        self.sdfg = sdfg
-        self.top_level = top_level
         self.children = children or []
         if self.children:
             for child in children:

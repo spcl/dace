@@ -343,7 +343,9 @@ class Tasklet(CodeNode):
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
     ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
-                                  'the symbols used by this tasklet')
+                                  'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
+                                  'tasklets, where only string analysis is possible; and to skip globals in Python '
+                                  'tasklets that should not be given as parameters to the SDFG.')
 
     def __init__(self,
                  label,
