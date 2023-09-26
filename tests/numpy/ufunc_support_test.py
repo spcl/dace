@@ -122,13 +122,13 @@ def ufunc_add_where(A: dace.int32[10], B: dace.int32[10], W: dace.bool_[10]):
 
 
 def test_ufunc_add_where():
-    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     W = np.random.randint(2, size=(10, ), dtype=np.bool_)
     C = ufunc_add_where(A, B, W)
     assert (np.array_equal(np.add(A, B, where=W)[W], C[W]))
-    assert (not np.array_equal((A + B)[np.logical_not(W)], C[np.logical_not(W)]))
+    if not np.all(W):  # If all of W is True, np.logical_not(W) would result in empty arrays
+        assert (not np.array_equal((A + B)[np.logical_not(W)], C[np.logical_not(W)]))
 
 
 @dace.program
@@ -177,7 +177,6 @@ def ufunc_add_where1(A: dace.int32[1], B: dace.int32[1], W: dace.bool_[1]):
 
 
 def test_ufunc_add_where1():
-    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(1, ), dtype=np.int32)
     B = np.random.randint(1, 10, size=(1, ), dtype=np.int32)
     W = np.random.randint(2, size=(1, ), dtype=np.bool_)
@@ -442,12 +441,11 @@ def ufunc_add_outer_where(A: dace.int32[2, 2, 2, 2, 2], B: dace.int32[2, 2, 2, 2
 
 
 def test_ufunc_add_outer_where():
-    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     W = np.random.randint(2, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
     s = ufunc_add_outer_where(A, B, W)
-    assert (np.array_equal(np.add.outer(A, B, where=W)[W], s[W]))
+    assert np.array_equal(np.add.outer(A, B, where=W)[W], s[W])
 
 
 @dace.program
@@ -456,7 +454,6 @@ def ufunc_add_outer_where2(A: dace.int32[2, 2, 2, 2, 2], B: dace.int32[2, 2, 2, 
 
 
 def test_ufunc_add_outer_where2():
-    np.random.seed(1234)
     A = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     W = np.random.randint(2, size=(2, 1, 2), dtype=np.bool_)
@@ -464,7 +461,7 @@ def test_ufunc_add_outer_where2():
     C = ufunc_add_outer_where2(A, B, W)
     where = np.empty((2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
     where[:] = W
-    assert (np.array_equal(np.add.outer(A, B, where=W)[where], C[where]))
+    assert np.array_equal(np.add.outer(A, B, where=W)[where], C[where])
 
 
 @compare_numpy_output()
