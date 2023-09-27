@@ -3,7 +3,7 @@ import logging
 from datetime import datetime
 import os
 import dace
-from dace.config import Config
+from subprocess import run
 from dace.sdfg import SDFG
 from dace import nodes
 
@@ -11,7 +11,7 @@ from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg, get_path_of
 from utils.general import remove_build_folder, enable_debug_flags, reset_graph_files, replace_symbols_by_values
 from utils.log import setup_logging
 from utils.run_config import RunConfig
-from utils.paths import get_full_cloudsc_log_dir, get_verbose_graphs_dir
+from utils.paths import get_full_cloudsc_log_dir, get_dacecache
 from execute.parameters import ParametersProvider
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,32 @@ opt_levels = {
         "name": "all_opt_custom"
         }
 }
+
+
+def add_synchronize(dacecache_folder: str):
+    src_dir = os.path.join(get_dacecache(), dacecache_folder, 'src', 'cpu')
+    src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
+    if len(os.listdir(src_dir)) > 1:
+        logger.warning(f"More than one files in {src_dir}")
+    lines = run(['grep', '-rn', 'std::chrono::high_resolution_clock::now', src_file], capture_output=True).stdout.decode('UTF-8')
+    logger.debug("Add synchronizes to %s", src_file)
+    line_numbers_to_insert = []
+
+    for line in lines.split('\n'):
+        if len(line) > 0:
+            if line.split()[2].startswith('__dace_t'):
+                line_numbers_to_insert.append(int(line.split(':')[0])-1)
+
+    logger.debug("Insert synchronize into line numbers: %s", line_numbers_to_insert)
+    with open(src_file, 'r') as f:
+        contents = f.readlines()
+        for offset, line_number in enumerate(line_numbers_to_insert):
+            contents.insert(line_number+offset,
+                            "        DACE_GPU_CHECK(cudaDeviceynchronize());\n")
+
+    with open(src_file, 'w') as f:
+        contents = "".join(contents)
+        f.write(contents)
 
 
 def get_program_name(args) -> str:
@@ -95,6 +121,8 @@ def action_compile(args):
     if args.instrument:
         instrument_sdfg(sdfg, args.opt_level, args.device)
     sdfg.compile()
+    if args.instrument:
+        add_synchronize(f"CLOUDSCOUTER{args.version}")
     signature_file = os.path.join(get_full_cloudsc_log_dir(), f"signature_dace_{program}.txt")
     logger.info("Write signature file into %s", signature_file)
     with open(signature_file, 'w') as file:
