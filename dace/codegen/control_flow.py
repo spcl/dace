@@ -360,6 +360,9 @@ class ForScope(ControlFlow):
     init_edges: List[InterstateEdge]  #: All initialization edges
 
     def as_cpp(self, codegen, symbols) -> str:
+
+        sdfg = self.guard.parent
+
         # Initialize to either "int i = 0" or "i = 0" depending on whether
         # the type has been defined
         defined_vars = codegen.dispatcher.defined_vars
@@ -369,9 +372,8 @@ class ForScope(ControlFlow):
                 init = self.itervar
             else:
                 init = f'{symbols[self.itervar]} {self.itervar}'
-            init += ' = ' + self.init
-
-        sdfg = self.guard.parent
+            init += ' = ' + unparse_interstate_edge(self.init_edges[0].data.assignments[self.itervar],
+                                                    sdfg, codegen=codegen)
 
         preinit = ''
         if self.init_edges:
@@ -391,8 +393,6 @@ class ForScope(ControlFlow):
             update = f'{self.itervar} = {self.update}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
-        # TODO: Check that the dot is used to access struct members
-        expr = expr.replace('.', '->')
         expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
         expr += '\n}\n'
         return expr
