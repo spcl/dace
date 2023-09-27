@@ -1,8 +1,12 @@
-cloudsc_path='/home/samuel/Documents/Schulisches/Studium/ETH/MasterCode/MasterThesis/dwarf-p-cloudsc-dace'
+cloudsc_path='/users/msamuel/dwarf-p-cloudsc-dace'
 dace_signature_file='full_cloudsc_logs/signature_dace_cloudscexp4.txt'
 cloudsc_version=4
-NBLOCKS=16384
-# NBLOCKS=1
+dacecache_folder=".dacecache/CLOUDSCOUTER${cloudsc_version}"
+# Read size of NBLOCKS from generated code
+NBLOCKS=$(grep "NBLOCKS = " "$dacecache_folder/src/cpu/CLOUDSCOUTER${cloudsc_version}.cpp" | head -n1 | cut -d'=' -f2 | xargs)
+#Remove semicolon at the end
+NBLOCKS=${NBLOCKS::-1}
+echo "NBLOCKS=$NBLOCKS"
 
 result_dir=$PWD
 result_filename="result.txt"
