@@ -395,8 +395,6 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
         if isinstance(node, nodes.AccessNode):
             for io_edge in [*graph.in_edges(node), *graph.out_edges(node)]:
                 for edge in graph.memlet_tree(io_edge):
-
-
                     if edge.data.data == data_name and graph.edge_id(edge) not in changed_edges:
                         if edge.data.data == data_name:
                             subset = copy.deepcopy(edge.data.subset)
@@ -456,6 +454,7 @@ def add_modulo_to_all_memlets(graph: dace.sdfg.SDFGState, data_name: str, data_s
                             else:
                                 edge.data.other_subset.ranges = new_ranges
                             changed_edges.add(graph.edge_id(edge))
+
                         except AssertionError:
                             # Should not reach that state
                             logger.error(
@@ -482,6 +481,7 @@ def get_range_with_modulo(rng: subsets.Range, data_shape: Tuple[symbolic.symbol]
     :rtype: subsets.Subset
     """
     new_ranges = []
+    logger.debug("rng: %s", rng)
     for index, (dim_size, offset) in enumerate(zip(data_shape, offsets)):
         start, end, step = rng.ranges[index]
         if start == end:
@@ -493,7 +493,7 @@ def get_range_with_modulo(rng: subsets.Range, data_shape: Tuple[symbolic.symbol]
             new_range = (0, dim_size - S.One, step)
         else:
             logger.error(
-                f"start - end + 1={(start - end + S.One).evalf(subs=symbols)}, "
+                f"end - start + 1={(end - start + S.One).evalf(subs=symbols)}, "
                 f"dim_size: {dim_size.evalf(subs=symbols)}, index: {index}"
             )
             raise AssertionError
@@ -555,6 +555,13 @@ def remove_min_max(rng: subsets.Range):
         if isinstance(elem, sympy.Min) or isinstance(elem, sympy.Max):
             # we assume that the start/end value of the loop is always the first argument
             return elem.args[1]
+        elif elem is not None and len(elem.args) > 0:
+            new_args = []
+            for e in elem.args:
+                new_args.append(extract(e))
+            # elem.args = tuple(new_args)
+            elem_class = type(elem)
+            return elem_class(*new_args)
         else:
             return elem
 
@@ -570,9 +577,17 @@ def has_min_max(rng: subsets.Range):
     :param rng: The subset to check
     :type rng: subsets.Range
     """
+    def elem_has_min_max(elem):
+        if isinstance(elem, sympy.Max) or isinstance(elem, sympy.Min):
+            return True
+        elif len(elem.args) > 0:
+            return any([elem_has_min_max(e) for e in elem.args])
+        else:
+            return False
+
     elems = [s for s, _, _ in rng]
     elems.extend([e for _, e, _ in rng])
-    return any(isinstance(elem, sympy.Min) or isinstance(elem, sympy.Max) for elem in elems)
+    return any(elem_has_min_max(elem) for elem in elems)
 
 
 def is_map_init(state: SDFGState, map_exit: nodes.MapEntry,
