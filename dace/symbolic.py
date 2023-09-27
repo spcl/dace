@@ -14,6 +14,7 @@ import sympy.printing.str
 from dace import dtypes
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
+_NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 
 # NOTE: Up to (including) version 1.8, sympy.abc._clash is a dictionary of the
 # form {'N': sympy.abc.N, 'I': sympy.abc.I, 'pi': sympy.abc.pi}
@@ -1407,3 +1408,26 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
 
     with sympy.assuming(*facts):
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
+
+
+def symbols_in_code(code: str, potential_symbols: Set[str] = None,
+                    symbols_to_ignore: Set[str] = None) -> Set[str]:
+    """
+    Tokenizes a code string for symbols and returns a set thereof.
+
+    :param code: The code to tokenize.
+    :param potential_symbols: If not None, filters symbols to this given set.
+    :param symbols_to_ignore: If not None, filters out symbols from this set.
+    """
+    if not code:
+        return set()
+    if potential_symbols is not None and len(potential_symbols) == 0:
+        # Don't bother tokenizing for an empty set of potential symbols
+        return set()
+    
+    tokens = set(re.findall(_NAME_TOKENS, code))
+    if potential_symbols is not None:
+        tokens &= potential_symbols
+    if symbols_to_ignore is None:
+        return tokens
+    return tokens - symbols_to_ignore
