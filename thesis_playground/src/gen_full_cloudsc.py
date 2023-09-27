@@ -53,18 +53,25 @@ def get_program_name(args) -> str:
     return program
 
 
-def instrument_sdfg(sdfg: SDFG, opt_level: str):
-    if opt_level == 'k-caching':
-        cloudsc_state = sdfg.find_state('stateCLOUDSC')
-        nblocks_map = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.MapEntry) and n.label == 'stateCLOUDSC_map'][0]
-        nblocks_map.instrument = dace.InstrumentationType.Timer
+def instrument_sdfg(sdfg: SDFG, opt_level: str, device: str):
+    if opt_level in ['k-caching', 'baseline']:
+        if device == 'CPU':
+            cloudsc_state = sdfg.find_state('stateCLOUDSC')
+        elif device == 'GPU':
+            cloudsc_state = sdfg.find_state('CLOUDSCOUTER4_copyin')
+        nblocks_maps = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.MapEntry) and n.label ==
+                        'stateCLOUDSC_map']
     if opt_level in ['all', 'change-strides']:
         changed_strides_state = sdfg.find_state('with_changed_strides')
         nsdfg_changed_strides = [n for n in changed_strides_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
-        nblocks_map = [n for n in nsdfg_changed_strides.find_state('CLOUDSCOUTER4_copyin').nodes()
-                       if isinstance(n, nodes.mapEntry) and n.label == 'stateCLOUDSC_map'][0]
+        nblocks_maps = [n for n in nsdfg_changed_strides.sdfg.find_state('CLOUDSCOUTER4_copyin').nodes()
+                        if isinstance(n, nodes.MapEntry) and n.label == 'stateCLOUDSC_map']
         sdfg.find_state('transform_data').instrument = dace.InstrumentationType.Timer
         sdfg.find_state('transform_data_back').instrument = dace.InstrumentationType.Timer
+
+    if len(nblocks_maps):
+        logger.warning("There is more than one map to instrument: %s", nblocks_maps)
+    nblocks_maps[0].instrument = dace.InstrumentationType.Timer
 
 
 def action_compile(args):
@@ -86,7 +93,7 @@ def action_compile(args):
     else:
         sdfg.build_folder = os.path.abspath(sdfg.build_folder)
     if args.instrument:
-        instrument_sdfg(sdfg, args.opt_level)
+        instrument_sdfg(sdfg, args.opt_level, args.device)
     sdfg.compile()
     signature_file = os.path.join(get_full_cloudsc_log_dir(), f"signature_dace_{program}.txt")
     logger.info("Write signature file into %s", signature_file)
