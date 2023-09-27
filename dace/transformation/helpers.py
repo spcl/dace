@@ -1307,6 +1307,23 @@ def redirect_edge(state: SDFGState,
     return new_edge
 
 
+def replace_code_to_code_edges(sdfg: SDFG):
+    """
+    Adds access nodes between all code->code edges in each state.
+
+    :param sdfg: The SDFG to process.
+    """
+    for state in sdfg.nodes():
+        for edge in state.edges():
+            if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
+                continue
+            # Add access nodes
+            aname = state.add_access(edge.data.data)
+            state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
+            state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+            state.remove_edge(edge)
+
+
 def can_run_state_on_fpga(state: SDFGState):
     """
     Checks if state can be executed on FPGA. Used by FPGATransformState 

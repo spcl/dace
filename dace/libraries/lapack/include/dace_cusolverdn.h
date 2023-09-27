@@ -21,8 +21,10 @@ static void CheckCusolverDnError(cusolverStatus_t const& status) {
 }
 
 static cusolverDnHandle_t CreateCusolverDnHandle(int device) {
-  if (cudaSetDevice(device) != cudaSuccess) {
-    throw std::runtime_error("Failed to set CUDA device.");
+  if (device >= 0) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
   }
   cusolverDnHandle_t handle;
   CheckCusolverDnError(cusolverDnCreate(&handle));
