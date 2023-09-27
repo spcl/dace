@@ -391,10 +391,10 @@ class ForScope(ControlFlow):
             update = f'{self.itervar} = {self.update}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
-        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
-        expr += '\n}\n'
         # TODO: Check that the dot is used to access struct members
         expr = expr.replace('.', '->')
+        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
+        expr += '\n}\n'
         return expr
 
     @property
