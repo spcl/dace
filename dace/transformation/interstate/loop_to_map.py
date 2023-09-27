@@ -100,6 +100,12 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         desc='The nested SDFG created when applying the transformation, if required',
     )
 
+    additional_rw = Property(
+        dtype=set,
+        allow_none=False,
+        default=set(),
+        desc='Additional read/write dependencies')
+
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -330,7 +336,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         return True
 
-    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+    @staticmethod
+    def _is_array_thread_local(name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
         """
         This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
         i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
@@ -446,9 +453,16 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 if not found and self._is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
+            logger.debug("Additional rw: %s", self.additional_rw)
+            logger.debug("Unique set before: %s", unique_set)
+            for n in self.additional_rw:
+                if n in unique_set:
+                    unique_set.remove(n)
+            logger.debug("Unique set after: %s", unique_set)
             # Find NestedSDFG's connectors
             read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
             write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+            logger.debug("Read set: %s, write set: %s", read_set, write_set)
 
             # Create NestedSDFG and add all loop-body states and edges
             # Also, find defined symbols in NestedSDFG

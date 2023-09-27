@@ -106,6 +106,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             desc="Set of array names who should be considered to be inside the subgraph even if this code decides"
                   "otherwise",
             default=set())
+    fix_map_exit_edges = Property(
+            dtype=Set,
+            desc="Set of arrays whose edges going out of the used maps needs to be offset",
+            default=set())
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
@@ -1605,10 +1609,16 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 oedge.data.other_subset.offset(min_offset, False)
         # Correct edges in/out of map entry/exit for the forced ones
         # Normally we expect that there are no such edges as otherwise the data wouldn't be contained in the subgraph
-        for data_name in self.forced_subgraph_contains_data:
-            for edge in graph.out_edges(global_map_exit):
-                if edge.data.data == data_name:
-                    edge.data.subset.offset(min_offsets[data_name], True)
+        for data_name in self.fix_map_exit_edges:
+            if data_name in min_offsets:
+                logger.debug("Fix outgoing map edges for %s", data_name)
+                for edge in graph.out_edges(global_map_exit):
+                    if edge.data.data == data_name:
+                        edge.data.subset.offset(min_offsets[data_name], True)
+                for edge in graph.in_edges(global_map_exit):
+                    if edge.data.data == data_name:
+                        logger.debug("offset edge %s by %s", edge, min_offsets[data_name])
+                        edge.data.subset.offset(min_offsets[data_name], True)
 
         # consolidate edges if desired
         if self.consolidate:
