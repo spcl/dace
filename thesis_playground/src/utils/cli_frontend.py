@@ -14,3 +14,4 @@ def add_cloudsc_size_arguments(parser: ArgumentParser):
     parser.add_argument('--KIDIA', type=int, default=None)
     parser.add_argument('--KFDIA', type=int, default=None)
     parser.add_argument('--NCLV', type=int, default=None)
+    parser.add_argument('--NCLDTOP', type=int, default=None)

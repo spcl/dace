@@ -21,7 +21,7 @@ from dace.sdfg.utils import consolidate_edges_scope, get_view_node
 from dace.transformation.helpers import find_contiguous_subsets, nest_state_subgraph
 
 from copy import deepcopy as dcpy
-from typing import List, Union, Tuple, Optional, Callable, Dict
+from typing import List, Union, Tuple, Optional, Callable, Dict, Set
 import warnings
 from sympy import S
 import sympy
@@ -99,7 +99,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             "here will compute the new shape automatically.",
             default={})
 
-    blacklisted_arrays = ['ZPFPLSX']
+    blacklisted_arrays = []
+
+    forced_subgraph_contains_data = Property(
+            dtype=Set,
+            desc="Set of array names who should be considered to be inside the subgraph even if this code decides"
+                  "otherwise",
+            default=set())
 
     def _map_ranges_compatible(self, this_map: nodes.Map, other_map: nodes.Map) -> bool:
         for rng, orng in zip(this_map.range, other_map.range):
@@ -850,7 +856,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         (node in intermediate_nodes or scope_dict[node] in map_entries):
                         data_counter_subgraph[node.data] += 1
                     elif node.data not in init_maps and len(state.in_edges(node)) == 1:
-                        logger.debug("%s: Found potential init access in %s", node.data, state)
+                        logger.debug("%s: Found potential init access in %s from node %s", node.data, state,
+                                     state.in_edges(node)[0])
                         if isinstance(state.in_edges(node)[0].src, nodes.MapExit):
                             init_map_candidate = state.in_edges(node)[0].src
                             is_init, maps = helpers.is_map_init(state, init_map_candidate, list(sdfg.arrays[node.data].shape),
@@ -862,7 +869,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 if change_init_outside:
                                     data_counter[node.data] -= 1
                     else:
-                        logger.debug("%s: Found access outside of subgraph in %s", node.data, state)
+                        logger.debug("%s: Found access outside of subgraph in %s with in edges: %s and out edges: %s", node.data, state,
+                                     state.in_edges(node), state.out_edges(node))
 
 
         # next up: If intermediate_counter and global counter match and if the array
@@ -1049,6 +1057,10 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         # 3. Gather invariant dimensions
         invariant_dimensions = self.determine_invariant_dimensions(sdfg, graph, intermediate_nodes, map_entries,
                                                                    map_exits)
+
+        for d in self.forced_subgraph_contains_data:
+            logger.debug("Force %s to be contained in the subgraph", d)
+            subgraph_contains_data[d] = True
 
         return (subgraph_contains_data, init_maps, transients_created, invariant_dimensions)
 
@@ -1411,13 +1423,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if storage is not None:
                     transient_array.storage = storage
 
-                # recurse into all nsdfg
-                # for state in sdfg.states():
-                #     for node in state.nodes():
-                #         if isinstance(node, nodes.NestedSDFG):
-                #             # Will ignore if an array has a different shape inside a nsdfg
-                #             change_data(data_name, node.sdfg, shape, strides, total_size, offset, lifetime, storage)
-
         intermediate_nodes = [n for n in intermediate_nodes if n.data not in self.blacklisted_arrays]
         data_intermediate = set([node.data for node in intermediate_nodes])
         data_intermediate -= set(self.blacklisted_arrays)
@@ -1492,7 +1497,6 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                 self.arrays_as_circular_buffer[data_name] = []
                             index += 1
 
-                    # TODO(Samuel): This can probably be removed
                     if data_name in self.arrays_as_circular_buffer:
                         for index, diff in enumerate(self.arrays_as_circular_buffer[data_name]):
                             new_data_shape[index] += diff
@@ -1521,6 +1525,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # If the compressed array is also initialised somewhere, change that map to the new size
                 if data_name in init_maps:
                     state, map_infos = init_maps[data_name]
+                    logger.debug("Change init maps for %s using maps %s to suit new shape: %s", data_name, map_infos,
+                                 sdfg.arrays[data_name].shape)
                     for map, shape_idx in map_infos:
                             # We assume that map are expanded and thus have only one range
                             map.range[0] = (
@@ -1597,6 +1603,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                 oedge.data.other_subset is None:
                                 oedge.data.other_subset = dcpy(oedge.data.subset)
                                 oedge.data.other_subset.offset(min_offset, False)
+        # Correct edges in/out of map entry/exit for the forced ones
+        # Normally we expect that there are no such edges as otherwise the data wouldn't be contained in the subgraph
+        for data_name in self.forced_subgraph_contains_data:
+            for edge in graph.out_edges(global_map_exit):
+                if edge.data.data == data_name:
+                    edge.data.subset.offset(min_offsets[data_name], True)
+
         # consolidate edges if desired
         if self.consolidate:
             consolidate_edges_scope(graph, global_map_entry)

@@ -1,5 +1,6 @@
 from typing import Optional, List
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,16 @@ def setup_logging(
     root_logger.addHandler(stdout_handler)
     file_handlers = []
     if full_logfile is not None:
+        if os.path.exists(full_logfile):
+            os.remove(full_logfile)
         full_file_handler = logging.FileHandler(full_logfile)
         full_file_handler.setFormatter(format)
         full_file_handler.setLevel(logging.DEBUG)
         root_logger.addHandler(full_file_handler)
         file_handlers.append(full_file_handler)
     if logfile is not None:
+        if os.path.exists(logfile):
+            os.remove(logfile)
         file_handler = logging.FileHandler(logfile)
         file_handler.setFormatter(format)
         file_handler.setLevel(level)

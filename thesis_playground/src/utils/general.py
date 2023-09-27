@@ -151,8 +151,10 @@ def generate_arguments_fortran(
                     fortran_arguments[arg_name] = params[arg_name.upper()]
                 else:
                     if arg_type == 'float':
+                        logger.debug("%s, Generate random scalar float", arg_name)
                         fortran_arguments[arg_name] = rng.random()
                     else:
+                        logger.debug("%s, Generate random scalar integer", arg_name)
                         fortran_arguments[arg_name] = rng.integers(0, 2, (1), dtype=np.int32)
             else:
                 # evaluate the dimension using the given parameters
@@ -160,8 +162,10 @@ def generate_arguments_fortran(
                     sympy_expr = parse_expr(dim.upper())
                     arg_dim[index] = int(sympy_expr.evalf(subs=params.get_dict()))
                 if arg_type == 'float':
+                    logger.debug("%s, Generate random float of shape %s", arg_name, arg_dim)
                     fortran_arguments[arg_name] = np.asfortranarray(rng.random(arg_dim))
                 else:
+                    logger.debug("%s, Generate random integer of shape %s", arg_name, arg_dim)
                     fortran_arguments[arg_name] = np.asfortranarray(rng.integers(0, 2, arg_dim, dtype=np.int32))
 
         os.chdir(cwd)
@@ -474,6 +478,8 @@ def print_compare_matrix(output_a: np.ndarray, output_b: np.ndarray, selection: 
 
 
 def enable_debug_flags():
+    # No -O3
+    Config.set('compiler', 'cpu', 'args', value='-std=c++14 -fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label')
     logger.info("Configure for debugging")
     Config.set('compiler', 'build_type', value='Debug')
     Config.set('compiler', 'cuda', 'syncdebug', value=True)
