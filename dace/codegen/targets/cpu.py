@@ -59,11 +59,11 @@ class CPUCodeGen(TargetCodeGenerator):
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
-                    _visit_structure(v, args, f'{prefix}.{k}')
+                    _visit_structure(v, args, f'{prefix}->{k}')
                 elif isinstance(v, data.StructArray):
-                    _visit_structure(v.stype, args, f'{prefix}.{k}')
+                    _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
-                    args[f'{prefix}.{k}'] = v
+                    args[f'{prefix}->{k}'] = v
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
@@ -223,8 +223,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if isinstance(v, data.Data):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}.{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}.{k}", defined_type, ctypedef)
+                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                 # TODO: Find a better way to do this (the issue is with pointers of pointers)
                 if atype.endswith('*'):
                     atype = atype[:-1]
@@ -301,9 +301,6 @@ class CPUCodeGen(TargetCodeGenerator):
         name = node.data
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
-        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        alloc_name = alloc_name.replace('.', '->')
 
         if nodedesc.transient is False:
             return
@@ -333,7 +330,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(v, data.Data):
                     ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                     defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                    self._dispatcher.declared_arrays.add(f"{name}.{k}", defined_type, ctypedef)
+                    self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
@@ -1186,9 +1183,6 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
-        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        ptr = ptr.replace('.', '->')
 
         if fpga.is_fpga_array(desc):
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
