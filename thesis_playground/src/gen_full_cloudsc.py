@@ -62,7 +62,7 @@ def add_synchronize(dacecache_folder: str):
         contents = f.readlines()
         for offset, line_number in enumerate(line_numbers_to_insert):
             contents.insert(line_number+offset,
-                            "        DACE_GPU_CHECK(cudaDeviceynchronize());\n")
+                            "DACE_GPU_CHECK(cudaDeviceSynchronize());DACE_GPU_CHECK(cudaStreamSynchronize(__state->gpu_context->streams[0]));\n")
 
     with open(src_file, 'w') as f:
         contents = "".join(contents)
