@@ -299,9 +299,6 @@ class CPUCodeGen(TargetCodeGenerator):
         name = node.data
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
-        # # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        # alloc_name = alloc_name.replace('.', '->')
 
         if nodedesc.transient is False:
             return
@@ -1184,9 +1181,6 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
-        # # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        # ptr = ptr.replace('.', '->')
 
         if fpga.is_fpga_array(desc):
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
