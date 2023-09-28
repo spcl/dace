@@ -110,6 +110,11 @@ def action_compile(args):
         sdfg_file = args.sdfg_file
     logger.info("Load SDFG from %s", sdfg_file)
     sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
+
+    if args.NBLOCKS is not None:
+        for nsdfg in sdfg.sdfg_list:
+            nsdfg.add_constant('NBLOCKS', args.NBLOCKS)
+
     if args.debug_build:
         logger.info("Enable Debug Flags")
         enable_debug_flags()
@@ -120,6 +125,7 @@ def action_compile(args):
         sdfg.build_folder = os.path.abspath(sdfg.build_folder)
     if args.instrument:
         instrument_sdfg(sdfg, args.opt_level, args.device)
+    sdfg.validate()
     sdfg.compile()
     if args.instrument:
         add_synchronize(f"CLOUDSCOUTER{args.version}")
@@ -141,7 +147,8 @@ def action_gen_graph(args):
     logger.info("Use program: %s", program)
     reset_graph_files(verbose_name)
 
-    params = ParametersProvider(program, update={'NBLOCKS': 16384})
+    params = ParametersProvider(program)
+    # params = ParametersProvider(program, update={'NBLOCKS': 16384})
     run_config = opt_levels[args.opt_level]["run_config"]
     run_config.device = device
     logger.debug(run_config)
@@ -215,6 +222,7 @@ def main():
     compile_parser.add_argument('--build-dir', default=None, help="Folder to build & generate the DaCe code into")
     compile_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
     compile_parser.add_argument('--instrument', action='store_true', default=False, help='Instrument SDFG')
+    compile_parser.add_argument('--NBLOCKS', type=int, help="Change NBLOCKS to new value", default=16384)
     compile_parser.set_defaults(func=action_compile)
 
     change_parser = subparsers.add_parser('change', description="Change NCLDTOP in basic SDFG")
