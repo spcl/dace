@@ -1,4 +1,4 @@
-cloudsc_path='/users/msamuel/dwarf-p-cloudsc-dace'
+cloudsc_path='/home/samuel/Documents/Schulisches/Studium/ETH/MasterCode/MasterThesis/dwarf-p-cloudsc-dace'
 dace_signature_file='full_cloudsc_logs/signature_dace_cloudscexp4.txt'
 cloudsc_version=4
 dacecache_folder=".dacecache/CLOUDSCOUTER${cloudsc_version}"
@@ -9,9 +9,13 @@ NBLOCKS=${NBLOCKS::-1}
 echo "NBLOCKS=$NBLOCKS"
 
 result_dir=$PWD
-result_filename="result.txt"
+result_path="$result_dir/result.txt"
 if [ "$#" -eq 1 ]; then
-    result_filename=$1
+    if [[ "$1" = /* ]]; then
+        result_path="$1"
+    else
+        result_path="$result_dir/$1"
+    fi
 fi
 
 
@@ -87,8 +91,7 @@ echo "}" >> $adapter_file
 
 current_dir=$PWD
 cd "$cloudsc_path/build"
-make && OMP_NUM_THREADS=1 ./bin/dwarf-cloudsc-fortran 1 $NBLOCKS 1 > "$result_dir/$result_filename"
+make && OMP_NUM_THREADS=1 ./bin/dwarf-cloudsc-fortran 1 $NBLOCKS 1 > "$result_path"
 cd $current_dir
-echo "Saved result into $result_dir/$result_filename"
-cat "$result_dir/$result_filename"
-
+echo "Saved result into $result_path"
+cat "$result_path"
