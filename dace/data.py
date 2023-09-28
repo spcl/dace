@@ -487,6 +487,11 @@ class Structure(Data):
     @property
     def may_alias(self) -> bool:
         return False
+    
+    # TODO: Can Structures be optional?
+    @property
+    def optional(self) -> bool:
+        return False
 
 
 @make_properties
