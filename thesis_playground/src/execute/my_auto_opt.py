@@ -768,7 +768,9 @@ def k_caching_prototype_v1_fuse(sdfg: SDFG,
                                               symbols['KLEV']),
             # Seems to work without
             'fixed_new_shapes': {},
-            'forced_subgraph_contains_data': set(['ZTP1', 'ZLI', 'ZQSMIX'])},
+            'forced_subgraph_contains_data': set(['ZTP1', 'ZLI', 'ZQSMIX']),
+            'fix_map_exit_edges': set(['ZQSMIX'])},
+            # 'forced_subgraph_contains_data': set(['ZTP1', 'ZLI'])},
             symbols, program)
     else:
         # Fuse maps to create one big KLEV-map

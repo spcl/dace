@@ -49,7 +49,7 @@ def get_composite_fusion(k_caching_args: Optional[Dict[str, int]] = None):
     if k_caching_args is not None:
         cf.subgraph_fusion_properties = {}
         for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential', 'disjoint_subsets',
-                    'fixed_new_shapes', 'forced_subgraph_contains_data']:
+                    'fixed_new_shapes', 'forced_subgraph_contains_data', 'fix_map_exit_edges']:
             if key in k_caching_args:
                 cf.subgraph_fusion_properties[key] = k_caching_args[key]
         cf.subgraph_fusion_properties['change_init_outside'] = True
