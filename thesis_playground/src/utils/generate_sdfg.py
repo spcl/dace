@@ -192,8 +192,11 @@ def optimise_basic_sdfg(
         save_graph(sdfg, verbose_name, "basic_sdfg")
 
     add_args = {}
+    symbols = params.get_dict()
+    for p in params_to_ignore:
+        del symbols[p]
     if run_config.specialise_symbols:
-        add_args['symbols'] = params.get_dict()
+        add_args['symbols'] = symbols
     add_args['k_caching'] = run_config.k_caching
     add_args['move_assignments_outside'] = run_config.move_assignment_outside
     add_args['program'] = verbose_name

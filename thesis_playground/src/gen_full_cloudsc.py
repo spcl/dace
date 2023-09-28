@@ -3,142 +3,32 @@ import logging
 from datetime import datetime
 import os
 import dace
-from subprocess import run
-from dace.sdfg import SDFG
-from dace import nodes
 
 from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg, get_path_of_basic_sdfg
 from utils.general import remove_build_folder, enable_debug_flags, reset_graph_files, replace_symbols_by_values
 from utils.log import setup_logging
-from utils.run_config import RunConfig
-from utils.paths import get_full_cloudsc_log_dir, get_dacecache
+from utils.paths import get_full_cloudsc_log_dir
+from utils.full_cloudsc import add_synchronize, instrument_sdfg, compile_sdfg, get_sdfg, get_program_name, opt_levels
 from execute.parameters import ParametersProvider
 
 logger = logging.getLogger(__name__)
 
-opt_levels = {
-    "baseline": {
-        "run_config": RunConfig(k_caching=False, change_stride=False, outside_loop_first=False,
-                                move_assignment_outside=False, full_cloudsc_fixes=True),
-        "name": "baseline"
-        },
-    "k-caching": {
-        "run_config": RunConfig(k_caching=True, change_stride=False, outside_loop_first=False,
-                                move_assignment_outside=False, full_cloudsc_fixes=True),
-        "name": "k_caching"
-        },
-    "change-strides": {
-        "run_config": RunConfig(k_caching=False, change_stride=True, outside_loop_first=False,
-                                move_assignment_outside=False, full_cloudsc_fixes=True),
-        "name": "change_strides"
-        },
-    "all": {
-        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
-        "name": "all_opt"
-        },
-    "all-custom": {
-        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
-        "name": "all_opt_custom"
-        }
-}
-
-
-def add_synchronize(dacecache_folder: str):
-    src_dir = os.path.join(get_dacecache(), dacecache_folder, 'src', 'cpu')
-    src_file = os.path.join(src_dir, os.listdir(src_dir)[0])
-    if len(os.listdir(src_dir)) > 1:
-        logger.warning(f"More than one files in {src_dir}")
-    lines = run(['grep', '-rn', 'std::chrono::high_resolution_clock::now', src_file], capture_output=True).stdout.decode('UTF-8')
-    logger.debug("Add synchronizes to %s", src_file)
-    line_numbers_to_insert = []
-
-    for line in lines.split('\n'):
-        if len(line) > 0:
-            if line.split()[2].startswith('__dace_t'):
-                line_numbers_to_insert.append(int(line.split(':')[0])-1)
-
-    logger.debug("Insert synchronize into line numbers: %s", line_numbers_to_insert)
-    with open(src_file, 'r') as f:
-        contents = f.readlines()
-        for offset, line_number in enumerate(line_numbers_to_insert):
-            contents.insert(line_number+offset,
-                            "DACE_GPU_CHECK(cudaDeviceSynchronize());DACE_GPU_CHECK(cudaStreamSynchronize(__state->gpu_context->streams[0]));\n")
-
-    with open(src_file, 'w') as f:
-        contents = "".join(contents)
-        f.write(contents)
-
-
-def get_program_name(args) -> str:
-    if args.version == 3:
-        program = 'cloudscexp3'
-    elif args.version == 4:
-        program = 'cloudscexp4'
-    else:
-        program = 'cloudscexp2'
-    return program
-
-
-def instrument_sdfg(sdfg: SDFG, opt_level: str, device: str):
-    if opt_level in ['k-caching', 'baseline']:
-        if device == 'CPU':
-            cloudsc_state = sdfg.find_state('stateCLOUDSC')
-        elif device == 'GPU':
-            cloudsc_state = sdfg.find_state('CLOUDSCOUTER4_copyin')
-        nblocks_maps = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.MapEntry) and n.label ==
-                        'stateCLOUDSC_map']
-    if opt_level in ['all', 'change-strides']:
-        changed_strides_state = sdfg.find_state('with_changed_strides')
-        nsdfg_changed_strides = [n for n in changed_strides_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
-        nblocks_maps = [n for n in nsdfg_changed_strides.sdfg.find_state('CLOUDSCOUTER4_copyin').nodes()
-                        if isinstance(n, nodes.MapEntry) and n.label == 'stateCLOUDSC_map']
-        sdfg.find_state('transform_data').instrument = dace.InstrumentationType.Timer
-        sdfg.find_state('transform_data_back').instrument = dace.InstrumentationType.Timer
-
-    if len(nblocks_maps):
-        logger.warning("There is more than one map to instrument: %s", nblocks_maps)
-    nblocks_maps[0].instrument = dace.InstrumentationType.Timer
-
 
 def action_compile(args):
-    program = get_program_name(args)
-    remove_build_folder(dacecache_folder=program.upper())
     if args.sdfg_file is None:
-        verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
-        sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
+        sdfg = get_sdfg(args.opt_level, args.device, args.version)
     else:
         sdfg_file = args.sdfg_file
+        sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
     logger.info("Load SDFG from %s", sdfg_file)
-    sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
-
-    if args.NBLOCKS is not None:
-        for nsdfg in sdfg.sdfg_list:
-            nsdfg.add_constant('NBLOCKS', args.NBLOCKS)
-
-    if args.debug_build:
-        logger.info("Enable Debug Flags")
-        enable_debug_flags()
-    logger.info("Build into %s", sdfg.build_folder)
-    if args.build_dir is not None:
-        sdfg.build_folder = args.build_dir
-    else:
-        sdfg.build_folder = os.path.abspath(sdfg.build_folder)
-    if args.instrument:
-        instrument_sdfg(sdfg, args.opt_level, args.device)
-    sdfg.validate()
-    sdfg.compile()
-    if args.instrument:
-        add_synchronize(f"CLOUDSCOUTER{args.version}")
-    signature_file = os.path.join(get_full_cloudsc_log_dir(), f"signature_dace_{program}.txt")
-    logger.info("Write signature file into %s", signature_file)
-    with open(signature_file, 'w') as file:
-        file.write(sdfg.signature())
+    compile_sdfg(sdfg, args.NBLOCKS, args.version, args.opt_level, args.device, instrument=args.instrument,
+                 debug=args.debug_mode, build_dir=args.build_dir)
 
 
 def action_gen_graph(args):
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
     device = device_map[args.device]
-    program = get_program_name(args)
+    program = get_program_name(args.version)
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}_{args.device.lower()}"
     logfile = os.path.join(
         get_full_cloudsc_log_dir(),
@@ -184,7 +74,7 @@ def action_change_ncldtop(args):
 
 
 def action_profile(args):
-    program = get_program_name(args)
+    program = get_program_name(args.version)
     remove_build_folder(dacecache_folder=program.upper())
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
     sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
@@ -193,7 +83,7 @@ def action_profile(args):
     reports = sdfg.get_instrumentation_reports()
     # data = []
     for report in reports:
-        print(report)
+        print(report.durations)
         # data.append({'measurement': '})
 
     if args.clear:

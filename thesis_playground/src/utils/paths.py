@@ -160,3 +160,15 @@ def get_basic_sdfg_dir() -> str:
 
 def get_full_cloudsc_log_dir() -> str:
     return create_if_not_exist(join(get_thesis_playground_root_dir(), 'full_cloudsc_logs'))
+
+
+def get_full_cloudsc_results_dir(node: Optional[str] = None, exp_id: Optional[int] = None) -> str:
+    if node is not None:
+        if exp_id is not None:
+            return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'results', node, str(exp_id)))
+        return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'results', node))
+    return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'results'))
+
+
+def get_full_cloudsc_plot_dir(node: str) -> str:
+    return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'plots', node))
