@@ -75,11 +75,12 @@ def action_list(args):
 def action_plot(args):
     experiment_list_df = get_experiment_list_df()
     node = experiment_list_df.loc[[int(args.experiment_id)]]['node'].values[0]
-    results_df = pd.read_csv(os.path.join(get_full_cloudsc_results_dir(node, args.experiment_id), 'results.csv'))
+    results_df = pd.read_csv(os.path.join(get_full_cloudsc_results_dir(node, args.experiment_id),
+                                          'results.csv')).set_index(['run', 'scope', 'opt level', 'nblocks'])
     figure = get_new_figure()
     ax = figure.add_subplot(1, 1, 1)
     size_vs_y_plot(ax, 'Runtime [ms]', 'Runtimes of full cloudsc', results_df, size_var_name='nblocks')
-    sns.lineplot(results_df, x='nblocks', y='runtime', hue='opt level')
+    sns.lineplot(results_df.xs('Map stateCLOUDSC_map', level='scope'), x='nblocks', y='runtime', hue='opt level')
     save_plot(os.path.join(get_full_cloudsc_plot_dir(node), 'runtime.pdf'))
 
 
