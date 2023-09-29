@@ -62,6 +62,7 @@ def action_profile(args):
             logger.debug('stdout: %s', output.stdout.decode('UTF-8'))
             if output.returncode != 0:
                 logger.warning('Running cloudsc failed')
+                logger.warning('stdout: %s', output.stdout.decode('UTF-8'))
                 logger.warning('stderr: %s', output.stderr.decode('UTF-8'))
             this_data = read_reports(sdfg)
             for d in this_data:

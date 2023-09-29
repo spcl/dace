@@ -262,6 +262,7 @@ def run_cloudsc_cuda(
                     logger.debug('Results line: %s', line)
         else:
             logger.warning('Running cuda cloudsc failed')
+            logger.warning('stdout: %s', cloudsc_output.stdout.decode('UTF-8'))
             logger.warning('stderr: %s', cloudsc_output.stderr.decode('UTF-8'))
     return data
 
