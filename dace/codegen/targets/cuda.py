@@ -206,7 +206,12 @@ class CUDACodeGen(TargetCodeGenerator):
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
+                sgraph = state.scope_subgraph(node)
+                used_symbols = sgraph.used_symbols(all_symbols=False)
+                arglist = sgraph.arglist(defined_syms, shared_transients[state.parent])
+                arglist = {k: v for k, v in arglist.items() if not k in defined_syms or k in used_symbols}
+                self._arglists[node] = arglist
+                # self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
         """
