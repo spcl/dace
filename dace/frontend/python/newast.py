@@ -3729,7 +3729,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Map internal SDFG symbols by adding keyword arguments
         # symbols = set(sdfg.symbols.keys())
-        symbols = sdfg.free_symbols
+        # symbols = sdfg.free_symbols
+        symbols = sdfg.used_symbols(all_symbols=False)
         try:
             mapping = infer_symbols_from_datadescriptor(
                 sdfg, {k: self.sdfg.arrays[v]
