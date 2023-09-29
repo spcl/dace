@@ -1,7 +1,7 @@
 from subprocess import run
 import os
 import logging
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 import pandas as pd
 from numbers import Number
 import dace
@@ -89,7 +89,7 @@ def add_synchronize(dacecache_folder: str):
         contents = f.readlines()
         for offset, line_number in enumerate(line_numbers_to_insert):
             contents.insert(line_number+offset,
-                            "DACE_GPU_CHECK(cudaDeviceSynchronize());DACE_GPU_CHECK(cudaStreamSynchronize(__state->gpu_context->streams[0]));\n")
+                    "DACE_GPU_CHECK(cudaDeviceSynchronize());DACE_GPU_CHECK(cudaStreamSynchronize(__state->gpu_context->streams[0]));\n")
 
     with open(src_file, 'w') as f:
         contents = "".join(contents)
@@ -122,7 +122,7 @@ def instrument_sdfg(sdfg: SDFG, opt_level: str, device: str):
         sdfg.find_state('transform_data').instrument = dace.InstrumentationType.Timer
         sdfg.find_state('transform_data_back').instrument = dace.InstrumentationType.Timer
 
-    if len(nblocks_maps):
+    if len(nblocks_maps) > 1:
         logger.warning("There is more than one map to instrument: %s", nblocks_maps)
     nblocks_maps[0].instrument = dace.InstrumentationType.Timer
 
@@ -222,3 +222,47 @@ def read_reports(sdfg: SDFG) -> List[Dict[str, Number]]:
             for key in entry:
                 data.append({'scope': key, 'runtime': list(entry[key].values())[0][0], 'run': index})
     return data
+
+
+def run_cloudsc_cuda(
+        executable_name: str,
+        data_name: str,
+        size: int,
+        repetitions: int) -> List[Dict[str, Union[str, Number]]]:
+    """
+    Runs the cloudsc CUDA version and returns runtime without data movement
+
+    :param executable_name: Name of the executable
+    :type executable_name: str
+    :param data_name: Name to give in the 'opt level' entry in the returned data
+    :type data_name: str
+    :param size: Size to pass to the executable
+    :type size: int
+    :param repetitions: Number of repetitions to run
+    :type repetitions: int
+    :return: List with one dictionary per run listing runtime and other metadata
+    :rtype: List[Dict[str, Union[str, Number]]]
+    """
+    data = []
+    logger.debug('Run %s using %s for size %s repeating it %i time', data_name, executable_name, size, repetitions)
+    for i in range(repetitions):
+        cloudsc_output = run([f"./bin/{executable_name}", '1', str(size), '128'],
+                             cwd='/users/msamuel/dwarf-p-cloudsc-original/build_cuda',
+                             capture_output=True)
+        if cloudsc_output.returncode == 0:
+            for line in cloudsc_output.stdout.decode('UTF-8').split('\n'):
+                if 'core' in line:
+                    data.append({
+                        'scope': 'Map stateCLOUDSC_map',
+                        'opt level': data_name,
+                        'nblocks': size,
+                        'runtime': line.split()[7],
+                        'run': i
+                        })
+                    logger.debug('Results line: %s', line)
+        else:
+            logger.warning('Running cuda cloudsc failed')
+            logger.warning('stderr: %s', cloudsc_output.stderr.decode('UTF-8'))
+    return data
+
+

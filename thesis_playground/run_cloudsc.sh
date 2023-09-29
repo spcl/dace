@@ -1,4 +1,4 @@
-cloudsc_path='/home/samuel/Documents/Schulisches/Studium/ETH/MasterCode/MasterThesis/dwarf-p-cloudsc-dace'
+cloudsc_path='/users/msamuel/dwarf-p-cloudsc-dace'
 dace_signature_file='full_cloudsc_logs/signature_dace_cloudscexp4.txt'
 cloudsc_version=4
 dacecache_folder=".dacecache/CLOUDSCOUTER${cloudsc_version}"
@@ -6,22 +6,27 @@ dacecache_folder=".dacecache/CLOUDSCOUTER${cloudsc_version}"
 NBLOCKS=$(grep "NBLOCKS = " "$dacecache_folder/src/cpu/CLOUDSCOUTER${cloudsc_version}.cpp" | head -n1 | cut -d'=' -f2 | xargs)
 #Remove semicolon at the end
 NBLOCKS=${NBLOCKS::-1}
+repetitions=1
 echo "NBLOCKS=$NBLOCKS"
 
 result_dir=$PWD
-result_path="$result_dir/result.txt"
-if [ "$#" -eq 1 ]; then
+result_path="$result_dir/result.out"
+if [ "$#" -gt 1 ]; then
     if [[ "$1" = /* ]]; then
         result_path="$1"
     else
         result_path="$result_dir/$1"
     fi
+    if [ "$#" -eq 2 ]; then
+        repetitions=$2
+    fi
 fi
 
 
-cd .dacecache/CLOUDSCOUTER4/build
+echo "Build dacecache folder"
+cd "$dacecache_folder/build"
 sh cmake_configure.sh
-make
+make clean && make
 cd -
 
 echo "Using signature file at $dace_signature_file"
@@ -91,7 +96,11 @@ echo "}" >> $adapter_file
 
 current_dir=$PWD
 cd "$cloudsc_path/build"
-make && OMP_NUM_THREADS=1 ./bin/dwarf-cloudsc-fortran 1 $NBLOCKS 1 > "$result_path"
+echo "Run for $repetitions time"
+for i in $(seq 1 $repetitions); do
+    echo "run $i"
+    make && OMP_NUM_THREADS=1 ./bin/dwarf-cloudsc-fortran 1 $NBLOCKS 1 > "$result_path.${i}"
+    cat "$result_path.${i}"
+done
 cd $current_dir
 echo "Saved result into $result_path"
-cat "$result_path"

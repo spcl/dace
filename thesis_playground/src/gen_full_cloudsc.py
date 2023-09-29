@@ -3,12 +3,14 @@ import logging
 from datetime import datetime
 import os
 import dace
+import pandas as pd
 
 from utils.generate_sdfg import optimise_basic_sdfg, get_basic_sdfg, get_path_of_basic_sdfg
 from utils.general import remove_build_folder, enable_debug_flags, reset_graph_files, replace_symbols_by_values
 from utils.log import setup_logging
 from utils.paths import get_full_cloudsc_log_dir
-from utils.full_cloudsc import add_synchronize, instrument_sdfg, compile_sdfg, get_sdfg, get_program_name, opt_levels
+from utils.full_cloudsc import add_synchronize, instrument_sdfg, compile_sdfg, get_sdfg, get_program_name, opt_levels, \
+                               read_reports
 from execute.parameters import ParametersProvider
 
 logger = logging.getLogger(__name__)
@@ -19,10 +21,10 @@ def action_compile(args):
         sdfg = get_sdfg(args.opt_level, args.device, args.version)
     else:
         sdfg_file = args.sdfg_file
+        logger.info("Load SDFG from %s", sdfg_file)
         sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
-    logger.info("Load SDFG from %s", sdfg_file)
     compile_sdfg(sdfg, args.NBLOCKS, args.version, args.opt_level, args.device, instrument=args.instrument,
-                 debug=args.debug_mode, build_dir=args.build_dir)
+                 debug=args.debug_build, build_dir=args.build_dir)
 
 
 def action_gen_graph(args):
@@ -75,16 +77,11 @@ def action_change_ncldtop(args):
 
 def action_profile(args):
     program = get_program_name(args.version)
-    remove_build_folder(dacecache_folder=program.upper())
     verbose_name = f"{program}_{opt_levels[args.opt_level]['name']}"
     sdfg_file = os.path.join(get_full_cloudsc_log_dir(), f"{verbose_name}_{args.device.lower()}.sdfg")
     logger.info("Load SDFG from %s", sdfg_file)
     sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
-    reports = sdfg.get_instrumentation_reports()
-    # data = []
-    for report in reports:
-        print(report.durations)
-        # data.append({'measurement': '})
+    print(pd.DataFrame(read_reports(sdfg)).set_index(['scope', 'run']))
 
     if args.clear:
         sdfg.clear_instrumentation_reports()
