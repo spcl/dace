@@ -468,6 +468,8 @@ class StateGraphView(object):
                 continue
 
             freesyms |= e.data.used_symbols(all_symbols)
+            if e.data.data in sdfg.arrays:
+                freesyms |= set(map(str, sdfg.arrays[e.data.data].used_symbols(all_symbols)))
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
