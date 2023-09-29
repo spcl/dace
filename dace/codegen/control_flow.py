@@ -82,6 +82,9 @@ class ControlFlow:
     # a string with its generated code.
     dispatch_state: Callable[[SDFGState], str]
 
+    # The parent control flow block of this one, used to avoid generating extraneous ``goto``s
+    parent: Optional['ControlFlow']
+
     @property
     def first_state(self) -> SDFGState:
         """ 
@@ -222,11 +225,18 @@ class GeneralBlock(ControlFlow):
                 out_edges = sdfg.out_edges(elem.state)
                 for j, e in enumerate(out_edges):
                     if e not in self.gotos_to_ignore:
-                        # If this is the last generated edge and it leads
-                        # to the next state, skip emitting goto
+                        # Skip gotos to immediate successors
                         successor = None
-                        if (j == (len(out_edges) - 1) and (i + 1) < len(self.elements)):
-                            successor = self.elements[i + 1].first_state
+                        # If this is the last generated edge
+                        if j == (len(out_edges) - 1):
+                            if (i + 1) < len(self.elements):
+                                # If last edge leads to next state in block
+                                successor = self.elements[i + 1].first_state
+                            elif i == len(self.elements) - 1:
+                                # If last edge leads to first state in next block
+                                next_block = _find_next_block(self) 
+                                if next_block is not None:
+                                    successor = next_block.first_state
 
                         expr += elem.generate_transition(sdfg, e, successor)
                     else:
@@ -350,6 +360,9 @@ class ForScope(ControlFlow):
     init_edges: List[InterstateEdge]  #: All initialization edges
 
     def as_cpp(self, codegen, symbols) -> str:
+
+        sdfg = self.guard.parent
+
         # Initialize to either "int i = 0" or "i = 0" depending on whether
         # the type has been defined
         defined_vars = codegen.dispatcher.defined_vars
@@ -359,9 +372,8 @@ class ForScope(ControlFlow):
                 init = self.itervar
             else:
                 init = f'{symbols[self.itervar]} {self.itervar}'
-            init += ' = ' + self.init
-
-        sdfg = self.guard.parent
+            init += ' = ' + unparse_interstate_edge(self.init_edges[0].data.assignments[self.itervar],
+                                                    sdfg, codegen=codegen)
 
         preinit = ''
         if self.init_edges:
@@ -478,13 +490,14 @@ class SwitchCaseScope(ControlFlow):
 
 def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[InterstateEdge],
                          leave_edge: Edge[InterstateEdge], back_edges: List[Edge[InterstateEdge]],
-                         dispatch_state: Callable[[SDFGState], str]) -> Union[ForScope, WhileScope]:
+                         dispatch_state: Callable[[SDFGState],
+                                                  str], parent_block: GeneralBlock) -> Union[ForScope, WhileScope]:
     """ 
     Helper method that constructs the correct structured loop construct from a
     set of states. Can construct for or while loops.
     """
 
-    body = GeneralBlock(dispatch_state, [], [], [], [], [], True)
+    body = GeneralBlock(dispatch_state, parent_block, [], [], [], [], [], True)
 
     guard_inedges = sdfg.in_edges(guard)
     increment_edges = [e for e in guard_inedges if e in back_edges]
@@ -535,10 +548,10 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
             # Also ignore assignments in increment edge (handled in for stmt)
             body.assignments_to_ignore.append(increment_edge)
 
-            return ForScope(dispatch_state, itvar, guard, init, condition, update, body, init_edges)
+            return ForScope(dispatch_state, parent_block, itvar, guard, init, condition, update, body, init_edges)
 
     # Otherwise, it is a while loop
-    return WhileScope(dispatch_state, guard, condition, body)
+    return WhileScope(dispatch_state, parent_block, guard, condition, body)
 
 
 def _cases_from_branches(
@@ -617,6 +630,31 @@ def _child_of(node: SDFGState, parent: SDFGState, ptree: Dict[SDFGState, SDFGSta
     return False
 
 
+def _find_next_block(block: ControlFlow) -> Optional[ControlFlow]:
+    """
+    Returns the immediate successor control flow block.
+    """
+    # Find block in parent
+    parent = block.parent
+    if parent is None:
+        return None
+    ind = next(i for i, b in enumerate(parent.children) if b is block)
+    if ind == len(parent.children) - 1 or isinstance(parent, (IfScope, IfElseChain, SwitchCaseScope)):
+        # If last block, or other children are not reachable from current node (branches),
+        # recursively continue upwards
+        return _find_next_block(parent)
+    return parent.children[ind + 1]
+
+
+def _reset_block_parents(block: ControlFlow):
+    """
+    Fixes block parents after processing.
+    """
+    for child in block.children:
+        child.parent = block
+        _reset_block_parents(child)
+
+
 def _structured_control_flow_traversal(sdfg: SDFG,
                                        start: SDFGState,
                                        ptree: Dict[SDFGState, SDFGState],
@@ -645,7 +683,7 @@ def _structured_control_flow_traversal(sdfg: SDFG,
     """
 
     def make_empty_block():
-        return GeneralBlock(dispatch_state, [], [], [], [], [], True)
+        return GeneralBlock(dispatch_state, parent_block, [], [], [], [], [], True)
 
     # Traverse states in custom order
     visited = set() if visited is None else visited
@@ -657,7 +695,7 @@ def _structured_control_flow_traversal(sdfg: SDFG,
         if node in visited or node is stop:
             continue
         visited.add(node)
-        stateblock = SingleState(dispatch_state, node)
+        stateblock = SingleState(dispatch_state, parent_block, node)
 
         oe = sdfg.out_edges(node)
         if len(oe) == 0:  # End state
@@ -708,12 +746,14 @@ def _structured_control_flow_traversal(sdfg: SDFG,
             if (len(oe) == 2 and oe[0].data.condition_sympy() == sp.Not(oe[1].data.condition_sympy())):
                 # If without else
                 if oe[0].dst is mergestate:
-                    branch_block = IfScope(dispatch_state, sdfg, node, oe[1].data.condition, cblocks[oe[1]])
-                elif oe[1].dst is mergestate:
-                    branch_block = IfScope(dispatch_state, sdfg, node, oe[0].data.condition, cblocks[oe[0]])
-                else:
-                    branch_block = IfScope(dispatch_state, sdfg, node, oe[0].data.condition, cblocks[oe[0]],
+                    branch_block = IfScope(dispatch_state, parent_block, sdfg, node, oe[1].data.condition,
                                            cblocks[oe[1]])
+                elif oe[1].dst is mergestate:
+                    branch_block = IfScope(dispatch_state, parent_block, sdfg, node, oe[0].data.condition,
+                                           cblocks[oe[0]])
+                else:
+                    branch_block = IfScope(dispatch_state, parent_block, sdfg, node, oe[0].data.condition,
+                                           cblocks[oe[0]], cblocks[oe[1]])
             else:
                 # If there are 2 or more edges (one is not the negation of the
                 # other):
@@ -721,10 +761,10 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                 if switch:
                     # If all edges are of form "x == y" for a single x and
                     # integer y, it is a switch/case
-                    branch_block = SwitchCaseScope(dispatch_state, sdfg, node, switch[0], switch[1])
+                    branch_block = SwitchCaseScope(dispatch_state, parent_block, sdfg, node, switch[0], switch[1])
                 else:
                     # Otherwise, create if/else if/.../else goto exit chain
-                    branch_block = IfElseChain(dispatch_state, sdfg, node,
+                    branch_block = IfElseChain(dispatch_state, parent_block, sdfg, node,
                                                [(e.data.condition, cblocks[e] if e in cblocks else make_empty_block())
                                                 for e in oe])
             # End of branch classification
@@ -739,11 +779,11 @@ def _structured_control_flow_traversal(sdfg: SDFG,
             loop_exit = None
             scope = None
             if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                scope = _loop_from_structure(sdfg, node, oe[0], oe[1], back_edges, dispatch_state)
+                scope = _loop_from_structure(sdfg, node, oe[0], oe[1], back_edges, dispatch_state, parent_block)
                 body_start = oe[0].dst
                 loop_exit = oe[1].dst
             elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                scope = _loop_from_structure(sdfg, node, oe[1], oe[0], back_edges, dispatch_state)
+                scope = _loop_from_structure(sdfg, node, oe[1], oe[0], back_edges, dispatch_state, parent_block)
                 body_start = oe[1].dst
                 loop_exit = oe[0].dst
 
@@ -836,7 +876,8 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    root_block = GeneralBlock(dispatch_state, [], [], [], [], [], True)
+    root_block = GeneralBlock(dispatch_state, None, [], [], [], [], [], True)
     _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
                                        root_block)
+    _reset_block_parents(root_block)
     return root_block
