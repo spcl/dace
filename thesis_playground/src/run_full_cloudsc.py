@@ -86,7 +86,8 @@ def action_list(args):
 
 def action_plot(args):
     plot_lines(args.experiment_id)
-    plot_bars(args.experiment_id)
+    plot_bars(args.experiment_id, False)
+    plot_bars(args.experiment_id, True)
 
 
 def main():

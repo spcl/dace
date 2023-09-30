@@ -318,10 +318,12 @@ def get_data(experiment_id: int) -> Dict[str, Union[str, pd.DataFrame]]:
     return {'gpu': gpu, 'node': node, 'data': data, 'avg_data': avg_data, 'run_count': run_count}
 
 
-def plot_bars(experiment_id: int):
+def plot_bars(experiment_id: int, share_y: bool = False):
     data_dict = get_data(experiment_id)
     avg_data = data_dict['avg_data']
     data = data_dict['data']
+    speedups = compute_speedups(data_dict['avg_data'], ('baseline'), ('opt level'))\
+        .xs(('work', 'DaCe'), level=('scope', 'version'))
     print(f"Runs: {data_dict['run_count']}, GPU: {data_dict['gpu']}, node: {data_dict['node']}")
     figure = get_new_figure()
     # figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
@@ -331,6 +333,11 @@ def plot_bars(experiment_id: int):
     nrows = 2
     ncols = ceil((len(sizes) / nrows))
     axes = figure.subplots(nrows, ncols, sharex=True)
+    if share_y:
+        axes[0][0].get_shared_y_axes().join(axes[0][0], axes[0][1], axes[0][2])
+        axes[1][0].get_shared_y_axes().join(axes[1][0], axes[1][1], axes[1][2])
+        axes[0][0].set_ylim((0, 45))
+        axes[1][0].set_ylim((0, 270))
     axes_1d = [a for axs in axes for a in axs]
     for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
         ax.set_title(f"{size:,}")
@@ -341,11 +348,24 @@ def plot_bars(experiment_id: int):
             ax.set_ylabel('Runtime [ms]')
         else:
             ax.set_ylabel('')
+        if not share_y:
+            ylim = ax.get_ylim()
+            ax.set_ylim((ylim[0], ylim[1]*1.1))
+        font_size = 20
+        speedup_ylvl = ax.get_ylim()[1] * 0.03
+        # speedup_ylvl = 1 if idx // ncols == 0 else 3
+        ax.bar_label(ax.containers[0], fmt='%.1f', size=font_size)
+        ax.annotate(f"{speedups.xs(('k-caching', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                    xy=(1, speedup_ylvl), horizontalalignment='center', size=font_size)
+        ax.annotate(f"{speedups.xs(('change-strides', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                    xy=(2, speedup_ylvl), horizontalalignment='center', size=font_size)
+        ax.annotate(f"{speedups.xs(('all', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                    xy=(3, speedup_ylvl), horizontalalignment='center', size=font_size)
         rotate_xlabels(ax, replace_dict={'baseline': 'No optimisations', 'k-caching': 'K-caching',
                                          'change-strides': 'Changed array order', 'all': 'Both'})
 
     figure.tight_layout()
-    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime_bar.pdf'))
+    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), f"runtime_bar_{share_y}.pdf"))
 
     this_data = pd.concat([
         avg_data.xs('Cloudsc CUDA', level='opt level', drop_level=False),
