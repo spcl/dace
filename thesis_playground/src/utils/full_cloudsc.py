@@ -1,16 +1,21 @@
 from subprocess import run
+from math import sqrt, ceil
 import os
 import logging
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Dict, Union, Tuple
 import pandas as pd
 from numbers import Number
+import seaborn as sns
 import dace
 from dace.sdfg import SDFG
 from dace import nodes
 
-from utils.paths import get_dacecache, get_full_cloudsc_log_dir, get_full_cloudsc_results_dir
+from utils.paths import get_dacecache, get_full_cloudsc_log_dir, get_full_cloudsc_results_dir, get_full_cloudsc_plot_dir
 from utils.general import enable_debug_flags, remove_build_folder
 from utils.run_config import RunConfig
+from utils.data_analysis import compute_speedups
+from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines_dict, \
+                       replace_legend_names, legend_on_lines_dict, get_node_gpu_map, get_arrowprops, rotate_xlabels
 
 
 logger = logging.getLogger(__name__)
@@ -266,3 +271,146 @@ def run_cloudsc_cuda(
     return data
 
 
+def get_data(experiment_id: int) -> Dict[str, Union[str, pd.DataFrame]]:
+    """
+    Returns the data for the given experiment id. Returns a dictionary with the following entries:
+        - gpu: The GPU used. Is a string
+        - node: The node used. Is a string
+        - data: The measurement data. Is a pandas DataFrame
+        - avg_data: The measurement data averaged over all runs. Is a pandas DataFrame
+        - run_count: The number of runs is an int
+
+    :param experiment_id: The experiment id
+    :type experiment_id: int
+    :return: Dictionary with all data
+    :rtype: Dict[str, Union[str, pd.DataFrame]]
+    """
+    index_cols = ['run', 'scope', 'opt level', 'nblocks']
+    experiment_list_df = get_experiment_list_df()
+    node = experiment_list_df.loc[[int(experiment_id)]]['node'].values[0]
+    gpu = get_node_gpu_map()[node]
+    data = pd.read_csv(os.path.join(get_full_cloudsc_results_dir(node, experiment_id),
+                                    'results.csv')).set_index(index_cols)
+    if 'Unnamed: 0' in data.columns:
+        data.drop('Unnamed: 0', axis='columns', inplace=True)
+    dace_opt_levels = ['all', 'k-caching', 'change-strides', 'baseline']
+    # data = data.reset_index().assign(version=lambda x: 'DaCe' if x['opt level'] in dace_opt_levels else 'Cloudsc')
+    data.reset_index(inplace=True)
+    data['version'] = data.apply(lambda x: 'DaCe' if x['opt level'] in dace_opt_levels else 'Cloudsc', axis=1)
+    index_cols.append('version')
+    data['scope'] = data['scope'].map({
+        'State transform_data': 'transform',
+        'State transform_data_back': 'transform back',
+        'Map stateCLOUDSC_map': 'work'
+        })
+    data.set_index(index_cols, inplace=True)
+
+    index_cols.remove('run')
+    run_counts = data.groupby(index_cols).count()['runtime']
+    run_count = run_counts.min()
+    if run_counts.max() != run_count:
+        logger.warning("The number of run counts is not equal, ranges from %s to %s", run_count, run_count.max())
+        logger.warning("%s", run_counts)
+
+    avg_data = data.groupby(index_cols).mean()
+
+    return {'gpu': gpu, 'node': node, 'data': data, 'avg_data': avg_data, 'run_count': run_count}
+
+
+def plot_bars(experiment_id: int):
+    data_dict = get_data(experiment_id)
+    avg_data = data_dict['avg_data']
+    data = data_dict['data']
+    figure = get_new_figure()
+    figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
+                    f"averaging over {data_dict['run_count']} runs")
+
+    sizes = avg_data.reset_index()['nblocks'].unique()
+    nrows = 2
+    ncols = ceil((len(sizes) / nrows))
+    axes = figure.subplots(nrows, ncols, sharex=True)
+    axes_1d = [a for axs in axes for a in axs]
+    for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
+        ax.set_title(size)
+        sns.barplot(data.xs((size, 'work', 'DaCe'), level=('nblocks', 'scope', 'version')).reset_index(),
+                    x='opt level', y='runtime', ax=ax, order=['baseline', 'k-caching', 'change-strides', 'all'])
+        rotate_xlabels(ax)
+        ax.set_xlabel('')
+        if idx % ncols == 0:
+            ax.set_ylabel('Runtime [ms]')
+        else:
+            ax.set_ylabel('')
+        rotate_xlabels(ax, replace_dict={'baseline': 'No optimisations', 'k-caching': 'K-caching',
+                                         'change-strides': 'Changed array order', 'all': 'Both'})
+
+    figure.tight_layout()
+    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime_bar.pdf'))
+
+    this_data = pd.concat([
+        avg_data.xs('Cloudsc CUDA', level='opt level', drop_level=False),
+        avg_data.xs('Cloudsc CUDA K-caching', level='opt level', drop_level=False),
+        avg_data.xs('all', level='opt level', drop_level=False),
+        avg_data.xs('change-strides', level='opt level', drop_level=False),
+        ])
+    figure = get_new_figure()
+    figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
+                    f"averaging over {data_dict['run_count']} runs")
+    axes = figure.subplots(nrows, ncols, sharex=True)
+    axes_1d = [a for axs in axes for a in axs]
+    for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
+        ax.set_title(size)
+        sns.barplot(this_data.xs((size, 'work'), level=('nblocks', 'scope')).reset_index(),
+                    x='opt level', y='runtime', ax=ax,
+                    order=['Cloudsc CUDA', 'change-strides', 'Cloudsc CUDA K-caching', 'all'],
+                    hue='version', dodge=False)
+        ax.get_legend().remove()
+        rotate_xlabels(ax)
+        ax.set_xlabel('')
+        if idx % ncols == 0:
+            ax.set_ylabel('Runtime [ms]')
+        else:
+            ax.set_ylabel('')
+        replace_legend_names(ax.get_legend(), {'baseline': 'No optimisations', 'k-caching': 'K-caching',
+                                               'change-strides': 'Changed array order', 'all': 'Both'})
+
+    figure.tight_layout()
+    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime_bar_cuda.pdf'))
+
+
+def plot_lines(experiment_id: int):
+    data_dict = get_data(experiment_id)
+    desc = f"Run on {data_dict['node']} using a NVIDIA {data_dict['gpu']} GPU averaging over {data_dict['run_count']} "\
+           "runs"
+    data = data_dict['data']
+    speedups = compute_speedups(data_dict['avg_data'], ('baseline'), ('opt level'))
+
+    opt_order = ['Cloudsc CUDA K-caching', 'Cloudsc CUDA', 'all', 'k-caching', 'change-strides', 'baseline']
+    figure = get_new_figure()
+    figure.suptitle("Runtimes on the full cloudsc code")
+    ax = figure.add_subplot(1, 1, 1)
+    size_vs_y_plot(ax, 'Runtime [ms]', desc, data, size_var_name='nblocks')
+    sns.lineplot(data.xs('work', level='scope'), x='nblocks', y='runtime', hue='opt level',
+                 marker='o', hue_order=opt_order)
+    legend_on_lines_dict(ax, {
+        'Cloudsc CUDA K-caching': {'position': (9e4, 12), 'color_index': 0, 'rotation': 5},
+        'DaCe with K-caching & changed array order': {'position': (9e4, 21), 'color_index': 2, 'rotation': 5},
+        'Cloudsc CUDA': {'position': (1e5, 42), 'color_index': 1, 'rotation': 8},
+        'DaCe with changed array order': {'position': (1e5, 33), 'color_index': 4, 'rotation': 8},
+        'DaCe with K-caching': {'position': (1e5, 97), 'color_index': 3, 'rotation': 26},
+        'DaCe without any special optimisation': {'position': (1e5+100, 78), 'color_index': 5, 'rotation': 18},
+        })
+    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime.pdf'))
+
+    figure = get_new_figure()
+    figure.suptitle("Speedups on the full cloudsc code")
+    ax = figure.add_subplot(1, 1, 1)
+    size_vs_y_plot(ax, 'Speedup', desc, speedups, size_var_name='nblocks')
+    sns.lineplot(speedups.xs(('work', 'DaCe'), level=('scope', 'version')).drop('baseline', level='opt level'),
+                 x='nblocks', y='runtime', hue='opt level',
+                 marker='o', hue_order=opt_order[2:])
+    legend_on_lines_dict(ax, {
+        'DaCe with K-caching & changed array order': {'position': (9.7e4, 3.8), 'color_index': 0, 'rotation': -3},
+        'DaCe with changed array order': {'position': (1e5, 2.1), 'color_index': 2, 'rotation': 2},
+        'DaCe with K-caching': {'position': (6e4, 0.8), 'color_index': 1, 'rotation': -4},
+        })
+    save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'speedup.pdf'))

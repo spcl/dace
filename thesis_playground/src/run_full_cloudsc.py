@@ -4,16 +4,12 @@ from datetime import datetime
 import os
 from subprocess import run, check_output
 import pandas as pd
-import seaborn as sns
-from distutils.dir_util import copy_tree
 
 from utils.log import setup_logging
 from utils.full_cloudsc import get_sdfg, compile_sdfg, get_experiment_list_df, save_experiment_list_df, read_reports, \
-                               run_cloudsc_cuda
-from utils.paths import get_full_cloudsc_results_dir, get_thesis_playground_root_dir, get_full_cloudsc_plot_dir
+                               run_cloudsc_cuda, plot_lines, plot_bars, get_data
+from utils.paths import get_full_cloudsc_results_dir, get_thesis_playground_root_dir
 
-from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines, \
-                       replace_legend_names, legend_on_lines_dict
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +70,12 @@ def action_profile(args):
 
 
 def action_print(args):
-    experiment_list_df = get_experiment_list_df()
-    node = experiment_list_df.loc[[int(args.experiment_id)]]['node'].values[0]
-    results_df = pd.read_csv(os.path.join(get_full_cloudsc_results_dir(node, args.experiment_id), 'results.csv'))
-    print(results_df)
+    data_dict = get_data(args.experiment_id)
+    print(f"node: {data_dict['node']}, gpu: {data_dict['gpu']}, runs: {data_dict['run_count']}")
+    if args.average:
+        print(data_dict['avg_data'])
+    else:
+        print(data_dict['data'])
 
 
 def action_list(args):
@@ -86,15 +84,8 @@ def action_list(args):
 
 
 def action_plot(args):
-    experiment_list_df = get_experiment_list_df()
-    node = experiment_list_df.loc[[int(args.experiment_id)]]['node'].values[0]
-    results_df = pd.read_csv(os.path.join(get_full_cloudsc_results_dir(node, args.experiment_id),
-                                          'results.csv')).set_index(['run', 'scope', 'opt level', 'nblocks'])
-    figure = get_new_figure()
-    ax = figure.add_subplot(1, 1, 1)
-    size_vs_y_plot(ax, 'Runtime [ms]', 'Runtimes of full cloudsc', results_df, size_var_name='nblocks')
-    sns.lineplot(results_df.xs('Map stateCLOUDSC_map', level='scope'), x='nblocks', y='runtime', hue='opt level')
-    save_plot(os.path.join(get_full_cloudsc_plot_dir(node), 'runtime.pdf'))
+    plot_lines(args.experiment_id)
+    plot_bars(args.experiment_id)
 
 
 def main():
@@ -110,6 +101,7 @@ def main():
 
     print_parser = subparsers.add_parser('print', description='Print stored results')
     print_parser.add_argument('experiment_id')
+    print_parser.add_argument('--average', action='store_true', default=False)
     print_parser.set_defaults(func=action_print)
 
     plot_parser = subparsers.add_parser('plot', description='plot stored results')

@@ -170,5 +170,7 @@ def get_full_cloudsc_results_dir(node: Optional[str] = None, exp_id: Optional[in
     return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'results'))
 
 
-def get_full_cloudsc_plot_dir(node: str) -> str:
-    return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'plots', node))
+def get_full_cloudsc_plot_dir(node: Optional[str] = None) -> str:
+    if node is not None:
+        return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'plots', node))
+    return create_if_not_exist(join(get_full_cloudsc_log_dir(), 'plots'))
