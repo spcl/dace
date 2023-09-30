@@ -322,9 +322,10 @@ def plot_bars(experiment_id: int):
     data_dict = get_data(experiment_id)
     avg_data = data_dict['avg_data']
     data = data_dict['data']
+    print(f"Runs: {data_dict['run_count']}, GPU: {data_dict['gpu']}, node: {data_dict['node']}")
     figure = get_new_figure()
-    figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
-                    f"averaging over {data_dict['run_count']} runs")
+    # figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
+    #                 f"averaging over {data_dict['run_count']} runs")
 
     sizes = avg_data.reset_index()['nblocks'].unique()
     nrows = 2
@@ -332,10 +333,9 @@ def plot_bars(experiment_id: int):
     axes = figure.subplots(nrows, ncols, sharex=True)
     axes_1d = [a for axs in axes for a in axs]
     for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
-        ax.set_title(size)
+        ax.set_title(f"{size:,}")
         sns.barplot(data.xs((size, 'work', 'DaCe'), level=('nblocks', 'scope', 'version')).reset_index(),
                     x='opt level', y='runtime', ax=ax, order=['baseline', 'k-caching', 'change-strides', 'all'])
-        rotate_xlabels(ax)
         ax.set_xlabel('')
         if idx % ncols == 0:
             ax.set_ylabel('Runtime [ms]')
@@ -354,25 +354,24 @@ def plot_bars(experiment_id: int):
         avg_data.xs('change-strides', level='opt level', drop_level=False),
         ])
     figure = get_new_figure()
-    figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
-                    f"averaging over {data_dict['run_count']} runs")
+    # figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['gpu']} GPU "
+    #                 f"averaging over {data_dict['run_count']} runs")
     axes = figure.subplots(nrows, ncols, sharex=True)
     axes_1d = [a for axs in axes for a in axs]
     for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
-        ax.set_title(size)
+        ax.set_title(f"{size:,}")
         sns.barplot(this_data.xs((size, 'work'), level=('nblocks', 'scope')).reset_index(),
                     x='opt level', y='runtime', ax=ax,
                     order=['Cloudsc CUDA', 'change-strides', 'Cloudsc CUDA K-caching', 'all'],
                     hue='version', dodge=False)
         ax.get_legend().remove()
-        rotate_xlabels(ax)
         ax.set_xlabel('')
         if idx % ncols == 0:
             ax.set_ylabel('Runtime [ms]')
         else:
             ax.set_ylabel('')
-        replace_legend_names(ax.get_legend(), {'baseline': 'No optimisations', 'k-caching': 'K-caching',
-                                               'change-strides': 'Changed array order', 'all': 'Both'})
+        rotate_xlabels(ax, replace_dict={'baseline': 'No optimisations', 'k-caching': 'K-caching',
+                                         'change-strides': 'Changed array order', 'all': 'Both'})
 
     figure.tight_layout()
     save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime_bar_cuda.pdf'))
@@ -382,7 +381,9 @@ def plot_lines(experiment_id: int):
     data_dict = get_data(experiment_id)
     desc = f"Run on {data_dict['node']} using a NVIDIA {data_dict['gpu']} GPU averaging over {data_dict['run_count']} "\
            "runs"
+    desc = ""
     data = data_dict['data']
+    print(f"Runs: {data_dict['run_count']}, GPU: {data_dict['gpu']}, node: {data_dict['node']}")
     speedups = compute_speedups(data_dict['avg_data'], ('baseline'), ('opt level'))
 
     opt_order = ['Cloudsc CUDA K-caching', 'Cloudsc CUDA', 'all', 'k-caching', 'change-strides', 'baseline']
@@ -410,8 +411,8 @@ def plot_lines(experiment_id: int):
                  x='nblocks', y='runtime', hue='opt level',
                  marker='o', hue_order=opt_order[2:])
     legend_on_lines_dict(ax, {
-        'DaCe with K-caching & changed array order': {'position': (9.7e4, 3.8), 'color_index': 0, 'rotation': -3},
-        'DaCe with changed array order': {'position': (1e5, 2.1), 'color_index': 2, 'rotation': 2},
-        'DaCe with K-caching': {'position': (6e4, 0.8), 'color_index': 1, 'rotation': -4},
+        'DaCe with K-caching & changed array order': {'position': (1.4e5, 3.7), 'color_index': 0, 'rotation': -6},
+        'DaCe with changed array order': {'position': (1.3e5, 2.2), 'color_index': 2, 'rotation': 2},
+        'DaCe with K-caching': {'position': (7e4, 0.7), 'color_index': 1, 'rotation': -4},
         })
     save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'speedup.pdf'))
