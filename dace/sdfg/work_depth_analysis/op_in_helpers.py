@@ -12,20 +12,20 @@ class CacheLineTracker:
         self.next_free_line = 0
         self.L = L
 
-    def add_array(self, name: str, a: Array):
+    def add_array(self, name: str, a: Array, mapping):
         if name not in self.start_lines:
             # new array encountered
             self.array_info[name] = a
             self.start_lines[name] = self.next_free_line
             # increase next_free_line
-            self.next_free_line += (a.total_size * a.dtype.bytes + self.L - 1) // self.L    # ceil division
+            self.next_free_line += (a.total_size.subs(mapping) * a.dtype.bytes + self.L - 1) // self.L    # ceil division
 
-    def cache_line_id(self, name: str, access: [int]):
+    def cache_line_id(self, name: str, access: [int], mapping):
         arr = self.array_info[name]
         one_d_index = 0
         for dim in range(len(access)):
             i = access[dim]
-            one_d_index += (i + arr.offset[dim]) * arr.strides[dim]
+            one_d_index += (i + arr.offset[dim].subs(mapping)) * arr.strides[dim].subs(mapping)
 
         # divide by L to get the cache line id
         return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
@@ -43,11 +43,15 @@ class AccessStack:
     in the stack, report its distance and move it to the top of the stack. If the id was not found,
     we report a distance of -1. """
 
+    # TODO: this can be optimised such that the stack is never larger than C, since all elements deeper than C are misses 
+    # anyway. (then we cannot distinguish compulsory misses from capacity misses though)
+
     def __init__(self) -> None:
         self.top = None
+        self.num_calls = 0
 
     def touch(self, id):
-
+        self.num_calls += 1
         curr = self.top
         prev = None
         found = False
