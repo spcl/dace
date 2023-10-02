@@ -218,6 +218,11 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
     framecode: DaCeCodeGenerator = framecode
 
+    if '.' in name:
+        root = name.split('.')[0]
+        if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
+            name = name.replace('.', '->')
+
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
@@ -992,8 +997,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         if t.id not in self.sdfg.arrays:
             return super()._Name(t)
 
-        # Replace values with their code-generated names (for example,
-        # persistent arrays)
+        # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         self.write(ptr(t.id, desc, self.sdfg, self.codegen))
 

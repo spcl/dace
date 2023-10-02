@@ -617,9 +617,10 @@ def _elementwise(pv: 'ProgramVisitor',
 
 def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype: dace.typeclass = None):
     """ Implements a simple call of the form `out = func(inp)`. """
+    create_input = True
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
-    if not isinstance(inpname, str):
+    if not isinstance(inpname, str) and not symbolic.issymbolic(inpname):
         # Constant parameter
         cst = inpname
         inparr = data.create_datadescriptor(cst)
@@ -627,6 +628,10 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
         inparr.transient = True
         sdfg.add_constant(inpname, cst, inparr)
         sdfg.add_datadesc(inpname, inparr)
+    elif symbolic.issymbolic(inpname):
+        dtype = symbolic.symtype(inpname)
+        inparr = data.Scalar(dtype)
+        create_input = False
     else:
         inparr = sdfg.arrays[inpname]
 
@@ -636,10 +641,17 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     outarr.dtype = restype
     num_elements = data._prod(inparr.shape)
     if num_elements == 1:
-        inp = state.add_read(inpname)
+        if create_input:
+            inp = state.add_read(inpname)
+            inconn_name = '__inp'
+        else:
+            inconn_name = symbolic.symstr(inpname)
+
         out = state.add_write(outname)
-        tasklet = state.add_tasklet(func, {'__inp'}, {'__out'}, '__out = {f}(__inp)'.format(f=func))
-        state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
+        tasklet = state.add_tasklet(func, {'__inp'} if create_input else {}, {'__out'},
+                                    f'__out = {func}({inconn_name})')
+        if create_input:
+            state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(inpname, inparr))
         state.add_edge(tasklet, '__out', out, None, Memlet.from_array(outname, outarr))
     else:
         state.add_mapped_tasklet(
@@ -2158,8 +2170,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[-1], arr2.shape[-2])
         if res is None:
-            warnings.warn(f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
-                          f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
+            warnings.warn(
+                f'Last mode of first tesnsor/matrix {arr1.shape[-1]} and second-last mode of '
+                f'second tensor/matrix {arr2.shape[-2]} may not match', UserWarning)
         elif not res:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
@@ -2176,8 +2189,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[-1], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Number of matrix columns {arr1.shape[-1]} and length of vector {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Number of matrix columns {} must match"
                               "size of vector {}.".format(arr1.shape[1], arr2.shape[0]))
@@ -2188,8 +2202,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Length of vector {arr1.shape[0]} and number of matrix rows {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Size of vector {} must match number of matrix "
                               "rows {} must match".format(arr1.shape[0], arr2.shape[0]))
@@ -2200,8 +2215,9 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
         res = symbolic.equal(arr1.shape[0], arr2.shape[0])
         if res is None:
-            warnings.warn(f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
-                          f'may not match', UserWarning)
+            warnings.warn(
+                f'Length of first vector {arr1.shape[0]} and length of second vector {arr2.shape[0]} '
+                f'may not match', UserWarning)
         elif not res:
             raise SyntaxError("Vectors in vector product must have same size: "
                               "{} vs. {}".format(arr1.shape[0], arr2.shape[0]))
@@ -4401,10 +4417,13 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
 
     # Set tasklet parameters
     impl = {
-        'name': "_convert_to_{}_".format(dtype.to_string()),
+        'name':
+        "_convert_to_{}_".format(dtype.to_string()),
         'inputs': ['__inp'],
         'outputs': ['__out'],
-        'code': "__out = dace.{}(__inp)".format(dtype.to_string())
+        'code':
+        "__out = {}(__inp)".format(f"dace.{dtype.to_string()}" if dtype not in (dace.bool,
+                                                                                dace.bool_) else dtype.to_string())
     }
     if dtype in (dace.bool, dace.bool_):
         impl['code'] = "__out = dace.bool_(__inp)"

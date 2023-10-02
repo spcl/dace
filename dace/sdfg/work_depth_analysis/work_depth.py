@@ -570,7 +570,7 @@ def scope_work_depth(
                 # such that the user can define its value. But it doesn't...
                 # How to achieve this?
                 try:
-                    top_level_sdfg.add_symbol(f'{node.name}_work', int64)
+                    top_level_sdfg.add_symbol(f'{node.name}_work', dtypes.int64)
                 except FileExistsError:
                     # Such a library node was already encountered by the analysis.
                     # Hence, we don't need to add anyting.
