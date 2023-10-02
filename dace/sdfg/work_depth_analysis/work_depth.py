@@ -70,6 +70,7 @@ def count_work_matmul(node, symbols, state):
     if len(C_memlet.data.subset) == 3:
         result *= symeval(C_memlet.data.subset.size()[0], symbols)
     # M*N
+    # TODO: line below gives index out of range if we compute matrix vector product (as in e.g. atax from npbench)
     result *= symeval(C_memlet.data.subset.size()[-2], symbols)
     result *= symeval(C_memlet.data.subset.size()[-1], symbols)
     # K
@@ -121,6 +122,7 @@ PYFUNC_TO_ARITHMETICS = {
     'float': 0,
     'dace.float64': 0,
     'dace.int64': 0,
+    'dace.complex128': 0,
     'math.exp': 1,
     'exp': 1,
     'math.tanh': 1,
@@ -567,7 +569,12 @@ def scope_work_depth(
                 # TODO: This symbol should now appear in the VS code extension in the SDFG analysis tab,
                 # such that the user can define its value. But it doesn't...
                 # How to achieve this?
-                top_level_sdfg.add_symbol(f'{node.name}_work', dtypes.int64)
+                try:
+                    top_level_sdfg.add_symbol(f'{node.name}_work', int64)
+                except FileExistsError:
+                    # Such a library node was already encountered by the analysis.
+                    # Hence, we don't need to add anyting.
+                    pass
                 lib_node_work = sp.Symbol(f'{node.name}_work', positive=True)
             lib_node_depth = sp.sympify(-1)  # not analyzed
             if analyze_tasklet != get_tasklet_work:
