@@ -688,14 +688,15 @@ class StateGraphView(object):
         defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants
+            for k in self.used_symbols(all_symbols=False) if not k.startswith('__dace') and k not in sdfg.constants
         })
 
         # Add scalar arguments from free symbols of data descriptors
         for arg in data_args.values():
             scalar_args.update({
                 str(k): dt.Scalar(k.dtype)
-                for k in arg.free_symbols if not str(k).startswith('__dace') and str(k) not in sdfg.constants
+                for k in arg.used_symbols(all_symbols=False)
+                if not str(k).startswith('__dace') and str(k) not in sdfg.constants
             })
 
         # Fill up ordered dictionary
