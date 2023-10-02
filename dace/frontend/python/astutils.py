@@ -705,3 +705,17 @@ def escape_string(value: Union[bytes, str]):
         return value.encode("unicode_escape").decode("utf-8")
     # Python 2.x
     return value.encode('string_escape')
+
+
+def parse_function_arguments(node: ast.Call, argnames: List[str]) -> Dict[str, ast.AST]:
+    """
+    Parses function arguments (both positional and keyword) from a Call node,
+    based on the function's argument names. If an argument was not given, it will
+    not be in the result.
+    """
+    result = {}
+    for arg, aname in zip(node.args, argnames):
+        result[aname] = arg
+    for kw in node.keywords:
+        result[kw.arg] = kw.value
+    return result

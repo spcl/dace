@@ -285,7 +285,11 @@ def ParseMemlet(visitor,
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    try:
+        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    except IndexError:
+        raise DaceSyntaxError(visitor, node, 'Failed to parse memlet expression due to dimensionality. '
+                              f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}')
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:
