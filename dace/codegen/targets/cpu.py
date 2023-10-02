@@ -1513,7 +1513,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ]
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in self._frame.free_symbols(node) and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
@@ -1524,7 +1524,7 @@ class CPUCodeGen(TargetCodeGenerator):
             prepend = ['__state']
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
-            if symname not in sdfg.constants
+            if symname in self._frame.free_symbols(node) and symname not in sdfg.constants
         ])
         return f'{sdfg_label}({args});'
 
