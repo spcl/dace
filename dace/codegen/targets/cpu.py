@@ -1812,7 +1812,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # Include external edges
             for n in scope.nodes():
                 for e in state_dfg.all_edges(n):
-                    fsyms |= self._frame.free_symbols(e.data)
+                    fsyms |= e.data.used_symbols(False, e)
             fsyms = set(map(str, fsyms))
 
             ntid_is_used = '__omp_num_threads' in fsyms
