@@ -20,6 +20,594 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+_do_not_parse: Tuple[ast.AST]
+NamedExpr = ast.AST
+if sys.version_info >= (3, 8):
+    _do_not_parse = (ast.FunctionType, ast.ClassDef)
+    NamedExpr = ast.NamedExpr
+else:
+    _do_not_parse = (ast.ClassDef,)
+
+
+_only_parse_body = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+
+class ParentSetter(ast.NodeTransformer):
+    """ 
+    Sets the ``parent`` attribute of each AST node to its parent. 
+    """
+
+    def __init__(self, root: ast.AST = None):
+        self.parent = root
+
+    def visit(self, node):
+        node.parent = self.parent
+        self.parent = node
+        self.generic_visit(node)
+        self.parent = node.parent
+        return node
+
+
+def parent_found(parent: ast.AST, child: ast.AST) -> Tuple[bool, str, int]:
+    result = None
+    attr = None
+    index = None
+
+    if not hasattr(parent, 'body'):
+        result = False
+    elif child in parent.body:
+        result = True
+        attr = 'body'
+        index = parent.body.index(child)
+    elif hasattr(parent, 'orelse') and child in parent.orelse:
+        result = True
+        attr = 'orelse'
+        index = parent.orelse.index(child)
+    elif hasattr(parent, 'finalbody') and child in parent.finalbody:
+        result = True
+        attr = 'finalbody'
+        index = parent.finalbody.index(child)
+    else:
+        result = False
+
+    return result, attr, index
+    
+
+
+def find_parent_body(node: ast.AST) -> Tuple[ast.AST, int]:
+    """
+    Finds the parent AST node that has a ``body`` attribute, and the index of the given node within that body.
+    :param node: The node to find the parent of.
+    :return: A tuple of the parent AST node and the index of the given node within its body.
+    """
+    last_parent = node.parent
+    found, attr, idx = parent_found(last_parent, node)
+    while not found:
+        new_parent = last_parent.parent
+        last_parent, new_parent = new_parent, last_parent
+        found, attr, idx = parent_found(last_parent, new_parent)
+    return last_parent, attr, idx
+
+
+class NameGetter(ast.NodeVisitor):
+    """ 
+    Collects all names in an AST. 
+    """
+
+    def __init__(self):
+        self.names = set()
+
+    def visit_Name(self, node: ast.Name):
+        self.names.add(node.id)
+        self.generic_visit(node)
+
+
+def find_new_name(names: Set[str], base: str = '__var_') -> str:
+    """
+    Finds a new name that does not exist in the given set of names.
+    :param names: A set of names to avoid.
+    :return: A new name that does not exist in the given set of names.
+    """
+
+    i = 0
+    name = f"{base}{i}"
+    while name in names:
+        i += 1
+        name = f"{base}{i}"
+    return name
+
+
+class ExpressionUnnester(ast.NodeTransformer):
+    """
+    unnests expressions in a given AST.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def _new_val(self, old_val: Union[ast.AST, Any]) -> Union[ast.Constant, ast.Name]:
+
+        if old_val is None:
+            return old_val
+
+        if not isinstance(old_val, ast.AST):
+            return old_val
+
+        if isinstance(old_val, (ast.Constant, ast.Name)):
+            return old_val
+        
+        if hasattr(old_val, 'ctx') and isinstance(old_val.ctx, ast.Del):
+            old_val.ctx = ast.Load()
+
+        old_val = self.visit(old_val)
+
+        if isinstance(old_val, (ast.Constant, ast.Name)):
+            return old_val
+
+        new_val = self._new_name(old_val)
+        self._new_assign(old_val, new_val.id)
+        new_val.parent = old_val.parent
+
+        return new_val
+    
+    def _new_name(self, old_node: ast.AST) -> ast.Name:
+
+        new_id = find_new_name(self.names)
+        self.names.add(new_id)
+        new_name = ast.Name(id=new_id, ctx=ast.Load())
+        ast.copy_location(new_name, old_node)
+
+        return new_name
+    
+    def _new_assign(self, old_node: ast.AST, new_id: str) -> None:
+
+        val = old_node
+        if isinstance(old_node, ast.Slice):
+            val = ast.Call(func=ast.Name(id='slice', ctx=ast.Load()),
+                           args=[old_node.lower, old_node.upper, old_node.step], keywords=[])
+
+        parent, attr, idx = find_parent_body(old_node.parent)
+        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=val)
+        self.ast_nodes_to_add.append((parent, attr, idx, assign))
+    
+    def visit(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, _do_not_parse):
+            return node
+        if isinstance(node, _only_parse_body):
+            for stmt in node.body:
+                self.visit(stmt)
+            return node
+        return super().visit(node)
+    
+    ##### Statements #####
+
+    def visit_Return(self, node: ast.Return) -> ast.Return:
+
+        if node.value is not None:
+            if isinstance(node.value, ast.Tuple):
+                node.value = self.visit(node.value)
+            else:
+                node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Delete(self, node: ast.Delete) -> ast.Delete:
+
+        targets = []
+        for target in node.targets:
+            if isinstance(target, ast.Subscript):
+                target = self.visit(target)
+            else:
+                target = self._new_val(target)
+            if hasattr(target, 'ctx') and not isinstance(target.ctx, ast.Del):
+                target.ctx = ast.Del()
+            targets.append(target)
+        node.targets = targets
+        return node
+    
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign:
+
+        # TODO: How to handle swaps?
+        return self.generic_visit(node)
+    
+    def visit_AugAssign(self, node: ast.AugAssign) -> ast.AugAssign:
+
+        return self.generic_visit(node)
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign:
+
+        return self.generic_visit(node)
+    
+    def visit_For(self, node: ast.For) -> ast.For:
+
+        # TODO: Do we want to break down iterator structures to their components?
+        return self.generic_visit(node)
+    
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> ast.AsyncFor:
+
+        return self.generic_visit(node)
+    
+    def visit_While(self, node: ast.While) -> ast.While:
+
+        # NOTE: We cannot unnest the test expression because it has to be reevaluated every iteration.
+        # TODO: Rewrite the test expression as a function call?
+        # TODO: Unnest the test expression and repeat it at the end of the loop body?
+        node.body = [self.visit(stmt) for stmt in node.body]
+        node.orelse = [self.visit(stmt) for stmt in node.orelse]
+        return node
+    
+    def visit_If(self, node: ast.If) -> ast.If:
+
+        node.test = self._new_val(node.test)
+        return self.generic_visit(node)
+
+    ##### Expressions #####
+    
+    def visit_BoolOp(self, node: ast.BoolOp) -> ast.BoolOp:
+
+        node.values = [self._new_val(val) for val in node.values]
+        return node
+    
+    def visit_NamedExpr(self, node: NamedExpr) -> ast.Name:
+        
+        node.target = self._new_val(node.target)
+        node.value = self._new_val(node.value)
+        
+        self._new_assign(node.value, node.target.id)
+
+        new_node = node.target
+        new_node.ctx = ast.Load()
+        new_node.parent = node.parent
+ 
+        return new_node
+    
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
+    
+        node.left = self._new_val(node.left)
+        node.right = self._new_val(node.right)
+        
+        return node
+    
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> ast.UnaryOp:
+    
+        node.operand = self._new_val(node.operand) 
+        return node
+    
+    def visit_Lambda(self, node: ast.Lambda) -> ast.Lambda:
+
+        # NOTE: We cannot unnest the body of a lambda, so we just return the node.
+        # TODO: We could unnest the body of a lambda to a proper function definition.
+
+        return node
+    
+    def visit_IfExp(self, node: ast.IfExp) -> ast.IfExp:
+        
+        node.test = self._new_val(node.test)
+        node.body = self._new_val(node.body)
+        node.orelse = self._new_val(node.orelse)
+        return node
+    
+    def visit_Dict(self, node: ast.Dict) -> ast.Dict:
+
+        node.keys = [key if isinstance(key, ast.Name) else self._new_val(key) for key in node.keys]
+        node.values = [val if isinstance(val, ast.Name) else self._new_val(val) for val in node.values]
+        return node
+    
+    def visit_Set(self, node: ast.Set) -> ast.Set:
+
+        node.elts = [elt if isinstance(elt, ast.Name) else self._new_val(elt) for elt in node.elts]
+        return node
+    
+    def visit_ListComp(self, node: ast.ListComp) -> ast.ListComp:
+
+        # NOTE: We cannot unnest a ListComp's elt because it likely depends on the generators
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_SetComp(self, node: ast.SetComp) -> ast.SetComp:
+
+        # NOTE: We cannot unnest a SetComp's elt because it likely depends on the generators
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_DictComp(self, node: ast.DictComp) -> ast.DictComp:
+
+        # NOTE: We cannot unnest a DictComp's key-value pair because it likely depends on the generators
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_GeneratorExp(self, node: ast.GeneratorExp) -> ast.GeneratorExp:
+
+        # NOTE: We cannot unnest a GeneratorExp's elt because it likely depends on the generators
+        # TODO: Unnest to for-loops or Maps?
+        return node
+    
+    def visit_Await(self, node: ast.Await) -> ast.Await:
+
+        if isinstance(node.value, ast.Call):
+            return self.generic_visit(node)
+        node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Yield(self, node: ast.Yield) -> ast.Yield:
+
+        if node.value is not None:
+            node.value = self._new_val(node.value)
+        return node
+    
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> ast.YieldFrom:
+
+        node.value = self._new_val(node.value)
+        return node
+    
+    def visit_Compare(self, node: ast.Compare) -> ast.Compare:
+
+        node.left = self._new_val(node.left)
+        node.comparators = [self._new_val(comp) for comp in node.comparators]
+        return node
+    
+    def visit_Call(self, node: ast.Call) -> ast.Call:
+
+        node.func = self._new_val(node.func)
+        node.args = [self._new_val(arg) for arg in node.args]
+        for kw in node.keywords:
+            kw.value = self._new_val(kw.value)
+        return node
+    
+    def visit_FormattedValue(self, node: ast.FormattedValue) -> ast.FormattedValue:
+
+        node.value = self._new_val(node.value)
+        node.conversion = self._new_val(node.conversion)
+        if node.format_spec is not None:
+            node.format_spec = self.visit(node.format_spec)
+        return node
+    
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> ast.JoinedStr:
+
+        # NOTE: JoinedStr's values must be only FormattedValues and Constants
+        node.values = [self.visit(val) for val in node.values]
+        return node
+    
+    def visit_Constant(self, node: ast.Constant) -> ast.Constant:
+
+        return node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+
+        node.value = self._new_val(node.value)
+        node.attr = self._new_val(node.attr)
+        return node
+    
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+
+        node.value = self._new_val(node.value)
+        node.slice = self._new_val(node.slice)
+        return node
+    
+    def visit_Starred(self, node: ast.Starred) -> ast.Starred:
+
+        # TODO: How should this be handled?
+        return node
+    
+    def visit_Name(self, node: ast.Name) -> ast.Name:
+
+        return node
+    
+    def visit_List(self, node: ast.List) -> ast.List:
+
+        node.elts = [self._new_val(elt) for elt in node.elts]
+        return node
+    
+    def visit_Tuple(self, node: ast.Tuple) -> ast.Tuple:
+
+        node.elts = [self._new_val(elt) for elt in node.elts]
+        return node
+    
+    def visit_Slice(self, node: ast.Slice) -> ast.Slice:
+
+        node.lower = self._new_val(node.lower) or ast.Constant(value=0)
+        node.upper = self._new_val(node.upper)
+        node.step = self._new_val(node.step) or ast.Constant(value=1)
+        return node
+
+
+class AttributeTransformer(ast.NodeTransformer):
+    """
+    Transforms indirect attribute accesses to SSA.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def visit(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, _do_not_parse):
+            return node
+        if isinstance(node, _only_parse_body):
+            for stmt in node.body:
+                self.visit(stmt)
+            return node
+        return super().visit(node)
+    
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+
+        node = self.generic_visit(node)
+        
+        if not isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            new_node = ast.Name(id=new_id, ctx=ast.Load())
+            ast.copy_location(new_node, node)
+            new_node = ParentSetter(root=node.parent).visit(new_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+
+        else:
+            new_node = node
+
+        return new_node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+
+        node = self.generic_visit(node)
+
+        if isinstance(node.value, ast.Name) and isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            return node
+        
+        if not isinstance(node.value, ast.Name):
+
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            name_node = ast.Attribute(value=ast.Name(id=new_id, ctx=ast.Load()), attr=node.attr, ctx=node.ctx)
+            ast.copy_location(name_node, node)
+            name_node = ParentSetter(root=node.parent).visit(name_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.value)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+        
+        else:
+            name_node = node
+        
+        if not isinstance(node.parent, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Call)):
+            
+            new_id = find_new_name(self.names)
+            self.names.add(new_id)
+
+            new_node = ast.Name(id=new_id, ctx=node.ctx)
+            ast.copy_location(new_node, node)
+            new_node = ParentSetter(root=node.parent).visit(new_node)
+
+            parent, attr, idx = find_parent_body(node)
+            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=name_node)
+            self.ast_nodes_to_add.append((parent, attr, idx, assign))
+        
+        else:
+            new_node = name_node
+
+        return new_node
+
+
+class NestedSubsAttrsReplacer(ast.NodeTransformer):
+    """
+    Replaces nested subscript and attribute accesses with temporary variables.
+    """
+
+    def __init__(self, names: Set[str] = None):
+        self.names = names or set()
+        self.ast_nodes_to_add = []
+    
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        for stmt in node.body:
+            self.visit(stmt)
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute):
+
+        self.generic_visit(node)
+
+        if isinstance(node.value, ast.Name):
+            return node
+
+        new_id = find_new_name(self.names)
+        self.names.add(new_id)
+
+        new_node = ast.Attribute(value=ast.Name(id=new_id, ctx=ast.Load()), attr=node.attr, ctx=node.ctx)
+        ast.copy_location(new_node, node)
+        new_node = ParentSetter(root=node.parent).visit(new_node)
+
+        parent, body_idx = find_parent_body(node)
+        assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.value)
+        self.ast_nodes_to_add.append((parent, body_idx, assign))
+
+        return new_node
+    
+    def visit_Subscript(self, node: ast.Subscript):
+
+        self.generic_visit(node)
+
+        if hasattr(node.slice, 'elts'):
+
+            new_elts = []
+            for item in node.slice.elts:
+
+                if not isinstance(item, (ast.Slice, ast.Name, ast.Constant)):
+
+                    self.generic_visit(item)
+
+                    new_id = find_new_name(self.names)
+                    self.names.add(new_id)
+
+                    new_item = ast.Name(id=new_id, ctx=ast.Load())
+                    ast.copy_location(new_item, item)
+                    new_elts.append(new_item)
+
+                    parent, body_idx = find_parent_body(item)
+                    assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=item)
+                    self.ast_nodes_to_add.append((parent, body_idx, assign))
+
+                elif isinstance(item, ast.Slice):
+
+                    self.generic_visit(item)
+
+                    for attr in ['lower', 'upper', 'step']:
+                        if hasattr(item, attr):
+
+                            old_attr = getattr(item, attr)
+                            if old_attr is None or isinstance(old_attr, (ast.Name, ast.Constant)):
+                                continue
+
+                            new_id = find_new_name(self.names)
+                            self.names.add(new_id)
+
+                            new_attr = ast.Name(id=new_id, ctx=ast.Load())
+                            ast.copy_location(new_attr, item)
+                            setattr(item, attr, new_attr)
+
+                            parent, body_idx = find_parent_body(item)
+                            assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=old_attr)
+                            self.ast_nodes_to_add.append((parent, body_idx, assign))
+                    
+                    new_elts.append(item)
+
+                else:
+                    new_elts.append(item)
+
+            new_node = ast.Subscript(value=node.value, slice=ast.Tuple(elts=new_elts, ctx=ast.Load()), ctx=node.ctx)
+
+        else:
+
+            new_node = node.slice
+
+            if not isinstance(node.slice, (ast.Slice, ast.Name, ast.Constant)):
+
+                self.generic_visit(node.slice)
+
+                new_id = find_new_name(self.names)
+                self.names.add(new_id)
+
+                new_node = ast.Name(id=new_id, ctx=ast.Load())
+                ast.copy_location(new_node, node.slice)
+
+                parent, body_idx = find_parent_body(node.slice)
+                assign = ast.Assign(targets=[ast.Name(id=new_id, ctx=ast.Store())], value=node.slice)
+                self.ast_nodes_to_add.append((parent, body_idx, assign))
+            
+            new_node = ast.Subscript(value=node.value, slice=new_node, ctx=node.ctx)
+            
+        ast.copy_location(new_node, node)
+        new_node = ParentSetter(root=node.parent).visit(new_node)
+
+        return new_node
+
+
+
 class DaceRecursionError(Exception):
     """
     Exception that indicates a recursion in a data-centric parsed context.
@@ -1630,6 +2218,18 @@ def preprocess_dace_program(f: Callable[..., Any],
     if disallowed:
         raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
                         f'keyword: {disallowed}')
+
+    name_getter = NameGetter()
+    name_getter.visit(src_ast)
+    program_names = name_getter.names
+    src_ast = ParentSetter().visit(src_ast)
+    unnester = ExpressionUnnester(names=program_names)
+    src_ast = unnester.visit(src_ast)
+    for parent, attr, idx, node in reversed(unnester.ast_nodes_to_add):
+        getattr(parent, attr).insert(idx, node)
+    ast.fix_missing_locations(src_ast)
+    
+    print(astutils.unparse(src_ast))
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
