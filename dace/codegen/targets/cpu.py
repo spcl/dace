@@ -1513,10 +1513,10 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
-        used_symbols = node.sdfg.used_symbols(all_symbols=False)
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname in used_symbols and aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
@@ -1525,11 +1525,10 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ['__state']
-        used_symbols = node.sdfg.used_symbols(all_symbols=False)
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
-            cpp.sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items())
-            if symname in used_symbols and symname not in sdfg.constants
+            cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
+            if symname in fsyms and symname not in sdfg.constants
         ])
         return f'{sdfg_label}({args});'
 
@@ -1813,11 +1812,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Find if bounds are used within the scope
             scope = state_dfg.scope_subgraph(node, False, False)
-            fsyms = scope.free_symbols
+            fsyms = self._frame.free_symbols(scope)
             # Include external edges
             for n in scope.nodes():
                 for e in state_dfg.all_edges(n):
-                    fsyms |= e.data.free_symbols
+                    fsyms |= e.data.used_symbols(False, e)
             fsyms = set(map(str, fsyms))
 
             ntid_is_used = '__omp_num_threads' in fsyms
