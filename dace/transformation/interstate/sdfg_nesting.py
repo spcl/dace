@@ -17,6 +17,7 @@ from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers
@@ -428,6 +429,8 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 orig_data[node] = node.data
                 node.data = repldict[node.data]
+            else:
+                replace_properties_dict(node, repldict)
         for edge in nstate.edges():
             if edge.data.data in repldict:
                 orig_data[edge] = edge.data.data
