@@ -328,7 +328,8 @@ def auto_optimize_phase_2(sdfg: SDFG,
         save_graph(sdfg, program, "after_map_colapse")
 
     if move_assignments_outside:
-        sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
+        count = sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
+        logger.debug("Applied %i MoveAssignmentOutsideIf transformations", count)
     if program is not None:
         save_graph(sdfg, program, "after_move_assignment_outside_if")
 
