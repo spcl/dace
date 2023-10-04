@@ -1323,7 +1323,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
         """
         Returns a set of symbol names that are used by the SDFG, but not
         defined within it. This property is used to determine the symbolic
@@ -1331,6 +1331,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         :param all_symbols: If False, only returns the set of symbols that will be used
                             in the generated code and are needed as arguments.
+        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
+                                        will be removed from the set of defined symbols.
         """
         defined_syms = set()
         free_syms = set()
@@ -1371,6 +1373,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Remove symbols that were used before they were assigned
         defined_syms -= used_before_assignment
+
+        # Remove from defined symbols those that are in the symbol mapping
+        if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
+            defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
 
         # Add the set of SDFG symbol parameters
         # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
