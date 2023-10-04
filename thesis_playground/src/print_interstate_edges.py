@@ -10,19 +10,10 @@ from dace.sdfg import nodes, SDFG
 logger = logging.getLogger(__name__)
 
 
-def print_memlet_of_arrays(sdfg: SDFG, array: str):
-    memlets_in = []
-    memlets_out = []
-    for node, state in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode) and node.data == array:
-            for iedge in state.in_edges(node):
-                memlets_in.append((iedge.data.subset, iedge.src, iedge.dst, state, state.parent.label))
-                for edge in state.memlet_path(iedge):
-                    memlets_in.append((edge.data.subset, edge.src, edge.dst, state, state.parent.label))
-            for oedge in state.out_edges(node):
-                memlets_out.append((oedge.data.subset, oedge.src, oedge.dst, state, state.parent.label))
-                for edge in state.memlet_path(oedge):
-                    memlets_out.append((edge.data.subset, edge.src, edge.dst, state, state.parent.label))
+def print_interstate_of_arrays(sdfg: SDFG, array: str):
+    iedges = []
+    for edge, parent in sdfg.all_edges_recursive():
+
 
     print("In edges")
     print(tabulate(memlets_in, headers=["subset", "src", "dst", "state", "parent sdfg"]))

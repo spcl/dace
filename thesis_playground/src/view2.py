@@ -15,7 +15,7 @@ def action_print(args):
             'experiment id': ('Exp ID', ','),
             'node': ('Node', None),
             'program': ('Program', None),
-            'NBLOCKS': ('NBLOCKS', ','),
+            # 'NBLOCKS': ('NBLOCKS', ','),
             'runtime': ('Kernel T [s]', '.3e'),
             'Total time': ('tot T [s]', '.3e'),
             'measured bytes': ('D [b]', '.3e'),

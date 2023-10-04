@@ -4,9 +4,11 @@ from numpy import f2py
 from dace.sdfg import SDFG
 from dace.frontend.fortran import fortran_parser
 from dace.transformation.dataflow import MapToForLoop
-from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate import LoopToMap, MoveLoopIntoMap, StateFusion
 
 from utils.general import save_graph, reset_graph_files, get_fortran
+from utils.log import setup_logging
+from execute.my_auto_opt import loop_to_map_outside_first
 
 nblocks = 5
 klev = 7
@@ -99,15 +101,51 @@ def main():
     END SUBROUTINE foo_test_function
     """
 
-    expected_array = np.reshape(np.arange(0, nblocks*klev, dtype=np.float32), (nblocks, klev))
+    fortran_code_zqxnm1 = """
+    PROGRAM foo
+        IMPLICIT NONE
+        REAL INP1(KLEV)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 8
+
+
+        CALL foo_test_function(NBLOCKS, KLEV, INP1)
+
+    END PROGRAM
+
+    SUBROUTINE foo_test_function(NBLOCKS, KLEV, INP1)
+        INTEGER, PARAMETER  :: KLEV = 137
+        INTEGER, PARAMETER  :: NBLOCKS = 1
+        REAL INP1(KLEV)
+        REAL TMP1
+        REAL TMP2
+
+        TMP2  = 0
+        DO JK=1,KLEV
+            TMP1 = TMP2 + 1
+            INP1(JK) = TMP1(JK)
+            TMP2 = TMP1
+        ENDDO
+    END SUBROUTINE foo_test_function
+    """
+
+    setup_logging(level='DEBUG')
     reset_graph_files("test_loop_map")
+    # expected_array = np.reshape(np.arange(0, nblocks*klev, dtype=np.float32), (nblocks, klev))
 
-    print("Parallel")
-    test_fortran_code(fortran_code_parallel, "parallel", expected_output=expected_array)
+    # print("Parallel")
+    # test_fortran_code(fortran_code_parallel, "parallel", expected_output=expected_array)
 
-    print("Dependency")
-    test_fortran_code(fortran_code_dependency, "dependency", expected_output=expected_array, force=True)
+    # print("Dependency")
+    # test_fortran_code(fortran_code_dependency, "dependency", expected_output=expected_array, force=True)
 
+    sdfg = fortran_parser.create_sdfg_from_string(fortran_code_zqxnm1_2, "test_loop_map_parallel")
+    sdfg.simplify()
+    save_graph(sdfg, "test_loop_map", "zqxnm1")
+    # sdfg.apply_transformations_repeated([LoopToMap, MoveLoopIntoMap, StateFusion])
+    sdfg.apply_transformations_repeated([LoopToMap])
+    # loop_to_map_outside_first(sdfg)
+    save_graph(sdfg, "test_loop_map", "zqxnm1_after_loop_to_map")
 
 if __name__ == '__main__':
     main()

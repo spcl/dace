@@ -7,7 +7,7 @@ from execute.parameters import ParametersProvider
 from utils.log import setup_logging
 from utils.cli_frontend import add_cloudsc_size_arguments
 from utils.general import get_programs_data, get_sdfg, read_source, optimize_sdfg, generate_arguments_fortran, \
-                          get_fortran, compare_output_all, use_cache, reset_graph_files
+                          get_fortran, compare_output_all, use_cache, reset_graph_files, enable_debug_flags
 
 
 def main():
@@ -28,11 +28,19 @@ def main():
     parser.add_argument('--use-dace-auto-opt', default=False, action='store_true',
                         help='Use DaCes auto_opt instead of mine')
     parser.add_argument('--no-outer-loop-first', action='store_true', default=False, help='Disable outer loops first')
+    parser.add_argument('--log-level', default='info')
+    parser.add_argument('--log-file', default=None, help='Path to logfile with level DEBUG')
     add_cloudsc_size_arguments(parser)
 
     args = parser.parse_args()
     device_map = {'GPU': dace.DeviceType.GPU, 'CPU': dace.DeviceType.CPU}
-    setup_logging()
+    if args.log_file is not None:
+        setup_logging(full_logfile=args.log_file, level=args.log_level.upper())
+    else:
+        setup_logging(level=args.log_level.upper())
+
+    if args.debug:
+        enable_debug_flags()
 
     add_args = {}
     params = ParametersProvider(args.program)

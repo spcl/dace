@@ -9,8 +9,8 @@ def main():
 
     sdfg = dace.sdfg.sdfg.SDFG.from_file(args.sdfg_path)
     print(sdfg.name)
-    print(sdfg.validate())
-    print(dace.sdfg.validation.validate_sdfg(sdfg))
+    sdfg.validate()
+    dace.sdfg.validation.validate_sdfg(sdfg)
 
 
 if __name__ == '__main__':
