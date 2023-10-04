@@ -1,50 +1,58 @@
-PROGRAM mwe_example
-    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
-    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
+PROGRAM main
+    IMPLICIT NONE
+    REAL INP1(KLON, KLEV, NCLV)
+    REAL INP2(KLON, KLEV, NCLV)
 
-    INTEGER(KIND=JPIM), PARAMETER  :: KLEV = 137
-    INTEGER(KIND=JPIM), PARAMETER  :: NCLV = 10
-    INTEGER(KIND=JPIM), PARAMETER  :: NBLOCKS = 200
-    INTEGER(KIND=JPIM), PARAMETER :: NCLDQI = 3
-    INTEGER(KIND=JPIM), PARAMETER :: NCLDQL = 4
+    INTEGER, PARAMETER  :: NCLV = 5
+    INTEGER, PARAMETER  :: KLEV = 137
+    INTEGER, PARAMETER  :: KIDIA = 1
+    INTEGER, PARAMETER  :: KFDIA = 1
+    INTEGER, PARAMETER  :: KLON = 1
+    INTEGER, PARAMETER  :: NCLDQV = 5
 
-    REAL(KIND=JPRB) INP1(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP2(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP3(NBLOCKS, KLEV, NCLV)
-    REAL(KIND=JPRB) OUT1(NBLOCKS, KLEV)
+    REAL :: ZQX(KLON,KLEV,NCLV)  ! water variables
+    REAL :: ZLNEG(KLON,KLEV,NCLV)     ! for negative correction diagnostics
+    REAL :: tendency_loc_q(KLON,KLEV),tendency_loc_T(KLON,KLEV)  ! GFL fields
+    INTEGER :: IPHASE(NCLV) ! marker for water phase of each species
+    REAL :: RALVDCP, ZQTMST, ZQADJ, RLMIN
 
-    CALL mwe_example_routine(&
-        & KLEV, NBLOCKS, NCLV, NCLDQI, NCLDQL, &
-        & INP1, INP2, INP3, OUT1)
+
+    CALL work(&
+        & NCLV, KLEV, KIDIA, KFDIA, KLON, &
+        & RLMIN, RALVDCP, ZQTMST, &
+        & ZQX, ZLNEG, tendency_loc_q, tendency_loc_T, IPHASE)
 
 END PROGRAM
 
-SUBROUTINE mwe_example_routine(&
-        & KLEV, NBLOCKS, NCLV, NCLDQI, NCLDQL, &
-        & INP1, INP2, INP3, OUT1)
+SUBROUTINE work(&
+        & NCLV, KLEV, KIDIA, KFDIA, KLON, &
+        & RLMIN, RALVDCP, ZQTMST, &
+        & ZQX, ZLNEG, tendency_loc_q, tendency_loc_T, IPHASE)
+    INTEGER, PARAMETER  :: NCLV = 5
+    INTEGER, PARAMETER  :: KLEV = 137
+    INTEGER, PARAMETER  :: KIDIA = 1
+    INTEGER, PARAMETER  :: KFDIA = 1
+    INTEGER, PARAMETER  :: KLON = 1
 
-    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
-    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
+    REAL :: ZQX(KLON,KLEV,NCLV)  ! water variables
+    REAL :: ZLNEG(KLON,KLEV,NCLV)     ! for negative correction diagnostics
+    REAL :: tendency_loc_q(KLON,KLEV),tendency_loc_T(KLON,KLEV)  ! GFL fields
+    INTEGER :: IPHASE(NCLV) ! marker for water phase of each species
+    REAL :: RALVDCP, ZQTMST, ZQADJ, RLMIN
 
-    INTEGER(KIND=JPIM) KLEV
-    INTEGER(KIND=JPIM) NBLOCKS
-    INTEGER(KIND=JPIM) NCLV
-    INTEGER(KIND=JPIM) NCLDQI
-    INTEGER(KIND=JPIM) NCLDQL
-
-    REAL(KIND=JPRB) INP1(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP2(NBLOCKS, KLEV)
-    REAL(KIND=JPRB) INP3(NBLOCKS, KLEV, NCLV)
-    REAL(KIND=JPRB) OUT1(NBLOCKS, KLEV)
-
-    DO JN=1,NBLOCKS
-        DO JK=1,KLEV
-            IF (INP2(JN, JK) > 0.5) THEN
-                OUT1(JN, JK) = INP1(JN, JK) + INP3(JN, JK, NCLDQI)
-            ELSE
-                OUT1(JN, JK) = INP1(JN, JK) - INP3(JN, JK, NCLDQI)
-            ENDIF
+    DO JM=1,NCLV-1
+      DO JK=1,KLEV
+        DO JL=KIDIA,KFDIA
+          IF (ZQX(JL,JK,JM)<RLMIN) THEN
+            ZLNEG(JL,JK,JM) = ZLNEG(JL,JK,JM)+ZQX(JL,JK,JM)
+            ZQADJ               = ZQX(JL,JK,JM)*ZQTMST
+            tendency_loc_q(JL,JK)        = tendency_loc_q(JL,JK)+ZQADJ
+            IF (IPHASE(JM)==1) tendency_loc_T(JL,JK) = tendency_loc_T(JL,JK)-RALVDCP*ZQADJ
+            IF (IPHASE(JM)==2) tendency_loc_T(JL,JK) = tendency_loc_T(JL,JK)-RALSDCP*ZQADJ
+            ZQX(JL,JK,NCLDQV)   = ZQX(JL,JK,NCLDQV)+ZQX(JL,JK,JM)
+            ZQX(JL,JK,JM)       = 0.0
+          ENDIF
         ENDDO
+      ENDDO
     ENDDO
-
-END SUBROUTINE mwe_example_routine
+END SUBROUTINE work
