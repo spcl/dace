@@ -61,7 +61,11 @@ def plot_change_stride_runtime_bar(data: pd.DataFrame, folder: str, title: str):
                 errorbar=('ci', 95), label='Main work loop', color=sns.color_palette()[1])
     ax.legend()
     rotate_xlabels(ax, angle=20)
+    ax.set_xlabel('Optimisation')
+    ax.set_ylabel('Kernel Runtime [s]')
     plt.tight_layout()
+    legend_on_lines_dict(ax, {'main work': {'position': (1, 0.05), 'color_index': 'black'},
+                              'transpose': {'position': (2, 0.05), 'color_index': 'black'}})
     save_plot(os.path.join(folder, 'change_strides_runtime_bar_combined.pdf'))
 
     figure = get_new_figure()
@@ -70,6 +74,8 @@ def plot_change_stride_runtime_bar(data: pd.DataFrame, folder: str, title: str):
     sns.barplot(data.reset_index(), x='optimisation', y='runtime', hue='scope', ax=ax, order=order, errorbar=('ci', 95))
     ax.legend()
     rotate_xlabels(ax, angle=20)
+    ax.set_xlabel('Optimisation')
+    ax.set_ylabel('Kernel Runtime [s]')
     plt.tight_layout()
     save_plot(os.path.join(folder, 'change_strides_runtime_bar.pdf'))
 
@@ -96,7 +102,7 @@ def plot_speedup(data: pd.DataFrame, folder: str, title_total: str, title_ncu: s
     size_vs_y_plot(ax, 'Speedup', "Kernel Runtime - Speedup", speedups, size_var_name='NBLOCKS')
     sns.lineplot(speedups.xs('work', level='scope'), x='NBLOCKS', y='runtime', hue='optimisation', markers=True,
                  style='optimisation', dashes=False, markersize=15,
-                 ax=ax, errorbar=('ci', 95), err_style='bars')
+                 ax=ax)
     save_plot(os.path.join(folder, 'speedup_kernel.pdf'))
 
     figure = get_new_figure()
@@ -105,5 +111,5 @@ def plot_speedup(data: pd.DataFrame, folder: str, title_total: str, title_ncu: s
     ax.axhline(y=1, color='gray', linestyle='--')
     size_vs_y_plot(ax, 'Speedup', "Total Runtime - Speedup", speedups, size_var_name='NBLOCKS')
     sns.lineplot(speedups.xs('Total', level='scope'), x='NBLOCKS', y='Total time', hue='optimisation',
-                 ax=ax, errorbar=('ci', 95), err_style='bars')
+                 ax=ax)
     save_plot(os.path.join(folder, 'speedup_total.pdf'))

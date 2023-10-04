@@ -221,16 +221,22 @@ def save_plot(path: str):
     plt.savefig(path)
 
 
-def rotate_xlabels(ax: matplotlib.axis.Axis, angle: int = 45):
+def rotate_xlabels(ax: matplotlib.axis.Axis, angle: int = 45, replace_dict: Dict[str, str] = {}):
     """
-    Rotates the x labels/ticks of the given axis by the given label
+    Rotates the x labels/ticks of the given axis by the given label. Optionally also changes the texts
 
     :param ax: The axis
     :type ax: matplotlib.axis.Axis
     :param angle: The angle to rotate by, defaults to 45
     :type angle: int, optional
+    :param replace_dict: Dictonary with tick names and their replacement, optional
+    :type replace_dict: Dict[str, str]
     """
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=angle, horizontalalignment='right')
+    labels = ax.get_xticklabels()
+    for label in labels:
+        if label.get_text() in replace_dict:
+            label.set(text=replace_dict[label.get_text()])
+    ax.set_xticklabels(labels, rotation=angle, horizontalalignment='right')
 
 
 def get_new_figure(number_of_colors: Optional[int] = None) -> matplotlib.figure.Figure:
@@ -344,30 +350,48 @@ def legend_on_lines(ax: matplotlib.axis.Axis,
                 horizontalalignment='center', verticalalignment='center', rotation=angle)
 
 
-def legend_on_lines_dict( ax: matplotlib.axis.Axis, positions: Dict[str, Dict[str, Union[int, float]]]):
+def legend_on_lines_dict(ax: matplotlib.axis.Axis, positions: Dict[str, Dict[str, Union[int, float, Tuple[float]]]]):
+    """
+    Put legend on labels in the plot in given positions. Remvoes any pre existing legend.
+
+    The given dictionary is expected to have an entry per line to put a legend on. Key is the legend text. Value is a
+    dictionary with the following enties:
+        - position: Tuple[float] = Position of the text in data coordinates
+        - color_index: Union[int] = If int, index in the color palette, gives the color to use, if string will use that
+          string as a color
+        - rotation: float = Optional, rotation of the text
+        - text_position: Tuple[floaŧ] = Optional, gives position of text with an arrow pointing to position
+
+    :param ax: The axis to act on
+    :type ax: matplotlib.axis.Axis
+    :param positions: Dictionary with the positions and optionally other information.
+    :type positions: Dict[str, Dict[str, Union[int, float, Tuple[float]]]]
+    """
     if ax.get_legend() is not None:
         ax.get_legend().remove()
 
     for program, pos_data in positions.items():
+        verticalalignment='center'
         angle = 0
-        if rotations is not None:
-            if isinstance(rotations, List):
-                angle = rotations[index]
-            elif isinstance(rotations, Dict):
-                angle = rotations[program]
-        text_pos = pos
-        if isinstance(pos[0], Tuple):
-            text_pos = pos[0]
-            ax.annotate('', xytext=text_pos, xy=pos[1],
-                        arrowprops=get_arrowprops({'color': sns.color_palette()[index + color_palette_offset]}))
+        if 'rotation' in pos_data:
+            angle = pos_data['rotation']
+        pos = pos_data['position']
+        if isinstance(pos_data['color_index'], str):
+            color = pos_data['color_index']
+        else:
+            color = sns.color_palette()[pos_data['color_index']]
+        if 'text_position' in pos_data:
+            text_pos = pos_data['text_position']
+            ax.annotate('', xytext=text_pos, xy=pos,
+                        arrowprops=get_arrowprops({'color': color}))
+            pos = text_pos
+            verticalalignment='bottom'
 
-        ax.text(text_pos[0], text_pos[1], program, color=sns.color_palette()[index + color_palette_offset],
-                horizontalalignment='center', verticalalignment='center', rotation=angle)
+        ax.text(pos[0], pos[1], program, color=color,
+                horizontalalignment='center', verticalalignment=verticalalignment, rotation=angle)
 
 
-
-
-def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[Dict[str, str]] = None):
+def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Dict[str, str]):
     """
     Replace the program names in the legend by more discriptive ones
 
@@ -376,9 +400,10 @@ def replace_legend_names(legend: matplotlib.legend.Legend, names_map: Optional[D
     :param names_map: Dictionay mapping the names/labels to change.
     :type names_map: Dict[str, str]
     """
-    for text in legend.get_texts():
-        if text.get_text() in names_map:
-            text.set(text=names_map[text.get_text()])
+    if legend is not None:
+        for text in legend.get_texts():
+            if text is not None and text.get_text() in names_map:
+                text.set(text=names_map[text.get_text()])
 
 
 def get_node_gpu_map() -> Dict[str, str]:

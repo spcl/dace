@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Union, Tuple
 import pandas as pd
 from numbers import Number
 import seaborn as sns
+from matplotlib.ticker import EngFormatter
 import dace
 from dace.sdfg import SDFG
 from dace import nodes
@@ -14,7 +15,7 @@ from utils.paths import get_dacecache, get_full_cloudsc_log_dir, get_full_clouds
 from utils.general import enable_debug_flags, remove_build_folder
 from utils.run_config import RunConfig
 from utils.data_analysis import compute_speedups
-from utils.plot import save_plot, get_new_figure, size_vs_y_plot, get_bytes_formatter, legend_on_lines_dict, \
+from utils.plot import save_plot, get_new_figure, size_vs_y_plot, legend_on_lines_dict, \
                        replace_legend_names, legend_on_lines_dict, get_node_gpu_map, get_arrowprops, rotate_xlabels
 
 
@@ -38,11 +39,13 @@ opt_levels = {
         "name": "change_strides"
         },
     "all": {
-        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
+        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True,
+                                move_assignment_outside=False),
         "name": "all_opt"
         },
     "all-custom": {
-        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True),
+        "run_config": RunConfig(k_caching=True, change_stride=True, outside_loop_first=True, full_cloudsc_fixes=True,
+                                move_assignment_outside=True),
         "name": "all_opt_custom"
         }
 }
@@ -326,43 +329,66 @@ def plot_bars(experiment_id: int, share_y: bool = False):
         .xs(('work', 'DaCe'), level=('scope', 'version'))
     print(f"Runs: {data_dict['run_count']}, GPU: {data_dict['gpu']}, node: {data_dict['node']}")
     figure = get_new_figure()
-    # figure.suptitle(f"Runtimes on the full cloudsc code on {data_dict['node']} using a NVIDIA {data_dict['node']} GPU "
-    #                 f"averaging over {data_dict['run_count']} runs")
+    order = ['baseline', 'k-caching', 'change-strides', 'all']
 
     sizes = avg_data.reset_index()['nblocks'].unique()
     nrows = 2
     ncols = ceil((len(sizes) / nrows))
-    axes = figure.subplots(nrows, ncols, sharex=True)
+    names_map = {'baseline': 'No optimizations', 'k-caching': 'K-caching',
+                 'change-strides': 'Changed array order', 'all': 'Both'}
+
     if share_y:
-        axes[0][0].get_shared_y_axes().join(axes[0][0], axes[0][1], axes[0][2])
-        axes[1][0].get_shared_y_axes().join(axes[1][0], axes[1][1], axes[1][2])
-        axes[0][0].set_ylim((0, 45))
-        axes[1][0].set_ylim((0, 270))
-    axes_1d = [a for axs in axes for a in axs]
-    for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
-        ax.set_title(f"{size:,}")
-        sns.barplot(data.xs((size, 'work', 'DaCe'), level=('nblocks', 'scope', 'version')).reset_index(),
-                    x='opt level', y='runtime', ax=ax, order=['baseline', 'k-caching', 'change-strides', 'all'])
-        ax.set_xlabel('')
-        if idx % ncols == 0:
+        num_axes = 1
+        axes = figure.subplots(num_axes, 1)
+        if num_axes == 1:
+            axes = [axes]
+        for ax_idx, ax in enumerate(axes):
+            df = data.xs(('work', 'DaCe'), level=('scope', 'version')).reset_index()
+            start_size_idx = int(ax_idx*6/num_axes)
+            end_size_idx = int((ax_idx+1)*6/num_axes-1)
+            this_data = df[(df['nblocks'] <= sizes[end_size_idx]) & (df['nblocks'] >= sizes[start_size_idx])]
+            this_data['nblocks'] = this_data['nblocks'].apply(lambda x: f"{x:,}")
+            sns.barplot(this_data,
+                        x='nblocks', y='runtime', hue='opt level', ax=ax, hue_order=order, width=0.95)
+            for container in ax.containers:
+                ax.bar_label(container, fmt='%.1f', size=20, padding=8)
+            for idx, patch in enumerate(ax.patches, start=start_size_idx):
+                if idx < 6*4:
+                    size = sizes[idx % 6]
+                    opt_level = order[idx//6]
+                    ax.annotate(f"{speedups.xs((opt_level, size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                                xy=(patch.get_x() + patch.get_width()/2, 1.3), horizontalalignment='center', size=20)
+            ax.legend(title='Optimizations applied', loc='center left')
+            replace_legend_names(ax.get_legend(), names_map)
+            ax.set_xlabel('NBLOCKS')
             ax.set_ylabel('Runtime [ms]')
-        else:
-            ax.set_ylabel('')
-        if not share_y:
-            ylim = ax.get_ylim()
-            ax.set_ylim((ylim[0], ylim[1]*1.1))
-        font_size = 20
-        speedup_ylvl = ax.get_ylim()[1] * 0.03
-        # speedup_ylvl = 1 if idx // ncols == 0 else 3
-        ax.bar_label(ax.containers[0], fmt='%.1f', size=font_size)
-        ax.annotate(f"{speedups.xs(('k-caching', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
-                    xy=(1, speedup_ylvl), horizontalalignment='center', size=font_size)
-        ax.annotate(f"{speedups.xs(('change-strides', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
-                    xy=(2, speedup_ylvl), horizontalalignment='center', size=font_size)
-        ax.annotate(f"{speedups.xs(('all', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
-                    xy=(3, speedup_ylvl), horizontalalignment='center', size=font_size)
-        rotate_xlabels(ax, replace_dict={'baseline': 'No optimisations', 'k-caching': 'K-caching',
-                                         'change-strides': 'Changed array order', 'all': 'Both'})
+
+    else:
+        axes = figure.subplots(nrows, ncols, sharex=True)
+        axes_1d = [a for axs in axes for a in axs]
+        for idx, (ax, size) in enumerate(zip(axes_1d, sizes)):
+            ax.set_title(f"{size:,}")
+            sns.barplot(data.xs((size, 'work', 'DaCe'), level=('nblocks', 'scope', 'version')).reset_index(),
+                        x='opt level', y='runtime', ax=ax, order=order)
+            ax.set_xlabel('')
+            if idx % ncols == 0:
+                ax.set_ylabel('Runtime [ms]')
+            else:
+                ax.set_ylabel('')
+            if not share_y:
+                ylim = ax.get_ylim()
+                ax.set_ylim((ylim[0], ylim[1]*1.1))
+            font_size = 20
+            speedup_ylvl = ax.get_ylim()[1] * 0.03
+            # speedup_ylvl = 1 if idx // ncols == 0 else 3
+            ax.bar_label(ax.containers[0], fmt='%.1f', size=font_size)
+            ax.annotate(f"{speedups.xs(('k-caching', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                        xy=(1, speedup_ylvl), horizontalalignment='center', size=font_size)
+            ax.annotate(f"{speedups.xs(('change-strides', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                        xy=(2, speedup_ylvl), horizontalalignment='center', size=font_size)
+            ax.annotate(f"{speedups.xs(('all', size), level=('opt level', 'nblocks')).values[0][0]:.1f}x",
+                        xy=(3, speedup_ylvl), horizontalalignment='center', size=font_size)
+            rotate_xlabels(ax, replace_dict=names_map)
 
     figure.tight_layout()
     save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), f"runtime_bar_{share_y}.pdf"))
@@ -384,13 +410,16 @@ def plot_bars(experiment_id: int, share_y: bool = False):
                     x='opt level', y='runtime', ax=ax,
                     order=['Cloudsc CUDA', 'change-strides', 'Cloudsc CUDA K-caching', 'all'],
                     hue='version', dodge=False)
+        ax.bar_label(ax.containers[0], fmt='{:.1f}')
+        ax.bar_label(ax.containers[1], fmt='{:.1f}')
+        ax.set_ylim(0, ax.get_ylim()[1]*1.1)
         ax.get_legend().remove()
         ax.set_xlabel('')
         if idx % ncols == 0:
             ax.set_ylabel('Runtime [ms]')
         else:
             ax.set_ylabel('')
-        rotate_xlabels(ax, replace_dict={'baseline': 'No optimisations', 'k-caching': 'K-caching',
+        rotate_xlabels(ax, replace_dict={'baseline': 'No optimizations', 'k-caching': 'K-caching',
                                          'change-strides': 'Changed array order', 'all': 'Both'})
 
     figure.tight_layout()
@@ -419,7 +448,7 @@ def plot_lines(experiment_id: int):
         'Cloudsc CUDA': {'position': (1e5, 42), 'color_index': 1, 'rotation': 8},
         'DaCe with changed array order': {'position': (1e5, 33), 'color_index': 4, 'rotation': 8},
         'DaCe with K-caching': {'position': (1e5, 97), 'color_index': 3, 'rotation': 26},
-        'DaCe without any special optimisation': {'position': (1e5+100, 78), 'color_index': 5, 'rotation': 18},
+        'DaCe without any special optimization': {'position': (1e5+100, 78), 'color_index': 5, 'rotation': 18},
         })
     save_plot(os.path.join(get_full_cloudsc_plot_dir(data_dict['node']), 'runtime.pdf'))
 
