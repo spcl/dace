@@ -732,7 +732,12 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
+        if isinstance(self.args[1], sympy.Function):
+            attribute = str(self.args[1].func)
+        else:
+            attribute = str(self.args[1])
+        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
