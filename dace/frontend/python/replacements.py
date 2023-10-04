@@ -238,9 +238,9 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
     state.add_mapped_tasklet('eye',
-                             dict(i='0:%s' % N, j='0:%s' % M), {},
-                             'val = 1 if i == (j - %s) else 0' % k,
-                             dict(val=dace.Memlet.simple(name, 'i, j')),
+                             dict(__i0='0:%s' % N, __i1='0:%s' % M), {},
+                             'val = 1 if __i0 == (__i1 - %s) else 0' % k,
+                             dict(val=dace.Memlet.simple(name, '__i0, __i1')),
                              external_edges=True)
 
     return name
