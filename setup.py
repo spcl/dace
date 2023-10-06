@@ -63,7 +63,7 @@ setup(name='dace',
           "License :: OSI Approved :: BSD License",
           "Operating System :: OS Independent",
       ],
-      python_requires='>=3.6, <3.12',
+      python_requires='>=3.6, <3.13',
       packages=find_packages(exclude=["*.tests", "*.tests.*", "tests.*", "tests"]),
       package_data={
           '': [
