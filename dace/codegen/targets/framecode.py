@@ -550,7 +550,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
-                    instances[node.data].append((state, node))
+                    instances[node.data.split('.')[0]].append((state, node))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -669,7 +669,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
-                        if node.data != name:
+                        if node.data.split('.')[0] != name:
                             continue
 
                         # If already found in another state, set scope to SDFG
@@ -793,7 +793,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             else:
                 state_id = -1
 
-            desc = node.desc(tsdfg)
+            desc = node.root_desc(tsdfg)
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
                                                declare, allocate)
