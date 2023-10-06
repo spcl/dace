@@ -1277,9 +1277,14 @@ class ProgramVisitor(ExtNodeVisitor):
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
-                if self.sdfg.arrays[arrname].transient:
+                desc = self.sdfg.arrays[arrname]
+                if desc.transient:
                     if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
-                        self.sdfg.replace(arrname, pyname)
+                        repl_dict = dict()
+                        if isinstance(desc, data.Structure):
+                            repl_dict = {f"{arrname}.{k}": f"{pyname}.{k}" for k in desc.keys()}
+                        repl_dict[arrname] = pyname
+                        self.sdfg.replace_dict(repl_dict)
 
         propagate_states(self.sdfg)
         for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
