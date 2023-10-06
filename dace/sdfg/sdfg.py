@@ -81,6 +81,13 @@ class NestedDict(dict):
             token = tokens.pop(0)
             result = hasattr(desc, 'members') and token in desc.members
         return result
+    
+    def keys(self):
+        result = super(NestedDict, self).keys()
+        for k, v in self.items():
+            if isinstance(v, dt.Structure):
+                result |= set(map(lambda x: k + '.' + x, v.keys()))
+        return result
 
 
 def _arrays_to_json(arrays):
@@ -735,7 +742,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
 
@@ -1616,12 +1623,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # If transient is accessed in more than one state, it is shared
         for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.AccessNode) and node.desc(self).transient:
-                    if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
-                                                                         and seen[node.data] != state):
-                        shared.append(node.data)
-                    seen[node.data] = state
+            for node in state.data_nodes():
+                dataname = node.data.split('.')[0]
+                desc = self.arrays[dataname]
+                if desc.transient:
+                    if (check_toplevel and desc.toplevel) or (dataname in seen and seen[dataname] != state):
+                        shared.append(dataname)
+                    seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
@@ -2086,15 +2094,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
-        # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
-        # members of Structures.
-        name = name.replace('.', '_')
         # If exists, fail
         if name in self._arrays:
             if find_new_name:
                 name = self._find_new_name(name)
             else:
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
+        # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+        # members of Structures.
+        name = name.replace('.', '_')
+        assert name not in self._arrays
         self._arrays[name] = datadesc
 
         def _add_symbols(desc: dt.Data):
