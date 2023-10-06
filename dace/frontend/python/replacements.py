@@ -83,6 +83,24 @@ def _define_local_scalar(pv: ProgramVisitor,
     return name
 
 
+@oprepo.replaces('dace.define_local_structure')
+def _define_local_structure(pv: ProgramVisitor,
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            dtype: dace.data.Structure,
+                            storage: dtypes.StorageType = dtypes.StorageType.Default,
+                            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+    """ Defines a local structure in a DaCe program. """
+    name = sdfg.temp_data_name()
+    desc = copy.deepcopy(dtype)
+    desc.transient=True
+    desc.storage=storage
+    desc.lifetime=lifetime
+    sdfg.add_datadesc(name, desc)
+    pv.variables[name] = name
+    return name
+
+
 @oprepo.replaces('dace.define_stream')
 def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dace.typeclass, buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
