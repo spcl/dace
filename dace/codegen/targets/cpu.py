@@ -260,7 +260,7 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
-        name = node.data
+        name = node.root_data
         ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
 
         if nodedesc.transient is False:
@@ -298,7 +298,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
-        name = node.data
+        name = node.root_data
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
 
