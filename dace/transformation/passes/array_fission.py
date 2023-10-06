@@ -239,9 +239,9 @@ def _eliminate_phi_nodes(
             # if the state is a loop guard, does the loop overwrite the variable
             overwriting_loop = False
 
-            # check if the phi node belongs to a loopheader that completely overwrites the array
+            # if the phi node belongs to a loopheader that completely overwrites the array
             # and the loop does not read from the array defined by the phi node
-            # if so, only rename nodes reached by the loopheader
+            # only rename nodes reached by the loopheader
             if (
                 state in loop_write_approximation
                 and original_var in loop_write_approximation[state]
@@ -261,7 +261,7 @@ def _eliminate_phi_nodes(
                     overwriting_loop = True
             # if the variable defined by the phi node is read by any other
             # state we perform renaming in the whole SDFG
-            # if not we only "rename" all the states that are reachable by the defined variable
+            # if not we only perform phi propagation in all the states that are reachable by the defined variable
             elif not any(other_state in state_reach[state] or other_state is state for other_state in var_reads[newname]):
                 candidate_states = reached_by_def
                 is_read = False
@@ -269,7 +269,6 @@ def _eliminate_phi_nodes(
             # rename phi nodes and propagate parameters
             _rename_phi_related_phi_nodes(parameters, original_var, newname, candidate_states,
                                           state, phi_nodes, reached_by_def, is_read, overwriting_loop)
-
             # rename accesses
             if is_read:
                 _rename_phi_related_accesses(sdfg, parameters, original_var, newname, candidate_states,
@@ -360,7 +359,7 @@ def _rename_phi_related_phi_nodes(
 
             # if the variable defined by the other phi-node is in the parameters
             # rename the variable
-            if other_phi_node.name in phi_node_parameters and is_read and not is_overwriting_loop:
+            if other_phi_node.name in phi_node_parameters and is_read:
                 other_phi_node.name = new_name
 
             # propagate parameter or variable defined by phi node to other phi nodes
