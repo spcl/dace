@@ -1650,7 +1650,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(node, ast.Name):
             return node.id
-        elif sys.version_info < (3.8) and isinstance(node, ast.Num):
+        elif sys.version_info < (3, 8) and isinstance(node, ast.Num):
             return str(node.n)
         elif isinstance(node, ast.Constant):
             return str(node.value)
@@ -1677,7 +1677,7 @@ class ProgramVisitor(ExtNodeVisitor):
         :param node: Index node
         :return: Range in (from, to, step) format
         """
-        if sys.version_info < (3.9) and isinstance(node, ast.Index):
+        if sys.version_info < (3, 9) and isinstance(node, ast.Index):
             val = self._parse_value(node.value)
         elif isinstance(node, ast.Tuple):
             val = self._parse_value(node.elts)
