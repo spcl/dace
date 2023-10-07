@@ -4938,7 +4938,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self.visit(s)
             else:
                 res = self._visit_ast_or_value(s)
-        elif sys.version_info < (3.9) and isinstance(s, ast.Index):
+        elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
             res = self._parse_subscript_slice(s.value)
         elif isinstance(s, ast.Slice):
             lower = s.lower
