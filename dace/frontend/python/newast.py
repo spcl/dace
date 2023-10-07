@@ -49,6 +49,11 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
+if sys.version_info < (3, 8):
+    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+else:
+    _simple_ast_nodes = (ast.Constant, ast.Name)
+
 
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
@@ -2344,12 +2349,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Fix for scalar promotion tests
         # TODO: Maybe those tests should use the SDFG API instead of the
         # Python frontend which can change how it handles conditions.
-        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-        is_test_simple = isinstance(node, simple_ast_nodes)
+        is_test_simple = isinstance(node, _simple_ast_nodes)
         if not is_test_simple:
             if isinstance(node, ast.Compare):
-                is_left_simple = isinstance(node.left, simple_ast_nodes)
-                is_right_simple = (len(node.comparators) == 1 and isinstance(node.comparators[0], simple_ast_nodes))
+                is_left_simple = isinstance(node.left, _simple_ast_nodes)
+                is_right_simple = (len(node.comparators) == 1 and isinstance(node.comparators[0], _simple_ast_nodes))
                 if is_left_simple and is_right_simple:
                     return True
             elif isinstance(node, ast.BoolOp):
