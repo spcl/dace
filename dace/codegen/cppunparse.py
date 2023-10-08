@@ -985,7 +985,9 @@ class CPPUnparser:
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
-        if (isinstance(t.value, (ast.Num, ast.Constant)) and isinstance(t.value.n, int)):
+        if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
+            self.write(" ")
+        elif sys.version_info < (3, 8) and isinstance(t.value, ast.Num) and isinstance(t.value.n, int):
             self.write(" ")
         if (isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
