@@ -610,7 +610,7 @@ class ConstantExtractor(ast.NodeTransformer):
 
     def visit_Num(self, node: NumConstant):
         newname = f'__uu{self.id}'
-        self.gvars[newname] = node.n
+        self.gvars[newname] = node.value if sys.version_info >= (3, 8) else node.n
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
 
