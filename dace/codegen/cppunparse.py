@@ -729,25 +729,26 @@ class CPPUnparser:
         raise NotImplementedError('Invalid C++')
 
     def _Num(self, t):
-        repr_n = repr(t.n)
+        t_n = t.value if sys.version_info >= (3, 8) else t.n
+        repr_n = repr(t_n)
         # For complex values, use DTYPE_TO_TYPECLASS dictionary
-        if isinstance(t.n, complex):
+        if isinstance(t_n, complex):
             dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
         # Handle large integer values
-        if isinstance(t.n, int):
-            bits = t.n.bit_length()
+        if isinstance(t_n, int):
+            bits = t_n.bit_length()
             if bits == 32:  # Integer, potentially unsigned
-                if t.n >= 0:  # unsigned
+                if t_n >= 0:  # unsigned
                     repr_n += 'U'
                 else:  # signed, 64-bit
                     repr_n += 'LL'
             elif 32 < bits <= 63:
                 repr_n += 'LL'
-            elif bits == 64 and t.n >= 0:
+            elif bits == 64 and t_n >= 0:
                 repr_n += 'ULL'
             elif bits >= 64:
-                warnings.warn(f'Value wider than 64 bits encountered in expression ({t.n}), emitting as-is')
+                warnings.warn(f'Value wider than 64 bits encountered in expression ({t_n}), emitting as-is')
 
         if repr_n.endswith("j"):
             self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
