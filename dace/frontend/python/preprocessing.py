@@ -20,6 +20,20 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+if sys.version_info < (3, 8):
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
+
+
 class DaceRecursionError(Exception):
     """
     Exception that indicates a recursion in a data-centric parsed context.
@@ -1358,7 +1372,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
-        if not isinstance(node.func, (ast.Num, ast.Constant)):
+        if not isinstance(node.func, (NumConstant, ast.Constant)):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
@@ -1366,10 +1380,7 @@ class CallTreeResolver(ast.NodeVisitor):
                 self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
-        if isinstance(node.func, ast.Num):
-            value = node.func.n
-        else:
-            value = node.func.value
+        value = node.func.value if sys.version_info >= (3, 8) else node.func.n
 
         if not hasattr(value, '__sdfg__') or isinstance(value, SDFG):
             return self.generic_visit(node)
