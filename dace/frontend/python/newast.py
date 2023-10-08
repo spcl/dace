@@ -4635,7 +4635,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return rname
 
     #### Visitors that return arrays
-    def visit_Str(self, node: ast.Str):
+    def visit_Str(self, node: StrConstant):
         # A string constant returns a string literal
         return StringLiteral(node.s)
 
