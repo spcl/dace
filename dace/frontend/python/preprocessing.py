@@ -873,7 +873,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             parsed = [
                 not isinstance(v, ast.FormattedValue) or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [v.s if isinstance(v, ast.Str) else astutils.unparse(v.value) for v in visited.values]
+            # NOTE: In Python < 3.8, v should be ast.Str. In Python 3.8 and later, it is (probably) ast.Constant.
+            values = [astutils.unparse(v.value) if sys.vesion_info >= (3, 8) else v.s for v in visited.values]
             return ast.copy_location(
                 ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v for p, v in zip(parsed, values))),
                 node)
