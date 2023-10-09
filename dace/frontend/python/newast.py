@@ -74,6 +74,12 @@ else:
     ExtSlice = type(None)
 
 
+if sys.version_info < (3, 12):
+    TypeAlias = type(None)
+else:
+    TypeAlias = ast.TypeAlias
+
+
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
@@ -4713,7 +4719,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Return a string representation of the function
         return astutils.unparse(node)
     
-    def visit_TypeAlias(self, node: ast.TypeAlias):
+    def visit_TypeAlias(self, node: TypeAlias):
         raise NotImplementedError('Type aliases are not supported in DaCe')
 
     ############################################################
