@@ -810,7 +810,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
-    if len(in_edges) == 0 or len(out_edges) == 0:
+    if len(in_edges) == 0 and len(out_edges) == 0:
         return None
 
     # If there is one edge (in/out) that leads (via memlet path) to an access

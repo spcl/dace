@@ -1268,7 +1268,7 @@ class ExpressionInliner(ast.NodeTransformer):
                                             node)
             else:
                 # Augment closure with new value
-                newnode = self.resolver.global_value_to_node(e, node, f'inlined_{id(contents)}', True, keep_object=True)
+                newnode = self.resolver.global_value_to_node(contents, node, f'inlined_{id(contents)}', True, keep_object=True)
             return newnode
 
         return _convert_to_ast(contents)

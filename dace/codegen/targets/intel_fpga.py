@@ -729,9 +729,10 @@ __kernel void \\
     def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         # Intel FPGA needs to deal with streams
         arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         function_header = f'void {sdfg_label}({arguments}) {{'
