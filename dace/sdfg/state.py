@@ -608,7 +608,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                             in the generated code and are needed as arguments.
         """
         state = self.graph if isinstance(self, SubgraphView) else self
-        sdfg = state.parent
+        sdfg = state.sdfg
         new_symbols = set()
         freesyms = set()
 
@@ -2582,7 +2582,7 @@ class LoopScopeBlock(ScopeBlock):
         else:
             self.update_statement = None
 
-        self.loop_variable = loop_var
+        self.loop_variable = loop_var or ''
         self.inverted = inverted
 
     def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
