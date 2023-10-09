@@ -87,6 +87,21 @@ from six import StringIO
 from dace import dtypes
 from dace.codegen.tools import type_inference
 
+
+if sys.version_info < (3, 8):
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
+
+
 # Large float and imaginary literals get turned into infinities in the AST.
 # We unparse those infinities to INFSTR.
 INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
@@ -574,7 +589,7 @@ class CPPUnparser:
             self.write('/* async */ ')
 
         if getattr(t, "returns", False):
-            if isinstance(t.returns, ast.NameConstant):
+            if isinstance(t.returns, NameConstant):
                 if t.returns.value is None:
                     self.write('void')
                 else:
