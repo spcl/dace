@@ -1014,7 +1014,7 @@ class TaskletTransformer(ExtNodeTransformer):
     def visit_TopLevelStr(self, node: StrConstant):
         if self.extcode != None:
             raise DaceSyntaxError(self, node, 'Cannot provide more than one intrinsic implementation ' + 'for tasklet')
-        self.extcode = node.s
+        self.extcode = node.value if sys.version_info >= (3, 8) else node.s
 
         # TODO: Should get detected by _parse_Tasklet()
         if self.lang is None:
