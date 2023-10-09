@@ -20,8 +20,10 @@ static void CheckCuTensorError(cutensorStatus_t const& status) {
 }
 
 static cutensorHandle_t CreateCuTensorHandle(int device) {
-  if (cudaSetDevice(device) != cudaSuccess) {
-    throw std::runtime_error("Failed to set CUDA device.");
+  if (device >= 0) {
+    if (cudaSetDevice(device) != cudaSuccess) {
+      throw std::runtime_error("Failed to set CUDA device.");
+    }
   }
   cutensorHandle_t handle;
   CheckCuTensorError(cutensorInit(&handle));

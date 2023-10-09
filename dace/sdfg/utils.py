@@ -1396,7 +1396,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     :param state: the state that contains the node
     :param fsymbols: the free symbols to check against
     """
-    if isinstance(desc, dt.View):
+    if isinstance(desc, (dt.StructureView, dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
         e = get_view_edge(state, node)
         if e.data:

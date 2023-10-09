@@ -370,6 +370,10 @@ def emit_memlet_reference(dispatcher,
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
+    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
+    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
+    expr = expr.replace('.', '->')
+
     return (typedef + ref, pointer_name, expr)
 
 

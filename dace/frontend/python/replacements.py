@@ -986,7 +986,7 @@ def _argminmax(pv: ProgramVisitor,
     reduced_shape = list(copy.deepcopy(a_arr.shape))
     reduced_shape.pop(axis)
 
-    val_and_idx = dace.struct('_val_and_idx', val=a_arr.dtype, idx=result_type)
+    val_and_idx = dace.struct('_val_and_idx', idx=result_type, val=a_arr.dtype)
 
     # HACK: since identity cannot be specified for structs, we have to init the output array
     reduced_structs, reduced_struct_arr = sdfg.add_temp_transient(reduced_shape, val_and_idx)
