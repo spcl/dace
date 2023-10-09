@@ -1,6 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import pytest
+import sys
 
 
 def test_type_statement():
@@ -11,8 +12,11 @@ def test_type_statement():
         A: Scalar[dace.float32] = 0
         return A
     
-    with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
-        type_statement()
+    if sys.version_info >= (3, 12):
+        with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
+            type_statement()
+    else:
+        assert True
 
 
 if __name__ == '__main__':
