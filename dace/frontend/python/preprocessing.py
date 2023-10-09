@@ -768,7 +768,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program, inline  # Avoid import loop
 
-        if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
+        if (hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible) or 
+                sys.version_info < (3, 8) and hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible)):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
