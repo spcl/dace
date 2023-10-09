@@ -309,7 +309,7 @@ DISALLOWED_STMTS = [
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp', 'SetComp',
-    'DictComp', 'comprehension', 'TypeAlias'
+    'DictComp', 'comprehension', 'TypeAlias', 'TypeVar', 'ParamSpec', 'TypeVarTuple'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
