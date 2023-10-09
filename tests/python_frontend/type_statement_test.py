@@ -6,16 +6,19 @@ import sys
 
 def test_type_statement():
 
-    @dace.program
-    def type_statement():
-        type Scalar[T] = T
-        A: Scalar[dace.float32] = 0
-        return A
-    
     if sys.version_info >= (3, 12):
+
+        @dace.program
+        def type_statement():
+            type Scalar[T] = T
+            A: Scalar[dace.float32] = 0
+            return A
+        
         with pytest.raises(dace.frontend.python.common.DaceSyntaxError):
             type_statement()
+    
     else:
+
         assert True
 
 
