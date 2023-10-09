@@ -361,7 +361,7 @@ class ForScope(ControlFlow):
 
     def as_cpp(self, codegen, symbols) -> str:
 
-        sdfg = self.guard.parent
+        sdfg = self.guard.sdfg
 
         # Initialize to either "int i = 0" or "i = 0" depending on whether
         # the type has been defined
