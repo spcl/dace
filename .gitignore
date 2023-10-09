@@ -190,17 +190,3 @@ _build/
 
 .*cache/
 /doc/source/config_schema.rst
-
-# Results
-thesis_playground/results_v2
-# Plots
-thesis_playground/plots_v2
-**.sdfg
-thesis_playground/complete_results
-thesis_playground/data_analysis
-thesis_playground/playground_results
-thesis_playground/vert_loop_results
-thesis_playground/sdfg_gen_code
-thesis_playground/full_cloudsc_logs/*
-thesis_playground/results/*
-thesis_playground/basic_sdfgs/*
