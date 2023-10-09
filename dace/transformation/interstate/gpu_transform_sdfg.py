@@ -5,7 +5,7 @@ from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets a
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
-from dace.properties import DictProperty, Property, make_properties
+from dace.properties import Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
 from sympy import floor
@@ -198,7 +198,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         data_already_on_gpu = {}
 
         cloned_arrays = {}
-        already_cloned_arrays = {n: None for n, d in sdfg.arrays.items() if d.storage in gpu_storage}
         for inodename, inode in set(input_nodes):
             if inode.storage == dtypes.StorageType.GPU_Global:
                 data_already_on_gpu[inodename] = None
@@ -519,7 +518,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         desc = sdfg.arrays[nname]
                         hostname = nname
                         devicename = cloned_arrays[nname]
-
 
                     src_array = nodes.AccessNode(devicename, debuginfo=desc.debuginfo)
                     dst_array = nodes.AccessNode(hostname, debuginfo=desc.debuginfo)

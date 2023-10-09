@@ -162,9 +162,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
 
             # Validate inter-state edge names
             issyms = edge.data.new_symbols(sdfg, symbols)
-            eid = sdfg.edge_id(edge)
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
+                eid = sdfg.edge_id(edge)
                 raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
 
             # Ensure accessed data containers in assignments and conditions are accessible in this context
@@ -222,21 +222,6 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
-            
-            # Test read memlets
-            for memlet in edge.data.get_read_memlets((sdfg.arrays)):
-                arr = sdfg.arrays[memlet.data]
-                # Dimensionality
-                if memlet.subset.dims() != len(arr.shape):
-                    raise InvalidSDFGInterstateEdgeError(
-                        f"Memlet subset does not match node dimension "
-                        f"(expected {(len(arr.shape))}, got {memlet.subset.dims()})", sdfg, eid)
-                # Bounds
-                if any(((minel + off) < 0) == True for minel, off in zip(memlet.subset.min_element(), arr.offset)):
-                    raise InvalidSDFGInterstateEdgeError("Memlet other_subset negative out-of-bounds", sdfg, eid)
-                if any(((maxel + off) >= s) == True
-                       for maxel, s, off in zip(memlet.subset.max_element(), arr.shape, arr.offset)):
-                    raise InvalidSDFGInterstateEdgeError("Memlet other_subset out-of-bounds", sdfg, eid)
 
             # Ensure accessed data containers in assignments and conditions are accessible in this context
             ise_memlets = edge.data.get_read_memlets(sdfg.arrays)

@@ -733,21 +733,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
 
-        # Make an intermediate replacement for symbols that already exist in the SDFG.
-        intermediate_repl = dict()
-        defined_symbols = self.symbols.keys() - self.free_symbols
-        for v in repldict.values():
-            strv = str(v)
-            if strv in defined_symbols:
-                intermediate_repl[strv] = self.find_new_symbol(strv)
-        if intermediate_repl:
-            self.replace_dict(intermediate_repl, replace_in_graph=replace_in_graph, replace_keys=replace_keys)
-
         symrepl = symrepl or {
             symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
-
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
@@ -1690,7 +1679,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Reconnect
         for e in self.in_edges(state):
             self.remove_edge(e)
-            self.add_edge(e.src, new_state, copy.deepcopy(e.data))
+            self.add_edge(e.src, new_state, e.data)
         # Add unconditional connection between the new state and the current
         self.add_edge(new_state, state, InterstateEdge())
         return new_state
@@ -1709,7 +1698,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Reconnect
         for e in self.out_edges(state):
             self.remove_edge(e)
-            self.add_edge(new_state, e.dst, copy.deepcopy(e.data))
+            self.add_edge(new_state, e.dst, e.data)
         # Add unconditional connection between the current and the new state
         self.add_edge(state, new_state, InterstateEdge())
         return new_state
@@ -2583,8 +2572,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        states: Optional[List[Any]] = None,
                                        print_report: Optional[bool] = None,
                                        order_by_transformation: bool = True,
-                                       progress: Optional[bool] = None,
-                                       func=None, args=None) -> int:
+                                       progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
 
@@ -2618,7 +2606,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         pazz = PatternMatchAndApplyRepeated(xforms, permissive, validate, validate_all, states, print_report, progress,
                                             order_by_transformation)
-        results = pazz.apply_pass(self, {}, func, args)
+        results = pazz.apply_pass(self, {})
 
         # Return number of transformations applied
         if results is None:

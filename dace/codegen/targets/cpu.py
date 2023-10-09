@@ -592,8 +592,6 @@ class CPUCodeGen(TargetCodeGenerator):
             # Code->Code copy (not read nor write)
             raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
         else:
-            if memlet.is_empty(): return
-
             raise LookupError("Memlet does not point to any of the nodes")
 
         if isinstance(dst_node, nodes.Tasklet):

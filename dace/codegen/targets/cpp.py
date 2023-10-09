@@ -999,7 +999,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
-        target, rng = subscript_to_slice(t, self.sdfg.arrays, allow_actual_negative=True)
+        target, rng = subscript_to_slice(t, self.sdfg.arrays)
         rng = subsets.Range(rng)
         if rng.num_elements() != 1:
             raise SyntaxError('Range subscripts disallowed in interstate edges')
