@@ -1,8 +1,8 @@
 import dace
-from dace import  nodes
+from dace import nodes
 from dace.dtypes import ScheduleType
 from dace.memlet import Memlet
-from dace.transformation.auto.cloudsc_auto_opt import change_strides
+from dace.transformation.change_strides import change_strides
 
 
 def change_strides_test():
