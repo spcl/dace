@@ -914,13 +914,13 @@ class CPPUnparser:
             self.write(")")
         # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if isinstance(t.right, (ast.Num, ast.Constant, ast.UnaryOp)):
+            if isinstance(t.right, (NumConstant, ast.Constant, ast.UnaryOp)):
                 power = None
-                if isinstance(t.right, (ast.Num, ast.Constant)):
-                    power = t.right.n
+                if isinstance(t.right, (NumConstant, ast.Constant)):
+                    power = t.right.value if sys.version_info >= (3, 8) else t.right.n
                 elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
-                    if isinstance(t.right.operand, (ast.Num, ast.Constant)):
-                        power = -t.right.operand.n
+                    if isinstance(t.right.operand, (NumConstant, ast.Constant)):
+                        power = - (t.right.operand.value if sys.version_info >= (3, 8) else t.right.operand.n)
 
                 if power is not None and int(power) == power:
                     negative = power < 0
