@@ -2023,7 +2023,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         name = memlet.data
                         vname = "{c}_in_from_{s}{n}".format(c=conn,
-                                                            s=self.sdfg.states().index(state),
+                                                            s=self.sdfg.nodes().index(state),
                                                             n=('_%s' % state.node_id(entry_node) if entry_node else ''))
                         self.accesses[(name, scope_memlet.subset, 'r')] = (vname, orng)
                         orig_shape = orng.size()
