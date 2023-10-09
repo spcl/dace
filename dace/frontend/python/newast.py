@@ -303,7 +303,7 @@ DISALLOWED_STMTS = [
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp', 'SetComp',
-    'DictComp', 'comprehension'
+    'DictComp', 'comprehension', 'TypeAlias'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -4712,6 +4712,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
+    
+    def visit_TypeAlias(self, node: ast.TypeAlias):
+        raise NotImplementedError('Type aliases are not supported in DaCe')
 
     ############################################################
 
