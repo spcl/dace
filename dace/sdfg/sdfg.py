@@ -1383,7 +1383,7 @@ class SDFG(ScopeBlock):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)[0]
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
