@@ -356,13 +356,13 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         # Remake keyword argument names from AST
         kwarg_names = []
         for kw in arg.keys:
-            if isinstance(kw, ast.Num):
-                kwarg_names.append(kw.n)
-            elif isinstance(kw, (ast.Str, ast.Bytes)):
-                kwarg_names.append(kw.s)
-            elif isinstance(kw, ast.NameConstant):
+            if sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
                 kwarg_names.append(kw.value)
-            elif sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
+            elif sys.version_info < (3, 8) and isinstance(kw, ast.Num):
+                kwarg_names.append(kw.n)
+            elif sys.version_info < (3, 8) and isinstance(kw, (ast.Str, ast.Bytes)):
+                kwarg_names.append(kw.s)
+            elif sys.version_info < (3, 8) and isinstance(kw, ast.NameConstant):
                 kwarg_names.append(kw.value)
             else:
                 raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
