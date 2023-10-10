@@ -12,9 +12,6 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 
-import logging
-logger = logging.getLogger(__name__)
-
 
 # Helper class for finding connected component correspondences
 class CCDesc:
@@ -224,7 +221,6 @@ class StateFusion(transformation.MultiStateTransformation):
                     return False
 
         if not permissive:
-            # logger.debug("first_state: %s, second_state: %s", first_state, second_state)
             # Strict mode that inhibits state fusion if Python callbacks are involved
             if Config.get_bool('frontend', 'dont_fuse_callbacks'):
                 for node in (first_state.data_nodes() + second_state.data_nodes()):
@@ -291,7 +287,6 @@ class StateFusion(transformation.MultiStateTransformation):
 
             # If any second input appears more than once, fail
             if len(second_input) > len(second_input_names):
-                # logger.debug("Rejected: Second input appears more than once. Second input: %s", second_input)
                 return False
 
             # If any first output that is an input to the second state
@@ -303,7 +298,6 @@ class StateFusion(transformation.MultiStateTransformation):
                     if len([n for n in cc if n.data == match]) > 0:
                         cc_appearances += 1
                 if cc_appearances > 1:
-                    # logger.debug("Rejected: More than one cc appearance: %s", cc_appearances)
                     return False
 
             # Recreate fused connected component correspondences, and then
@@ -339,10 +333,8 @@ class StateFusion(transformation.MultiStateTransformation):
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    # this_match_nodes = {k: v for k, v in match_nodes.items() if k.data == cand} 
                     if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
                                              second_input, False, False):
-                        # logger.debug("Rejected: WW, no path: %s", cand)
                         return False
                 # End of write-write hazard check
 
@@ -368,7 +360,6 @@ class StateFusion(transformation.MultiStateTransformation):
                                                 if n1.data == src.data:
                                                     for n0 in nodes_first:
                                                         if not nx.has_path(first_state._nx, n0, n1):
-                                                            # logger.debug("Rejected: RW, race n0: %s, n1: %s", n0, n1)
                                                             return False
                                 # Read-write hazard where an access node is connected
                                 # to more than one output at once: (a) -> (b)  |  (d) -> [code] -> (d)
@@ -377,7 +368,6 @@ class StateFusion(transformation.MultiStateTransformation):
                                 # All paths need to lead to `src`
                                 if not self._check_all_paths(first_state, second_state, match_nodes, nodes_first,
                                                              nodes_second, True, False):
-                                    # logger.debug("Rejected: RW, no path")
                                     return False
 
                         continue
@@ -394,14 +384,12 @@ class StateFusion(transformation.MultiStateTransformation):
                                 nodes_first = [n for n in first_input if n.data == d]
                                 if StateFusion.memlets_intersect(first_state, nodes_first, True, second_state,
                                                                  nodes_second, False):
-                                    # logger.debug("Rejected: RW data race: %s", d)
                                     return False
                             # Write-Write race
                             if d in fused_cc.first_outputs:
                                 nodes_first = [n for n in first_output if n.data == d]
                                 if StateFusion.memlets_intersect(first_state, nodes_first, False, second_state,
                                                                  nodes_second, False):
-                                    # logger.debug("Rejectd: WW data race: %s", d)
                                     return False
                     # End of data race check
 
@@ -414,7 +402,6 @@ class StateFusion(transformation.MultiStateTransformation):
                 for inout in second_inout:
                     nodes_first = [n for n in match_nodes if n.data == inout]
                     if any(first_state.out_degree(n) > 0 for n in nodes_first):
-                        # logger.debug("Rejected: RAW dependency: %s", inout)
                         return False
 
                     # If we have potential candidates, check if there is a
@@ -429,10 +416,8 @@ class StateFusion(transformation.MultiStateTransformation):
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    # this_match_nodes = {k: v for k, v in match_nodes.items() if k.data == inout}
                     if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
                                              second_input, True, False):
-                        # logger.debug("Rejected: RAW dependency no paths: %s", inout)
                         return False
 
                 # End of read-write hazard check
@@ -459,7 +444,6 @@ class StateFusion(transformation.MultiStateTransformation):
                                         found = outnode
                                     else:
                                         # No path: ambiguous match
-                                        # logger.debug("Rejected: RAW dependency no path: ambiguous match")
                                         return False
                                 found = outnode
 
@@ -544,7 +528,7 @@ class StateFusion(transformation.MultiStateTransformation):
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes and x in first_state.nodes()]
+            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
