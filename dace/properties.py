@@ -1001,8 +1001,11 @@ class CodeBlock(object):
         if self.language == dace.dtypes.Language.Python:
             visitor = TaskletFreeSymbolVisitor(defined_syms)
             if self.code:
-                for stmt in self.code:
-                    visitor.visit(stmt)
+                if isinstance(self.code, list):
+                    for stmt in self.code:
+                        visitor.visit(stmt)
+                else:
+                    visitor.visit(self.code)
             return visitor.free_symbols
 
         return set()

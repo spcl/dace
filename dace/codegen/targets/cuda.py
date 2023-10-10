@@ -1939,6 +1939,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                               kernel_params: list, function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Get the thread/block index type
+        ttype = Config.get('compiler', 'cuda', 'thread_id_type')
+        tidtype = getattr(dtypes, ttype, False)
+        if not isinstance(tidtype, dtypes.typeclass):
+            raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
+                             'See ``dace.dtypes`` for available types (for example ``int32``).')
+
         # allocating shared memory for dynamic threadblock maps
         if has_dtbmap:
             kernel_stream.write(
@@ -1990,8 +1997,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
             if len(krange) > 3:
@@ -2010,8 +2017,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
         # Dispatch internal code
         assert CUDACodeGen._in_device_code is False

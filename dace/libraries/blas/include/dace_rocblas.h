@@ -24,8 +24,10 @@ static void CheckRocblasError(rocblas_status const& status) {
 }
 
 static rocblas_handle CreateRocblasHandle(int device) {
-  if (hipSetDevice(device) != hipSuccess) {
-    throw std::runtime_error("Failed to set HIP device.");
+  if (device >= 0) {
+    if (hipSetDevice(device) != hipSuccess) {
+      throw std::runtime_error("Failed to set HIP device.");
+    }
   }
   rocblas_handle handle;
   CheckRocblasError(rocblas_create_handle(&handle));
@@ -68,53 +70,55 @@ class _RocblasConstants {
   }
 
   _RocblasConstants(int device) {
-    if (hipSetDevice(device) != hipSuccess) {
-      throw std::runtime_error("Failed to set HIP device.");
+    if (device >= 0) {
+      if (hipSetDevice(device) != hipSuccess) {
+        throw std::runtime_error("Failed to set HIP device.");
+      }
     }
     // Allocate constant zero with the largest used size
-    hipMalloc(&zero_, sizeof(hipDoubleComplex) * 1);
-    hipMemset(zero_, 0, sizeof(hipDoubleComplex) * 1);
+    (void)hipMalloc(&zero_, sizeof(hipDoubleComplex) * 1);
+    (void)hipMemset(zero_, 0, sizeof(hipDoubleComplex) * 1);
 
     // Allocate constant one
-    hipMalloc(&half_pone_, sizeof(__half) * 1);
+    (void)hipMalloc(&half_pone_, sizeof(__half) * 1);
     __half half_pone = __float2half(1.0f);
-    hipMemcpy(half_pone_, &half_pone, sizeof(__half) * 1,
+    (void)hipMemcpy(half_pone_, &half_pone, sizeof(__half) * 1,
                hipMemcpyHostToDevice);
-    hipMalloc(&float_pone_, sizeof(float) * 1);
+    (void)hipMalloc(&float_pone_, sizeof(float) * 1);
     float float_pone = 1.0f;
-    hipMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
+    (void)hipMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
                hipMemcpyHostToDevice);
-    hipMalloc(&double_pone_, sizeof(double) * 1);
+    (void)hipMalloc(&double_pone_, sizeof(double) * 1);
     double double_pone = 1.0;
-    hipMemcpy(double_pone_, &double_pone, sizeof(double) * 1,
+    (void)hipMemcpy(double_pone_, &double_pone, sizeof(double) * 1,
                hipMemcpyHostToDevice);
-    hipMalloc(&complex64_pone_, sizeof(hipComplex) * 1);
+    (void)hipMalloc(&complex64_pone_, sizeof(hipComplex) * 1);
     hipComplex complex64_pone = make_hipFloatComplex(1.0f, 0.0f);
-    hipMemcpy(complex64_pone_, &complex64_pone, sizeof(hipComplex) * 1,
+    (void)hipMemcpy(complex64_pone_, &complex64_pone, sizeof(hipComplex) * 1,
                hipMemcpyHostToDevice);
-    hipMalloc(&complex128_pone_, sizeof(hipDoubleComplex) * 1);
+    (void)hipMalloc(&complex128_pone_, sizeof(hipDoubleComplex) * 1);
     hipDoubleComplex complex128_pone = make_hipDoubleComplex(1.0, 0.0);
-    hipMemcpy(complex128_pone_, &complex128_pone, sizeof(hipDoubleComplex) * 1,
+    (void)hipMemcpy(complex128_pone_, &complex128_pone, sizeof(hipDoubleComplex) * 1,
                hipMemcpyHostToDevice);
 
     // Allocate custom factors and default to zero
-    hipMalloc(&custom_alpha_, sizeof(hipDoubleComplex) * 1);
-    hipMemset(custom_alpha_, 0, sizeof(hipDoubleComplex) * 1);
-    hipMalloc(&custom_beta_, sizeof(hipDoubleComplex) * 1);
-    hipMemset(custom_beta_, 0, sizeof(hipDoubleComplex) * 1);
+    (void)hipMalloc(&custom_alpha_, sizeof(hipDoubleComplex) * 1);
+    (void)hipMemset(custom_alpha_, 0, sizeof(hipDoubleComplex) * 1);
+    (void)hipMalloc(&custom_beta_, sizeof(hipDoubleComplex) * 1);
+    (void)hipMemset(custom_beta_, 0, sizeof(hipDoubleComplex) * 1);
   }
 
   _RocblasConstants(_RocblasConstants const&) = delete;
 
   ~_RocblasConstants() {
-    hipFree(zero_);
-    hipFree(half_pone_);
-    hipFree(float_pone_);
-    hipFree(double_pone_);
-    hipFree(complex64_pone_);
-    hipFree(complex128_pone_);
-    hipFree(custom_alpha_);
-    hipFree(custom_beta_);
+    (void)hipFree(zero_);
+    (void)hipFree(half_pone_);
+    (void)hipFree(float_pone_);
+    (void)hipFree(double_pone_);
+    (void)hipFree(complex64_pone_);
+    (void)hipFree(complex128_pone_);
+    (void)hipFree(custom_alpha_);
+    (void)hipFree(custom_beta_);
   }
 
   _RocblasConstants& operator=(_RocblasConstants const&) = delete;

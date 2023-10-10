@@ -45,7 +45,7 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         body2_state.add_nedge(read_a, read_tmp1, dace.Memlet(f'A[2:{N}-2, 2:{N}-2, i:{N}]'))
     else:
         read_tmp1 = body2_state.add_read('tmp1')
-    rednode = standard.Reduce(wcr='lambda a, b : a + b', identity=0)
+    rednode = standard.Reduce('sum', wcr='lambda a, b : a + b', identity=0)
     if storage == dace.dtypes.StorageType.GPU_Global:
         rednode.implementation = 'CUDA (device)'
     elif storage == dace.dtypes.StorageType.FPGA_Global:

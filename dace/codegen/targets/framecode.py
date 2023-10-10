@@ -471,7 +471,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state,
+            cft = cflow.GeneralBlock(dispatch_state, None,
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [], False)
 
@@ -886,8 +886,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
 
             # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
             # redefine the symbols in such cases.
-            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys()
-                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
+            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping
+                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName]) == str(isvarName)):
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
