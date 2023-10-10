@@ -49,16 +49,15 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
         if len(remaining_ranges) == 0:
             # Redirect map entry's out edges
-            write_only_map = False
+            write_only_map = True
             for edge in graph.out_edges(map_entry):
                 path = graph.memlet_path(edge)
                 index = path.index(edge)
 
-                if len(path) > 1:
+                if not edge.data.is_empty():
                     # Add an edge directly from the previous source connector to the destination
                     graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
-                else:
-                    write_only_map = True
+                    write_only_map = False
 
             # Redirect map exit's in edges.
             for edge in graph.in_edges(map_exit):
