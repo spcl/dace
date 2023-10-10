@@ -2,7 +2,6 @@
 """ Contains functions related to pattern matching in transformations. """
 
 import collections
-import copy
 from dataclasses import dataclass
 import time
 
@@ -31,10 +30,9 @@ class PatternMatchAndApply(ppl.Pass):
                                               default=[],
                                               desc='The list of transformations to apply')
 
-    permissive = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
+    permissive = properties.Property(dtype=bool,
+                                     default=False,
+                                     desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
     validate = properties.Property(dtype=bool,
                                    default=True,
                                    desc='If True, validates the SDFG after all transformations have been applied.')
@@ -167,28 +165,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
         if self.validate_all:
             match_name = match.print_match(tsdfg)
 
-        if Config.get('debugpass') == True:
-            original_sdfg = copy.deepcopy(sdfg)
-            sdfg_name = f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg"
-            try:
-                applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
-            except Exception as e:
-                original_sdfg.save(sdfg_name)
-                print(f'Exception occured when applying {type(match).__name__} on SDFG {match.sdfg_id} and '
-                      f'SDFGState{match.state_id}.')
-                print(f'Last correct SDFG: {sdfg_name}')
-                raise e
-            finally:
-                try:
-                    sdfg.validate()
-                except Exception as e:
-                    original_sdfg.save(sdfg_name)
-                    print(f'Validation failed after applying {type(match).__name__} on SDFG {match.sdfg_id} and '
-                          f'SDFGState{match.state_id}.')
-                    print(f'Last correct SDFG: {sdfg_name}')
-                    raise e
-        else:
-            applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+        applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
@@ -201,7 +178,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     f'Validation failed after applying {match_name}. '
                     f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
 
-    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool, func=None, args=None) -> Dict[str, List[Any]]:
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
         """
         Internal apply pass method that can run once through the graph or repeatedly.
         """
@@ -231,12 +208,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                                     patterns=[xform],
                                                     states=self.states,
                                                     metadata=self._metadata):
-                            if func is not None:
-                                sdfg.save('before.sdfg')
                             self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
-                            if func is not None and not func(sdfg, *args):
-                                sdfg.save('after.sdfg')
-                                raise RuntimeError('Validation failed after applying {}.'.format(match.print_match(sdfg)))
                             applied = True
                             applied_anything = True
                             break
@@ -252,12 +224,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                             patterns=xforms,
                                             states=self.states,
                                             metadata=self._metadata):
-                    if func is not None:
-                        sdfg.save('before.sdfg')
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
-                    if func is not None and not func(sdfg, *args):
-                        sdfg.save('after.sdfg')
-                        raise RuntimeError('Validation failed after applying {}.'.format(match.print_match(sdfg)))
                     applied = True
                     break
                 if apply_once:
@@ -282,8 +249,8 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             return None
         return applied_transformations
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], func=None, args=None) -> Dict[str, List[Any]]:
-        return self._apply_pass(sdfg, pipeline_results, apply_once=False, func=func, args=args)
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+        return self._apply_pass(sdfg, pipeline_results, apply_once=False)
 
 
 @dataclass
