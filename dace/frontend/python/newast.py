@@ -3067,7 +3067,7 @@ class ProgramVisitor(ExtNodeVisitor):
         full_rng = subsets.Range.from_array(self.sdfg.arrays[new_name])
         if (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self)):
             new_name, new_rng = self.make_slice(new_name, rng)
-        elif not isinstance(self.sdfg.arrays[new_name], data.Scalar) and full_rng != new_rng:
+        elif full_rng != new_rng:
             new_name, new_rng = self.make_slice(new_name, new_rng)
         return (new_name, new_rng)
 
@@ -4956,7 +4956,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_name, new_rng = self._add_write_access(name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
-                if isinstance(self.sdfg.arrays[new_name], data.Scalar) or new_rng.ranges == full_rng.ranges:
+                if new_rng.ranges == full_rng.ranges:
                     return new_name
                 else:
                     if is_read:

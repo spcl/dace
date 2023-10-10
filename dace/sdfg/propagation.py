@@ -614,11 +614,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # this cycle.
             increment_edge = None
             for iedge in in_edges:
-                try:
-                    fsymbols = set([str(s) for s in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols])
-                except AttributeError:
-                    fsymbols = set()
-                if itvarsym in fsymbols:
+                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
                     increment_edge = iedge
                     break
             if increment_edge is None:
@@ -1101,9 +1097,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                internal_offset = sdfg.arrays[internal_memlet.data].offset
-                external_offset = parent_sdfg.arrays[iedge.data.data].offset
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True, internal_offset=internal_offset, external_offset=external_offset)
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1123,9 +1117,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                internal_offset = sdfg.arrays[internal_memlet.data].offset
-                external_offset = parent_sdfg.arrays[oedge.data.data].offset
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True, internal_offset=internal_offset, external_offset=external_offset)
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                     if rng[1] + 1 == s:
