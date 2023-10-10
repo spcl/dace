@@ -557,8 +557,8 @@ def test_constant_multiplicative_2D():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["j"], j_subset, None, True)
-    propagated_memlet = UnderapproximateWrites().propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["j"], j_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1, 0:3*M - 2:3")
@@ -575,8 +575,8 @@ def test_affine_2D():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["j"], j_subset, None, True)
-    propagated_memlet = UnderapproximateWrites().propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["j"], j_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1, 3 : 3 * M + 1 : 3")
@@ -593,8 +593,8 @@ def test_multiplied_variables():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["j"], j_subset, None, True)
-    propagated_memlet = UnderapproximateWrites().propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["j"], j_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
 
     assert (not propagated_memlet.subset.subset_list)
 
@@ -607,8 +607,8 @@ def test_one_variable_in_2dimensions():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["j"], j_subset, None, True)
-    propagated_memlet = UnderapproximateWrites().propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["j"], j_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
 
     assert (not propagated_memlet.subset.subset_list)
 
@@ -621,8 +621,8 @@ def test_negative_step():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["j"], j_subset, None, True)
-    propagated_memlet = UnderapproximateWrites().propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["j"], j_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset([propagated_memlet], A, ["i"], i_subset, None, True)
 
     propagated_subset = propagated_memlet.subset.subset_list[0]
     expected_subset = Range.from_string("0:N:1,0:M:1")
@@ -639,7 +639,7 @@ def test_step_not_one():
     memlet = dace.Memlet(None, "A", subset)
     memlets = [memlet]
 
-    propagated_memlet = UnderapproximateWrites().propagate_subset(memlets, A, ["i"], i_subset, None, True)
+    propagated_memlet = UnderapproximateWrites()._propagate_subset(memlets, A, ["i"], i_subset, None, True)
     propagated_subset = propagated_memlet.subset.subset_list[0]
 
     expected_subset = Range.from_string("0:N:3")

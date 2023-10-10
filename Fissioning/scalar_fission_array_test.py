@@ -333,7 +333,6 @@ def test_scalar_write_shadow_interstate_self():
                       None, dace.Memlet('B[i + 1]'))
 
     results = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
-    sdfg.view()
 
     try:
         sdfg.validate()

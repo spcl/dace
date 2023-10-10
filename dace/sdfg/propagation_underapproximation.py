@@ -23,7 +23,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.graph import Edge
 
-
 approximation_dict: dict[Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
@@ -31,7 +30,8 @@ loop_write_dict: dict[SDFGState, dict[str, Memlet]] = {}
 loop_dict: dict[SDFGState, (SDFGState, SDFGState,
                             list[SDFGState], str, subsets.Range)] = {}
 iteration_variables: dict[SDFGState, set[str]] = {}
-ranges_per_state: dict[SDFGState, dict[str, subsets.Range]] = defaultdict(lambda: {})
+ranges_per_state: dict[SDFGState,
+                       dict[str, subsets.Range]] = defaultdict(lambda: {})
 
 
 @registry.make_registry
@@ -452,6 +452,169 @@ class ConstantRangeMemlet(MemletPattern):
         return subsets.Range(rng)
 
 
+def _find_unconditionally_executed_states(sdfg: SDFG) -> set[SDFGState]:
+    # find states that are executed unconditionally
+    # add dummy state as a sink
+    dummy_sink = sdfg.add_state("dummy_state")
+    for sink_node in sdfg.sink_nodes():
+        if sink_node is not dummy_sink:
+            sdfg.add_edge(sink_node, dummy_sink,
+                          dace.sdfg.InterstateEdge())
+    # get all the nodes that are executed unconditionally in the state-machine a.k.a nodes
+    # that dominate the sink states
+    dominators = cfg.all_dominators(sdfg)
+    states = dominators[dummy_sink]
+    # remove dummy state
+    sdfg.remove_node(dummy_sink)
+    return states
+
+
+def unsqueeze_memlet_subsetList(
+        internal_memlet: Memlet,
+        external_memlet: Memlet,
+        parent_sdfg: dace.SDFG,
+        nsdfg: NestedSDFG
+) -> Memlet:
+    """helper method that tries to unsqueeze a memlet in a nested SDFG.
+    If it fails it falls back to an empty memlet."""
+
+    from dace.transformation.helpers import unsqueeze_memlet
+
+    if isinstance(external_memlet.subset, subsets.Subsetlist):
+        external_memlet.subset = external_memlet.subset.subset_list[0]
+    if isinstance(external_memlet.dst_subset, subsets.Subsetlist):
+        external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
+    if isinstance(external_memlet.src_subset, subsets.Subsetlist):
+        external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
+
+    if isinstance(internal_memlet.subset, subsets.Subsetlist):
+        _subsets = internal_memlet.subset.subset_list
+    else:
+        _subsets = [internal_memlet.subset]
+
+    tmp_memlet = Memlet(
+        data=internal_memlet.data,
+        subset=internal_memlet.subset,
+        other_subset=internal_memlet.other_subset
+    )
+
+    internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
+    external_array = parent_sdfg.arrays[external_memlet.data]
+
+    for j, subset in enumerate(_subsets):
+        if subset is None:
+            continue
+        tmp_memlet.subset = subset
+        try:
+            unsqueezed_memlet = unsqueeze_memlet(
+                tmp_memlet, external_memlet, False, internal_offset=internal_array.offset,
+                external_offset=external_array.offset)
+            subset = unsqueezed_memlet.subset
+        except (ValueError, NotImplementedError):
+            # In any case of memlets that cannot be unsqueezed (i.e.,
+            # reshapes), use empty memlets.
+            subset = None
+        _subsets[j] = subset
+
+    # if all subsets are empty make memlet empty
+    if all(s is None for s in _subsets):
+        external_memlet.subset = None
+        external_memlet.other_subset = None
+    else:
+        external_memlet = unsqueezed_memlet
+        external_memlet.subset = subsets.Subsetlist(_subsets)
+
+    return external_memlet
+
+
+def _find_top_loopheaders(loops: dict[SDFGState, (SDFGState, SDFGState, list[SDFGState], str, subsets.Range)]) -> Set[SDFGState]:
+    top_loopheaders = set()
+    for current_loop_header, current_loop in loops.items():
+        for other_loop_header, other_loop in loops.items():
+            if other_loop_header is current_loop_header:
+                continue
+            _, _, other_loop_states, _, _ = other_loop
+            if current_loop_header in other_loop_states:
+                break
+        else:
+            top_loopheaders.add(current_loop_header)
+    return top_loopheaders
+
+
+def _freesyms(expr):
+    """
+    Helper function that either returns free symbols for sympy expressions
+    or an empty set if constant.
+    """
+    if isinstance(expr, sympy.Basic):
+        return expr.free_symbols
+    return {}
+
+
+def _collect_iteration_variables(
+        state: SDFGState,
+        node: nodes.NestedSDFG
+) -> set[str]:
+    """
+    Helper method which finds all the iteration variables that
+    surround a nested SDFG in a state.
+
+    :param state: The state in which the nested SDFG resides
+    :param node: The nested SDFG that the surrounding iteration
+                variables need to be found for
+
+    :return: The set of iteration variables surrounding the nested SDFG
+    """
+    scope_dict = state.scope_dict()
+    current_scope: nodes.EntryNode = scope_dict[node]
+    params = set()
+    while current_scope:
+        # TODO: what about consume?
+        mapnode: nodes.Map = current_scope.map
+        params.update(set(mapnode.params))
+        current_scope = scope_dict[current_scope]
+
+    return params
+
+
+def _collect_itvars_scope(
+        scopes: Union[ScopeTree, List[ScopeTree]]
+) -> Dict[ScopeTree, Set[str]]:
+    """
+    Helper method which finds all surrounding iteration variables for each scope
+
+    :param scopes: A List of scope trees or a single scopetree to analize
+    :return: A dictionary mapping each ScopeTree object in scopes to the
+            list of iteration variables surrounding it
+    """
+    if isinstance(scopes, ScopeTree):
+        scopes_to_process = [scopes]
+    else:
+        scopes_to_process = scopes
+
+    next_scopes = set()
+    surrounding_map_vars = {}
+    while len(scopes_to_process) > 0:
+        for scope in scopes_to_process:
+            if scope is None:
+                continue
+            next_scope = scope
+            while next_scope:
+                next_scope = next_scope.parent
+                if next_scope is None:
+                    break
+                curr_entry = next_scope.entry
+                if scope not in surrounding_map_vars:
+                    surrounding_map_vars[scope] = set()
+                if isinstance(curr_entry, nodes.MapEntry):
+                    surrounding_map_vars[scope] |= set(
+                        curr_entry.map.params)
+            next_scopes.add(scope.parent)
+        scopes_to_process = next_scopes
+        next_scopes = set()
+    return surrounding_map_vars
+
+
 class UnderapproximateWrites(ppl.Pass):
 
     def depends_on(self) -> Set[Type[Pass] | Pass]:
@@ -579,7 +742,7 @@ class UnderapproximateWrites(ppl.Pass):
                 # this cycle.
                 increment_edge = None
                 for iedge in in_edges:
-                    if itvarsym in self._freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
+                    if itvarsym in _freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
                         # if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
                         increment_edge = iedge
                         break
@@ -670,22 +833,8 @@ class UnderapproximateWrites(ppl.Pass):
         for connector in nsdfg_node.out_connectors:
             border_memlets[connector] = None
 
-        # find states that are executed unconditionally
-        sdfg: dace.SDFG = nsdfg_node.sdfg
         outer_symbols = parent_state.symbols_defined_at(nsdfg_node)
-        # add dummy state as a sink
-        dummy_sink = sdfg.add_state("dummy_state")
-        for sink_node in sdfg.sink_nodes():
-            if not sink_node is dummy_sink:
-                sdfg.add_edge(sink_node, dummy_sink,
-                              dace.sdfg.InterstateEdge())
-        # get all the nodes that are executed unconditionally in the state-machine a.k.a nodes
-        # that dominate the sink states
-        dominators = cfg.all_dominators(sdfg)
-        states = dominators[dummy_sink]
-        # remove dummy state
-        sdfg.remove_node(dummy_sink)
-
+        states = _find_unconditionally_executed_states(nsdfg_node.sdfg)
         # For each state, go through all access nodes corresponding to any
         # out-connector from this SDFG. Given those access nodes, collect
         # the corresponding memlets and use them to calculate the
@@ -747,12 +896,12 @@ class UnderapproximateWrites(ppl.Pass):
                     # If the border memlet already has a set range, compute the
                     # union of the ranges to merge the subsets.
                     if border_memlet.subset is not None:
-                        if border_memlet.subset.dims() != subset.dims():
-                            raise ValueError(
-                                'Cannot merge subset ranges of unequal dimension!')
-                        else:
+                        if border_memlet.subset.dims() == subset.dims():
                             border_memlet.subset = subsets.list_union(
                                 border_memlet.subset, subset)
+                        else:
+                            raise ValueError(
+                                'Cannot merge subset ranges of unequal dimension!')
                     else:
                         border_memlet.subset = subset
 
@@ -813,68 +962,10 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge] = out_memlet
                     continue
 
-                out_memlet = self.unsqueeze_memlet_subsetList(
+                out_memlet = unsqueeze_memlet_subsetList(
                     internal_memlet, out_memlet, parent_sdfg, nsdfg_node)
 
                 approximation_dict[edge] = out_memlet
-
-    def unsqueeze_memlet_subsetList(
-            self,
-            internal_memlet: Memlet,
-            external_memlet: Memlet,
-            parent_sdfg: dace.SDFG,
-            nsdfg: NestedSDFG
-    ) -> Memlet:
-        """helper method that tries to unsqueeze a memlet in a nested SDFG.
-        If it fails it falls back to an empty memlet."""
-
-        from dace.transformation.helpers import unsqueeze_memlet
-
-        if isinstance(external_memlet.subset, subsets.Subsetlist):
-            external_memlet.subset = external_memlet.subset.subset_list[0]
-        if isinstance(external_memlet.dst_subset, subsets.Subsetlist):
-            external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
-        if isinstance(external_memlet.src_subset, subsets.Subsetlist):
-            external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
-
-        if isinstance(internal_memlet.subset, subsets.Subsetlist):
-            _subsets = internal_memlet.subset.subset_list
-        else:
-            _subsets = [internal_memlet.subset]
-
-        tmp_memlet = Memlet(
-            data=internal_memlet.data,
-            subset=internal_memlet.subset,
-            other_subset=internal_memlet.other_subset
-        )
-
-        internal_array = nsdfg.sdfg.arrays[internal_memlet.data]
-        external_array = parent_sdfg.arrays[external_memlet.data]
-
-        for j, subset in enumerate(_subsets):
-            if subset is None:
-                continue
-            tmp_memlet.subset = subset
-            try:
-                unsqueezed_memlet = unsqueeze_memlet(
-                    tmp_memlet, external_memlet, False, internal_offset=internal_array.offset,
-                    external_offset=external_array.offset)
-                subset = unsqueezed_memlet.subset
-            except (ValueError, NotImplementedError):
-                # In any case of memlets that cannot be unsqueezed (i.e.,
-                # reshapes), use empty memlets.
-                subset = None
-            _subsets[j] = subset
-
-        # if all subsets are empty make memlet empty
-        if all(s is None for s in _subsets):
-            external_memlet.subset = None
-            external_memlet.other_subset = None
-        else:
-            external_memlet = unsqueezed_memlet
-            external_memlet.subset = subsets.Subsetlist(_subsets)
-
-        return external_memlet
 
     def propagate_memlets_sdfg(
             self,
@@ -943,45 +1034,27 @@ class UnderapproximateWrites(ppl.Pass):
 
         if not loops:
             return
-
         # No loopheader was passed as an argument so we find the outermost loops
-        if loopheader == None:
-            top_loopheaders = []
-            for current_loop_header, current_loop in loops.items():
-                for other_loop_header, other_loop in loops.items():
-                    if other_loop_header is current_loop_header:
-                        continue
-                    _, _, other_loop_states, _, _ = other_loop
-                    if current_loop_header in other_loop_states:
-                        break
-                else:
-                    top_loopheaders.append(current_loop_header)
-
-            if not top_loopheaders:
-                return
-
+        if loopheader is None:
+            top_loopheaders = _find_top_loopheaders(loops)
             # propagate out of loops recursively
-            for loopheader in top_loopheaders:
-                self.propagate_memlet_loop(sdfg, loops, loopheader)
+            for top_loopheader in top_loopheaders:
+                self.propagate_memlet_loop(sdfg, loops, top_loopheader)
             return
 
         current_loop = loops[loopheader]
         begin, last_loop_state, loop_states, itvar, rng = current_loop
         if rng.num_elements() == 0:
             return
-
         # make sure there is no break out of the loop
         dominators = cfg.all_dominators(sdfg)
         if any(begin not in dominators[s] and not begin is s for s in loop_states):
             return
-
         border_memlets = defaultdict(None)
-
         # get all the nodes that are executed unconditionally in the cfg
         # a.k.a nodes that dominate the sink states
         states = dominators[last_loop_state].intersection(set(loop_states))
         states.update([loopheader, last_loop_state])
-
         # maintain a list of states that are part of nested loops
         ignore = []
         for state in loop_states:
@@ -989,7 +1062,7 @@ class UnderapproximateWrites(ppl.Pass):
                 continue
 
             # recursively propagate nested loops and ignore the nested states
-            if state in loops and not state is loopheader:
+            if state in loops and state is not loopheader:
                 self.propagate_memlet_loop(sdfg, loops, state)
                 _, _, nested_loop_states, _, _ = loops[state]
                 ignore += nested_loop_states
@@ -1129,7 +1202,7 @@ class UnderapproximateWrites(ppl.Pass):
     def propagate_memlets_state(
             self,
             sdfg: SDFG,
-            state: SDFG
+            state: SDFGState
     ):
         """ Propagates memlets throughout one SDFG state.
 
@@ -1160,24 +1233,24 @@ class UnderapproximateWrites(ppl.Pass):
         #    Accumulate information about each array in the target node.
 
         # First, propagate nested SDFGs in a bottom-up fashion
+        def symbol_map(mapping, symbol):
+            if symbol in mapping:
+                return mapping[symbol]
+            return None
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
 
-                map_ivars = self._collect_iteration_variables(state, node)
-                sdfg_ivars = iteration_variables[sdfg] if sdfg in iteration_variables else set(
+                map_iteration_variables = _collect_iteration_variables(
+                    state, node)
+                sdfg_iteration_variables = iteration_variables[sdfg] if sdfg in iteration_variables else set(
                 )
-                state_ivars = ranges_per_state[state].keys()
-                it_vars = map_ivars | sdfg_ivars | state_ivars
-
-                def mapfunction(mapping, symbol):
-                    if symbol in mapping:
-                        return mapping[symbol]
-                    return None
+                state_iteration_variables = ranges_per_state[state].keys()
+                iteration_variables_local = map_iteration_variables | sdfg_iteration_variables | state_iteration_variables
 
                 # apply symbol mapping of nested SDFG
                 symbol_mapping = node.symbol_mapping
                 iteration_variables[node.sdfg] = set(map(
-                    lambda x: mapfunction(symbol_mapping, x), it_vars))
+                    lambda x: symbol_map(symbol_mapping, x), iteration_variables_local))
 
                 # Propagate memlets inside the nested SDFG.
                 self.propagate_memlets_sdfg(node.sdfg)
@@ -1207,7 +1280,8 @@ class UnderapproximateWrites(ppl.Pass):
         """
 
         # for each map scope find the iteration variables of surrounding maps
-        surrounding_map_vars: Dict[ScopeTree, set[str]] = self._collect_itvars_scope(scopes)
+        surrounding_map_vars: Dict[ScopeTree,
+                                   set[str]] = _collect_itvars_scope(scopes)
 
         if isinstance(scopes, ScopeTree):
             scopes_to_process = [scopes]
@@ -1223,22 +1297,23 @@ class UnderapproximateWrites(ppl.Pass):
                 if scope.entry is None:
                     continue
 
-                map_vars = surrounding_map_vars[scope] if scope in surrounding_map_vars else set(
+                map_iteration_variables = surrounding_map_vars[scope] if scope in surrounding_map_vars else set(
                 )
-                sdfg_vars = iteration_variables[sdfg] if sdfg in iteration_variables else set(
+                sdfg_iteration_variables = iteration_variables[sdfg] if sdfg in iteration_variables else set(
                 )
-                loop_vars = ranges_per_state[state].keys()
-
-                surrounding_vars = map_vars | sdfg_vars | loop_vars
+                loop_iteration_variables = ranges_per_state[state].keys()
+                surrounding_iteration_variables = map_iteration_variables | sdfg_iteration_variables | loop_iteration_variables
 
                 # TODO: Maybe only propagate in one direction since we are only interested in writes
                 # Propagate out of entry
                 if propagate_entry:
-                    self._propagate_node(state, scope.entry, surrounding_vars)
+                    self._propagate_node(
+                        state, scope.entry, surrounding_iteration_variables)
 
                 # Propagate out of exit
                 if propagate_exit:
-                    self._propagate_node(state, scope.exit, surrounding_vars)
+                    self._propagate_node(
+                        state, scope.exit, surrounding_iteration_variables)
 
                 # Add parent to next frontier
                 next_scopes.add(scope.parent)
@@ -1546,76 +1621,3 @@ class UnderapproximateWrites(ppl.Pass):
         new_memlet.subset = new_subset
         new_memlet.other_subset = None
         return new_memlet
-
-    def _freesyms(self, expr):
-        """ 
-        Helper function that either returns free symbols for sympy expressions
-        or an empty set if constant.
-        """
-        if isinstance(expr, sympy.Basic):
-            return expr.free_symbols
-        return {}
-
-    def _collect_iteration_variables(
-            self,
-            state: SDFGState,
-            node: nodes.NestedSDFG
-    ) -> set[str]:
-        """
-        Helper method which finds all the iteration variables that 
-        surround a nested SDFG in a state.
-
-        :param state: The state in which the nested SDFG resides
-        :param node: The nested SDFG that the surrounding iteration 
-                    variables need to be found for
-
-        :return: The set of iteration variables surrounding the nested SDFG
-        """
-        scope_dict = state.scope_dict()
-        current_scope: nodes.EntryNode = scope_dict[node]
-        params = set()
-        while current_scope:
-            # TODO: what about consume?
-            mapnode: nodes.Map = current_scope.map
-            params.update(set(mapnode.params))
-            current_scope = scope_dict[current_scope]
-
-        return params
-
-    def _collect_itvars_scope(
-            self,
-            scopes: Union[ScopeTree, List[ScopeTree]]
-    ) -> Dict[ScopeTree, Set[str]]:
-        """
-        Helper method which finds all surrounding iteration variables for each scope
-
-        :param scopes: A List of scope trees or a single scopetree to analize
-        :return: A dictionary mapping each ScopeTree object in scopes to the 
-                list of iteration variables surrounding it
-        """
-        if isinstance(scopes, ScopeTree):
-            scopes_to_process = [scopes]
-        else:
-            scopes_to_process = scopes
-
-        next_scopes = set()
-        surrounding_map_vars = {}
-        while len(scopes_to_process) > 0:
-            for scope in scopes_to_process:
-                if scope is None:
-                    continue
-                next_scope = scope
-                while next_scope:
-                    next_scope = next_scope.parent
-                    if next_scope is None:
-                        break
-                    curr_entry = next_scope.entry
-                    if scope not in surrounding_map_vars:
-                        surrounding_map_vars[scope] = set()
-                    if isinstance(curr_entry, nodes.MapEntry):
-                        surrounding_map_vars[scope] |= set(
-                            curr_entry.map.params)
-                next_scopes.add(scope.parent)
-            scopes_to_process = next_scopes
-            next_scopes = set()
-        return surrounding_map_vars

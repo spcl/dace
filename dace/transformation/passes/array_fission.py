@@ -116,7 +116,7 @@ class ArrayFission(ppl.Pass):
         )
 
         # store all the new names for each original variable name
-        definitions: Dict[str, Set(str)] = defaultdict(None)
+        definitions: Dict[str, Set[str]] = defaultdict(None)
         for var, an_dict in access_nodes.items():
             current_defs = set()
             for _, ans in an_dict.items():
@@ -268,7 +268,7 @@ def _eliminate_phi_nodes(
 
             # rename phi nodes and propagate parameters
             _rename_phi_related_phi_nodes(parameters, original_var, newname, candidate_states,
-                                          state, phi_nodes, reached_by_def, is_read, overwriting_loop)
+                                          state, phi_nodes, reached_by_def, is_read)
             # rename accesses
             if is_read:
                 _rename_phi_related_accesses(sdfg, parameters, original_var, newname, candidate_states,
@@ -346,7 +346,6 @@ def _rename_phi_related_phi_nodes(
     phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
     reached_by_def: set[SDFGState],
     is_read: bool,
-    is_overwriting_loop: bool
 ):
     for other_state in candidate_states:
         # rename all phi nodes and propagate

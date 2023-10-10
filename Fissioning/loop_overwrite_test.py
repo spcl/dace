@@ -277,11 +277,11 @@ def test_loop_read_before_write_no_fission():
     sdfg.add_edge(loop_1_1, loop_1_2, tmp1_edge)
     sdfg.add_edge(loop_1_2, guard_1, dace.InterstateEdge(
         assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard_1, after, dace.InterstateEdge(condition='i >= N - 1'))
+    sdfg.add_edge(guard_1, after, dace.InterstateEdge(condition='i >= N'))
     overwrite_0 = init_state.add_tasklet('overwrite_0', None, {'a'}, 'a = 0')
-    tmp_access_0 = init_state.add_access("tmp")
-    init_state.add_edge(overwrite_0, 'a', tmp_access_0,
-                        None, dace.Memlet('tmp'))
+    A_access_init = init_state.add_access('A')
+    init_state.add_edge(overwrite_0, 'a', A_access_init,
+                        None, dace.Memlet('A'))
     A_access_0 = loop_1_1.add_access("A")
     B_access_0 = loop_1_1.add_access("B")
     tmp_access_1 = loop_1_1.add_access("tmp")
@@ -318,14 +318,14 @@ def test_loop_read_before_write_no_fission():
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [
-        set([A_access_0, loop1_write_a, after_read_A])]
+        set([A_access_0, loop1_write_a, after_read_A, A_access_init])]
     name_sets["tmp"] = [set(
-        [tmp_access_0, tmp_access_1, loop1_read_tmp, after_write_tmp])]
+        [tmp_access_1, loop1_read_tmp, after_write_tmp])]
     name_sets["B"] = [set([B_access_0])]
     access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[AccessNode], Set[AccessNode]]]
                        ] = result[FindAccessNodes.__name__][sdfg.sdfg_id]
+
     assert_rename_sets(name_sets, access_nodes)
-    sdfg.validate()
     try:
         sdfg.validate()
     except:
@@ -378,7 +378,7 @@ def test_loop_read_before_write_interstate():
                    None, dace.Memlet("tmp[0]"))
 
     result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
-    sdfg.view()
+
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [set([loop1_write_a, after_read_A, A_access_init])]
     name_sets["tmp"] = [set([tmp_access_0, loop1_read_tmp, after_write_tmp])]
