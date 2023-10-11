@@ -14,7 +14,6 @@ from dace.sdfg import SDFG, nodes, graph as gr
 import time
 from typing import Set, Tuple, Union, List, Iterable, Dict, Optional
 import warnings
-import logging
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
@@ -31,8 +30,6 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 
 # FPGA AutoOpt
 from dace.transformation.auto import fpga as fpga_auto_opt
-
-logger = logging.getLogger(__name__)
 
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
@@ -70,10 +67,10 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
     :param graph_or_subgraph: SDFG, SDFGState or Subgraph
-    :param validate_all: Validate SDFG or graph at each fusion step
-    :param device: Device type to specialize for
+    :param validate_all: Validate SDFG or graph at each fusion step 
+    :param device: Device type to specialize for 
     :param recursive: Fuse recursively within (fused and unfused) scopes
-    :param stencil: Perform stencil fusion instead of regular fusion
+    :param stencil: Perform stencil fusion instead of regular fusion 
     :param stencil_tile: StencilTiling Tile size, default if None
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
@@ -103,7 +100,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            # sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:
@@ -147,12 +144,9 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             fusion_condition.expansion_split = not permutations_only
 
         condition_function = lambda sdfg, subgraph: fusion_condition.can_be_applied(sdfg, subgraph)
-        logger.debug("Enumerate greedly in sdfg: %s graph: %s using subgraph with %i nodes", sdfg.name, graph.name,
-                     len(subgraph.nodes()))
         enumerator = GreedyEnumerator(sdfg, graph, subgraph, condition_function=condition_function)
         for map_entries in enumerator:
             if len(map_entries) > 1:
-                logger.debug("Setup up composite fusion for maps: %s", map_entries)
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = get_composite_fusion(k_caching_args)
                 cf.setup_match(current_subgraph)
@@ -162,26 +156,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 cf.expansion_split = fusion_condition.expansion_split
                 cf.stencil_strides = fusion_condition.stencil_strides
 
-                if config.Config.get('debugpass') == True:
-                    original_sdfg = copy.deepcopy(sdfg)
-                    sdfg_name = f"{original_sdfg.label}_{str(time.time()).replace('.', '_')}.sdfg"
-                    try:
-                        cf.apply(sdfg) 
-                    except Exception as e:
-                        original_sdfg.save(sdfg_name)
-                        print(f'Exception occured when applying {type(cf).__name__}.')
-                        print(f'Last correct SDFG: {sdfg_name}')
-                        raise e
-                    finally:
-                        try:
-                            sdfg.validate()
-                        except Exception as e:
-                            original_sdfg.save(sdfg_name)
-                            print(f'Validation failed after applying {type(cf).__name__}.')
-                            print(f'Last correct SDFG: {sdfg_name}')
-                            raise e
-                else:
-                    cf.apply(sdfg)
+                cf.apply(sdfg)
                 applied_transformations += 1
 
             if recursive:
@@ -615,24 +590,23 @@ def auto_optimize(sdfg: SDFG,
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
 
-    # fuse subgraphs greedily
-    sdfg.simplify()
-
-    if device != dtypes.DeviceType.Generic:
-
-        greedy_fuse(sdfg, device=device, validate_all=validate_all)
-
-        # fuse stencils greedily
-        greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
-
-    # Move Loops inside Maps when possible
-    from dace.transformation.interstate import MoveLoopIntoMap
-    # sdfg.apply_transformations_repeated([MoveLoopIntoMap])
-
     # Apply GPU transformations and set library node implementations
+
     if device == dtypes.DeviceType.GPU:
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
+
+    # fuse subgraphs greedily
+    sdfg.simplify()
+
+    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+
+    # fuse stencils greedily
+    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
@@ -656,13 +630,6 @@ def auto_optimize(sdfg: SDFG,
             # FORNOW: Leave out
             # node.map.collapse = len(node.map.range)
             pass
-
-    if device == dtypes.DeviceType.Generic:
-        # Validate at the end
-        if validate or validate_all:
-            sdfg.validate()
-
-        return sdfg
 
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
