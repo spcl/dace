@@ -7,7 +7,6 @@ import itertools
 import sympy as sp
 import networkx as nx
 from typing import Dict, List, Optional, Set, Tuple
-import re as regex
 import logging
 
 from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
@@ -93,13 +92,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         desc='The name of the iteration variable (optional).',
     )
 
-    nsdfg = Property(
-        dtype=nodes.NestedSDFG,
-        allow_none=True,
-        default=None,
-        desc='The nested SDFG created when applying the transformation, if required',
-    )
-
     additional_rw = Property(
         dtype=set,
         allow_none=False,
@@ -172,7 +164,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         assigned_symbols.add(k)
                 if assigned_symbols & used_before_assignment:
                     return False
-
 
                 symbols_that_may_be_used |= e.data.assignments.keys()
 
@@ -447,7 +438,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             # Also, find defined symbols in NestedSDFG
             fsymbols = set(sdfg.free_symbols)
             new_body = sdfg.add_state('single_state_body')
-            # nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
             nsdfg = SDFG(f"loop_body_of_{itervar}", constants=sdfg.constants_prop, parent=new_body)
             nsdfg.add_node(body, is_start_state=True)
             body.parent = nsdfg
@@ -490,7 +480,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
             logger.debug("Add nsdfg with read: %s and writes: %s and name: %s", read_set, write_set, cnode.label)
-            self.nsdfg = cnode
             if sdfg.parent:
                 for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                     if s not in cnode.symbol_mapping:
@@ -525,7 +514,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
             logger.debug("Created nested SDFG with name %s as edge %s -> %s has assignment %s", nsdfg.label,
                          isedge.src, isedge.dst, isedge.data.assignments)
-            self.nsdfg = nsdfg
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
@@ -711,11 +699,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # Route body directly to after state, maintaining any other assignments
         # it might have had
         sdfg.add_edge(body, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
-
-        # If removed this leads to an error in some graphs, somehow the save has a sideeffect:
-        # WARNING: LoopToMap::can_be_applied triggered a AttributeError exception: 'NoneType' object has no attribute 'covers'
-        # Interestingly it does not seem to have an impact on the resulting SDFG
-        sdfg.save('/tmp/graph.sdfg')
 
         # If this had made the iteration variable a free symbol, we can remove
         # it from the SDFG symbols
