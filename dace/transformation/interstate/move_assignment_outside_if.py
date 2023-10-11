@@ -1,14 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" TODO """
+""" 
+Transformation to move assignments outside if statements to potentially avoid warp divergence. Speedup gained is
+questionable.
+"""
 
 import ast
 import sympy as sp
 
-import dace
 from dace import sdfg as sd
 from dace.sdfg import graph as gr
 from dace.sdfg.nodes import Tasklet, AccessNode
-from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 
 
@@ -92,7 +93,6 @@ class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     def apply(self, _, sdfg: sd.SDFG):
         # create a new state before the guard state where the zero assignment happens
-        # TODO: Find a better name for the new state
         new_assign_state = sdfg.add_state_before(self.if_guard, label="const_assignment_state")
 
         # Move all the Tasklets together with the AccessNode

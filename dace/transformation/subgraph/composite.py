@@ -60,7 +60,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
         """
         Creates a SubgraphFusion object and sets its property which it shares with this
 
-        :return: The SubgraphFusion object
+        :return: The created SubgraphFusion instance
         :rtype: SubgraphFusion
         """
         sf = SubgraphFusion()
@@ -72,7 +72,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
         """
         Create MultiExpansion instance coping some required property
 
-        :return: [TODO:description]
+        :return: The created SubgraphExpansion instance
         :rtype: MultiExpansion
         """
         se = MultiExpansion()
@@ -87,7 +87,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
         subgraph = self.subgraph_view(sdfg)
         scope_dict = graph.scope_dict()
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
-        logger.debug("")
         logger.debug("Check for maps: %s", [m.map for m in map_entries])
 
         if self.allow_expansion == True:

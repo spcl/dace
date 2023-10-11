@@ -133,7 +133,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
         # next, get all the base maps and expand
         maps = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
         self.expand(sdfg, graph, maps, map_base_variables=map_base_variables)
-        sdfg.save('subgraph/after_expansion.sdfg')
 
     def expand(self, sdfg, graph, map_entries, map_base_variables=None):
         """
@@ -183,7 +182,6 @@ class MultiExpansion(transformation.SubgraphTransformation):
             map_base_variables = []
             for rng, indices in zip(map_base_ranges, range_indices):
                 for i in range(len(maps[0].params)):
-                    # if maps[0].range[i] == rng and maps[0].params[i] not in map_base_variables:
                     if i in indices and maps[0].params[i] not in map_base_variables:
                         map_base_variables.append(maps[0].params[i])
                         break

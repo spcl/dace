@@ -314,8 +314,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         return True
 
-    @staticmethod
-    def _is_array_thread_local(name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
+    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
         """
         This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
         i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.

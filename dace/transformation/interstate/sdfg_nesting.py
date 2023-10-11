@@ -12,7 +12,6 @@ import warnings
 from functools import reduce
 import operator
 import copy
-import logging
 
 from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
