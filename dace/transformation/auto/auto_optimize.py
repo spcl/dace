@@ -1,19 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
-import copy
 import dace
 import sympy
 from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-import time
-from typing import Set, Tuple, Union, List, Iterable, Dict, Optional
-import warnings
+from typing import Set, Tuple, Union, List, Dict, Optional
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
