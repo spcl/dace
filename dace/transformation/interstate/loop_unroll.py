@@ -79,8 +79,6 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.
         itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
-        
-        print("LoopUnroll: ", itervar, rng)
 
         # Loop must be fully unrollable for now.
         if self.count != 0:
@@ -92,7 +90,6 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
-        print("Unrolling: ", itervar)
 
         try:
             start, end, stride = (r for r in rng)
