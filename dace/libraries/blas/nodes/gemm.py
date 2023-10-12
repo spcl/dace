@@ -50,6 +50,13 @@ class ExpandGemmPure(ExpandTransformation):
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
+        alpha_desc = None
+        for e in parent_state.in_edges(node):
+            if e.dst_conn == '_alpha':
+                alpha_node = parent_state.memlet_path(e)[0].src
+                if isinstance(alpha_node, dace.sdfg.nodes.AccessNode):
+                    alpha_desc: dt.Array = parent_sdfg.arrays[alpha_node.data]
+
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
         dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
@@ -81,16 +88,22 @@ class ExpandGemmPure(ExpandTransformation):
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
         _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
-        if node.alpha == 1.0:
-            mul_program = "__out = __a * __b"
-        else:
-            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
-
         if node.beta == 1:
             state = sdfg.add_state(node.label + "_state")
         else:
             init_state = sdfg.add_state(node.label + "_initstate")
             state = sdfg.add_state_after(init_state, node.label + "_state")
+
+        if alpha_desc is not None:
+            dcopy = dc(alpha_desc)
+            dcopy.lifetime = dtypes.AllocationLifetime.Scope
+            dcopy.transient = False
+            sdfg.add_datadesc('_alpha', dcopy)
+            mul_program = "__out = (_alpha * __a) * __b"
+        elif node.alpha == 1.0:
+            mul_program = "__out = __a * __b"
+        else:
+            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
 
         if '_cin' in node.in_connectors:
             sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
@@ -132,12 +145,14 @@ class ExpandGemmPure(ExpandTransformation):
                                           external_edges=True)
 
         # Multiplication map
+        gemm_inputs = {
+            "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+            "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")}
+        if alpha_desc is not None:
+            gemm_inputs["_alpha"] = dace.Memlet.from_array('_alpha', alpha_desc)
         state.add_mapped_tasklet("gemm", {"__i%d" % i: "0:%s" % s
                                           for i, s in enumerate([M, N, K])},
-                                 {
-                                     "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                                     "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
-                                 },
+                                 gemm_inputs,
                                  mul_program,
                                  {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
                                  external_edges=True,
