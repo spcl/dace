@@ -262,31 +262,14 @@ class CallExtractor(NodeTransformer):
             if res is not None:
                 for i in range(0, len(res)):
 
-                    if (res[i].name.name == "__dace_sum"):
-                        newbody.append(
-                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[i].type,
-                                    sizes=None
-                                )
-                            ]))
-                        newbody.append(
-                            ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="tmp_call_" +
-                                                                                                str(temp)),
-                                                            op="=",
-                                                            rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                                                            line_number=child.line_number))
-                    else:
-
-                        newbody.append(
-                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[i].type,
-                                    sizes=None
-                                )
-                            ]))
+                    newbody.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Var_Decl_Node(
+                                name="tmp_call_" + str(temp),
+                                type=res[i].type,
+                                sizes=None
+                            )
+                        ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
                                                         lval=ast_internal_classes.Name_Node(name="tmp_call_" +
@@ -961,6 +944,15 @@ class SumToLoop(NodeTransformer):
 
                 par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
 
+                # Initialize the result variable
+                newbody.append(
+                    ast_internal_classes.BinOp_Node(
+                        lval=current,
+                        op="=",
+                        rval=ast_internal_classes.Int_Literal_Node(value="0"),
+                        line_number=child.line_number
+                    )
+                )
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,
                                                        op="=",
