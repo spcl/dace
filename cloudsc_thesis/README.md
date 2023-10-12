@@ -13,6 +13,28 @@ My run scripts require the following additional python packages in order to coll
 - pandas
 - seaborn
 
+## Structure of this folder
+This folder contains several subfolders. These are:
+
+- `basic_sdfg`: Storage of basic SDFGs used
+- `fortran_programs`: The source code of the Fortran programs used
+- `src`: The python code used to generate the SDFGs and so on
+
+In addition the scripts might create two additional folders:
+- `sdfg_graphs`: Intermediate SDFGs will be stored here for further inspection
+- `full_cloudsc_logs`: The logfiles created when running the scripts for the full cloudsc as well as the generated SDFGs
+
+## SDFG generation process
+In order to cut down the time to generate a SDFG, especially for the full CLOUDSC code I implemented a two phase model.
+First a basic SDFG is generated without any optimisations applied, but all loops are converted to maps if possible as
+this takes the longest amount of time (on my local machine 2-3 hours). These are then stored in the `basic_sdfg` folder.
+This SDFG is then loaded to perform the further optimisations (these take on my local machine something from 2min up to
+just under 30min). 
+
+For the full cloudsc code the basic SDFG is already provided for your convenience and as some of my scripts have certain
+state names hard coded which might change depending on the other of transformations applied which is not fixed (when
+using `sdfg.apply_transformation_repeated`)
+
 ## How to run
 All commands given here assume that you execute them for this directory.
 

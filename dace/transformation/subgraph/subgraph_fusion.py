@@ -893,11 +893,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         """
         Check if the data of the given array name is initialised outside of the given state
 
-        :param sdfg: [TODO:description]
+        :param sdfg: The SDFG containing the given state in which to look for the initialisation
         :type sdfg: dace.sdfg.SDFG
-        :param this_state: [TODO:description]
+        :param this_state: The state
         :type this_state: SDFGState
-        :param data_name: [TODO:description]
+        :param data_name: The name of the data to check
         :type data_name: str
         :return: If an init 
         :rtype: Optional[Tuple[SDFGState, List[Tuple[nodes.MapExit, int]]]]
