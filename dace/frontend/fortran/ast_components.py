@@ -6,6 +6,7 @@ from fparser.two import symbol_table
 import copy
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
+from dace.frontend.fortran.intrinsics import FortranIntrinsics
 from typing import Any, List, Tuple, Type, TypeVar, Union, overload
 
 #We rely on fparser to provide an initial AST and convert to a version that is more suitable for our purposes
@@ -122,6 +123,7 @@ class InternalFortranAst:
             "DOUBLE PRECISION": "DOUBLE",
             "REAL": "REAL",
         }
+        self.intrinsic_handler = FortranIntrinsics()
         self.supported_fortran_syntax = {
             "str": self.str_node,
             "tuple": self.tuple_node,
@@ -242,7 +244,7 @@ class InternalFortranAst:
             "Level_2_Unary_Expr": self.level_2_expr,
             "Mult_Operand": self.power_expr,
             "Parenthesis": self.parenthesis_expr,
-            "Intrinsic_Name": self.intrinsic_name,
+            "Intrinsic_Name": self.intrinsic_handler.replace_function_name,
             "Intrinsic_Function_Reference": self.intrinsic_function_reference,
             "Only_List": self.only_list,
             "Structure_Constructor": self.structure_constructor,
@@ -395,65 +397,12 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Component_Spec_List_Node)
         return ast_internal_classes.Structure_Constructor_Node(name=name, args=args.args, type=None)
 
-    def intrinsic_name(self, node: FASTNode):
-        name = node.string
-        replacements = {
-            "INT": "__dace_int",
-            "DBLE": "__dace_dble",
-            "SQRT": "sqrt",
-            "COSH": "cosh",
-            "ABS": "abs",
-            "MIN": "min",
-            "MAX": "max",
-            "EXP": "exp",
-            "EPSILON": "__dace_epsilon",
-            "TANH": "tanh",
-            "SUM": "__dace_sum",
-            "SIGN": "__dace_sign",
-            "EXP": "exp",
-            "SELECTED_INT_KIND": "__dace_selected_int_kind",
-            "SELECTED_REAL_KIND": "__dace_selected_real_kind",
-        }
-        return ast_internal_classes.Name_Node(name=replacements[name])
-
     def intrinsic_function_reference(self, node: FASTNode):
         children = self.create_children(node)
         line = get_line(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
-        if name.name == "__dace_selected_int_kind":
-            import math
-            return ast_internal_classes.Int_Literal_Node(value=str(
-                math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
-                                                         line_number=line)
-        # This selects the smallest kind that can hold the given number of digits (fp64,fp32 or fp16)
-        elif name.name == "__dace_selected_real_kind":
-            if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
-                return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-            elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
-                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
-            else:
-                return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
-
-        func_types = {
-            "__dace_int": "INT",
-            "__dace_dble": "DOUBLE",
-            "sqrt": "DOUBLE",
-            "cosh": "DOUBLE",
-            "abs": "DOUBLE",
-            "min": "DOUBLE",
-            "max": "DOUBLE",
-            "exp": "DOUBLE",
-            "__dace_epsilon": "DOUBLE",
-            "tanh": "DOUBLE",
-            "__dace_sum": "DOUBLE",
-            "__dace_sign": "DOUBLE",
-            "exp": "DOUBLE",
-            "__dace_selected_int_kind": "INT",
-            "__dace_selected_real_kind": "INT",
-        }
-        call_type = func_types[name.name]
-        return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
+        return self.intrinsic_handler.replace_function_reference(name, args, line)
 
     def function_stmt(self, node: FASTNode):
         raise NotImplementedError(
