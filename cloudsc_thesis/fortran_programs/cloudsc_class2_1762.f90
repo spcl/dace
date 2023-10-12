@@ -1,0 +1,88 @@
+PROGRAM precipitation_cover_overlap
+
+    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
+
+    INTEGER(KIND=JPIM), PARAMETER  :: KLON = 100
+    INTEGER(KIND=JPIM), PARAMETER  :: KLEV = 100
+    INTEGER(KIND=JPIM), PARAMETER  :: NCLV = 100
+    INTEGER(KIND=JPIM)  :: KIDIA 
+    INTEGER(KIND=JPIM)  :: KFDIA 
+    INTEGER(KIND=JPIM)  :: NCLDTOP
+    INTEGER(KIND=JPIM)  :: NCLDQS
+    INTEGER(KIND=JPIM)  :: NCLDQR
+
+    ! Might consider setting RCOVPMIN not randomly
+    REAL(KIND=JPRB)     :: RCOVPMIN
+    REAL(KIND=JPRB)     :: ZEPSEC
+    REAL(KIND=JPRB)     :: ZQXFG(KLON, NCLV)
+    REAL(KIND=JPRB)     :: ZA(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZQPRETOT2(KLON, KLEV)
+
+    REAL(KIND=JPRB)     :: ZCOVPTOT2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPCLR2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPMAX2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZRAINCLD2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZSNOWCLD2(KLON, KLEV)
+
+
+    CALL precipitation_cover_overlap_routine(&
+        & KLON, KLEV, KIDIA, KFDIA, NCLV, NCLDTOP, NCLDQS, NCLDQR, &
+        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT2, &
+        & ZCOVPTOT2, ZCOVPCLR2, ZCOVPMAX2, ZRAINCLD2, ZSNOWCLD2)
+
+END
+
+SUBROUTINE precipitation_cover_overlap_routine(&
+        & KLON, KLEV, KIDIA, KFDIA, NCLV, NCLDTOP, NCLDQS, NCLDQR, &
+        & RCOVPMIN, ZEPSEC, ZQXFG, ZA, ZQPRETOT2, &
+        & ZCOVPTOT2, ZCOVPCLR2, ZCOVPMAX2, ZRAINCLD2, ZSNOWCLD2)
+
+    INTEGER, PARAMETER :: JPIM = SELECTED_INT_KIND(9)
+    INTEGER, PARAMETER :: JPRB = SELECTED_REAL_KIND(13, 300)
+
+    INTEGER(KIND=JPIM)  :: KLON
+    INTEGER(KIND=JPIM)  :: KLEV
+    INTEGER(KIND=JPIM)  :: KIDIA 
+    INTEGER(KIND=JPIM)  :: KFDIA 
+    INTEGER(KIND=JPIM)  :: NCLV 
+    INTEGER(KIND=JPIM)  :: NCLDTOP
+    INTEGER(KIND=JPIM)  :: NCLDQS
+    INTEGER(KIND=JPIM)  :: NCLDQR
+
+    ! Might consider setting RCOVPMIN not randomly
+    REAL(KIND=JPRB)     :: RCOVPMIN
+    REAL(KIND=JPRB)     :: ZEPSEC
+    REAL(KIND=JPRB)     :: ZQXFG(KLON, NCLV)
+    REAL(KIND=JPRB)     :: ZA(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZQPRETOT2(KLON, KLEV)
+
+    REAL(KIND=JPRB)     :: ZCOVPTOT2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPCLR2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZCOVPMAX2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZRAINCLD2(KLON, KLEV)
+    REAL(KIND=JPRB)     :: ZSNOWCLD2(KLON, KLEV)
+
+    DO JK=NCLDTOP,KLEV
+        DO JL=KIDIA,KFDIA     ! LOOP CLASS 2
+            IF (ZQPRETOT2(JL, JK)>ZEPSEC) THEN
+                ZCOVPTOT2(JL, JK) = 1.0 - ((1.0-ZCOVPTOT2(JL, JK))*&
+                &            (1.0 - MAX(ZA(JL,JK),ZA(JL,JK-1)))/&
+                &            (1.0 - MIN(ZA(JL,JK-1),1.0-1.E-06)) )  
+                ZCOVPTOT2(JL, JK) = MAX(ZCOVPTOT2(JL, JK),RCOVPMIN)
+                ZCOVPCLR2(JL, JK) = MAX(0.0,ZCOVPTOT2(JL, JK)-ZA(JL,JK)) ! clear sky proportion
+                ZRAINCLD2(JL, JK) = ZQXFG(JL,NCLDQR)/ZCOVPTOT2(JL, JK)
+                ZSNOWCLD2(JL, JK) = ZQXFG(JL,NCLDQS)/ZCOVPTOT2(JL, JK)
+                ZCOVPMAX2(JL, JK) = MAX(ZCOVPTOT2(JL, JK),ZCOVPMAX2(JL, JK))
+            ELSE
+                ZRAINCLD2(JL, JK) = 0.0 
+                ZSNOWCLD2(JL, JK) = 0.0 
+                ZCOVPTOT2(JL, JK) = 0.0 ! no flux - reset cover
+                ZCOVPCLR2(JL, JK) = 0.0   ! reset clear sky proportion 
+                ZCOVPMAX2(JL, JK) = 0.0 ! reset max cover for ZZRH calc 
+            ENDIF
+        ENDDO
+    ENDDO
+
+END SUBROUTINE precipitation_cover_overlap_routine
+
