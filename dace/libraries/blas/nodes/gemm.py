@@ -223,7 +223,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
         node.validate(sdfg, state)
 
         # Find inputs and output
-        adesc, bdesc, cdesc = None, None, None
+        adesc, bdesc, cdesc, alpha_desc = None, None, None, None
         for e in state.in_edges(node):
             if e.dst_conn == '_a':
                 anode = state.memlet_path(e)[0].src
@@ -233,6 +233,10 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 bnode = state.memlet_path(e)[0].src
                 if isinstance(bnode, dace.sdfg.nodes.AccessNode):
                     bdesc: dt.Array = sdfg.arrays[bnode.data]
+            elif e.dst_conn == '_alpha':
+                alpha_node = state.memlet_path(e)[0].src
+                if isinstance(alpha_node, dace.sdfg.nodes.AccessNode):
+                    alpha_desc: dt.Array = sdfg.arrays[alpha_node.data]
         for e in state.out_edges(node):
             if e.src_conn == '_c':
                 cnode = state.memlet_path(e)[-1].dst
@@ -274,7 +278,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
             0.0: f"__state->{cls.backend}blas_handle.Constants(__dace_cuda_device).{factort}Zero()",
         }
-        if node.alpha not in constants or node.beta not in constants:
+        if node.alpha not in constants or node.beta not in constants or alpha_desc is not None:
             # Deal with complex input constants
             if isinstance(node.alpha, complex):
                 alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
@@ -286,12 +290,16 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 beta = f'{dtype.ctype}({node.beta})'
 
             # Set pointer mode to host
-            call_prefix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});
-            {dtype.ctype} __alpha = {alpha};
-            {dtype.ctype} __beta = {beta};
-            '''
-            call_suffix += f'''{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
-            alpha = f'({cdtype} *)&__alpha'
+            call_prefix += f'{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_host});\n'
+            if alpha_desc is None:
+                call_prefix += f'{dtype.ctype} __alpha = {alpha};'
+            call_prefix += f'{dtype.ctype} __beta = {beta};'
+
+            call_suffix += f'''\n{cls.set_pointer_mode}(__dace_{cls.backend}blas_handle, {cls.pointer_device});'''
+            if alpha_desc is not None:
+                alpha = f'({cdtype} *)&_conn_alpha'
+            else:
+                alpha = f'({cdtype} *)&__alpha'
             beta = f'({cdtype} *)&__beta'
         else:
             alpha = constants[node.alpha]
@@ -309,7 +317,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             opt['backend_op_ta'] = cls.backend_op(opt['ta'])
             opt['backend_op_tb'] = cls.backend_op(opt['tb'])
 
-            call = '''{backend}blas{func}(__dace_{backend}blas_handle,
+            call = '''\n{backend}blas{func}(__dace_{backend}blas_handle,
                 {backend_op_ta}, {backend_op_tb},
                 {M}, {N}, {K},
                 {alpha},
@@ -331,7 +339,7 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
                 algorithm = node.algorithm
 
             call = f'''
-            {cls.backend}blas{cls.ex_suffix}(__dace_{cls.backend}blas_handle,
+            \n{cls.backend}blas{cls.ex_suffix}(__dace_{cls.backend}blas_handle,
                 {cls.backend_op(opt['ta'])},
                 {cls.backend_op(opt['tb'])},
                 {opt['M']}, {opt['N']}, {opt['K']},
@@ -381,6 +389,12 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
             gb = nstate.add_access('_b_gpu')
             c = nstate.add_write('_c')
             gc = nstate.add_access('_c_gpu')
+            if alpha_desc is not None:
+                dcopy = dc(alpha_desc)
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
+                dcopy.transient = False
+                nsdfg.add_datadesc('_alpha', dcopy)
+                alpha_var = nstate.add_read('_alpha')
 
             # Reset code and connectors
             tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
@@ -392,6 +406,8 @@ class ExpandGemmGPUBLAS(ExpandTransformation):
 
             nstate.add_edge(ga, None, tasklet, '_conn_a', dace.Memlet.from_array('_a_gpu', adesc))
             nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
+            if alpha_desc is not None:
+                nstate.add_edge(alpha_var, None, tasklet, '_conn_alpha', dace.Memlet.from_array('_alpha', alpha_desc))
             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 

@@ -58,3 +58,6 @@ from .lift_einsum import LiftEinsum
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
+
+# Other
+from .detect_library_nodes import DetectComplexGemm, DetectMatrixScalarMultiplicationIntoGemm
