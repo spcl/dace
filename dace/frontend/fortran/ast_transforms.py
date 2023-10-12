@@ -752,6 +752,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     currentindex = 0
     indices = []
+
     offsets = scope_vars.get_var(node.parent, node.name.name).offsets
 
     for idx, i in enumerate(node.indices):
@@ -925,7 +926,24 @@ class SumToLoop(NodeTransformer):
 
                 current = child.lval
                 val = child.rval
-                rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+
+                rvals = []
+                for i in mywalk(val):
+                    if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_sum':
+
+                        for arg in i.args:
+
+                            # supports syntax SUM(arr)
+                            if isinstance(arg, ast_internal_classes.Name_Node):
+                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                                array_node.name = arg
+                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')]
+                                rvals.append(array_node)
+
+                            # supports syntax SUM(arr(:))
+                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                                rvals.append(arg)
+
                 if len(rvals) != 1:
                     raise NotImplementedError("Only one array can be summed")
                 val = rvals[0]
