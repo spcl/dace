@@ -148,8 +148,6 @@ class ExpandGemmPure(ExpandTransformation):
         gemm_inputs = {
             "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
             "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")}
-        if alpha_desc is not None:
-            gemm_inputs["_alpha"] = dace.Memlet.from_array('_alpha', alpha_desc)
         state.add_mapped_tasklet("gemm", {"__i%d" % i: "0:%s" % s
                                           for i, s in enumerate([M, N, K])},
                                  gemm_inputs,
