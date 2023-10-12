@@ -268,7 +268,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                         newbody.append(
@@ -284,7 +284,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                     newbody.append(
@@ -458,7 +458,11 @@ class IndexExtractor(NodeTransformer):
                             if self.normalize_offsets:
 
                                 # Find the offset of a variable to which we are assigning
-                                var_name = child.lval.name.name
+                                var_name = ""
+                                if isinstance(j, ast_internal_classes.Name_Node):
+                                    var_name = j.name
+                                else:
+                                    var_name = j.name.name
                                 variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]
 
