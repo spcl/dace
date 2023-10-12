@@ -1045,7 +1045,10 @@ def create_ast_from_string(
         program = ast_transforms.CallExtractor().visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
-        program = ast_transforms.SumToLoop(program).visit(program)
+
+        for transformation in own_ast.fortran_intrinsics().transformations():
+            program = transformation(program).visit(program)
+
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
 
@@ -1077,7 +1080,10 @@ def create_sdfg_from_string(
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.SumToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics().transformations():
+        program = transformation(program).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
@@ -1119,7 +1125,10 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.SumToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics():
+        program = transformation(program).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)

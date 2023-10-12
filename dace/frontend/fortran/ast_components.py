@@ -6,8 +6,10 @@ from fparser.two import symbol_table
 import copy
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
-from dace.frontend.fortran.intrinsics import FortranIntrinsics
-from typing import Any, List, Tuple, Type, TypeVar, Union, overload
+from typing import Any, List, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dace.frontend.fortran.intrinsics import FortranIntrinsics
 
 #We rely on fparser to provide an initial AST and convert to a version that is more suitable for our purposes
 
@@ -123,6 +125,7 @@ class InternalFortranAst:
             "DOUBLE PRECISION": "DOUBLE",
             "REAL": "REAL",
         }
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.intrinsic_handler = FortranIntrinsics()
         self.supported_fortran_syntax = {
             "str": self.str_node,
@@ -257,6 +260,9 @@ class InternalFortranAst:
             "Allocate_Shape_Spec": self.allocate_shape_spec,
             "Allocate_Shape_Spec_List": self.allocate_shape_spec_list,
         }
+
+    def fortran_intrinsics(self) -> "FortranIntrinsics":
+        return self.intrinsic_handler
 
     def list_tables(self):
         for i in self.tables._symbol_tables:
