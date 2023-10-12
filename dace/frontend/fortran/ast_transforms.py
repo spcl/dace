@@ -737,8 +737,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           count: int,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
-                          declaration=True,
-                          is_sum_to_loop=False):
+                          declaration=True):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -933,7 +932,7 @@ class SumToLoop(NodeTransformer):
                 rangeposrval = []
                 rangesrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False, True)
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
 
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,
