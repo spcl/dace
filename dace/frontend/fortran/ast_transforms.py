@@ -941,7 +941,12 @@ class SumToLoop(NodeTransformer):
                             if isinstance(arg, ast_internal_classes.Name_Node):
                                 array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
                                 array_node.name = arg
-                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')]
+
+                                # If we access SUM(arr) where arr has many dimensions,
+                                # We need to create a ParDecl_Node for each dimension
+                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
                                 rvals.append(array_node)
 
                             # supports syntax SUM(arr(:))

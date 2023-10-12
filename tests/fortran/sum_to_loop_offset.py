@@ -98,7 +98,7 @@ def test_fortran_frontend_arr2loop_2d():
                     double precision, dimension(5,3) :: d
                     double precision, dimension(4) :: res
 
-                    !res(1) = SUM(d)
+                    res(1) = SUM(d)
                     res(2) = SUM(d(:,:))
                     res(3) = SUM(d(2:4, 2))
                     res(4) = SUM(d(2:4, 2:3))
@@ -121,9 +121,11 @@ def test_fortran_frontend_arr2loop_2d():
             cnt += 1
     res = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
+    assert res[0] == 105
     assert res[1] == 105
     assert res[2] == 21
     assert res[3] == 45
+
 
 if __name__ == "__main__":
 
