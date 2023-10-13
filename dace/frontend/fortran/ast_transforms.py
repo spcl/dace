@@ -706,6 +706,7 @@ class ArrayLoopNodeLister(NodeVisitor):
 def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           ranges: list,
                           rangepos: list,
+                          rangeslen: list,
                           count: int,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
@@ -714,6 +715,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
     :param ranges: The ranges of the loop
+    :param rangeslength: The length of ranges of the loop
     :param rangepos: The positions of the ranges
     :param count: The current count of the loop
     :param newbody: The new basic block that will contain the loop
@@ -758,9 +760,24 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         rval=ast_internal_classes.Int_Literal_Node(value="1")
                     )
                 ranges.append([lower_boundary, upper_boundary])
+                rangeslen.append(-1)
 
             else:
                 ranges.append([i.range[0], i.range[1]])
+
+                start = 0
+                if isinstance(i.range[0], ast_internal_classes.Int_Literal_Node):
+                    start = int(i.range[0].value)
+                else:
+                    start = i.range[0]
+
+                end = 0
+                if isinstance(i.range[1], ast_internal_classes.Int_Literal_Node):
+                    end = int(i.range[1].value)
+                else:
+                    end = i.range[1]
+
+                rangeslen.append(end - start + 1)
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
@@ -800,7 +817,7 @@ class ArrayToLoop(NodeTransformer):
                 val = child.rval
                 ranges = []
                 rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, self.scope_vars, True)
+                par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars, True)
 
                 if res_range is not None and len(res_range) > 0:
                     rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -808,7 +825,7 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
