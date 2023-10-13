@@ -184,9 +184,36 @@ def test_fortran_frontend_any_array_scalar_comparison():
     sdfg(first=first, res=res)
     assert list(res) == [1, 1, 0, 1, 1, 1, 1]
 
+def test_fortran_frontend_any_array_comparison_wrong_subset():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM intrinsic_any_test
+                    implicit none
+                    logical, dimension(5) :: first
+                    logical, dimension(5) :: second
+                    logical, dimension(2) :: res
+                    CALL intrinsic_any_test_function(first, second, res)
+                    end
+
+                    SUBROUTINE intrinsic_any_test_function(first, second, res)
+                    logical, dimension(5) :: first
+                    logical, dimension(5) :: second
+                    logical, dimension(2) :: res
+
+                    res(1) = ANY(first(1:2) .eq. second(2:5))
+
+                    END SUBROUTINE intrinsic_any_test_function
+                    """
+
+    with pytest.raises(TypeError):
+        fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+
 if __name__ == "__main__":
 
     test_fortran_frontend_any_array()
     test_fortran_frontend_any_array_dim()
     test_fortran_frontend_any_array_comparison()
     test_fortran_frontend_any_array_scalar_comparison()
+    test_fortran_frontend_any_array_comparison_wrong_subset()
