@@ -1,0 +1,5 @@
+program,base id,variant description
+cloudsc_vert_loop_4_ZSOLQA,1,original array layout
+cloudsc_vert_loop_6_ZSOLQA,1,flipped arrays without temporary array fix
+cloudsc_vert_loop_6_1_ZSOLQA,1,flipped arrays with temporary array fix
+cloudsc_vert_loop_7_3,1,flipped arrays & k-caching

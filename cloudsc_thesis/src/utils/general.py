@@ -535,7 +535,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
 
     # avoid cyclic dependency
-    from execute.my_auto_opt import auto_optimize as my_auto_optimize, change_strides
+    from dace.transformation.auto.cloudsc_auto_opt import auto_optimize as my_auto_optimize, change_strides
     additional_args = {}
     if symbols:
         additional_args['symbols'] = symbols

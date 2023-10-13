@@ -34,6 +34,8 @@ from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.auto.auto_optimize import get_composite_fusion
 from dace.transformation.interstate.sdfg_nesting import ASTRefiner
 
+from utils.general import save_graph
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,6 +78,8 @@ def apply_subgraph_fusion(
     fuse_two_states(sdfg, 'single_state_body_8__for_it_14_0', 'single_state_body_8__for_it_14_1')
     logger.debug("Apply normal StateFusion")
     sdfg.apply_transformations_repeated([StateFusion])
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_state_fusion")
     cloudsc_state = sdfg.find_state('stateCLOUDSC')
     cloudsc_nsdfg = [n for n in cloudsc_state.nodes() if isinstance(n, nodes.NestedSDFG)][0]
 
@@ -92,6 +96,8 @@ def apply_subgraph_fusion(
             logger.debug("Apply forced transformation")
             found = True
 
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_forced_state_fusion")
     sdfg.validate()
 
     map_names = [
@@ -128,6 +134,8 @@ def apply_subgraph_fusion(
     else:
         logger.warning("Subgraphfusion can not be applied")
 
+    if verbose_name is not None:
+        save_graph(sdfg, verbose_name, "after_subgraph_fusion")
     sdfg.validate()
 
 
@@ -173,35 +181,55 @@ def auto_optimize_phase_1(
     if validate:
         sdfg.validate()
 
+    if program is not None:
+        save_graph(sdfg, program, "after_specialise_symbols")
 
     # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_trivial_map_elimination")
 
     sdfg.simplify(validate=False, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
 
     pipeline = Pipeline([ScalarFission()])
     for sd in sdfg.all_sdfgs_recursive():
         results = pipeline.apply_pass(sd, {})['ScalarFission']
         logger.debug("Result of ScalarFission: %s", results)
 
+    if program is not None:
+        save_graph(sdfg, program, "after_scalar_fission")
 
     if outside_first:
         loop_to_map_outside_first(sdfg, validate=validate, validate_all=validate_all, program=program)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
+        if program is not None:
+            save_graph(sdfg, program, "after_simplify")
         for s in sdfg.sdfg_list:
             xfh.split_interstate_edges(s)
+        if program is not None:
+            save_graph(sdfg, program, "after_splitting_interstate_edges")
         l2ms = sdfg.apply_transformations_repeated([LoopToMap], validate=False, validate_all=validate_all)
+        if program is not None:
+            save_graph(sdfg, program, "after_loop_to_map")
         l2ms += sdfg.apply_transformations_repeated([RefineNestedAccess], validate=False, validate_all=validate_all)
         transformed = l2ms > 0
+        if program is not None:
+            save_graph(sdfg, program, "after_refine_nested_access")
 
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify(verbose=True, validate_all=True)
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify_and_collapse")
 
     # fuse subgraphs greedily
     sdfg.simplify()
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
     if validate:
         sdfg.validate
 
@@ -256,6 +284,8 @@ def auto_optimize_phase_2(sdfg: SDFG,
             greedy_fuse(sdfg, device=device, validate_all=validate_all)
             # fuse stencils greedily
             greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+            if program is not None:
+                save_graph(sdfg, program, "after_greedy_fuse")
 
     # Apply GPU transformations and set library node implementations
     if device == dtypes.DeviceType.GPU:
@@ -268,6 +298,9 @@ def auto_optimize_phase_2(sdfg: SDFG,
         logger.debug("Apply GPU transformations")
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
+
+    if program is not None:
+        save_graph(sdfg, program, "after_gpu_transformations")
 
     # Tiled WCR and streams
     for nsdfg in list(sdfg.all_sdfgs_recursive()):
@@ -282,16 +315,13 @@ def auto_optimize_phase_2(sdfg: SDFG,
             # node.map.collapse = len(node.map.range)
             pass
 
+    if program is not None:
+        save_graph(sdfg, program, "after_map_colapse")
     if move_assignments_outside:
         count = sdfg.apply_transformations(MoveAssignmentOutsideIf, validate=validate, validate_all=validate_all)
         logger.debug("Applied %i MoveAssignmentOutsideIf transformations", count)
-
-    if device == dtypes.DeviceType.Generic:
-        # Validate at the end
-        if validate or validate_all:
-            sdfg.validate()
-
-        return sdfg
+    if program is not None:
+        save_graph(sdfg, program, "after_move_assignment_outside_if")
 
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
@@ -426,9 +456,13 @@ def loop_to_map_outside_first(sdfg: SDFG,
 
     sdfg.simplify(validate=False, validate_all=validate_all)
     number_of_transformations_performed = 1
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
 
     for s in sdfg.sdfg_list:
         xfh.split_interstate_edges(s)
+    if program:
+        save_graph(sdfg, program, "after_split_interstate_edges")
 
     while number_of_transformations_performed > 0:
         outside_loop_transformations = []
@@ -458,8 +492,12 @@ def loop_to_map_outside_first(sdfg: SDFG,
             logger.debug(f" apply LoopToMap to guard: {xform.loop_guard}, begin: {xform.loop_begin} on sdfg: "
                          f"{sdfg.sdfg_list[xform.sdfg_id].label}")
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
+    if program is not None:
+        save_graph(sdfg, program, "after_outer_loop_to_map")
     sdfg.validate()
     sdfg.apply_transformations_repeated([RefineNestedAccess], validate=validate, validate_all=validate_all)
+    if program is not None:
+        save_graph(sdfg, program, "after_outer_refine_nested_access")
 
     return sdfg
 
@@ -547,6 +585,7 @@ def apply_transformation_stepwise(sdfg: SDFG,
         logger.debug(f"apply {xforms[0]}")
         xforms[0].apply(sdfg.sdfg_list[xforms[0].sdfg_id].find_state(xforms[0].state_id),
                         sdfg.sdfg_list[xforms[0].sdfg_id])
+        save_graph(sdfg, program, f"after_{description}")
         xforms = [xf for xf in Optimizer(sdfg).get_pattern_matches(patterns=transformations)]
         sdfg.validate()
     return count
@@ -566,6 +605,7 @@ def map_fusion_merge_different_ranges(transformation_class, max_start_difference
     transformation_class.max_start_difference = 1
     transformation_class.max_end_difference = 1
     return transformation_class
+
 
 def k_caching_prototype_v1_prepare_klev_loops(sdfg: SDFG, validate: bool, validate_all: bool, device: dace.DeviceType,
                                               symbols: Dict[str, int], program: Optional[str] = None):
@@ -588,6 +628,8 @@ def k_caching_prototype_v1_prepare_klev_loops(sdfg: SDFG, validate: bool, valida
                 xform.apply(xf_state, xf_sdfg)
         except Exception as e:
             logger.warning("Encountered error while looking for loop: %s", e)
+    if program is not None:
+        save_graph(sdfg, program, "after_loop_unroll")
 
     for s in sdfg.sdfg_list:
         xfh.split_interstate_edges(s)
@@ -610,38 +652,45 @@ def k_caching_prototype_v1_prepare_klev_loops(sdfg: SDFG, validate: bool, valida
             sdfg.validate()
 
     sdfg.validate()
+    if program is not None:
+        save_graph(sdfg, program, "after_force_klev_to_map")
 
     amount = sdfg.apply_transformations_repeated([RefineNestedAccess])
     logger.debug("Applied %i RefineNestedAccess transformations", amount)
+    if program is not None:
+        save_graph(sdfg, program, "after_refine_nested_acces")
 
 
 def k_caching_prototype_v1_prepare_fusion(sdfg: SDFG,
-                           validate: bool,
-                           validate_all: bool,
-                           device: dace.DeviceType,
-                           symbols: Dict[str, int],
-                           program: Optional[str] = None,
-                           full_cloudsc_fixes: bool = False):
+                                          validate: bool,
+                                          validate_all: bool,
+                                          device: dace.DeviceType,
+                                          symbols: Dict[str, int],
+                                          program: Optional[str] = None,
+                                          full_cloudsc_fixes: bool = False):
     """
     K-Caching: Steps before fusion
 
-    :param validate: [TODO:description]
-    :type validate: bool
-    :param validate_all: [TODO:description]
-    :type validate_all: bool
-    :param device: [TODO:description]
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
+    :type validate_all: bool, optional
+    :param device: The device to optimise fort
     :type device: dace.DeviceType
-    :param symbols: [TODO:description]
+    :param symbols: Dictionary of symbols to specialise and their valeus
     :type symbols: Dict[str, int]
-    :param program: [TODO:description], defaults to None
+    :param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
     :type program: Optional[str], optional
-    :param full_cloudsc_fixes: [TODO:description], defaults to False
-    :type full_cloudsc_fixes: bool, optional
+    :param full_cloudsc_fixes: Set to true if fixes for full cloudsc sdfg should be generated, defaults to False
+    :type full_cloudsc_fixes: bool
     """
     k_caching_prototype_v1_prepare_klev_loops(sdfg, validate, validate_all, device, symbols, program)
 
     if full_cloudsc_fixes:
         sdfg = fix_all_strange_memlets(sdfg)
+    if program is not None:
+        save_graph(sdfg, program, "after_memlet_fixing")
 
     # SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
 
@@ -650,13 +699,19 @@ def k_caching_prototype_v1_prepare_fusion(sdfg: SDFG,
 
     # Apply TrivialMapElimination before Fusion to avoid problems with maps over KLON=1
     sdfg.apply_transformations_repeated([TrivialMapElimination])
+    if program is not None:
+        save_graph(sdfg, program, "after_trivial_map_elimination")
 
     # SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
 
     # Map expansion is required to make sure that klev is outermost afterwards to be able to fuse them properly
     sdfg.apply_transformations_repeated([MapExpansion])
+    if program is not None:
+        save_graph(sdfg, program, "after_map_expansion")
 
     make_outermost_map(sdfg, symbols, 'KLEV', allowed_difference=1)
+    if program is not None:
+        save_graph(sdfg, program, "after_make_klev_outermost")
 
     sdfg.validate()
 
@@ -671,18 +726,19 @@ def k_caching_prototype_v1_fuse(sdfg: SDFG,
     """
     K-Caching: Fusing step
 
-    :param validate: [TODO:description]
-    :type validate: bool
-    :param validate_all: [TODO:description]
-    :type validate_all: bool
-    :param device: [TODO:description]
+    :param validate: If True, validates the SDFG after all transformations
+                     have been applied, defaults to True
+    :type validate: bool, optional
+    :param validate_all: If True, validates the SDFG after every step, defaults to True
+    :type validate_all: bool, optional
+    :param device: The device to optimise fort
     :type device: dace.DeviceType
-    :param symbols: [TODO:description]
+    :param symbols: Dictionary of symbols to specialise and their valeus
     :type symbols: Dict[str, int]
-    :param program: [TODO:description], defaults to None
+    :param program: Name of the program. If set will save intermediate graphs using this name, defaults to None
     :type program: Optional[str], optional
-    :param full_cloudsc_fixes: [TODO:description], defaults to False
-    :type full_cloudsc_fixes: bool, optional
+    :param full_cloudsc_fixes: Set to true if fixes for full cloudsc sdfg should be generated, defaults to False
+    :type full_cloudsc_fixes: bool
     """
     if full_cloudsc_fixes:
         apply_subgraph_fusion(sdfg, {
@@ -707,9 +763,13 @@ def k_caching_prototype_v1_fuse(sdfg: SDFG,
                                               symbols['KLEV'])
         })
 
+        if program is not None:
+            save_graph(sdfg, program, "after_greedy_fuse")
 
     sdfg.validate()
     SimplifyPass(validate=True, validate_all=True, skip=['RemoveUnusedSymbols']).apply_pass(sdfg, {})
+    if program is not None:
+        save_graph(sdfg, program, "after_simplify")
 
     if device != dace.DeviceType.GPU:
         continue_search = True
@@ -725,6 +785,8 @@ def k_caching_prototype_v1_fuse(sdfg: SDFG,
                     continue_search = True
                     logger.debug("Found the correct map. Apply it to state %s and sdfg %s", xf_state.name, xf_sdfg.label)
                     xf.apply(xf_state, xf_sdfg)
+                    if program is not None:
+                        save_graph(sdfg, program, "after_map_to_for_loop")
                     break
     sdfg.validate()
 
@@ -737,7 +799,7 @@ def k_caching_prototype_v1(sdfg: SDFG,
                            program: Optional[str] = None,
                            full_cloudsc_fixes: bool = False):
     """
-    Performs K-caching on the given SDFG by mergen all KLEV loops into one and shrink any intermediate arrays.
+    Performs K-caching on the given SDFG by merging all KLEV loops into one and shrink any intermediate arrays.
 
 :param sdfg: The SDFG to act upon
 :type sdfg: SDFG
@@ -771,7 +833,7 @@ def list_access_nodes(
     :type sdfg: dace.SDFG
     :param array_name: The name of the wanted array
     :type array_name: str
-    :return: [TODO:description]
+    :return: List of the found access nodes together with their state
     :rtype: List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]
     """
     found_nodes = []
@@ -966,11 +1028,13 @@ def change_strides(
 
 def check_memlet(memlet: Memlet) -> bool:
     """
-    Checks if memlet has the stange access pattern 0:_for_it_xxx
+    Checks if memlet has the strange subset of 0:_for_it_xxx. This stems from not being refined by
+    RefineNestedAccess as there are two access to different neighbouring indices in two different memlets. Assumes the
+    memlet subset has at least two ranges and it appears in the second.
 
-    :param memlet: [TODO:description]
+    :param memlet: The memlet to check
     :type memlet: Memlet
-    :return: [TODO:description]
+    :return: True if the memlets has the strange subset
     :rtype: bool
     """
     if len(memlet.subset) > 1:
@@ -981,9 +1045,18 @@ def check_memlet(memlet: Memlet) -> bool:
     return False
 
 
-def fix_edge(edge: MultiConnectorEdge[Memlet], print: bool = False):
+def fix_edge(edge: MultiConnectorEdge[Memlet]):
+    """
+    Fixes the edge with a strange memlet as defined by check_memlet(). This by fixing changing the start of the subset
+    to end-x where x is either 1 or 2 as defined in a hardcoded dictionary in the function fixing the memlet to a volume
+    of x. Assumes that the memlet subset has two ranges and it needs to fix the second.
+
+    :param edge: The edge to fix
+    :type edge: MultiConnectorEdge[Memlet]
+    """
     memlet = edge.data
-    to_fix = {'ZQX':1 , 'ZA': 2, 'ZTP1': 2, 'ZPFPLSX': 2}
+    # The volume/length of the memlet
+    to_fix = {'ZQX': 1, 'ZA': 2, 'ZTP1': 2, 'ZPFPLSX': 2}
     if memlet.data in to_fix:
         old_subset = copy.deepcopy(memlet.subset)
         memlet.subset[1] = (memlet.subset[1][1] - to_fix[memlet.data] + 1, memlet.subset[1][1], memlet.subset[1][2])
@@ -993,6 +1066,18 @@ def fix_edge(edge: MultiConnectorEdge[Memlet], print: bool = False):
 
 
 def refine_nsdfg_internal_edges(nsdfg: nodes.NestedSDFG, offset: Range, data_name: str):
+    """
+    Change any edges (memlets and interstate) inside a nsdfg when the outside edge has been adjusted. Taken and adapted
+    from the RefineNestedAccess transformation.
+
+    :param nsdfg: The NSDFG to check
+    :type nsdfg: nodes.NestedSDFG
+    :param offset: The offset by what to change the edges/memlets.
+    :type offset: Range
+    :param data_name: The name of the array changed.
+    :type data_name: str
+    :raises NotImplementedError: If the language of an interstate edge is not python
+    """
     # Just refine the index we changed before in fix_edge -> indices={1}
     indices = {1}
     # Refine accesses in internal memlets
@@ -1016,14 +1101,13 @@ def refine_nsdfg_internal_edges(nsdfg: nodes.NestedSDFG, offset: Range, data_nam
             raise NotImplementedError
 
 
-def fix_all_strange_memlets(sdfg: SDFG, new_name: Optional[str] = None) -> SDFG:
+def fix_all_strange_memlets(sdfg: SDFG) -> SDFG:
     """
-    Find all strange memlets in the temporary arrays and fix them
+    Find all strange memlets in the temporary arrays and fix them. Strange memlets are the ones not refined by
+    RefineNestedAccess as defined in check_memlet() and fixed by calling fix_edge()
 
-    :param sdfg: [TODO:description]
+    :param sdfg: The SDFG to fix the memlets in
     :type sdfg: SDFG
-    :param new_name: [TODO:description]
-    :type new_name: Optional[str]
     """
     def handle_edge(edge: MultiConnectorEdge[Memlet]):
         if check_memlet(edge.data):
@@ -1036,11 +1120,3 @@ def fix_all_strange_memlets(sdfg: SDFG, new_name: Optional[str] = None) -> SDFG:
                 for e in state.memlet_path(edge):
                     handle_edge(e)
     return sdfg
-
-
-def make_klev_maps_sequential(sdfg: SDFG, symbols: Dict[str, int]):
-    for node, state in sdfg.all_nodes_recursive():
-        if (isinstance(node, nodes.MapEntry) 
-            and is_map_over_symbol(node.map.ranges, symbols, 'KLEV', allowed_difference=symbols['NCLDTOP']+1)):
-            logger.debug("Make map %s sequential", node.map)
-            node.map.schedule = ScheduleType.Sequential

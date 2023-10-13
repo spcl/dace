@@ -19,6 +19,7 @@ This folder contains several subfolders. These are:
 - `basic_sdfg`: Storage of basic SDFGs used
 - `fortran_programs`: The source code of the Fortran programs used
 - `src`: The python code used to generate the SDFGs and so on
+- `results_v2`: Folder where the results of the smaller example codes are stored
 
 In addition the scripts might create two additional folders:
 - `sdfg_graphs`: Intermediate SDFGs will be stored here for further inspection
@@ -61,6 +62,27 @@ python3 src/gen_full_cloudsc.py compile <opt-level>
 Generating the SDFG my be faster locally than on ault, in this case the generated SDFG needs to be copied to ault using
 `scp`. The graph will be located in the folder `full_cloudsc_logs` together with a logfile. The provided bash script
 `run_cloudsc.sh` can be run to execute the cloudsc code. Please adjust the paths inside it first to the location of your
-cloudsc repository. It also needs to be adapted.
+CLOUDSC repository. In order to prepared the CLOUDSC repository please follow the instructions inside the
+[cloudsc_instructions folder](cloudsc_thesis/cloudsc_instructions/README.md)
+
+The python scripts `src/run_full_cloudsc.py` was used to run the cloudsc code multiple times and plot the results. You
+will need to adapt the path going to the CLOUDSC repository inside `src/utils/full_cloudsc.py`. Use `--help` to
+discover the option the scripts take. This works for any python run script in this folder.
 
 
+### Smaller example code
+#### CLOUDSC example programs
+There are 5 example programs used to develop K-caching and the change in strides. They represent the whole CLOUDSC
+program structure but are much smaller. The first one was used to develop the DaCe transformations, the other four
+implement them manually and were used to get a first feeling if it makes sense to implement the transformations.
+
+- `cloudsc_vert_loop_10.f90`: This was used to develop the DaCe transformations
+- `cloudsc_vert_loop_4_ZSOLQA.f90`: Baseline without any optimisation
+- `clousdc_vert_loop_6_ZSOLQA.f90`: Change in stride applied
+- `clousdc_vert_loop_6_1_ZSOLQA.f90`: Change in stride with fix for temporary array applied
+- `cloudsc_vert_loop_7_3.f90`: Change in stride and K-caching
+
+#### CLOUDSC kernels grouped into classes
+There are 3-4 programs per class as described in the thesis. The source files are named after the following scheme:
+`cloudsc_class<class-number>_<line>.f90` where `<class-number>` is the class number 1, 2 or 3 and `<line>` the name of
+the program also indicating the line where the program starts in the [cloudsc source code](https://github.com/ecmwf-ifs/dwarf-p-cloudsc/blob/main/src/cloudsc_fortran/cloudsc.F90).

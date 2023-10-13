@@ -18,6 +18,8 @@ from utils.data_analysis import compute_speedups
 from utils.plot import save_plot, get_new_figure, size_vs_y_plot, legend_on_lines_dict, \
                        replace_legend_names, legend_on_lines_dict, get_node_gpu_map, get_arrowprops, rotate_xlabels
 
+# Absolute path to the build folder where you compiled the CLOUDSC CUDA version
+CLOUDSC_DACE_DIR='Change here'
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +257,7 @@ def run_cloudsc_cuda(
     logger.debug('Run %s using %s for size %s repeating it %i time', data_name, executable_name, size, repetitions)
     for i in range(repetitions):
         cloudsc_output = run([f"./bin/{executable_name}", '1', str(size), '128'],
-                             cwd='/users/msamuel/dwarf-p-cloudsc-original/build_cuda',
+                             cwd=CLOUDSC_CUDA_DIR,
                              capture_output=True)
         if cloudsc_output.returncode == 0:
             for line in cloudsc_output.stdout.decode('UTF-8').split('\n'):
