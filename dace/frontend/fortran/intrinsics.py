@@ -301,7 +301,6 @@ class Any(LoopBasedReplacement):
                                     right_side_arr  = self._parse_array(node, arg.rval)
                                     has_two_arrays = left_side_arr is not None and right_side_arr is not None
 
-
                                     if not has_two_arrays:
 
                                         # if one side of the operator is scalar, then parsing array
@@ -324,11 +323,6 @@ class Any(LoopBasedReplacement):
 
                                         continue
 
-                                    rangeposrval = []
-                                    rangeslen_left = []
-                                    rangeposrval = []
-                                    par_Decl_Range_Finder(left_side_arr, rangesrval, rangeposrval, rangeslen_left, self.count, newbody, self.scope_vars, True)
-                                    val = arg
 
                                     if len(left_side_arr.indices) != len(right_side_arr.indices):
                                         raise TypeError("Can't parse Fortran ANY with different array ranks!")
@@ -337,9 +331,15 @@ class Any(LoopBasedReplacement):
                                         if left_idx.type != right_idx.type:
                                             raise TypeError("Can't parse Fortran ANY with different array ranks!")
 
+                                    rangeposrval = []
+                                    rangeslen_left = []
+                                    rangeposrval = []
+                                    par_Decl_Range_Finder(left_side_arr, rangesrval, rangeposrval, rangeslen_left, self.count, newbody, self.scope_vars, True)
+                                    val = arg
+
                                     rangesrval_right = []
                                     rangeslen_right = []
-                                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, rangeposrval, rangeslen_right, self.count, newbody, self.scope_vars, True)
+                                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, [], rangeslen_right, self.count, newbody, self.scope_vars, True)
 
                                     for left_len, right_len in zip(rangeslen_left, rangeslen_right):
                                         if left_len != right_len:

@@ -186,7 +186,7 @@ def test_fortran_frontend_any_array_scalar_comparison():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_any_array()
-    #test_fortran_frontend_any_array_dim()
-    #test_fortran_frontend_any_array_comparison()
+    test_fortran_frontend_any_array()
+    test_fortran_frontend_any_array_dim()
+    test_fortran_frontend_any_array_comparison()
     test_fortran_frontend_any_array_scalar_comparison()
