@@ -181,9 +181,11 @@ class CallToArray(NodeTransformer):
         if funcs is None:
             funcs = []
         self.funcs = funcs
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sum", "__dace_sign", "tanh",
-            "__dace_epsilon"
+            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sign", "tanh",
+            "__dace_epsilon", *FortranIntrinsics.function_names()
         ]
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
