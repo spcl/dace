@@ -114,6 +114,26 @@ class LoopBasedReplacementTransformation(NodeTransformer):
     def func_name(self) -> str:
         pass
 
+    @abstractmethod
+    def _initialize(self):
+        pass
+
+    @abstractmethod
+    def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+        pass
+
+    @abstractmethod
+    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+        pass
+
+    @abstractmethod
+    def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+        pass
+
+    @abstractmethod
+    def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+        pass
+
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
         newbody = []
@@ -134,7 +154,7 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             # Visit all intrinsic arguments and extract arrays
             for i in mywalk(child.rval):
                 if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == self.func_name():
-                    self._parse_call_expr_node(i, newbody)
+                    self._parse_call_expr_node(i)
 
             # Verify that all of intrinsic args are correct and prepare them for loop generation
             self._summarize_args(child, newbody)
@@ -205,7 +225,7 @@ class Sum(LoopBasedReplacement):
             self.rvals = []
             self.argument_variable = None
 
-        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node, new_func_body: List[ast_internal_classes.FNode]):
+        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
             for arg in node.args:
 
@@ -261,6 +281,28 @@ class Sum(LoopBasedReplacement):
 
 class Any(LoopBasedReplacement):
 
+    """
+        In this class, we implement the transformation for Fortran intrinsic ANY
+        We support three ways of invoking the function - by providing array name, array subscript,
+        and a binary operation.
+        We do NOT support the *DIM* argument.
+
+        First, we split the implementation between three scenarios:
+        (1) ANY(arr)
+        (2) ANY(arr1 op arr2)
+        (3) ANY(arr1 op scalar)
+        Depending on the scenario, we verify if all participating arrays have the same rank.
+        We determine the loop range based on the arrays, and convert all array accesses to depend on
+        the loop. We take special care for situations where arrays have different subscripts, e.g.,
+        arr1(1:3) op arr2(5:7) - the second array needs a shift when indexing based on loop iterator.
+
+        During the loop construction, we add a single variable storing the partial result.
+        Then, we generate an if condition inside the loop to check if the value is true or not.
+        For (1), we check if the array entry is equal to 1.
+        For (2), we reuse the provided binary operation.
+        When the condition is true, we set the value to true and exit.
+    """
+
     class Transformation(LoopBasedReplacementTransformation):
 
         def __init__(self, ast):
@@ -290,7 +332,12 @@ class Any(LoopBasedReplacement):
         def _initialize(self):
             self.rvals = []
 
-        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node, new_func_body: List[ast_internal_classes.FNode]):
+            self.first_array = None
+            self.second_array = None
+            self.dominant_array = None
+            self.cond = None
+
+        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
             if len(node.args) > 1:
                 raise NotImplementedError("Fortran ANY with the DIM parameter is not supported!")
@@ -298,18 +345,9 @@ class Any(LoopBasedReplacement):
 
             array_node = self._parse_array(node, arg)
             if array_node is not None:
-                self.rvals.append(array_node)
 
-                if len(self.rvals) != 1:
-                    raise NotImplementedError("Only one array can be summed")
-                val = self.rvals[0]
-                rangeposrval = []
+                self.first_array = array_node
 
-                par_Decl_Range_Finder(val, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
-                self.cond = ast_internal_classes.BinOp_Node(op="==",
-                                                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                                    lval=copy.deepcopy(val),
-                                                    line_number=node.line_number)
             else:
 
                 # supports syntax ANY(logical op)
@@ -321,85 +359,99 @@ class Any(LoopBasedReplacement):
                 #
                 # (2) arr1 op scalar
                 # there, we ignore the scalar because it's not an array
-                if isinstance(arg, ast_internal_classes.BinOp_Node):
+                if not isinstance(arg, ast_internal_classes.BinOp_Node):
+                    return
 
-                    left_side_arr  = self._parse_array(node, arg.lval)
-                    right_side_arr  = self._parse_array(node, arg.rval)
-                    has_two_arrays = left_side_arr is not None and right_side_arr is not None
+                self.first_array  = self._parse_array(node, arg.lval)
+                self.second_array  = self._parse_array(node, arg.rval)
+                has_two_arrays = self.first_array is not None and self.second_array is not None
 
-                    if not has_two_arrays:
+                # array and scalar - simplified case
+                if not has_two_arrays:
 
-                        # if one side of the operator is scalar, then parsing array
-                        # will return none
-                        dominant_array = left_side_arr
-                        if left_side_arr is None:
-                            dominant_array = right_side_arr
+                    # if one side of the operator is scalar, then parsing array
+                    # will return none
+                    self.dominant_array = self.first_array
+                    if self.dominant_array is None:
+                        self.dominant_array = self.second_array
 
-                        rangeposrval = []
-                        rangeslen_left = []
-                        rangeposrval = []
-                        par_Decl_Range_Finder(dominant_array, self.loop_ranges, rangeposrval, rangeslen_left, self.count, new_func_body, self.scope_vars, True)
-                        val = arg
+                    # replace the array subscript node in the binary operation
+                    # ignore this when the operand is a scalar
+                    self.cond = copy.deepcopy(arg)
+                    if self.first_array is not None:
+                        self.cond.lval = self.dominant_array
+                    if self.second_array is not None:
+                        self.cond.rval = self.dominant_array
 
-                        self.cond = copy.deepcopy(val)
-                        if left_side_arr is not None:
-                            self.cond.lval = dominant_array
-                        if right_side_arr is not None:
-                            self.cond.rval = dominant_array
-
-                        return
+                    return
 
 
-                    if len(left_side_arr.indices) != len(right_side_arr.indices):
+                if len(self.first_array.indices) != len(self.second_array.indices):
+                    raise TypeError("Can't parse Fortran ANY with different array ranks!")
+
+                for left_idx, right_idx in zip(self.first_array.indices, self.second_array.indices):
+                    if left_idx.type != right_idx.type:
                         raise TypeError("Can't parse Fortran ANY with different array ranks!")
 
-                    for left_idx, right_idx in zip(left_side_arr.indices, right_side_arr.indices):
-                        if left_idx.type != right_idx.type:
-                            raise TypeError("Can't parse Fortran ANY with different array ranks!")
-
-                    rangeposrval = []
-                    rangeslen_left = []
-                    rangeposrval = []
-                    par_Decl_Range_Finder(left_side_arr, self.loop_ranges, rangeposrval, rangeslen_left, self.count, new_func_body, self.scope_vars, True)
-                    val = arg
-
-                    rangesrval_right = []
-                    rangeslen_right = []
-                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, [], rangeslen_right, self.count, new_func_body, self.scope_vars, True)
-
-                    for left_len, right_len in zip(rangeslen_left, rangeslen_right):
-                        if left_len != right_len:
-                            raise TypeError("Can't support Fortran ANY with different array ranks!")
-
-                    # Now, the loop will be dictated by the left array
-                    # If the access pattern on the right array is different, we need to shfit it - for every dimension.
-                    # For example, we can have arr(1:3) == arr2(3:5)
-                    # Then, loop_idx is from 1 to 3
-                    # arr becomes arr[loop_idx]
-                    # but arr2 must be arr2[loop_idx + 2]
-                    for i in range(len(right_side_arr.indices)):
-
-                        idx_var = right_side_arr.indices[i]
-                        start_loop = self.loop_ranges[i][0]
-                        end_loop = rangesrval_right[i][0]
-
-                        difference = int(end_loop.value) - int(start_loop.value)
-                        if difference != 0:
-                            new_index = ast_internal_classes.BinOp_Node(
-                                lval=idx_var,
-                                op="+",
-                                rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
-                                line_number=node.line_number
-                            )
-                            right_side_arr.indices[i] = new_index
-
-                    # Now, we need to convert the array to a proper subscript node
-                    self.cond = copy.deepcopy(val)
-                    self.cond.lval = left_side_arr
-                    self.cond.rval = right_side_arr
+                # Now, we need to convert the array to a proper subscript node
+                self.cond = copy.deepcopy(arg)
+                self.cond.lval = self.first_array
+                self.cond.rval = self.second_array
 
         def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
-            pass
+
+            # The main argument is an array, not a binary operation
+            if self.cond is None:
+
+                par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                self.cond = ast_internal_classes.BinOp_Node(
+                    op="==",
+                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                    lval=copy.deepcopy(self.first_array),
+                    line_number=node.line_number
+                )
+                return
+
+            # we have a binary operation with an array and a scalar
+            if self.dominant_array is not None:
+
+                par_Decl_Range_Finder(self.dominant_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                return
+
+            # we have a binary operation with two arrays
+
+            rangeslen_left = []
+            par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body, self.scope_vars, True)
+
+            loop_ranges_right = []
+            rangeslen_right = []
+            par_Decl_Range_Finder(self.second_array, loop_ranges_right, [], rangeslen_right, self.count, new_func_body, self.scope_vars, True)
+
+            for left_len, right_len in zip(rangeslen_left, rangeslen_right):
+                if left_len != right_len:
+                    raise TypeError("Can't support Fortran ANY with different array ranks!")
+
+            # Now, the loop will be dictated by the left array
+            # If the access pattern on the right array is different, we need to shfit it - for every dimension.
+            # For example, we can have arr(1:3) == arr2(3:5)
+            # Then, loop_idx is from 1 to 3
+            # arr becomes arr[loop_idx]
+            # but arr2 must be arr2[loop_idx + 2]
+            for i in range(len(self.second_array.indices)):
+
+                idx_var = self.second_array.indices[i]
+                start_loop = self.loop_ranges[i][0]
+                end_loop = loop_ranges_right[i][0]
+
+                difference = int(end_loop.value) - int(start_loop.value)
+                if difference != 0:
+                    new_index = ast_internal_classes.BinOp_Node(
+                        lval=idx_var,
+                        op="+",
+                        rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
+                        line_number=node.line_number
+                    )
+                    self.second_array.indices[i] = new_index
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
