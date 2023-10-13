@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
+import pytest
 
-from dace.frontend.fortran import ast_transforms, fortran_parser
+from dace.frontend.fortran import fortran_parser
 
 def test_fortran_frontend_any_array():
     """
@@ -49,6 +50,31 @@ def test_fortran_frontend_any_array():
     sdfg(d=d, res=res)
     assert res[0] == False
 
+def test_fortran_frontend_any_array_dim():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM intrinsic_any_test
+                    implicit none
+                    logical, dimension(5) :: d
+                    logical, dimension(2) :: res
+                    CALL intrinsic_any_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_any_test_function(d, res)
+                    logical, dimension(5) :: d
+                    logical, dimension(2) :: res
+
+                    res(1) = ANY(d, 1)
+
+                    END SUBROUTINE intrinsic_any_test_function
+                    """
+
+    with pytest.raises(NotImplementedError):
+        sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+
 if __name__ == "__main__":
 
     test_fortran_frontend_any_array()
+    test_fortran_frontend_any_array_dim()

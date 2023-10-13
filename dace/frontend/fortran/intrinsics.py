@@ -238,7 +238,6 @@ class Any(LoopBasedReplacement):
                 lister = Any.AnyLoopNodeLister()
                 lister.visit(child)
                 res = lister.nodes
-                print(res)
                 if res is not None and len(res) > 0:
 
                     current = child.lval
@@ -248,23 +247,25 @@ class Any(LoopBasedReplacement):
                     for i in mywalk(val):
                         if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_any':
 
-                            for arg in i.args:
+                            if len(i.args) > 1:
+                                raise NotImplementedError("Fortran ANY with the DIM parameter is not supported!")
+                            arg = i.args[0]
 
-                                # supports syntax SUM(arr)
-                                if isinstance(arg, ast_internal_classes.Name_Node):
-                                    array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-                                    array_node.name = arg
+                            # supports syntax SUM(arr)
+                            if isinstance(arg, ast_internal_classes.Name_Node):
+                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                                array_node.name = arg
 
-                                    # If we access SUM(arr) where arr has many dimensions,
-                                    # We need to create a ParDecl_Node for each dimension
-                                    dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-                                    array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+                                # If we access SUM(arr) where arr has many dimensions,
+                                # We need to create a ParDecl_Node for each dimension
+                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
 
-                                    rvals.append(array_node)
+                                rvals.append(array_node)
 
-                                # supports syntax SUM(arr(:))
-                                if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-                                    rvals.append(arg)
+                            # supports syntax SUM(arr(:))
+                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                                rvals.append(arg)
 
                     if len(rvals) != 1:
                         raise NotImplementedError("Only one array can be summed")
