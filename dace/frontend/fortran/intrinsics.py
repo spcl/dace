@@ -146,7 +146,7 @@ class Sum(LoopBasedReplacement):
                     rangeposrval = []
                     rangesrval = []
 
-                    par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
+                    par_Decl_Range_Finder(val, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, True)
 
                     # Initialize the result variable
                     newbody.append(
@@ -232,6 +232,24 @@ class Any(LoopBasedReplacement):
             self.scope_vars = ScopeVarsDeclarations()
             self.scope_vars.visit(ast)
 
+        def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
+
+            # supports syntax ANY(arr)
+            if isinstance(arg, ast_internal_classes.Name_Node):
+                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                array_node.name = arg
+
+                # If we access SUM(arr) where arr has many dimensions,
+                # We need to create a ParDecl_Node for each dimension
+                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
+                return array_node
+
+            # supports syntax ANY(arr(:))
+            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                return arg
+
         def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
             newbody = []
             for child in node.execution:
@@ -244,6 +262,7 @@ class Any(LoopBasedReplacement):
                     val = child.rval
 
                     rvals = []
+                    rangesrval = []
                     for i in mywalk(val):
                         if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_any':
 
@@ -251,29 +270,55 @@ class Any(LoopBasedReplacement):
                                 raise NotImplementedError("Fortran ANY with the DIM parameter is not supported!")
                             arg = i.args[0]
 
-                            # supports syntax SUM(arr)
-                            if isinstance(arg, ast_internal_classes.Name_Node):
-                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-                                array_node.name = arg
-
-                                # If we access SUM(arr) where arr has many dimensions,
-                                # We need to create a ParDecl_Node for each dimension
-                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-
+                            array_node = self._parse_array(node, arg)
+                            if array_node is not None:
                                 rvals.append(array_node)
 
-                            # supports syntax SUM(arr(:))
-                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-                                rvals.append(arg)
+                                if len(rvals) != 1:
+                                    raise NotImplementedError("Only one array can be summed")
+                                val = rvals[0]
+                                rangeposrval = []
 
-                    if len(rvals) != 1:
-                        raise NotImplementedError("Only one array can be summed")
-                    val = rvals[0]
-                    rangeposrval = []
-                    rangesrval = []
+                                par_Decl_Range_Finder(val, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, True)
+                                cond = ast_internal_classes.BinOp_Node(op="==",
+                                                                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                                    lval=copy.deepcopy(val),
+                                                                    line_number=child.line_number)
+                            else:
 
-                    par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
+                                # supports syntax ANY(logical op)
+                                # the logical op can be:
+                                #
+                                # (1) arr1 op arr2
+                                # where arr1 and arr2 are name node or array subscript node
+                                # there, we need to extract shape and verify they are the same
+                                #
+                                # (2) arr1 op scalar
+                                # there, we ignore the scalar because it's not an array
+                                if isinstance(arg, ast_internal_classes.BinOp_Node):
+
+                                    left_side_arr  = self._parse_array(node, arg.lval)
+                                    right_side_arr  = self._parse_array(node, arg.rval)
+                                    if len(left_side_arr.indices) != len(right_side_arr.indices):
+                                        raise TypeError("Can't parse Fortran ANY with different array ranks!")
+
+                                    for left_idx, right_idx in zip(left_side_arr.indices, right_side_arr.indices):
+                                        if left_idx.type != right_idx.type:
+                                            raise TypeError("Can't parse Fortran ANY with different array ranks!")
+
+                                    rangeposrval = []
+                                    rangesrval_right = []
+                                    rangeslen_left = []
+                                    rangeslen_right = []
+                                    par_Decl_Range_Finder(left_side_arr, rangesrval, rangeposrval, rangeslen_left, self.count, newbody, self.scope_vars, True)
+                                    rangeposrval = []
+                                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, rangeposrval, rangeslen_right, self.count, newbody, self.scope_vars, True)
+                                    val = arg
+
+                                    # Now, we need to convert the array to a proper subscript node
+                                    cond = copy.deepcopy(val)
+                                    cond.lval = left_side_arr
+                                    cond.rval = right_side_arr
 
                     # Initialize the result variable
                     newbody.append(
@@ -287,10 +332,6 @@ class Any(LoopBasedReplacement):
                     range_index = 0
 
                     # Here begins the specialized implementation
-                    cond = ast_internal_classes.BinOp_Node(op="==",
-                                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                                        lval=copy.deepcopy(val),
-                                                        line_number=child.line_number)
                     body_if = ast_internal_classes.Execution_Part_Node(execution=[
                         ast_internal_classes.BinOp_Node(
                             lval=copy.deepcopy(current),
