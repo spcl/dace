@@ -134,7 +134,7 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             # Visit all intrinsic arguments and extract arrays
             for i in mywalk(child.rval):
                 if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == self.func_name():
-                    self._parse_call_expr_node(i)
+                    self._parse_call_expr_node(i, newbody)
 
             # Verify that all of intrinsic args are correct and prepare them for loop generation
             self._summarize_args(child, newbody)
@@ -184,6 +184,15 @@ class LoopBasedReplacementTransformation(NodeTransformer):
 
 class Sum(LoopBasedReplacement):
 
+    """
+        In this class, we implement the transformation for Fortran intrinsic SUM(:)
+        We support two ways of invoking the function - by providing array name and array subscript.
+        We do NOT support the *DIM* argument.
+
+        During the loop construction, we add a single variable storing the partial result.
+        Then, we generate a binary node accumulating the result.
+    """
+
     class Transformation(LoopBasedReplacementTransformation):
 
         def __init__(self, ast):
@@ -196,7 +205,7 @@ class Sum(LoopBasedReplacement):
             self.rvals = []
             self.argument_variable = None
 
-        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node, new_func_body: List[ast_internal_classes.FNode]):
 
             for arg in node.args:
 
@@ -254,6 +263,9 @@ class Any(LoopBasedReplacement):
 
     class Transformation(LoopBasedReplacementTransformation):
 
+        def __init__(self, ast):
+            super().__init__(ast)
+
         def func_name(self) -> str:
             return "__dace_any"
 
@@ -275,7 +287,10 @@ class Any(LoopBasedReplacement):
             if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
                 return arg
 
-        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+        def _initialize(self):
+            self.rvals = []
+
+        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node, new_func_body: List[ast_internal_classes.FNode]):
 
             if len(node.args) > 1:
                 raise NotImplementedError("Fortran ANY with the DIM parameter is not supported!")
@@ -283,18 +298,18 @@ class Any(LoopBasedReplacement):
 
             array_node = self._parse_array(node, arg)
             if array_node is not None:
-                rvals.append(array_node)
+                self.rvals.append(array_node)
 
-                if len(rvals) != 1:
+                if len(self.rvals) != 1:
                     raise NotImplementedError("Only one array can be summed")
-                val = rvals[0]
+                val = self.rvals[0]
                 rangeposrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, True)
-                cond = ast_internal_classes.BinOp_Node(op="==",
+                par_Decl_Range_Finder(val, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                self.cond = ast_internal_classes.BinOp_Node(op="==",
                                                     rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                                     lval=copy.deepcopy(val),
-                                                    line_number=child.line_number)
+                                                    line_number=node.line_number)
             else:
 
                 # supports syntax ANY(logical op)
@@ -323,14 +338,14 @@ class Any(LoopBasedReplacement):
                         rangeposrval = []
                         rangeslen_left = []
                         rangeposrval = []
-                        par_Decl_Range_Finder(dominant_array, rangesrval, rangeposrval, rangeslen_left, self.count, newbody, self.scope_vars, True)
+                        par_Decl_Range_Finder(dominant_array, self.loop_ranges, rangeposrval, rangeslen_left, self.count, new_func_body, self.scope_vars, True)
                         val = arg
 
-                        cond = copy.deepcopy(val)
+                        self.cond = copy.deepcopy(val)
                         if left_side_arr is not None:
-                            cond.lval = dominant_array
+                            self.cond.lval = dominant_array
                         if right_side_arr is not None:
-                            cond.rval = dominant_array
+                            self.cond.rval = dominant_array
 
                         return
 
@@ -345,12 +360,12 @@ class Any(LoopBasedReplacement):
                     rangeposrval = []
                     rangeslen_left = []
                     rangeposrval = []
-                    par_Decl_Range_Finder(left_side_arr, rangesrval, rangeposrval, rangeslen_left, self.count, newbody, self.scope_vars, True)
+                    par_Decl_Range_Finder(left_side_arr, self.loop_ranges, rangeposrval, rangeslen_left, self.count, new_func_body, self.scope_vars, True)
                     val = arg
 
                     rangesrval_right = []
                     rangeslen_right = []
-                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, [], rangeslen_right, self.count, newbody, self.scope_vars, True)
+                    par_Decl_Range_Finder(right_side_arr, rangesrval_right, [], rangeslen_right, self.count, new_func_body, self.scope_vars, True)
 
                     for left_len, right_len in zip(rangeslen_left, rangeslen_right):
                         if left_len != right_len:
@@ -365,7 +380,7 @@ class Any(LoopBasedReplacement):
                     for i in range(len(right_side_arr.indices)):
 
                         idx_var = right_side_arr.indices[i]
-                        start_loop = rangesrval[i][0]
+                        start_loop = self.loop_ranges[i][0]
                         end_loop = rangesrval_right[i][0]
 
                         difference = int(end_loop.value) - int(start_loop.value)
@@ -374,102 +389,49 @@ class Any(LoopBasedReplacement):
                                 lval=idx_var,
                                 op="+",
                                 rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
-                                line_number=child.line_number
+                                line_number=node.line_number
                             )
                             right_side_arr.indices[i] = new_index
 
                     # Now, we need to convert the array to a proper subscript node
-                    cond = copy.deepcopy(val)
-                    cond.lval = left_side_arr
-                    cond.rval = right_side_arr
+                    self.cond = copy.deepcopy(val)
+                    self.cond.lval = left_side_arr
+                    self.cond.rval = right_side_arr
 
-        def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-            newbody = []
-            for child in node.execution:
-                lister = Any.AnyLoopNodeLister()
-                lister.visit(child)
-                res = lister.nodes
-                if res is not None and len(res) > 0:
+        def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+            pass
 
-                    current = child.lval
-                    val = child.rval
+        def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
-                    rvals = []
-                    rangesrval = []
-                    for i in mywalk(val):
-                        if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_any':
-                            self._parse_call_expr_node(i)
+            return ast_internal_classes.BinOp_Node(
+                lval=node.lval,
+                op="=",
+                rval=ast_internal_classes.Int_Literal_Node(value="0"),
+                line_number=node.line_number
+            )
 
-                    # Initialize the result variable
-                    newbody.append(
-                        ast_internal_classes.BinOp_Node(
-                            lval=current,
-                            op="=",
-                            rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                            line_number=child.line_number
-                        )
-                    )
-                    range_index = 0
+        def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
 
-                    # Here begins the specialized implementation
-                    body_if = ast_internal_classes.Execution_Part_Node(execution=[
-                        ast_internal_classes.BinOp_Node(
-                            lval=copy.deepcopy(current),
-                            op="=",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                            line_number=child.line_number
-                        ),
-                        # TODO: we should make the `break` generation conditional based on the architecture
-                        # For parallel maps, we should have no breaks
-                        # For sequential loop, we want a break to be faster
-                        #ast_internal_classes.Break_Node(
-                        #    line_number=child.line_number
-                        #)
-                    ])
-                    body = ast_internal_classes.If_Stmt_Node(
-                        cond=cond,
-                        body=body_if,
-                        body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
-                        line_number=child.line_number
-                    )
-                    # Here ends the specialized implementation
-
-                    for i in rangesrval:
-                        initrange = i[0]
-                        finalrange = i[1]
-                        init = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="=",
-                            rval=initrange,
-                            line_number=child.line_number)
-                        cond = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="<=",
-                            rval=finalrange,
-                            line_number=child.line_number)
-                        iter = ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="=",
-                            rval=ast_internal_classes.BinOp_Node(
-                                lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                                op="+",
-                                rval=ast_internal_classes.Int_Literal_Node(value="1")),
-                            line_number=child.line_number)
-                        current_for = ast_internal_classes.Map_Stmt_Node(
-                            init=init,
-                            cond=cond,
-                            iter=iter,
-                            body=ast_internal_classes.Execution_Part_Node(execution=[body]),
-                            line_number=child.line_number)
-                        body = current_for
-                        range_index += 1
-
-                    newbody.append(body)
-
-                    self.count = self.count + range_index
-                else:
-                    newbody.append(self.visit(child))
-            return ast_internal_classes.Execution_Part_Node(execution=newbody)
+            body_if = ast_internal_classes.Execution_Part_Node(execution=[
+                ast_internal_classes.BinOp_Node(
+                    lval=copy.deepcopy(node.lval),
+                    op="=",
+                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                    line_number=node.line_number
+                ),
+                # TODO: we should make the `break` generation conditional based on the architecture
+                # For parallel maps, we should have no breaks
+                # For sequential loop, we want a break to be faster
+                #ast_internal_classes.Break_Node(
+                #    line_number=node.line_number
+                #)
+            ])
+            return ast_internal_classes.If_Stmt_Node(
+                cond=self.cond,
+                body=body_if,
+                body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
+                line_number=node.line_number
+            )
 
 class FortranIntrinsics:
 
