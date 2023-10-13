@@ -357,7 +357,7 @@ class Any(LoopBasedReplacement):
                                         start_loop = rangesrval[i][0]
                                         end_loop = rangesrval_right[i][0]
 
-                                        difference = int(end_loop.value) - int(start_loop.value) + 1
+                                        difference = int(end_loop.value) - int(start_loop.value)
                                         if difference != 0:
                                             new_index = ast_internal_classes.BinOp_Node(
                                                 lval=idx_var,
