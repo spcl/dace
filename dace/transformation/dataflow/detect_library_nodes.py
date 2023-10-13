@@ -7,6 +7,7 @@ from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.sdfg import utils as sdutil, graph as gr
 from dace.transformation import transformation
+from dace.dtypes import Language
 from typing import Any, List, Union
 import networkx as nx
 from dace.libraries.blas.nodes.gemm import Gemm
@@ -73,10 +74,30 @@ class DetectMatrixScalarMultiplicationIntoGemm(transformation.SingleStateTransfo
     def can_be_applied(self, graph, expr_index, sdfg, permissive = False):
         if not isinstance(self.library_node, Gemm):
             return False
+
+        # checking if matrix
+        if len(self.matrix_node.desc(sdfg).shape) != 2:
+            return False
+
+        if expr_index == 0:
+            # checking if scalar_node is a scalar
+            if self.scalar_node.desc(sdfg).total_size != 1:
+                return False
+        
+        # only scalar multiplication inside the tasklet
+        entry_out_degree = 2 if expr_index == 0 else 1
+        if graph.out_degree(self.map_entry_node) != entry_out_degree or graph.in_degree(self.map_exit_node) != 1:
+            return False
+
+        if self.mult_tasklet.language == Language.Python:
+            code = self.mult_tasklet.code.code[0]
+            if not (isinstance(code, ast.Assign) and isinstance(code.value, ast.BinOp) and isinstance(code.value.op, ast.Mult)):
+                return False
+            if expr_index == 1:
+                if not isinstance(code.value.left.args[0], ast.Constant):
+                    return False
+
         return True
-        #code = self.mult_tasklet._code.code[0]
-        #if isinstance(code, ast.Assign) and isinstance(code.value, ast.BinOp) and isinstance(code.value.op, ast.Mult):
-        #return False
     
     def apply(self, graph, sdfg):
         matrix_edge = graph.out_edges(self.matrix_node)[0]
@@ -86,7 +107,7 @@ class DetectMatrixScalarMultiplicationIntoGemm(transformation.SingleStateTransfo
             scalar_edge = graph.out_edges(self.scalar_node)[0]
             scalar_node = self.scalar_node
         else:
-            scalar_constant = self.mult_tasklet._code.code[0].value.left.args[0].value
+            scalar_constant = self.mult_tasklet.code.code[0].value.left.args[0].value
 
         lib = self.library_node
 
