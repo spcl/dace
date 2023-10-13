@@ -129,9 +129,64 @@ def test_fortran_frontend_any_array_comparison():
     for val in res:
         assert val == False
 
+def test_fortran_frontend_any_array_scalar_comparison():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM intrinsic_any_test
+                    implicit none
+                    integer, dimension(5) :: first
+                    logical, dimension(7) :: res
+                    CALL intrinsic_any_test_function(first, res)
+                    end
+
+                    SUBROUTINE intrinsic_any_test_function(first, res)
+                    integer, dimension(5) :: first
+                    logical, dimension(7) :: res
+
+                    res(1) = ANY(first .eq. 42)
+                    res(2) = ANY(first(:) .eq. 42)
+                    res(3) = ANY(first(1:2) .eq. 42)
+                    res(4) = ANY(first(3) .eq. 42)
+                    res(5) = ANY(first(3:5) .eq. 42)
+                    res(6) = ANY(42 .eq. first)
+                    res(7) = ANY(42 .ne. first)
+
+                    END SUBROUTINE intrinsic_any_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
+    sdfg.save('test.sdfg')
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 5
+    first = np.full([size], 1, order="F", dtype=np.int32)
+    res = np.full([7], 0, order="F", dtype=np.int32)
+
+    sdfg(first=first, res=res)
+    for val in res[0:-1]:
+        assert val == False
+    assert res[-1] == True
+
+    first[1] = 42
+    sdfg(first=first, res=res)
+    assert list(res) == [1, 1, 1, 0, 0, 1, 1]
+
+    first[1] = 5
+    first[3] = 42
+    sdfg(first=first, res=res)
+    assert list(res) == [1, 1, 0, 0, 1, 1, 1]
+
+    first[3] = 7
+    first[2] = 42
+    sdfg(first=first, res=res)
+    assert list(res) == [1, 1, 0, 1, 1, 1, 1]
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_any_array()
-    test_fortran_frontend_any_array_dim()
-    test_fortran_frontend_any_array_comparison()
+    #test_fortran_frontend_any_array()
+    #test_fortran_frontend_any_array_dim()
+    #test_fortran_frontend_any_array_comparison()
+    test_fortran_frontend_any_array_scalar_comparison()
