@@ -63,7 +63,7 @@ Generating the SDFG my be faster locally than on ault, in this case the generate
 `scp`. The graph will be located in the folder `full_cloudsc_logs` together with a logfile. The provided bash script
 `run_cloudsc.sh` can be run to execute the cloudsc code. Please adjust the paths inside it first to the location of your
 CLOUDSC repository. In order to prepared the CLOUDSC repository please follow the instructions inside the
-[cloudsc_instructions folder](cloudsc_thesis/cloudsc_instructions/README.md)
+[cloudsc_instructions folder](cloudsc_instructions/README.md)
 
 The python scripts `src/run_full_cloudsc.py` was used to run the cloudsc code multiple times and plot the results. You
 will need to adapt the path going to the CLOUDSC repository inside `src/utils/full_cloudsc.py`. Use `--help` to
