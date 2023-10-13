@@ -315,6 +315,32 @@ class Any(LoopBasedReplacement):
                                     par_Decl_Range_Finder(right_side_arr, rangesrval_right, rangeposrval, rangeslen_right, self.count, newbody, self.scope_vars, True)
                                     val = arg
 
+                                    for left_len, right_len in zip(rangeslen_left, rangeslen_right):
+                                        if left_len != right_len:
+                                            raise TypeError("Can't support Fortran ANY with different array ranks!")
+
+                                    # Now, the loop will be dictated by the left array
+                                    # If the access pattern on the right array is different, we need to shfit it - for every dimension.
+                                    # For example, we can have arr(1:3) == arr2(3:5)
+                                    # Then, loop_idx is from 1 to 3
+                                    # arr becomes arr[loop_idx]
+                                    # but arr2 must be arr2[loop_idx + 2]
+                                    for i in range(len(right_side_arr.indices)):
+
+                                        idx_var = right_side_arr.indices[i]
+                                        start_loop = rangesrval[i][0]
+                                        end_loop = rangesrval_right[i][0]
+
+                                        difference = int(end_loop.value) - int(start_loop.value) + 1
+                                        if difference != 0:
+                                            new_index = ast_internal_classes.BinOp_Node(
+                                                lval=idx_var,
+                                                op="+",
+                                                rval=ast_internal_classes.Int_Literal_Node(value=str(difference)),
+                                                line_number=child.line_number
+                                            )
+                                            right_side_arr.indices[i] = new_index
+
                                     # Now, we need to convert the array to a proper subscript node
                                     cond = copy.deepcopy(val)
                                     cond.lval = left_side_arr

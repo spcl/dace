@@ -86,21 +86,24 @@ def test_fortran_frontend_any_array_comparison():
                     implicit none
                     integer, dimension(5) :: first
                     integer, dimension(5) :: second
-                    logical, dimension(6) :: res
+                    logical, dimension(7) :: res
                     CALL intrinsic_any_test_function(first, second, res)
                     end
 
                     SUBROUTINE intrinsic_any_test_function(first, second, res)
                     integer, dimension(5) :: first
                     integer, dimension(5) :: second
-                    logical, dimension(6) :: res
+                    logical, dimension(7) :: res
 
                     res(1) = ANY(first .eq. second)
-                    !res(2) = ANY(first(:) .eq. second)
-                    !res(3) = ANY(first .eq. second(:))
-                    !res(4) = ANY(first(:) .eq. second(:))
-                    !res(5) = any(first(1:5) .eq. second(1:5))
-                    !res(6) = any(first(1:3) .eq. second(3:5))
+                    res(2) = ANY(first(:) .eq. second)
+                    res(3) = ANY(first .eq. second(:))
+                    res(4) = ANY(first(:) .eq. second(:))
+                    res(5) = any(first(1:5) .eq. second(1:5))
+                    ! This will also be true - the only same
+                    ! element is at position 3.
+                    res(6) = any(first(1:3) .eq. second(3:5))
+                    res(7) = any(first(1:2) .eq. second(4:5))
 
                     END SUBROUTINE intrinsic_any_test_function
                     """
@@ -113,14 +116,15 @@ def test_fortran_frontend_any_array_comparison():
     first = np.full([size], 1, order="F", dtype=np.int32)
     second = np.full([size], 2, order="F", dtype=np.int32)
     second[3] = 1
-    res = np.full([6], 1, order="F", dtype=np.int32)
+    res = np.full([7], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, second=second, res=res)
-    for val in res:
+    for val in res[0:-1]:
         assert val == True
+    assert res[-1] == False
 
     second = np.full([size], 2, order="F", dtype=np.int32)
-    res = np.full([6], 0, order="F", dtype=np.int32)
+    res = np.full([7], 0, order="F", dtype=np.int32)
     sdfg(first=first, second=second, res=res)
     for val in res:
         assert val == False
