@@ -137,7 +137,6 @@ def test_fortran_frontend_any_array_scalar_comparison():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_any_test", False)
-    sdfg.save('test.sdfg')
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
