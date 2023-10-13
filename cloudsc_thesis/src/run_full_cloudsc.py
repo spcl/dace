@@ -98,16 +98,16 @@ def main():
             help="See the help of the respective command")
 
     profile_parser = subparsers.add_parser('profile', description='Do profile runs')
-    profile_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU')
+    profile_parser.add_argument('--device', choices=['CPU', 'GPU'], default='GPU', help='The Device to run it on')
     profile_parser.set_defaults(func=action_profile)
 
     print_parser = subparsers.add_parser('print', description='Print stored results')
-    print_parser.add_argument('experiment_id')
-    print_parser.add_argument('--average', action='store_true', default=False)
+    print_parser.add_argument('experiment_id', help='Experiment number/id to print')
+    print_parser.add_argument('--average', action='store_true', default=False, help='If the results should be averaged')
     print_parser.set_defaults(func=action_print)
 
     plot_parser = subparsers.add_parser('plot', description='plot stored results')
-    plot_parser.add_argument('experiment_id')
+    plot_parser.add_argument('experiment_id', help='Experiment number/id to plot')
     plot_parser.set_defaults(func=action_plot)
 
     list_parser = subparsers.add_parser('list', description='List stored experiments')

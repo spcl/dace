@@ -71,6 +71,9 @@ discover the option the scripts take. This works for any python run script in th
 
 
 ### Smaller example code
+The smaller example codes can be run using the script `src/run2.py` and `src/plot2.py`, use `--help` to discover their
+options.
+
 #### CLOUDSC example programs
 There are 5 example programs used to develop K-caching and the change in strides. They represent the whole CLOUDSC
 program structure but are much smaller. The first one was used to develop the DaCe transformations, the other four
