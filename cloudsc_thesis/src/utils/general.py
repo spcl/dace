@@ -525,12 +525,13 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
 
     logger.info(f"device: {device}, use_my_auto_opt: {use_my_auto_opt}, verbose_name:"
                 f"{verbose_name}, symbols: {symbols}, k_caching: {k_caching}, change_stride: {change_stride}")
-    replace_symbols_by_values(sdfg, {
-        'NCLV': str(symbols['NCLV']),
-        'NCLDQI': str(symbols['NCLDQI']),
-        'NCLDQL': str(symbols['NCLDQL']),
-        'NCLDQS': str(symbols['NCLDQS']),
-        'NCLDQV': str(symbols['NCLDQV'])})
+    if symbols is not None:
+        replace_symbols_by_values(sdfg, {
+            'NCLV': str(symbols['NCLV']),
+            'NCLDQI': str(symbols['NCLDQI']),
+            'NCLDQL': str(symbols['NCLDQL']),
+            'NCLDQS': str(symbols['NCLDQS']),
+            'NCLDQV': str(symbols['NCLDQV'])})
     if verbose_name is not None:
         save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
 
