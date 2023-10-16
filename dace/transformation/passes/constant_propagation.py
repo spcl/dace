@@ -8,7 +8,7 @@ from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
 from dace import SDFG, SDFGState, dtypes, symbolic, properties
-from dace.sdfg.state import ScopeBlock, ControlFlowBlock
+from dace.sdfg.state import ScopeBlock, ControlFlowBlock, LoopScopeBlock
 from typing import Any, Dict, Set, Optional, Tuple
 
 
@@ -73,7 +73,8 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
             result = {}
         else:
             # Trace all constants and symbols through states
-            per_block_constants: Dict[ControlFlowBlock, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
+            per_block_constants: Dict[ControlFlowBlock, Dict[str, Any]] = self.collect_constants(scope_block,
+                                                                                                 initial_symbols)
 
             # Keep track of replaced and ambiguous symbols
             symbols_replaced: Dict[str, Any] = {}
@@ -192,6 +193,7 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
 
             # Get predecessors
             in_edges = scope.in_edges(block)
+            assignments = {}
             if len(in_edges) == 1:  # Special case, propagate as-is
                 if block not in result:  # Condition evaluates to False when state is the start-state
                     result[block] = {}
@@ -202,27 +204,28 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
 
                 # Then assignments on the incoming edge
                 self._propagate(result[block], self._data_independent_assignments(in_edges[0].data, arrays))
-                continue
+            else:
+                # More than one incoming edge: may require reversed traversal
+                for edge in in_edges:
+                    # If source was already visited, use its propagated constants
+                    constants: Dict[str, Any] = {}
+                    if edge.src in result:
+                        constants.update(result[edge.src])
+                    else:  # Otherwise, reverse DFS to find constants until a visited state
+                        constants = self._constants_from_unvisited_state(scope, edge.src, arrays, result)
 
-            # More than one incoming edge: may require reversed traversal
-            assignments = {}
-            for edge in in_edges:
-                # If source was already visited, use its propagated constants
-                constants: Dict[str, Any] = {}
-                if edge.src in result:
-                    constants.update(result[edge.src])
-                else:  # Otherwise, reverse DFS to find constants until a visited state
-                    constants = self._constants_from_unvisited_state(scope, edge.src, arrays, result)
+                    # Update constants with incoming edge
+                    self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
 
-                # Update constants with incoming edge
-                self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
+                    for aname, aval in constants.items():
+                        # If something was assigned more than once (to a different value), it's not a constant
+                        if aname in assignments and aval != assignments[aname]:
+                            assignments[aname] = _UnknownValue
+                        else:
+                            assignments[aname] = aval
 
-                for aname, aval in constants.items():
-                    # If something was assigned more than once (to a different value), it's not a constant
-                    if aname in assignments and aval != assignments[aname]:
-                        assignments[aname] = _UnknownValue
-                    else:
-                        assignments[aname] = aval
+            if isinstance(block, LoopScopeBlock): # Add the loop variable as unknown assignment
+                assignments[block.loop_variable] = _UnknownValue
 
             if block not in result:  # Condition may evaluate to False when state is the start-state
                 result[block] = {}

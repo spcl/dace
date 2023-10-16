@@ -80,9 +80,10 @@ class DeadDataflowElimination(ppl.Pass):
             dead_nodes: List[nodes.Node] = []
 
             # Propagate deadness backwards within a state
-            for node in sdutil.dfs_topological_sort(state, reverse=True):
-                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
-                    dead_nodes.append(node)
+            if isinstance(state, SDFGState):
+                for node in sdutil.dfs_topological_sort(state, reverse=True):
+                    if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
+                        dead_nodes.append(node)
 
             # Scope exit nodes are only dead if their corresponding entry nodes are
             live_nodes = set()

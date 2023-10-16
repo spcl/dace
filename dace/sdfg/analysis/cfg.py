@@ -2,7 +2,7 @@
 """ Various analyses related to control flow in SDFG states. """
 from collections import defaultdict
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr, utils as sdutil
-from dace.symbolic import pystr_to_symbolic
+from dace.sdfg.state import ScopeBlock, ControlFlowBlock
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Set
@@ -67,32 +67,32 @@ def back_edges(sdfg: SDFG,
     return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
 
 
-def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
+def state_parent_tree(graph: ScopeBlock) -> Dict[ControlFlowBlock, ControlFlowBlock]:
     """
     Computes an upward-pointing tree of each state, pointing to the "parent
-    state" it belongs to (in terms of structured control flow). More formally,
-    each state is either mapped to its immediate dominator with out degree > 2,
-    one state upwards if state occurs after a loop, or the start state if 
-    no such states exist.
+    block" it belongs to (in terms of structured control flow). More formally,
+    each block is either mapped to its immediate dominator with out degree > 2,
+    one block upwards if the block occurs after a loop, or the start block if 
+    no such block exist.
 
     :param sdfg: The SDFG to analyze.
     :return: A dictionary that maps each state to a parent state, or None
              if the root (start) state.
     """
-    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-    alldoms = all_dominators(sdfg, idom)
-    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
+    idom = nx.immediate_dominators(graph.nx, graph.start_block)
+    alldoms = all_dominators(graph, idom)
+    loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
 
     # First, annotate loops
-    for be in back_edges(sdfg, idom, alldoms):
+    for be in back_edges(graph, idom, alldoms):
         guard = be.dst
         laststate = be.src
         if loopexits[guard] is not None:
             continue
 
         # Natural loops = one edge leads back to loop, another leads out
-        in_edges = sdfg.in_edges(guard)
-        out_edges = sdfg.out_edges(guard)
+        in_edges = graph.in_edges(guard)
+        out_edges = graph.out_edges(guard)
 
         # A loop guard has two or more incoming edges (1 increment and
         # n init, all identical), and exactly two outgoing edges (loop and
@@ -148,8 +148,8 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
                 return False
             return True  # Keep traversing
 
-        list(sdutil.dfs_conditional(sdfg, (oa, ), cond_a))
-        list(sdutil.dfs_conditional(sdfg, (ob, ), cond_b))
+        list(sdutil.dfs_conditional(graph, (oa, ), cond_a))
+        list(sdutil.dfs_conditional(graph, (ob, ), cond_b))
 
         # Check which candidate states led back to guard
         is_a_begin = a_reached_guard and reachable_a
@@ -168,20 +168,20 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
         loopexits[guard] = exit_state
 
     # Get dominators
-    parents: Dict[SDFGState, SDFGState] = {}
-    step_up: Set[SDFGState] = set()
-    for state in sdfg.nodes():
+    parents: Dict[ControlFlowBlock, ControlFlowBlock] = {}
+    step_up: Set[ControlFlowBlock] = set()
+    for state in graph.nodes():
         curdom = idom[state]
         if curdom == state:
             parents[state] = None
             continue
 
         while curdom != idom[curdom]:
-            if sdfg.out_degree(curdom) > 1:
+            if graph.out_degree(curdom) > 1:
                 break
             curdom = idom[curdom]
 
-        if sdfg.out_degree(curdom) == 2 and loopexits[curdom] is not None:
+        if graph.out_degree(curdom) == 2 and loopexits[curdom] is not None:
             p = state
             while p != curdom and p != loopexits[curdom]:
                 p = idom[p]
@@ -199,22 +199,22 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
     return parents
 
 
-def _stateorder_topological_sort(sdfg: SDFG,
-                                 start: SDFGState,
-                                 ptree: Dict[SDFGState, SDFGState],
-                                 branch_merges: Dict[SDFGState, SDFGState],
-                                 stop: SDFGState = None,
-                                 visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
+def _stateorder_topological_sort(graph: ScopeBlock,
+                                 start: ControlFlowBlock,
+                                 ptree: Dict[ControlFlowBlock, ControlFlowBlock],
+                                 branch_merges: Dict[ControlFlowBlock, ControlFlowBlock],
+                                 stop: ControlFlowBlock = None,
+                                 visited: Set[ControlFlowBlock] = None) -> Iterator[ControlFlowBlock]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
 
-    :param sdfg: SDFG.
-    :param start: Starting state for traversal.
+    :param graph: Control flow graph or SDFG.
+    :param start: Starting block for traversal.
     :param ptree: State parent tree (computed from ``state_parent_tree``).
-    :param branch_merges: Dictionary mapping from branch state to its merge state.
-    :param stop: Stopping state to not traverse through (merge state of a 
-                 branch or guard state of a loop).
-    :return: Generator that yields states in state-order from ``start`` to 
+    :param branch_merges: Dictionary mapping from branch blocks to their merge blocks.
+    :param stop: Stopping block to not traverse through (merge block of a 
+                 branch or guard block of a loop).
+    :return: Generator that yields blocks in state-order from ``start`` to 
              ``stop``.
     """
     # Traverse states in custom order
@@ -227,7 +227,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
         yield node
         visited.add(node)
 
-        oe = sdfg.out_edges(node)
+        oe = graph.out_edges(node)
         if len(oe) == 0:  # End state
             continue
         elif len(oe) == 1:  # No traversal change
@@ -236,14 +236,14 @@ def _stateorder_topological_sort(sdfg: SDFG,
         elif len(oe) == 2:  # Loop or branch
             # If loop, traverse body, then exit
             if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
+                for s in _stateorder_topological_sort(graph, oe[0].dst, ptree, branch_merges, stop=node,
                                                       visited=visited):
                     yield s
                     visited.add(s)
                 stack.append(oe[1].dst)
                 continue
             elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
+                for s in _stateorder_topological_sort(graph, oe[1].dst, ptree, branch_merges, stop=node,
                                                       visited=visited):
                     yield s
                     visited.add(s)
@@ -258,7 +258,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
             try:
                 # Otherwise (e.g., with return/break statements), traverse through each branch,
                 # stopping at the end of the current tree level.
-                mergestate = next(e.dst for e in sdfg.out_edges(stop) if ptree[e.dst] != stop)
+                mergestate = next(e.dst for e in graph.out_edges(stop) if ptree[e.dst] != stop)
             except StopIteration:
                 # If that fails, simply traverse branches in arbitrary order
                 mergestate = stop
@@ -267,7 +267,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
             if branch.dst is mergestate:
                 # If we hit the merge state (if without else), defer to end of branch traversal
                 continue
-            for s in _stateorder_topological_sort(sdfg,
+            for s in _stateorder_topological_sort(graph,
                                                   branch.dst,
                                                   ptree,
                                                   branch_merges,
@@ -278,23 +278,23 @@ def _stateorder_topological_sort(sdfg: SDFG,
         stack.append(mergestate)
 
 
-def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
+def stateorder_topological_sort(graph: ScopeBlock) -> Iterator[ControlFlowBlock]:
     """
-    Returns a generator that produces states in the order that they will be
+    Returns a generator that produces control flow blocks in the order that they will be
     executed, disregarding multiple loop iterations and employing topological
     sort for branches.
 
-    :param sdfg: The SDFG to iterate over.
-    :return: Generator that yields states in state-order.
+    :param graph: The SDFG / control flow graph to iterate over.
+    :return: Generator that yields control flow blocks in state-order.
     """
     # Get parent states
-    ptree = state_parent_tree(sdfg)
+    ptree = state_parent_tree(graph)
 
     # Annotate branches
-    branch_merges: Dict[SDFGState, SDFGState] = {}
-    adf = acyclic_dominance_frontier(sdfg)
-    for state in sdfg.nodes():
-        oedges = sdfg.out_edges(state)
+    branch_merges: Dict[ControlFlowBlock, ControlFlowBlock] = {}
+    adf = acyclic_dominance_frontier(graph)
+    for state in graph.nodes():
+        oedges = graph.out_edges(state)
         # Skip if not branch
         if len(oedges) <= 1:
             continue
@@ -312,4 +312,4 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges)
+    yield from _stateorder_topological_sort(graph, graph.start_block, ptree, branch_merges)

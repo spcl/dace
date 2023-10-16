@@ -5,7 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowBlock, ScopeBlock
+from dace.sdfg.state import ControlFlowBlock, LoopScopeBlock
 from dace.sdfg.analysis import cfg
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
@@ -31,20 +31,33 @@ class StateReachability(ppl.Pass):
         # If anything was modified, reapply
         return modified & ppl.Modifies.States
 
-    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]:
         """
-        :return: A dictionary mapping each state to its other reachable states.
+        :return: A dictionary mapping each control flow block to its other reachable control flow blocks.
         """
-        reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
+        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            result: Dict[SDFGState, Set[SDFGState]] = {}
+            result: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {}
 
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
             # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
+            for scope in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
+                for n, v in reachable_nodes(scope.nx):
+                    result[n] = set(v)
 
-            for n, v in reachable_nodes(sdfg.nx):
-                result[n] = set(v)
+            for k, _ in result.items():
+                parent = k.parent
+                if parent is not None:
+                    # Everything in a loop can also reach anything else in the loop.
+                    # TODO: Unless it's a break or return state.
+                    if isinstance(parent, LoopScopeBlock):
+                        result[k].update(parent.nodes())
+
+                    # Propagate in the parent scope's reach (transitively).
+                    while parent is not None and not isinstance(parent, SDFG):
+                        result[k].update(result[parent])
+                        parent = parent.parent
 
             reachable[sdfg.sdfg_id] = result
 
@@ -63,8 +76,6 @@ def _single_shortest_path_length_no_self(adj, source):
             Adjacency dict or view
         firstlevel : dict
             starting nodes, e.g. {source: 1} or {target: 1}
-        cutoff : int or float
-            level at which we stop the process
     """
     firstlevel = {source: 1}
 

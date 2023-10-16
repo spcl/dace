@@ -757,14 +757,7 @@ class SDFG(ScopeBlock):
         for array in self.arrays.values():
             replace_properties_dict(array, repldict, symrepl)
 
-        if replace_in_graph:
-            # Replace in inter-state edges
-            for edge in self.edges():
-                edge.data.replace_dict(repldict)
-
-            # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repldict, symrepl)
+        super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.

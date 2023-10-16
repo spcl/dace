@@ -960,9 +960,21 @@ class ControlGraphView(BlockGraphView, abc.ABC):
 
     def replace_dict(self,
                      repl: Dict[str, str],
-                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
-        for n in self.nodes():
-            n.replace_dict(repl, symrepl)
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True, replace_keys: bool = False):
+        symrepl = symrepl or {
+            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            for k, v in repl.items()
+        }
+
+        if replace_in_graph:
+            # Replace in inter-state edges
+            for edge in self.edges():
+                edge.data.replace_dict(repl)
+
+            # Replace in states
+            for state in self.nodes():
+                state.replace_dict(repl, symrepl)
 
 
 @make_properties
@@ -2370,8 +2382,8 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
             after_state = self.add_state()
 
         self.add_node(loop_scope)
-        self.add_edge(before_state, loop_scope)
-        self.add_edge(loop_scope, after_state)
+        self.add_edge(before_state, loop_scope, dace.sdfg.InterstateEdge())
+        self.add_edge(loop_scope, after_state, dace.sdfg.InterstateEdge())
 
         return before_state, loop_scope, after_state
 
@@ -2555,6 +2567,18 @@ class LoopScopeBlock(ScopeBlock):
         free_symbols -= defined_symbols
 
         return free_symbols, defined_symbols, used_before_assignment
+
+    def replace_dict(self, repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True, replace_keys: bool = True):
+        if replace_keys:
+            from dace.sdfg.replace import replace_properties_dict
+            replace_properties_dict(self, repl, symrepl)
+
+            if self.loop_variable and self.loop_variable in repl:
+                self.loop_variable = repl[self.loop_variable]
+
+        super().replace_dict(repl, symrepl, replace_in_graph)
 
     def to_json(self, parent=None):
         return super().to_json(parent)
