@@ -242,7 +242,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                           "This may not be what you want.")
         if self.autoopt == True:
             warnings.warn("You are calling to_sdfg() on a dace program that "
-                          "has set `auto_optimize` to True, which is ignored here.")
+                          "has set `auto_optimize` to True. Automatic optimization will not be applied.")
 
         if use_cache:
             # Update global variables with current closure
