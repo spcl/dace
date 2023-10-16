@@ -1,3 +1,4 @@
+""" Functions to get shape of input/output data """
 from typing import Dict, Union, Tuple, List, Optional
 import numpy as np
 from numbers import Number

@@ -1,3 +1,4 @@
+""" Store the parameters used """
 import logging
 from typing import Dict, Optional
 from numbers import Number

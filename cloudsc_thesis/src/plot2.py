@@ -178,7 +178,6 @@ def action_script(args):
             'my-transformations': (plot_my_transformations, {'experiment_ids': [176, 177, 188, 189]}),
             'my-transformations-ampere': (plot_my_transformations, {'experiment_ids': [218, 219, 220, 221],
                                                                     'folder_name': 'my-transformations-ampere'}),
-            # 'classes': (plot_classes, {'experiment_ids': [193, 194, 195]})
             'classes': (plot_classes, {'experiment_ids': [321, 322, 323]})
     }
     function, func_args = scripts[args.script_name]
@@ -195,7 +194,7 @@ def main():
         help="See the help of the respective command")
 
     script_parser = subparsers.add_parser('script', description='Run predefined script to create a set of pltos')
-    script_parser.add_argument('script_name', type=str)
+    script_parser.add_argument('script_name', type=str, help='Name of the script to execute')
     script_parser.add_argument('--args', type=str, default='{}',
                                help='Additional arguments passed to the plot script function as a json-dictionary')
     script_parser.set_defaults(func=action_script)

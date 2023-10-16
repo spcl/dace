@@ -25,6 +25,16 @@ In addition the scripts might create two additional folders:
 - `sdfg_graphs`: Intermediate SDFGs will be stored here for further inspection
 - `full_cloudsc_logs`: The logfiles created when running the scripts for the full cloudsc as well as the generated SDFGs
 
+### Code structure
+All python files directly inside the `src` folder are scripts which can be executed directly and support command line
+arguments including `--help` do show what flags they accepts. The are several subfolders containing more python code:
+
+- `execute`: Store data shape and parameters to execute the Fortran programs using random input data
+- `measurements`: Code to profile the Fortran programs
+- `scripts`: Different plotting scripts.
+- `utils`: Different helper functions
+
+
 ## SDFG generation process
 In order to cut down the time to generate a SDFG, especially for the full CLOUDSC code I implemented a two phase model.
 First a basic SDFG is generated without any optimisations applied, but all loops are converted to maps if possible as
@@ -72,9 +82,16 @@ discover the option the scripts take. This works for any python run script in th
 
 ### Smaller example code
 The smaller example codes can be run using the script `src/run2.py` and `src/plot2.py`, use `--help` to discover their
-options.
+options. The plotting script needs to be adapted to use the correct experiment ids as this repository does not contain
+any data. You need to adapt the `scripts` dictionary inside the `action_script` function.
+In the code and as command line arguments there are often three kind of programs, they are shortly introduced
+here and in more details in the further paragraphs.
 
-#### CLOUDSC example programs
+- `classes`: The small example programs grouped into classes
+- `vert-loop`: These refers to the other vertical loop programs where I did the optimisations manually
+- `my transformations`: These refers to `cloudsc_vert_loop_10` with and/or without K-caching and changed strides.
+
+#### CLOUDSC example programs / vertical loop programs
 There are 5 example programs used to develop K-caching and the change in strides. They represent the whole CLOUDSC
 program structure but are much smaller. The first one was used to develop the DaCe transformations, the other four
 implement them manually and were used to get a first feeling if it makes sense to implement the transformations.

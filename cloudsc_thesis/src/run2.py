@@ -25,41 +25,6 @@ from measurements.profile_config import ProfileConfig
 logger = logging.getLogger("run2")
 
 
-def do_cloudsc() -> List[int]:
-    program = 'cloudscexp2'
-    params = []
-    experiment_ids = []
-    params.append(ParametersProvider(program, update={'NBLOCKS': 1000}))
-    # params.append(ParametersProvider(program, update={'NBLOCKS': 2000}))
-    # params.append(ParametersProvider(program, update={'NBLOCKS': 3000}))
-    profile_config = [ProfileConfig(program, params, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5,
-        use_basic_sdfg=True)]
-    experiment_desc = 'Full cloudsc'
-    # experiment_desc = 'vert_loop_10'
-    experiment_ids.append(profile(profile_config, RunConfig(k_caching=False, change_stride=False, outside_loop_first=False),
-                                  experiment_desc + ' baseline', [('k_caching', "False"), ('change_strides', 'False')],
-                                  ncu_report=False))
-    experiment_ids.append(profile(profile_config, RunConfig(k_caching=True, change_stride=True, outside_loop_first=False),
-                                  experiment_desc + ' my optimisations', [('k_caching', "True"), ('change_strides', 'True')],
-                                  ncu_report=False))
-    return experiment_ids
-
-
-def do_test() -> List[int]:
-    program = 'mwe_array_order'
-    profile_configs = []
-    params1 = [ParametersProvider(program, update={'NBLOCKS': 100, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})]
-    params2 = [ParametersProvider(program, update={'NBLOCKS': 200, 'KLEV': 137, 'KFDIA': 1, 'KIDIA': 1, 'KLON': 1})]
-    profile_configs.append(ProfileConfig(program, params1, ['NBLOCKS'], ncu_repetitions=1, tot_time_repetitions=5))
-    profile_configs.append(ProfileConfig(program, params2, ['NBLOCKS'], ncu_repetitions=0, tot_time_repetitions=5))
-    experiment_desc = "test run"
-    experiment_ids = []
-    experiment_ids.append(profile(profile_configs, RunConfig(k_caching=False, change_stride=False), experiment_desc,
-                          [('k_caching', "False"), ('change_strides', 'False')], ncu_report=False,
-                          debug_mode=False))
-    return experiment_ids
-
-
 def do_classes(additional_desc: Optional[str] = None) -> List[int]:
     class1 = ['cloudsc_class1_2783', 'cloudsc_class1_2857', 'cloudsc_class1_658', 'cloudsc_class1_670']
     class2 = ['cloudsc_class2_1516', 'cloudsc_class2_1762', 'cloudsc_class2_781']
@@ -223,12 +188,14 @@ def do_vertical_loops(additional_desc: Optional[str] = None, nblock_min: Number 
 
 
 base_experiments = {
+    # The vertical loop programs with my manual changes
     'vert-loop': do_vertical_loops,
+    # The vertical loop program with my transformation, profile using ncu
     'k_caching_ncu': do_k_caching_ncu,
+    # The vertical loop program with my transformation, profile total runtime
     'k_caching_total': do_k_caching_total,
+    # The small classes program
     'classes': do_classes,
-    'test': do_test,
-    'cloudsc': do_cloudsc
 }
 
 
@@ -291,14 +258,7 @@ def profile(program_configs: List[ProfileConfig], run_config: RunConfig, experim
         os.makedirs(experiment_folder, exist_ok=True)
         additional_columns_values = [col[1] for col in additional_columns]
 
-        # Generate SDFG only once -> save runtime
-        # sdfg_name = f"{program_config.program}_{new_experiment_id}_" + '_'.join(additional_columns_values) + ".sdfg"
-        # sdfg_path = os.path.join(experiment_folder, sdfg_name)
-        # print_with_time(f"[run2::profile] Generate SDFG and save it into {sdfg_path}")
-        # sdfg = program_config.compile(program_config.sizes[0], run_config, specialise_changing_sizes=False)
-        # sdfg.save(sdfg_path)
         additional_args = {}
-        # additional_args['sdfg_path'] = sdfg_path
         additional_args['debug_mode'] = debug_mode
         if ncu_report:
             create_if_not_exist(os.path.join(get_results_2_folder(), "ncu_reports"))
