@@ -21,7 +21,7 @@ from utils.execute_dace import compile_for_profile, gen_ncu_report, RNG_SEED
 from utils.run_config import RunConfig
 from execute.data import set_input_pattern
 from execute.parameters import ParametersProvider
-from execute.my_auto_opt import specialise_symbols
+from dace.transformation.auto.cloudsc_auto_opt import specialise_symbols
 from measurements.flop_computation import get_number_of_bytes_2, get_number_of_flops
 
 logger = logging.getLogger(__name__)
