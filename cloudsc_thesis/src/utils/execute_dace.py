@@ -1,7 +1,7 @@
 import numpy as np
 import copy
 from numbers import Number
-from typing import Tuple, Optional, List, Union, Dict
+from typing import Optional, List, Union, Dict
 import os
 from subprocess import run
 import logging
@@ -12,9 +12,8 @@ from execute.parameters import ParametersProvider
 from execute.data import set_input_pattern
 from utils.general import get_programs_data, read_source, get_fortran, get_sdfg, get_inputs, get_outputs, \
                           compare_output, compare_output_all, optimize_sdfg
-from utils.gpu_general import copy_to_device, print_non_zero_percentage
+from utils.gpu_general import copy_to_device
 from utils.run_config import RunConfig
-from measurements.flop_computation import FlopCount, get_number_of_bytes, get_number_of_flops
 from measurements.data import ProgramMeasurement
 
 RNG_SEED = 424388
