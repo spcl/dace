@@ -13,6 +13,7 @@ My run scripts require the following additional python packages in order to coll
 - pandas
 - seaborn
 - cupy for execution on GPU
+- tabulate
 
 ## Structure of this folder
 This folder contains several subfolders. These are:
