@@ -200,7 +200,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
 def parse_memlet_subset(array: data.Data,
                         node: Union[ast.Name, ast.Subscript],
                         das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int]]:
+                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
     """ 
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -209,7 +209,7 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
-    :return: A 2-tuple of (subset, list of new axis indices).
+    :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
     """
     # Get memlet range
     ndslice = [(0, s - 1, 1) for s in array.shape]
@@ -285,7 +285,11 @@ def ParseMemlet(visitor,
         if len(node.value.args) >= 2:
             write_conflict_resolution = node.value.args[1]
 
-    subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    try:
+        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+    except IndexError:
+        raise DaceSyntaxError(visitor, node, 'Failed to parse memlet expression due to dimensionality. '
+                              f'Array dimensions: {array.shape}, expression in code: {astutils.unparse(node)}')
 
     # If undefined, default number of accesses is the slice size
     if num_accesses is None:

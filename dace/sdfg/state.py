@@ -8,7 +8,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
+from typing import TYPE_CHECKING, Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
 
 import dace
 from dace import data as dt
@@ -29,6 +29,10 @@ from dace.subsets import Range, Subset
 SomeNodeT = Union[nd.Node, 'ControlFlowBlock']
 SomeEdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
 SomeGraphT = Union['ScopeBlock', 'SDFGState']
+
+
+if TYPE_CHECKING:
+    import dace.sdfg.scope
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -589,8 +593,21 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Query, subgraph, and replacement methods
 
-    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
-        state: dace.SDFGState = self.graph if isinstance(self, SubgraphView) else self
+    def is_leaf_memlet(self, e):
+        if isinstance(e.src, nd.ExitNode) and e.src_conn and e.src_conn.startswith('OUT_'):
+            return False
+        if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
+            return False
+        return True
+
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        """
+        Returns a set of symbol names that are used in the state.
+
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
+        """
+        state = self.graph if isinstance(self, SubgraphView) else self
         sdfg = state.sdfg
         new_symbols = set()
         freesyms = set()
@@ -602,13 +619,23 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))
-            elif (isinstance(n, nd.Tasklet) and n.language == dtypes.Language.Python):
-                # Consider callbacks defined as symbols as free
-                for stmt in n.code.code:
-                    for astnode in ast.walk(stmt):
-                        if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
-                                and astnode.func.id in sdfg.symbols):
-                            freesyms.add(astnode.func.id)
+            elif isinstance(n, nd.Tasklet):
+                if n.language == dtypes.Language.Python:
+                    # Consider callbacks defined as symbols as free
+                    for stmt in n.code.code:
+                        for astnode in ast.walk(stmt):
+                            if (isinstance(astnode, ast.Call) and isinstance(astnode.func, ast.Name)
+                                    and astnode.func.id in sdfg.symbols):
+                                freesyms.add(astnode.func.id)
+                else:
+                    # Find all string tokens and filter them to sdfg.symbols, while ignoring connectors
+                    codesyms = symbolic.symbols_in_code(
+                        n.code.as_string,
+                        potential_symbols=sdfg.symbols.keys(),
+                        symbols_to_ignore=(n.in_connectors.keys() | n.out_connectors.keys() | n.ignored_symbols),
+                    )
+                    freesyms |= codesyms
+                    continue
 
             if hasattr(n, 'used_symbols'):
                 freesyms |= n.used_symbols(all_symbols)
@@ -616,23 +643,27 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 freesyms |= n.free_symbols
 
         # Free symbols from memlets
-        def _is_leaf_memlet(e):
-            if isinstance(e.src, nd.ExitNode) and e.src_conn and e.src_conn.startswith('OUT_'):
-                return False
-            if isinstance(e.dst, nd.EntryNode) and e.dst_conn and e.dst_conn.startswith('IN_'):
-                return False
-            return True
-        
         for e in self.edges():
             # If used for code generation, only consider memlet tree leaves
-            if not all_symbols and not _is_leaf_memlet(e):
+            if not all_symbols and not self.is_leaf_memlet(e):
                 continue
 
-            freesyms |= e.data.used_symbols(all_symbols)
+            freesyms |= e.data.used_symbols(all_symbols, e)
 
         # Do not consider SDFG constants as symbols
         new_symbols.update(set(sdfg.constants.keys()))
-        return freesyms - new_symbols, new_symbols, set()
+        return freesyms - new_symbols
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """
+        Returns a set of symbol names that are used, but not defined, in
+        this graph view (SDFG state or subgraph thereof).
+
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        return self.used_symbols(all_symbols=True)
 
     def defined_symbols(self) -> Dict[str, dt.Data]:
         state = self.graph if isinstance(self, SubgraphView) else self
@@ -685,8 +716,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
-                            if (in_edge.data.data == out_edge.data.data and
-                                    in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                            if (in_edge.data.data == out_edge.data.data
+                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
                                 break
 
@@ -794,17 +825,34 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants
+            for k in self.used_symbols(all_symbols=False) if not k.startswith('__dace') and k not in sdfg.constants
         })
 
         # Add scalar arguments from free symbols of data descriptors
         for arg in data_args.values():
             scalar_args.update({
                 str(k): dt.Scalar(k.dtype)
-                for k in arg.free_symbols if not str(k).startswith('__dace') and str(k) not in sdfg.constants
+                for k in arg.used_symbols(all_symbols=False)
+                if not str(k).startswith('__dace') and str(k) not in sdfg.constants
             })
 
-        return data_args, scalar_args
+        # Fill up ordered dictionary
+        result = collections.OrderedDict()
+        for k, v in itertools.chain(sorted(data_args.items()), sorted(scalar_args.items())):
+            result[k] = v
+
+        return result
+
+    def signature_arglist(self, with_types=True, for_call=False):
+        """ Returns a list of arguments necessary to call this state or
+            subgraph, formatted as a list of C definitions.
+
+            :param with_types: If True, includes argument types in the result.
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :return: A list of strings. For example: `['float *A', 'int b']`.
+        """
+        return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in self.arglist().items()]
 
     def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
         from dace.sdfg.scope import _scope_subgraph
@@ -970,7 +1018,7 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         if replace_in_graph:
             # Replace in inter-state edges
             for edge in self.edges():
-                edge.data.replace_dict(repl)
+                edge.data.replace_dict(repl, replace_keys=replace_keys)
 
             # Replace in states
             for state in self.nodes():
@@ -1099,7 +1147,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self._debuginfo = debuginfo
         self.nosync = False
         self.location = location if location is not None else {}
-    
+        self._default_lineinfo = None
+
     def __deepcopy__(self, memo):
         cls = self.__class__
         result = cls.__new__(cls)
@@ -1722,7 +1771,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         """
         import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        result = stdlib.Reduce(wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
+        result = stdlib.Reduce('Reduce', wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
@@ -2545,7 +2594,7 @@ class LoopScopeBlock(ScopeBlock):
         else:
             self.update_statement = None
 
-        self.loop_variable = loop_var
+        self.loop_variable = loop_var or ''
         self.inverted = inverted
 
     def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:

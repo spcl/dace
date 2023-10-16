@@ -69,7 +69,7 @@ class NestedDict(dict):
             token = tokens.pop(0)
             result = result.members[token]
         return result
-    
+
     def __setitem__(self, key, val):
         if isinstance(key, str) and '.' in key:
             raise KeyError('NestedDict does not support setting nested keys')
@@ -280,7 +280,7 @@ class InterstateEdge(object):
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
@@ -1229,43 +1229,123 @@ class SDFG(ScopeBlock):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
+    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
+        """
+        Returns a set of symbol names that are used by the SDFG, but not
+        defined within it. This property is used to determine the symbolic
+        parameters of the SDFG.
+
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
+        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
+                                        will be removed from the set of defined symbols.
+        """
         defined_syms = set()
         free_syms = set()
 
-        # Exclude data descriptor names, constants, and shapes of global data descriptors
-        not_strictly_necessary_global_symbols = set()
-        for name, desc in self.arrays.items():
+        # Exclude data descriptor names and constants
+        for name in self.arrays.keys():
             defined_syms.add(name)
-
-            if not all_symbols:
-                used_desc_symbols = desc.used_symbols(all_symbols)
-                not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
-                not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
 
         defined_syms |= set(self.constants_prop.keys())
 
-        # Start with the set of SDFG free symbols
-        if all_symbols:
-            free_syms |= set(self.symbols.keys())
-        else:
-            free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
+        # Add used symbols from init and exit code
+        for code in self.init_code.values():
+            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+        for code in self.exit_code.values():
+            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
         # Add free state symbols
         used_before_assignment = set()
 
-        b_free_syms, b_defined_syms, b_used_before_syms = super().used_symbols(all_symbols, defined_syms, free_syms,
-                                                                               used_before_assignment)
-        free_syms |= b_free_syms
-        defined_syms |= b_defined_syms
-        used_before_assignment |= b_used_before_syms
+        try:
+            ordered_states = self.topological_sort(self.start_state)
+        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
+            ordered_states = self.nodes()
+
+        for state in ordered_states:
+            state_fsyms = state.used_symbols(all_symbols)
+            free_syms |= state_fsyms
+
+            # Add free inter-state symbols
+            for e in self.out_edges(state):
+                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
+                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
+                # compute the symbols that are used before being assigned.
+                efsyms = e.data.used_symbols(all_symbols)
+                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_fsyms)
+                used_before_assignment.update(efsyms - defined_syms)
+                free_syms |= efsyms
 
         # Remove symbols that were used before they were assigned
         defined_syms -= used_before_assignment
 
+        # Remove from defined symbols those that are in the symbol mapping
+        if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
+            defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
+
+        # Add the set of SDFG symbol parameters
+        # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
+        if all_symbols:
+            free_syms |= set(self.symbols.keys())
+
         # Subtract symbols defined in inter-state edges and constants
-        free_syms -= defined_syms
-        return free_syms, defined_syms, used_before_assignment
+        return free_syms - defined_syms
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """
+        Returns a set of symbol names that are used by the SDFG, but not
+        defined within it. This property is used to determine the symbolic
+        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
+
+        :note: Assumes that the graph is valid (i.e., without undefined or
+               overlapping symbols).
+        """
+        return self.used_symbols(all_symbols=True)
+
+    def get_all_toplevel_symbols(self) -> Set[str]:
+        """
+        Returns a set of all symbol names that are used by the SDFG's state machine.
+        This includes all symbols in the descriptor repository and interstate edges,
+        whether free or defined. Used to identify duplicates when, e.g., inlining or
+        dealiasing a set of nested SDFGs.
+        """
+        # Exclude constants and data descriptor names
+        exclude = set(self.arrays.keys()) | set(self.constants_prop.keys())
+
+        syms = set()
+
+        # Start with the set of SDFG free symbols
+        syms |= set(self.symbols.keys())
+
+        # Add inter-state symbols
+        for e in self.edges():
+            syms |= set(e.data.assignments.keys())
+            syms |= e.data.free_symbols
+
+        # Subtract exluded symbols
+        return syms - exclude
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        """
+        Determines what data containers are read and written in this SDFG. Does
+        not include reads to subsets of containers that have previously been
+        written within the same state.
+
+        :return: A two-tuple of sets of things denoting
+                 ({data read}, {data written}).
+        """
+        read_set = set()
+        write_set = set()
+        for state in self.states():
+            for edge in self.in_edges(state):
+                read_set |= edge.data.free_symbols & self.arrays.keys()
+            # Get dictionaries of subsets read and written from each state
+            rs, ws = state._read_and_write_sets()
+            read_set |= rs.keys()
+            write_set |= ws.keys()
+        return read_set, write_set
 
     def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
@@ -1296,7 +1376,7 @@ class SDFG(ScopeBlock):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)[0]
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
@@ -1313,7 +1393,7 @@ class SDFG(ScopeBlock):
             :param for_call: If True, returns arguments that can be used when calling the SDFG.
         """
         # Get global free symbols scalar arguments
-        free_symbols = free_symbols or self.free_symbols
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))
@@ -1333,6 +1413,21 @@ class SDFG(ScopeBlock):
         arglist = arglist or self.arglist(scalars_only=not with_arrays)
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
 
+    def python_signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
+        """ Returns a list of arguments necessary to call this SDFG,
+            formatted as a list of Data-Centric Python definitions.
+
+            :param with_types: If True, includes argument types in the result.
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+            :return: A list of strings. For example: `['A: dace.float32[M]', 'b: dace.int32']`.
+        """
+        arglist = arglist or self.arglist(scalars_only=not with_arrays, free_symbols=[])
+        return [v.as_python_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
+
     def signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
 
@@ -1347,6 +1442,21 @@ class SDFG(ScopeBlock):
             :param arglist: An optional cached argument list.
         """
         return ", ".join(self.signature_arglist(with_types, for_call, with_arrays, arglist))
+
+    def python_signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
+        """ Returns a Data-Centric Python signature of this SDFG, used when generating code.
+
+            :param with_types: If True, includes argument types (can be used
+                               for a function prototype). If False, only
+                               include argument names (can be used for function
+                               calls).
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+        """
+        return ", ".join(self.python_signature_arglist(with_types, for_call, with_arrays, arglist))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
