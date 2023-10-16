@@ -111,6 +111,59 @@ def test_program(
     return passes_test
 
 
+def run_program(program: str,  run_config: RunConfig, params: ParametersProvider, repetitions: int = 1,
+                sdfg_file: Optional[str] = None, verbose_name: Optional[str] = None):
+    """
+    Runs Programs
+
+    :param program: Name of the program
+    :type program: str
+    :param run_config: Configuration how to run it
+    :type run_config: RunConfig
+    :param parameters: The parameters to use.
+    :type parameters: ParametersProvider
+    :param repetitions: The number of repetitions to run the program, defaults to 1
+    :type repetitions: int, optional
+    :param sdfg_file: Path to sdfg file. If set will not recreate SDFG but use this one instead, defaults to None
+    :type sdfg_file: str, optional
+    :param verbose_name: Name of the folder to store any intermediate sdfg. Will only do this if is not None, default
+    None
+    :type verbose_name: Optional[str]
+    """
+    programs = get_programs_data()['programs']
+    logger.info(f"run {program} ({programs[program]}) for {repetitions} time on device {run_config.device}")
+    logger.info(str(run_config))
+    fsource = read_source(program)
+    program_name = programs[program]
+    if sdfg_file is None:
+        sdfg = get_sdfg(fsource, program_name)
+        additional_args = {}
+        if run_config.specialise_symbols:
+            additional_args['symbols'] = params.get_dict()
+        additional_args['k_caching'] = run_config.k_caching
+        additional_args['change_stride'] = run_config.change_stride
+        additional_args['verbose_name'] = verbose_name
+        additional_args['outside_first'] = run_config.outside_loop_first
+        additional_args['move_assignments_outside'] = run_config.move_assignment_outside
+
+        sdfg = optimize_sdfg(sdfg, run_config.device, use_my_auto_opt=not run_config.use_dace_auto_opt,
+                             **additional_args)
+    else:
+        logger.info(f"Reading SDFG from {sdfg_file} and compile it")
+        sdfg = dace.sdfg.sdfg.SDFG.from_file(sdfg_file)
+        sdfg.compile()
+
+    rng = np.random.default_rng(RNG_SEED)
+    inputs = get_inputs(program, rng, params)
+    inputs = copy_to_device(inputs)
+    outputs = copy_to_device(get_outputs(program, rng, params))
+    if run_config.pattern is not None:
+        set_input_pattern(inputs, outputs, params, program, run_config.pattern)
+
+    for _ in range(repetitions):
+        sdfg(**inputs, **outputs)
+
+
 def compile_for_profile(program: str, params: Union[ParametersProvider, Dict[str, Number]],
                         run_config: RunConfig) -> dace.SDFG:
     """
