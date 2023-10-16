@@ -183,22 +183,22 @@ def get_number_formula_iteration(
                 (inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] >= inputs['RCLDTOPCF']))
         number_formula_2 = np.count_nonzero(
                 (inputs['ZTP1'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] < inputs['RTT']) &
-                (outputs['ZQXFG2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']] > inputs['RLMIN']))
+                (outputs['ZQXFG2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']-1] > inputs['RLMIN']))
         return (number_formula_1, number_formula_2)
     elif program == 'cloudsc_class2_1762':
         number_formula = np.count_nonzero(inputs['ZQPRETOT2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['ZEPSEC'])
         return (number_formula)
     elif program == 'cloudsc_class3_691':
-        zqx_ql_qi = outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQI']] + \
-                    outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQL']]
+        zqx_ql_qi = outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQI']-1] + \
+                    outputs['ZQX'][KIDIA-1:KFDIA, 0:KLEV, params['NCLDQL']-1]
         number_iterations = np.count_nonzero(
                 (zqx_ql_qi < inputs['RLMIN']) | (outputs['ZA'][KIDIA-1:KFDIA, 0:KLEV] < inputs['RAMIN']))
         return (number_iterations)
     elif program == 'cloudsc_class3_965':
         number_of_iterations = np.count_nonzero(
-                inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']] < inputs['RLMIN'])
+                inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQL']-1] < inputs['RLMIN'])
         number_of_iterations += np.count_nonzero(
-                inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQI']] < inputs['RLMIN'])
+                inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQI']-1] < inputs['RLMIN'])
         return (number_of_iterations)
     elif program == 'cloudsc_class3_1985':
         number_if_iterations = np.count_nonzero(
@@ -206,7 +206,7 @@ def get_number_formula_iteration(
                 (inputs['ZTP1'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV] > inputs['RTT']))
         return (number_if_iterations)
     elif program == 'cloudsc_class3_2120':
-        zqe = (inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQV']]
+        zqe = (inputs['ZQX'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQV']-1]
                - inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV]) \
                         * np.maximum(inputs['ZEPSEC'], 1.0 - inputs['ZA'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV])
         zqe = np.maximum(0.0, np.minimum(zqe, inputs['ZQSLIQ'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV]))
@@ -216,7 +216,7 @@ def get_number_formula_iteration(
         zzrh = np.minimum(zzrh, np.maximum(inputs['RPRECRHMAX'], 1.0))
         number_if_iterations = np.count_nonzero(
                 (inputs['ZCOVPCLR'][KIDIA-1:KFDIA] > inputs['ZEPSEC']) &
-                (outputs['ZQXFG2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQR']] > inputs['ZEPSEC']).transpose() &
+                (outputs['ZQXFG2'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV, params['NCLDQR']-1] > inputs['ZEPSEC']).transpose() &
                 (zqe < zzrh * inputs['ZQSLIQ'][KIDIA-1:KFDIA, NCLDTOP-1:KLEV]).transpose())
         return (number_if_iterations)
 
