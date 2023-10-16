@@ -12,6 +12,7 @@ My run scripts require the following additional python packages in order to coll
 
 - pandas
 - seaborn
+- cupy for execution on GPU
 
 ## Structure of this folder
 This folder contains several subfolders. These are:
@@ -81,11 +82,11 @@ discover the option the scripts take. This works for any python run script in th
 
 
 ### Smaller example code
-The smaller example codes can be run using the script `src/run2.py` and `src/plot2.py`, use `--help` to discover their
-options. The plotting script needs to be adapted to use the correct experiment ids as this repository does not contain
-any data. You need to adapt the `scripts` dictionary inside the `action_script` function.
-In the code and as command line arguments there are often three kind of programs, they are shortly introduced
-here and in more details in the further paragraphs.
+The smaller example codes can be run on GPU using the script `src/run2.py` and `src/plot2.py`, use `--help` to discover
+their options. The plotting script needs to be adapted to use the correct experiment ids as this repository does not
+contain any data. You need to adapt the `scripts` dictionary inside the `action_script` function. In the code and as
+command line arguments there are often three kind of programs, they are shortly introduced here and in more details in
+the further paragraphs.
 
 - `classes`: The small example programs grouped into classes
 - `vert-loop`: These refers to the other vertical loop programs where I did the optimisations manually
