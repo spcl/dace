@@ -33,7 +33,6 @@
         "cloudsc_class3_1985": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQS","NCLDQI", "NCLDQL",
                                 "NCLDTOP"],
         "cloudsc_class3_2120": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQV", "NCLDQR", "NCLDTOP"],
-                                "NBLOCKS"],
         "cloudsc_vert_loop_4_ZSOLQA": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
                                 "NBLOCKS"],
         "cloudsc_vert_loop_6_ZSOLQA": ["KLON", "KLEV", "NCLV", "KIDIA", "KFDIA", "NCLDQS", "NCLDQI", "NCLDQL", "NCLDTOP",
