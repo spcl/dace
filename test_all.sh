@@ -3,6 +3,12 @@
 
 set -a
 
+if [[ -z "${CXX}" ]]; then
+  CXX="g++" # I don't think that is a good default, but it was the hardcoded compiler before I made changes...
+else
+  CXX="${CXX}"
+fi
+
 SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH
 
@@ -53,7 +59,7 @@ bail_skip() {
 test_start() {
     TESTS=`expr $TESTS + 1`
     CURTEST="$TESTPREFIX$1"
-    echo "---------- TEST: $TESTPREFIX$1 ----------"
+    echo "---------- TEST: $TESTPREFIX$1 ---------- [ This is test $TESTS of $TOTAL_TESTS ]"
 }
 
 testcmd() {
@@ -71,7 +77,7 @@ testcmd() {
 
 runtest_cpp() {
     test_start $1
-    testcmd g++ -std=c++14 -Wall -Wextra -O3 -march=native -ffast-math -fopenmp -fPIC \
+    testcmd $CXX -std=c++14 -Wall -Wextra -O3 -march=native -ffast-math -fopenmp -fPIC \
         -I $SCRIPTPATH/dace/runtime/include $1 -o ./$1.out
     if [ $? -ne 0 ]; then bail "$1 (compilation)"; fi
     testcmd ./$1.out
