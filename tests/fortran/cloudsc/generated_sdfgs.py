@@ -103,6 +103,8 @@ def simplify_sdfg(sdfg: dace.SDFG, specialize: bool) -> dace.SDFG:
 
         # Verify and fix NSSOPT and NCLDTOP
         for sd in sdfg.all_sdfgs_recursive():
+            for name in repl_dict.keys():
+                sd.arrays.pop(name, None)
             for state in sd.nodes():
                 for edge in list(state.edges()):
                     if not edge.data.is_empty() and edge.data.data in ('NSSOPT', 'NCLDTOP'):
