@@ -329,6 +329,8 @@ class ParentScopeAssigner(NodeVisitor):
             elif isinstance(value, ast_internal_classes.FNode):
                 self.visit(value, node)
 
+        return node
+
 class ScopeVarsDeclarations(NodeVisitor):
     """
         Creates a mapping (scope name, variable name) -> variable declaration.
