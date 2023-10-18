@@ -140,6 +140,24 @@ class LoopBasedReplacementTransformation(NodeTransformer):
     def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
         pass
 
+    def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
+
+        # supports syntax func(arr)
+        if isinstance(arg, ast_internal_classes.Name_Node):
+            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+            array_node.name = arg
+
+            # If we access SUM(arr) where arr has many dimensions,
+            # We need to create a ParDecl_Node for each dimension
+            dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+            array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
+            return array_node
+
+        # supports syntax func(arr(:))
+        if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+            return arg
+
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
         newbody = []
@@ -221,22 +239,10 @@ class SumProduct(LoopBasedReplacementTransformation):
 
         for arg in node.args:
 
-            # supports syntax SUM(arr)
-            if isinstance(arg, ast_internal_classes.Name_Node):
-                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-                array_node.name = arg
+            array_node = self._parse_array(node, arg)
 
-                # If we access SUM(arr) where arr has many dimensions,
-                # We need to create a ParDecl_Node for each dimension
-                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-
+            if array_node is not None:
                 self.rvals.append(array_node)
-
-            # supports syntax SUM(arr(:))
-            elif isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-                self.rvals.append(arg)
-
             else:
                 raise NotImplementedError("We do not support non-array arguments for SUM/PRODUCT")
 
@@ -328,24 +334,6 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
     def __init__(self, ast):
         super().__init__(ast)
-
-    def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
-
-        # supports syntax ANY(arr)
-        if isinstance(arg, ast_internal_classes.Name_Node):
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-            array_node.name = arg
-
-            # If we access SUM(arr) where arr has many dimensions,
-            # We need to create a ParDecl_Node for each dimension
-            dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-            array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-
-            return array_node
-
-        # supports syntax ANY(arr(:))
-        if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-            return arg
 
     def _initialize(self):
         self.rvals = []
