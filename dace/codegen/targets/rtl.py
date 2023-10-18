@@ -102,6 +102,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 elif isinstance(arr, data.Scalar):
                     line: str = "{} {} = {};".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                      edge.src.data)
+                elif isinstance(arr, data.Stream):
+                    # TODO Streams are currently unsupported, as the proper behaviour has to be implemented to avoid deadlocking.
+                    line: str = "// Unsupported read from ({}) variable '{}' from stream '{}'".format(
+                        dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src_conn)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
             rtl_name = self.unique_name(edge.dst, sdfg.nodes()[state_id], sdfg)
             self.n_unrolled[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
