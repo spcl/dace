@@ -933,7 +933,8 @@ class CPUCodeGen(TargetCodeGenerator):
             _, uconn, v, _, memlet = edge
             if skip_wcr and memlet.wcr is not None:
                 continue
-            dst_node = dfg.memlet_path(edge)[-1].dst
+            dst_edge = dfg.memlet_path(edge)[-1]
+            dst_node = dst_edge.dst
 
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
@@ -984,8 +985,9 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(conntype, dtypes.pointer) and sdfg.arrays[memlet.data].dtype == conntype:
                     is_scalar = True  # Pointer to pointer assignment
                 is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
+                is_refset = isinstance(sdfg.arrays[memlet.data], data.Reference) and dst_edge.dst_conn == 'set'
 
-                if is_scalar and not memlet.dynamic and not is_stream:
+                if (is_scalar and not memlet.dynamic and not is_stream) or is_refset:
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -1016,6 +1018,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
+                            mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            write_expr = f"{mname} = {in_local_name};"
+                        elif defined_type == DefinedType.Pointer and is_refset:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                             write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
@@ -1503,10 +1508,13 @@ class CPUCodeGen(TargetCodeGenerator):
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
-        elif isinstance(cdtype, dtypes.pointer):
-            # If pointer, also point to output
+        elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
-            if not isinstance(desc.dtype, dtypes.pointer):
+
+            # If reference set, do not emit initial assignment
+            is_refset = isinstance(desc, data.Reference) and state_dfg.memlet_path(edge)[-1].dst_conn == 'set'
+
+            if not is_refset and not isinstance(desc.dtype, dtypes.pointer):
                 ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
