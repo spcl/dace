@@ -1,8 +1,10 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+#
+# Pipelined, AXI-handshake compliant example that increments b from a up to 100.
+#
+# It is intended for running simulation xilinx targets.
 
 import dace
-import argparse
-
 import numpy as np
 
 # add symbol
@@ -56,7 +58,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
             state <= state_next;
     end
 
-    always_comb 
+    always_comb
     begin
         state_next = state;
         case(state)
