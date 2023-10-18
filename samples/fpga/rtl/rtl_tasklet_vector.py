@@ -1,7 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-    RTL tasklet with a vector input of 4 int32 (width=128bits) and a single scalar output. It increments b from a[31:0] up to 100.
-"""
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
 import argparse

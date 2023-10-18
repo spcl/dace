@@ -1,4 +1,4 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 #
 # This sample shows the AXPY BLAS routine. It is implemented through Xilinx
 # IPs in order to utilize double pumping, which doubles the performance per
