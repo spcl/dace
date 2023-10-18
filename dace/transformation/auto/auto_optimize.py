@@ -6,10 +6,12 @@ import sympy
 from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
-from typing import Set, Tuple, Union, List, Dict, Optional
+from typing import Set, Tuple, Union, List, Iterable, Dict
+import warnings
 
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
@@ -30,26 +32,6 @@ from dace.transformation.auto import fpga as fpga_auto_opt
 GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
 
 
-def get_composite_fusion(k_caching_args: Optional[Dict[str, int]] = None):
-    """
-    Constructs a CompositeFusion object, sets its properties according to the value(s) of k_caching_args
-
-    :param k_caching_args: If given performs k-caching, expects the following keys: 'max_difference_start',
-                           'max_difference_end' used to set the properties in subgraph fusion
-    :type k_caching_args: Optional[Dict[str, int]], optional
-    """
-    cf = CompositeFusion()
-    if k_caching_args is not None:
-        cf.subgraph_fusion_properties = {}
-        for key in ['max_difference_end', 'max_difference_start', 'is_map_sequential', 'disjoint_subsets',
-                    'fixed_new_shapes', 'forced_subgraph_contains_data', 'fix_map_exit_edges']:
-            if key in k_caching_args:
-                cf.subgraph_fusion_properties[key] = k_caching_args[key]
-        cf.subgraph_fusion_properties['change_init_outside'] = True
-
-    return cf
-
-
 def greedy_fuse(graph_or_subgraph: GraphViewType,
                 validate_all: bool,
                 device: dace.dtypes.DeviceType = dace.dtypes.DeviceType.CPU,
@@ -57,8 +39,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 stencil: bool = False,
                 stencil_tile=None,
                 permutations_only: bool = True,
-                expand_reductions: bool = False,
-                k_caching_args: Optional[Dict[str, int]] = None) -> None:
+                expand_reductions: bool = False) -> None:
     """
     Greedily fuses maps of an SDFG or graph, operating in-place.
 
@@ -70,8 +51,6 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     :param stencil_tile: StencilTiling Tile size, default if None
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
-    :param k_caching_args: If given performs k-caching, expects the following keys: 'max_difference_start',
-                           'max_difference_end' used to set the properties in subgraph fusion
     """
     debugprint = config.Config.get_bool('debugprint')
     if isinstance(graph_or_subgraph, SDFG):
@@ -89,8 +68,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                         stencil=stencil,
                         stencil_tile=stencil_tile,
                         permutations_only=permutations_only,
-                        expand_reductions=expand_reductions,
-                        k_caching_args=k_caching_args)
+                        expand_reductions=expand_reductions)
     else:
         # we are in graph or subgraph
         sdfg, graph, subgraph = None, None, None
@@ -105,7 +83,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             subgraph = graph_or_subgraph
 
         # create condition function object
-        fusion_condition = get_composite_fusion(k_caching_args)
+        fusion_condition = CompositeFusion()
         fusion_condition.setup_match(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
@@ -144,7 +122,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
-                cf = get_composite_fusion(k_caching_args)
+                cf = CompositeFusion()
                 cf.setup_match(current_subgraph)
                 # transfer settings
                 cf.allow_tiling = fusion_condition.allow_tiling
@@ -165,8 +143,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                             stencil=stencil,
                             stencil_tile=stencil_tile,
                             permutations_only=permutations_only,
-                            expand_reductions=expand_reductions,
-                            k_caching_args=k_caching_args)
+                            expand_reductions=expand_reductions)
 
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
@@ -177,8 +154,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                             stencil_tile=stencil_tile,
                             recursive=recursive,
                             permutations_only=permutations_only,
-                            expand_reductions=expand_reductions,
-                            k_caching_args=k_caching_args)
+                            expand_reductions=expand_reductions)
 
         if applied_transformations > 0:
             if debugprint:

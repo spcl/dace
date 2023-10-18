@@ -7,7 +7,6 @@ import itertools
 import sympy as sp
 import networkx as nx
 from typing import Dict, List, Optional, Set, Tuple
-import logging
 
 from dace import data as dt, dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
@@ -19,8 +18,6 @@ from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
-
-logger = logging.getLogger(__name__)
 
 
 def _check_range(subset, a, itersym, b, step):
@@ -92,12 +89,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         desc='The name of the iteration variable (optional).',
     )
 
-    additional_rw = Property(
-        dtype=set,
-        allow_none=False,
-        default=set(),
-        desc='Additional read/write dependencies')
-
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -114,9 +105,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         found = find_for_loop(graph, guard, begin, itervar=self.itervar)
         if not found:
             return False
-        
-        if permissive:
-            return True
 
         itervar, (start, end, step), (_, body_end) = found
 
@@ -425,10 +413,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 if not found and self._is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
-            logger.debug("Additional rw: %s", self.additional_rw)
-            for n in self.additional_rw:
-                if n in unique_set:
-                    unique_set.remove(n)
             # Find NestedSDFG's connectors
             read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
             write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
@@ -437,7 +421,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             # Also, find defined symbols in NestedSDFG
             fsymbols = set(sdfg.free_symbols)
             new_body = sdfg.add_state('single_state_body')
-            nsdfg = SDFG(f"loop_body_of_{itervar}", constants=sdfg.constants_prop, parent=new_body)
+            nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
             nsdfg.add_node(body, is_start_state=True)
             body.parent = nsdfg
             exit_state = nsdfg.add_state('exit')
@@ -478,7 +462,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Add NestedSDFG node
             cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
-            logger.debug("Add nsdfg with read: %s and writes: %s and name: %s", read_set, write_set, cnode.label)
             if sdfg.parent:
                 for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                     if s not in cnode.symbol_mapping:
@@ -511,12 +494,10 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         symbols_to_remove = set()
         if len(isedge.data.assignments) > 0:
             nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
-            logger.debug("Created nested SDFG with name %s as edge %s -> %s has assignment %s", nsdfg.label,
-                         isedge.src, isedge.dst, isedge.data.assignments)
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
-                if sym in sdfg.symbols and sym not in nsdfg.sdfg.symbols:
+                if sym in sdfg.symbols:
                     nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
                     nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
                 elif sym in sdfg.arrays:
@@ -568,15 +549,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 intermediate_nodes.append(node)
 
-        # Evaluate symbols for map range first
-        import sympy
-        if isinstance(start, sympy.core.basic.Basic):
-            start = start.evalf(subs=sdfg.constants)
-        if isinstance(end, sympy.core.basic.Basic):
-            end = end.evalf(subs=sdfg.constants)
-        if isinstance(step, sympy.core.basic.Basic):
-            step = step.evalf(subs=sdfg.constants)
-
         map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
         entry = nodes.MapEntry(map)
         exit = nodes.MapExit(map)
@@ -585,18 +557,12 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
-        repl_dict = dict()
         for rd in containers_to_read:
             # We are guaranteed that this is always a scalar, because
             # can_be_applied makes sure there are no sympy functions in each of
             # the loop expresions
             access_node = body.add_read(rd)
-            # Find new name
-            new_rd = sdfg._find_new_name(rd)
-            repl_dict[rd] = new_rd
-            body.add_memlet_path(access_node, entry, dst_conn=new_rd, memlet=memlet.Memlet(rd))
-        if repl_dict:
-            map.range.replace(repl_dict)
+            body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
@@ -623,7 +589,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
-
         for n in sink_nodes:
             if isinstance(n, nodes.AccessNode):
                 for e in body.in_edges(n):
@@ -634,7 +599,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
-
         intermediate_sinks = {}
         for n in intermediate_nodes:
             if isinstance(sdfg.arrays[n.data], dt.View):

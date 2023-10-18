@@ -16,12 +16,8 @@ from dace.properties import EnumProperty, make_properties, Property, ShapeProper
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
-from typing import Dict
 import copy
 import warnings
-import logging
-
-logger = logging.getLogger(__name__)
 
 
 @make_properties
@@ -51,63 +47,23 @@ class CompositeFusion(transformation.SubgraphTransformation):
     stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Stencil tile stride")
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
-    subgraph_fusion_properties = Property(
-            dtype=Dict,
-            desc="Dictionary with properties to be added to every created SubgraphFusion instance",
-            default={})
-
-    def get_subgraph_fusion(self) -> SubgraphFusion:
-        """
-        Creates a SubgraphFusion object and sets its property which it shares with this
-
-        :return: The created SubgraphFusion instance
-        :rtype: SubgraphFusion
-        """
-        sf = SubgraphFusion()
-        for key, value in self.subgraph_fusion_properties.items():
-            setattr(sf, key, value)
-        return sf
-
-    def get_subgraph_expansion(self) -> MultiExpansion:
-        """
-        Create MultiExpansion instance coping some required property
-
-        :return: The created SubgraphExpansion instance
-        :rtype: MultiExpansion
-        """
-        se = MultiExpansion()
-        if 'max_difference_start' in self.subgraph_fusion_properties:
-            se.max_difference_start = self.subgraph_fusion_properties['max_difference_start']
-        if 'max_difference_end' in self.subgraph_fusion_properties:
-            se.max_difference_end = self.subgraph_fusion_properties['max_difference_end']
-        return se
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
-        subgraph = self.subgraph_view(sdfg)
-        scope_dict = graph.scope_dict()
-        map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
-        logger.debug("Check for maps: %s", [m.map for m in map_entries])
-
         if self.allow_expansion == True:
-            subgraph_fusion = self.get_subgraph_fusion()
+            subgraph_fusion = SubgraphFusion()
             subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 # try w/o copy first
                 return True
 
-            expansion = self.get_subgraph_expansion()
-            expansion.allow_offset = False
+            expansion = MultiExpansion()
             expansion.setup_match(subgraph)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 # deepcopy
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
-                # Copy constants manually as this is not done for SDFGs when the constants have been defined in a parent
-                # SDFG for nsdfgs
-                for k, v in sdfg.constants.items():
-                    sdfg_copy.add_constant(k, v)
                 sdfg_copy.reset_sdfg_list()
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
@@ -118,7 +74,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 #expansion.setup_match(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
-                subgraph_fusion = self.get_subgraph_fusion()
+                subgraph_fusion = SubgraphFusion()
                 subgraph_fusion.setup_match(subgraph_copy)
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
@@ -129,7 +85,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                     return True
 
         else:
-            subgraph_fusion = self.get_subgraph_fusion()
+            subgraph_fusion = SubgraphFusion()
             subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 return True
@@ -148,17 +104,15 @@ class CompositeFusion(transformation.SubgraphTransformation):
         scope_dict = graph.scope_dict()
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph, scope_dict)
         first_entry = next(iter(map_entries))
-        logger.debug("Apply to map entries: %s", map_entries)
 
         if self.allow_expansion:
-            expansion = self.get_subgraph_expansion()
-            expansion.allow_offset = False
+            expansion = MultiExpansion()
             expansion.setup_match(subgraph, self.sdfg_id, self.state_id)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
 
-        sf = self.get_subgraph_fusion()
+        sf = SubgraphFusion()
         sf.setup_match(subgraph, self.sdfg_id, self.state_id)
         if sf.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             # set SubgraphFusion properties
@@ -181,7 +135,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 # StencilTiling: update nodes
                 new_entries = st._outer_entries
                 subgraph = helpers.subgraph_from_maps(sdfg, graph, new_entries)
-                sf = self.get_subgraph_fusion()
+                sf = SubgraphFusion()
                 sf.setup_match(subgraph, self.sdfg_id, self.state_id)
                 # set SubgraphFusion properties
                 sf.debug = self.debug

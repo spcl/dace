@@ -674,16 +674,9 @@ class StateGraphView(object):
 
         # Add scalar arguments from free symbols
         defined_syms = defined_syms or self.defined_symbols()
-        # Fix for dynamic map inputs appearing in free symbols
-        from dace.sdfg.utils import dynamic_map_inputs
-        dynamic_inputs = set()
-        for node in self.nodes():
-            if isinstance(node, nd.MapEntry):
-                dynamic_inputs.update([e.dst_conn for e in dynamic_map_inputs(self.graph, node)])
-        free_symbols = self.free_symbols - dynamic_inputs
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
-            for k in free_symbols if not k.startswith('__dace') and k not in sdfg.constants
+            for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants
         })
 
         # Add scalar arguments from free symbols of data descriptors
@@ -1029,12 +1022,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         # Start with global symbols
         symbols = collections.OrderedDict(sdfg.symbols)
         for desc in sdfg.arrays.values():
-            # symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-            symbols.update([(str(s), s.dtype) if isinstance(s, dace.symbol) else (str(s), dace.int32) for s in desc.free_symbols])
+            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
 
         # Add symbols from inter-state edges along the path to the state
         try:
-            start_state = self
+            start_state = sdfg.start_state
             for e in sdfg.predecessor_state_transitions(start_state):
                 symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:
@@ -1717,8 +1709,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                 if not cur_memlet.is_empty():
                     if propagate:
                         cur_memlet = propagate_memlet(self, cur_memlet, snode, True)
-                elif propagate:
-                    cur_memlet = mm.Memlet()
         # Try to initialize memlets
         for edge in edges:
             edge.data.try_initialize(self.parent, self, edge)

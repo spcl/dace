@@ -725,14 +725,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                      replace_in_graph: bool = True,
                      replace_keys: bool = True) -> None:
         """
-        Replaces all occurrences of keys in the given dictionary with the mapped values.
+        Replaces all occurrences of keys in the given dictionary with the mapped
+        values.
 
         :param repldict: The replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
         :param symrepl: A symbolic expression replacement dictionary (for performance reasons).
         :param replace_in_graph: Whether to replace in SDFG nodes / edges.
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
-
         symrepl = symrepl or {
             symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
@@ -2205,7 +2206,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             after_state = self.add_state()
 
         # Create guard state
-        guard = self.add_state(f"guard_{loop_var}")
+        guard = self.add_state("guard")
 
         # Loop initialization
         init = None if initialize_expr is None else {loop_var: initialize_expr}
