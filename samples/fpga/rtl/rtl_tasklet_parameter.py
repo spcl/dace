@@ -73,19 +73,19 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='simulation'):
+        # init data structures
+        a = np.random.randint(0, 100, 1).astype(np.int32)
+        b = np.array([0]).astype(np.int32)
 
-    # init data structures
-    a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.array([0]).astype(np.int32)
+        # show initial values
+        print("a={}, b={}".format(a, b))
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
+        # call program
+        sdfg(A=a, B=b)
 
-    # call program
-    sdfg(A=a, B=b)
+        # show result
+        print("a={}, b={}".format(a, b))
 
-    # show result
-    print("a={}, b={}".format(a, b))
-
-    # check result
-    assert b == sdfg.constants["MAX_VAL"]
+        # check result
+        assert b == sdfg.constants["MAX_VAL"]

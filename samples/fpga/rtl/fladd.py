@@ -190,4 +190,4 @@ if __name__ == '__main__':
         expected = a + b
         diff = np.linalg.norm(expected - c) / N.get()
         print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+        assert diff <= 1e-5
