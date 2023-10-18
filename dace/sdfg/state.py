@@ -202,7 +202,7 @@ class BlockGraphView(abc.ABC):
     # Query, subgraph, and replacement methods
 
     @abc.abstractmethod
-    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
         """
         Returns a set of symbol names that are used in the graph.
 
@@ -219,7 +219,7 @@ class BlockGraphView(abc.ABC):
 
         :note: Assumes that the graph is valid (i.e., without undefined or overlapping symbols).
         """
-        return self.used_symbols(all_symbols=True)[0]
+        return self.used_symbols(all_symbols=True)
 
     @abc.abstractmethod
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
@@ -836,12 +836,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 if not str(k).startswith('__dace') and str(k) not in sdfg.constants
             })
 
-        # Fill up ordered dictionary
-        result = collections.OrderedDict()
-        for k, v in itertools.chain(sorted(data_args.items()), sorted(scalar_args.items())):
-            result[k] = v
-
-        return result
+        return data_args, scalar_args
 
     def signature_arglist(self, with_types=True, for_call=False):
         """ Returns a list of arguments necessary to call this state or
@@ -2441,7 +2436,21 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
                      all_symbols: bool,
                      defined_syms: Optional[Set]=None,
                      free_syms: Optional[Set]=None,
-                     used_before_assignment: Optional[Set]=None) -> Tuple[Set[str], Set[str], Set[str]]:
+                     used_before_assignment: Optional[Set]=None,
+                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        """
+        Returns a set of symbol names that are used by the scope, but not defined within it.
+
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
+        :param defined_syms: Set of already defined symbols, if any. Otherwise None.
+        :param free_syms: Set of already found free symbols, if any. Otherwise None.
+        :param used_before_assignment: Set of already found symbols that are used before they are assigned to, if any.
+                                       Otherwise None.
+        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
+                                        will be removed from the set of defined symbols.
+        :returns: Three-Tuple (Set of free symbols, set of defined symbols, set of symbols used before assignment).
+        """
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -2452,10 +2461,16 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
             ordered_blocks = self.nodes()
 
         for block in ordered_blocks:
-            b_free_syms, b_defined_syms, b_used_before_syms = block.used_symbols(all_symbols)
-            free_syms |= b_free_syms
-            defined_syms |= b_defined_syms
-            used_before_assignment |= b_used_before_syms
+            state_symbols = set()
+            if isinstance(block, ScopeBlock):
+                b_free_syms, b_defined_syms, b_used_before_syms = block.used_symbols(all_symbols)
+                free_syms |= b_free_syms
+                defined_syms |= b_defined_syms
+                used_before_assignment |= b_used_before_syms
+                state_symbols = b_free_syms
+            else:
+                state_symbols = block.used_symbols(all_symbols)
+                free_syms |= state_symbols
 
             # Add free inter-state symbols
             for e in self.out_edges(block):
@@ -2463,16 +2478,31 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
                 # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
-                defined_syms |= set(e.data.assignments.keys()) - efsyms
+                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
 
         # Remove symbols that were used before they were assigned.
         defined_syms -= used_before_assignment
 
+        if isinstance(self, dace.SDFG):
+            # Remove from defined symbols those that are in the symbol mapping
+            if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
+                defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
+
+            # Add the set of SDFG symbol parameters
+            # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
+            if all_symbols:
+                free_syms |= set(self.symbols.keys())
+
         # Subtract symbols defined in inter-state edges and constants from the list of free symbols.
         free_syms -= defined_syms
+
         return free_syms, defined_syms, used_before_assignment
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        return self.used_symbols(all_symbols=True)[0]
 
     def to_json(self, parent=None):
         graph_json = OrderedDiGraph.to_json(self)
@@ -2597,25 +2627,34 @@ class LoopScopeBlock(ScopeBlock):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
 
-    def used_symbols(self, all_symbols: bool) -> Tuple[Set[str], Set[str], Set[str]]:
-        free_symbols = set()
-        defined_symbols = set(self.loop_variable)
-        used_before_assignment = set()
-        if self.init_statement is not None:
-            free_symbols |= self.init_statement.get_free_symbols()
-        if self.update_statement is not None:
-            free_symbols |= self.update_statement.get_free_symbols()
-        free_symbols |= self.scope_condition.get_free_symbols()
+    def used_symbols(self,
+                     all_symbols: bool,
+                     defined_syms: Optional[Set]=None,
+                     free_syms: Optional[Set]=None,
+                     used_before_assignment: Optional[Set]=None,
+                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(all_symbols)
-        free_symbols |= b_free_symbols
-        defined_symbols |= b_defined_symbols
+        defined_syms.add(self.loop_variable)
+        if self.init_statement is not None:
+            free_syms |= self.init_statement.get_free_symbols()
+        if self.update_statement is not None:
+            free_syms |= self.update_statement.get_free_symbols()
+        free_syms |= self.scope_condition.get_free_symbols()
+
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(
+            all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
+        )
+        free_syms |= b_free_symbols
+        defined_syms |= b_defined_symbols
         used_before_assignment |= b_used_before_assignment
 
-        defined_symbols -= used_before_assignment
-        free_symbols -= defined_symbols
+        defined_syms -= used_before_assignment
+        free_syms -= defined_syms
 
-        return free_symbols, defined_symbols, used_before_assignment
+        return free_syms, defined_syms, used_before_assignment
 
     def replace_dict(self, repl: Dict[str, str],
                      symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,

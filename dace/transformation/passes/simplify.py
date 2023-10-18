@@ -20,13 +20,13 @@ SIMPLIFY_PASSES = [
     InlineSDFGs,
     ScalarToSymbolPromotion,
     FuseStates,
-    #OptionalArrayInference,
+    OptionalArrayInference,
     ConstantPropagation,
     DeadDataflowElimination,
     DeadStateElimination,
-    #RemoveUnusedSymbols,
-    #ArrayElimination,
-    #ConsolidateEdges,
+    RemoveUnusedSymbols,
+    ArrayElimination,
+    ConsolidateEdges,
 ]
 
 _nonrecursive_passes = [

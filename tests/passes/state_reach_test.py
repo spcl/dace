@@ -22,16 +22,14 @@ def test_loop_scope_reach():
     loop2.add_edge(s3, s4, dace.InterstateEdge())
 
     res = {}
-    ppl.Pipeline([passes.StateReachability()]).apply_pass(sdfg, res)
+    ppl.Pipeline([passes.analysis.LegacyStateReachability()]).apply_pass(sdfg, res)
 
-    reach = res[passes.StateReachability.__name__][0]
-    assert reach[s1] == {s6, loop1}
-    assert reach[loop1] == {s6}
-    assert reach[s2] == {s5, loop2, s6, s2}
-    assert reach[loop2] == {s5, loop2, s6, s2}
-    assert reach[s3] == {s5, loop2, s6, s2, s3, s4}
-    assert reach[s4] == {s5, loop2, s6, s2, s3, s4}
-    assert reach[s5] == {s5, loop2, s6, s2}
+    reach = res[passes.analysis.LegacyStateReachability.__name__][0]
+    assert reach[s1] == {s2, s3, s4, s5, s6}
+    assert reach[s2] == {s2, s3, s4, s5, s6}
+    assert reach[s3] == {s2, s3, s4, s5, s6}
+    assert reach[s4] == {s2, s3, s4, s5, s6}
+    assert reach[s5] == {s2, s3, s4, s5, s6}
     assert len(reach[s6]) == 0
 
 

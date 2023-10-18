@@ -19,7 +19,7 @@ class _UnknownValue:
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-class ConstantPropagation(ppl.ControlFlowScopePass):
+class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
     the number of overall symbols.
@@ -51,22 +51,17 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
 
         return False
 
-    def apply(self,
-              scope_block: ScopeBlock,
-              sdfg: SDFG,
-              pipeline_results: Dict[str, Any],
-              initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
-        """
-        Propagates constants throughout the SDFG.
-
-        :param sdfg: The SDFG to modify.
-        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
-                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
-                                 pipeline, an empty dictionary is expected.
-        :param initial_symbols: If not None, sets values of initial symbols.
-        :return: A set of propagated constants, or None if nothing was changed.
-        """
+    def apply_to_scope(self,
+                       sdfg: SDFG,
+                       scope_block: ScopeBlock,
+                       initial_symbols: Optional[Dict[str, Any]] = None,
+                       do_not_remove: Set[str] = None) -> Tuple[Set[str], Set[str], Dict[str, Any]]:
         initial_symbols = initial_symbols or {}
+        do_not_remove = do_not_remove or set()
+
+        # Keep track of replaced and ambiguous symbols
+        symbols_replaced: Dict[str, Any] = {}
+        remaining_unknowns: Set[str] = set()
 
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(scope_block):
@@ -75,10 +70,6 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
             # Trace all constants and symbols through states
             per_block_constants: Dict[ControlFlowBlock, Dict[str, Any]] = self.collect_constants(scope_block,
                                                                                                  initial_symbols)
-
-            # Keep track of replaced and ambiguous symbols
-            symbols_replaced: Dict[str, Any] = {}
-            remaining_unknowns: Set[str] = set()
 
             # Collect symbols from symbol-dependent data descriptors
             # If there can be multiple values over the SDFG, the symbols are not propagated
@@ -122,35 +113,59 @@ class ConstantPropagation(ppl.ControlFlowScopePass):
             for edge in scope_block.edges():
                 intersection = result & edge.data.assignments.keys()
                 for sym in intersection:
-                    del edge.data.assignments[sym]
+                    if sym not in do_not_remove:
+                        del edge.data.assignments[sym]
 
             # If symbols are never unknown any longer, remove from SDFG
             fsyms = sdfg.used_symbols(all_symbols=False)
             result = {k: v for k, v in result.items() if k not in fsyms}
             for sym in result:
-                if sym in sdfg.symbols:
+                if sym in sdfg.symbols and not sym in do_not_remove:
                     # Remove from symbol repository and nested SDFG symbol mapipng
                     sdfg.remove_symbol(sym)
 
         result = set(result.keys())
 
-        if self.recursive:
-            # Change result to set of tuples
-            sid = sdfg.sdfg_id
-            result = set((sid, sym) for sym in result)
+        return result, remaining_unknowns, symbols_replaced
 
-            for state in scope_block.all_states_recursive():
-                for node in state.nodes():
-                    if isinstance(node, nodes.NestedSDFG):
-                        nested_id = node.sdfg.sdfg_id
-                        const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
-                        internal = self.apply_pass(node.sdfg, pipeline_results, initial_symbols=const_syms)
-                        if internal:
-                            for nid, removed in internal:
-                                result.add((nid, removed))
-                                # Remove symbol mapping if constant was completely propagated
-                                if nid == nested_id and removed in node.symbol_mapping:
-                                    del node.symbol_mapping[removed]
+    def apply_pass(self,
+                   sdfg: SDFG,
+                   pipeline_results: Dict[str, Any],
+                   initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
+        """
+        Propagates constants throughout the SDFG.
+
+        :param sdfg: The SDFG to modify.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :param initial_symbols: If not None, sets values of initial symbols.
+        :return: A set of propagated constants, or None if nothing was changed.
+        """
+
+        result = set()
+
+        for scope in sdfg.all_state_scopes_recursive(recurse_into_sdfgs=False):
+            scope_res, scope_unknown, scope_replaced = self.apply_to_scope(sdfg, scope, initial_symbols)
+            pass
+
+        #if self.recursive:
+        #    # Change result to set of tuples
+        #    sid = sdfg.sdfg_id
+        #    result = set((sid, sym) for sym in result)
+
+        #    for state in scope_block.all_states_recursive():
+        #        for node in state.nodes():
+        #            if isinstance(node, nodes.NestedSDFG):
+        #                nested_id = node.sdfg.sdfg_id
+        #                const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
+        #                internal = self.apply_pass(node.sdfg, pipeline_results, initial_symbols=const_syms)
+        #                if internal:
+        #                    for nid, removed in internal:
+        #                        result.add((nid, removed))
+        #                        # Remove symbol mapping if constant was completely propagated
+        #                        if nid == nested_id and removed in node.symbol_mapping:
+        #                            del node.symbol_mapping[removed]
 
         # Return result
         if not result:

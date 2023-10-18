@@ -1229,19 +1229,15 @@ class SDFG(ScopeBlock):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG.
-
-        :param all_symbols: If False, only returns the set of symbols that will be used
-                            in the generated code and are needed as arguments.
-        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
-                                        will be removed from the set of defined symbols.
-        """
-        defined_syms = set()
-        free_syms = set()
+    def used_symbols(self,
+                     all_symbols: bool,
+                     defined_syms: Optional[Set]=None,
+                     free_syms: Optional[Set]=None,
+                     used_before_assignment: Optional[Set]=None,
+                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
         # Exclude data descriptor names and constants
         for name in self.arrays.keys():
@@ -1255,54 +1251,10 @@ class SDFG(ScopeBlock):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        # Add free state symbols
-        used_before_assignment = set()
-
-        try:
-            ordered_states = self.topological_sort(self.start_state)
-        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
-            ordered_states = self.nodes()
-
-        for state in ordered_states:
-            state_fsyms = state.used_symbols(all_symbols)
-            free_syms |= state_fsyms
-
-            # Add free inter-state symbols
-            for e in self.out_edges(state):
-                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
-                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
-                # compute the symbols that are used before being assigned.
-                efsyms = e.data.used_symbols(all_symbols)
-                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_fsyms)
-                used_before_assignment.update(efsyms - defined_syms)
-                free_syms |= efsyms
-
-        # Remove symbols that were used before they were assigned
-        defined_syms -= used_before_assignment
-
-        # Remove from defined symbols those that are in the symbol mapping
-        if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
-            defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
-
-        # Add the set of SDFG symbol parameters
-        # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
-        if all_symbols:
-            free_syms |= set(self.symbols.keys())
-
-        # Subtract symbols defined in inter-state edges and constants
-        return free_syms - defined_syms
-
-    @property
-    def free_symbols(self) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
-
-        :note: Assumes that the graph is valid (i.e., without undefined or
-               overlapping symbols).
-        """
-        return self.used_symbols(all_symbols=True)
+        return super().used_symbols(
+            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
+            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
+        )
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1376,7 +1328,7 @@ class SDFG(ScopeBlock):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)[0]
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary

@@ -1,11 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge
 from dace.sdfg.graph import Edge
-from dace.sdfg import nodes as nd
-from dace.sdfg.state import ControlFlowBlock, LoopScopeBlock
+from dace.sdfg import nodes as nd, utils as sdutils
+from dace.sdfg.state import ControlFlowBlock, ScopeBlock, LoopScopeBlock
 from dace.sdfg.analysis import cfg
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
@@ -54,12 +55,63 @@ class StateReachability(ppl.Pass):
                     if isinstance(parent, LoopScopeBlock):
                         result[k].update(parent.nodes())
 
-                    # Propagate in the parent scope's reach (transitively).
-                    while parent is not None and not isinstance(parent, SDFG):
-                        result[k].update(result[parent])
-                        parent = parent.parent
-
             reachable[sdfg.sdfg_id] = result
+
+        return reachable
+
+
+@properties.make_properties
+class LegacyStateReachability(ppl.Pass):
+    """
+    Evaluates state reachability (which other states can be executed after each state).
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.States
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
+        """
+        :return: A dictionary mapping each state to its other reachable states.
+        """
+        reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
+
+        # Convert any scope blocks to old-school state machines for now.
+        sdfg = copy.deepcopy(top_sdfg)
+        translation: Dict[int, Dict[str, SDFGState]] = {}
+        orig_states: Dict[int, Set[str]] = {}
+        for sd in top_sdfg.all_sdfgs_recursive():
+            orig_states[sd.sdfg_id] = set()
+            translation[sd.sdfg_id] = {}
+            for scope in sd.all_state_scopes_recursive(recurse_into_sdfgs=False):
+                for state in scope.nodes():
+                    if isinstance(state, SDFGState):
+                        orig_states[sd.sdfg_id].add(state.name)
+                        translation[sd.sdfg_id][state.name] = state
+
+        sdutils.inline_loop_blocks(sdfg)
+
+        for sd in sdfg.all_sdfgs_recursive():
+            result: Dict[SDFGState, Set[SDFGState]] = {}
+
+            inlined_states = set([s.name for s in sd.all_states_recursive()])
+            difference = inlined_states - orig_states[sd.sdfg_id]
+
+            # In networkx this is currently implemented naively for directed graphs.
+            # The implementation below is faster
+            # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
+            for n, v in reachable_nodes(sd.nx):
+                if n.name not in difference:
+                    result[translation[sd.sdfg_id][n.name]] = set(
+                        [translation[sd.sdfg_id][r.name] for r in v.keys() if r.name not in difference]
+                    )
+
+            reachable[sd.sdfg_id] = result
 
         return reachable
 

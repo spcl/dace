@@ -668,7 +668,7 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     from dace.sdfg.propagation import propagate_memlets_scope
 
     total_consolidated = 0
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
             continue

@@ -41,7 +41,7 @@ class DeadDataflowElimination(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.StateReachability, ap.AccessSets}
+        return {ap.LegacyStateReachability, ap.AccessSets}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
@@ -56,7 +56,7 @@ class DeadDataflowElimination(ppl.Pass):
         # Depends on the following analysis passes:
         #  * State reachability
         #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.LegacyStateReachability.__name__][sdfg.sdfg_id]
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.sdfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
@@ -69,6 +69,9 @@ class DeadDataflowElimination(ppl.Pass):
             #############################################
             # Analysis
             #############################################
+
+            if not isinstance(state, SDFGState):
+                continue
 
             # Compute states where memory will no longer be read
             writes = access_sets[state][1]
