@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ 
 Transformation to move assignments outside if statements to potentially avoid warp divergence. Speedup gained is
 questionable.
