@@ -60,6 +60,7 @@ class LoopBasedReplacement:
     def replaced_name(func_name: str) -> str:
         replacements = {
             "SUM": "__dace_sum",
+            "PRODUCT": "__dace_product",
             "ANY": "__dace_any",
             "ALL": "__dace_all",
             "COUNT": "__dace_count"
@@ -70,6 +71,7 @@ class LoopBasedReplacement:
     def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
         func_types = {
             "__dace_sum": "DOUBLE",
+            "__dace_product": "DOUBLE",
             "__dace_any": "INTEGER",
             "__dace_all": "INTEGER",
             "__dace_count": "INTEGER"
@@ -206,6 +208,72 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             self.count = self.count + range_index
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+class SumProduct(LoopBasedReplacementTransformation):
+
+    def __init__(self, ast):
+        super().__init__(ast)
+
+    def _initialize(self):
+        self.rvals = []
+        self.argument_variable = None
+
+    def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        for arg in node.args:
+
+            # supports syntax SUM(arr)
+            if isinstance(arg, ast_internal_classes.Name_Node):
+                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                array_node.name = arg
+
+                # If we access SUM(arr) where arr has many dimensions,
+                # We need to create a ParDecl_Node for each dimension
+                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
+                self.rvals.append(array_node)
+
+            # supports syntax SUM(arr(:))
+            elif isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                self.rvals.append(arg)
+
+            else:
+                raise NotImplementedError("We do not support non-array arguments for SUM/PRODUCT")
+
+
+    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+
+        if len(self.rvals) != 1:
+            raise NotImplementedError("Only one array can be summed")
+
+        self.argument_variable = self.rvals[0]
+
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+
+    def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+
+        return ast_internal_classes.BinOp_Node(
+            lval=node.lval,
+            op="=",
+            rval=ast_internal_classes.Int_Literal_Node(value=self._result_init_value()),
+            line_number=node.line_number
+        )
+
+    def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+
+        return ast_internal_classes.BinOp_Node(
+            lval=node.lval,
+            op="=",
+            rval=ast_internal_classes.BinOp_Node(
+                lval=node.lval,
+                op=self._result_update_op(),
+                rval=self.argument_variable,
+                line_number=node.line_number
+            ),
+            line_number=node.line_number
+        )
+
+
 class Sum(LoopBasedReplacement):
 
     """
@@ -217,7 +285,7 @@ class Sum(LoopBasedReplacement):
         Then, we generate a binary node accumulating the result.
     """
 
-    class Transformation(LoopBasedReplacementTransformation):
+    class Transformation(SumProduct):
 
         def __init__(self, ast):
             super().__init__(ast)
@@ -225,62 +293,36 @@ class Sum(LoopBasedReplacement):
         def func_name(self) -> str:
             return "__dace_sum"
 
-        def _initialize(self):
-            self.rvals = []
-            self.argument_variable = None
+        def _result_init_value(self):
+            return "0"
 
-        def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+        def _result_update_op(self):
+            return "+"
 
-            for arg in node.args:
+class Product(LoopBasedReplacement):
 
-                # supports syntax SUM(arr)
-                if isinstance(arg, ast_internal_classes.Name_Node):
-                    array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-                    array_node.name = arg
+    """
+        In this class, we implement the transformation for Fortran intrinsic PRODUCT(:)
+        We support two ways of invoking the function - by providing array name and array subscript.
+        We do NOT support the *DIM* and *MASK* arguments.
 
-                    # If we access SUM(arr) where arr has many dimensions,
-                    # We need to create a ParDecl_Node for each dimension
-                    dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-                    array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+        During the loop construction, we add a single variable storing the partial result.
+        Then, we generate a binary node accumulating the result.
+    """
 
-                    self.rvals.append(array_node)
+    class Transformation(SumProduct):
 
-                # supports syntax SUM(arr(:))
-                if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-                    self.rvals.append(arg)
+        def __init__(self, ast):
+            super().__init__(ast)
 
+        def func_name(self) -> str:
+            return "__dace_product"
 
-        def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+        def _result_init_value(self):
+            return "1"
 
-            if len(self.rvals) != 1:
-                raise NotImplementedError("Only one array can be summed")
-
-            self.argument_variable = self.rvals[0]
-
-            par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
-
-        def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
-
-            return ast_internal_classes.BinOp_Node(
-                lval=node.lval,
-                op="=",
-                rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                line_number=node.line_number
-            )
-
-        def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
-
-            return ast_internal_classes.BinOp_Node(
-                lval=node.lval,
-                op="=",
-                rval=ast_internal_classes.BinOp_Node(
-                    lval=node.lval,
-                    op="+",
-                    rval=self.argument_variable,
-                    line_number=node.line_number
-                ),
-                line_number=node.line_number
-            )
+        def _result_update_op(self):
+            return "*"
 
 class AnyAllCountTransformation(LoopBasedReplacementTransformation):
 
@@ -590,6 +632,7 @@ class FortranIntrinsics:
         "SELECTED_INT_KIND": SelectedKind,
         "SELECTED_REAL_KIND": SelectedKind,
         "SUM": Sum,
+        "PRODUCT": Product,
         "ANY": Any,
         "COUNT": Count,
         "ALL": All
@@ -599,6 +642,7 @@ class FortranIntrinsics:
         "__dace_selected_int_kind": SelectedKind,
         "__dace_selected_real_kind": SelectedKind,
         "__dace_sum": Sum,
+        "__dace_product": Product,
         "__dace_any": Any,
         "__dace_all": All,
         "__dace_count": Count
