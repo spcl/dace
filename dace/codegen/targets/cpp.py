@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import sys
 import warnings
 
 import sympy as sp
@@ -217,6 +218,11 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
     framecode: DaCeCodeGenerator = framecode
+
+    if '.' in name:
+        root = name.split('.')[0]
+        if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
+            name = name.replace('.', '->')
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
@@ -992,8 +998,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         if t.id not in self.sdfg.arrays:
             return super()._Name(t)
 
-        # Replace values with their code-generated names (for example,
-        # persistent arrays)
+        # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         self.write(ptr(t.id, desc, self.sdfg, self.codegen))
 
@@ -1274,7 +1279,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.n:
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
+                        value.value if sys.version_info >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):

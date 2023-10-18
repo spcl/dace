@@ -343,10 +343,10 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
-
-    ignored_symbols = SetProperty(element_type=str,
-                                  desc='Symbols that should not be considered as free in this '
-                                  'tasklet. For example, a global variable.')
+    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+                                  'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
+                                  'tasklets, where only string analysis is possible; and to skip globals in Python '
+                                  'tasklets that should not be given as parameters to the SDFG.')
 
     def __init__(self,
                  label,
@@ -371,8 +371,8 @@ class Tasklet(CodeNode):
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.side_effects = side_effects
-        self.debuginfo = debuginfo
         self.ignored_symbols = ignored_symbols or set()
+        self.debuginfo = debuginfo
 
     @property
     def language(self):
@@ -400,7 +400,11 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys() | self.ignored_symbols)
+        symbols_to_ignore = self.in_connectors.keys() | self.out_connectors.keys()
+        symbols_to_ignore |= self.ignored_symbols
+
+        return self.code.get_free_symbols(symbols_to_ignore)
+
 
     def has_side_effects(self, sdfg) -> bool:
         """

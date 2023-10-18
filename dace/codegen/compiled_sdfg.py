@@ -287,6 +287,7 @@ class CompiledSDFG(object):
         result: Dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
             func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            func.restype = ctypes.c_size_t
             result[storage] = func(self._libhandle, *self._lastargs[1])
 
         return result
