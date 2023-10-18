@@ -8,13 +8,10 @@ from dace.transformation.optimizer import Optimizer
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation import helpers as xfh
 
-from utils.general import save_graph
-
 
 def loop_to_map_outside_first(sdfg: SDFG,
                               validate: bool = True,
-                              validate_all: bool = True,
-                              program: str = None) -> SDFG:
+                              validate_all: bool = True) -> SDFG:
     """
     Performs LoopToMap transformation by applying it to the outer loop first
 
@@ -31,18 +28,13 @@ def loop_to_map_outside_first(sdfg: SDFG,
     :return: The optimised SDFG
     :rtype: SDFG
     :note: Works by applying LoopToMap to the outermost loop where the
-    transformation can be applied. Has not been thoroughly tested yet.
+    transformation can be applied.
     """
 
-    sdfg.simplify(validate=False, validate_all=validate_all)
     number_of_transformations_performed = 1
-    if program is not None:
-        save_graph(sdfg, program, "after_simplify")
 
     for s in sdfg.sdfg_list:
         xfh.split_interstate_edges(s)
-    if program:
-        save_graph(sdfg, program, "after_split_interstate_edges")
 
     while number_of_transformations_performed > 0:
         outside_loop_transformations = []
@@ -70,11 +62,7 @@ def loop_to_map_outside_first(sdfg: SDFG,
             xform = outside_loop_transformations[0]
             # Apply for the LoopToMap transformations does not use the first argument, thus None is passed here
             xform.apply(None, sdfg.sdfg_list[xform.sdfg_id])
-    if program is not None:
-        save_graph(sdfg, program, "after_outer_loop_to_map")
     sdfg.validate()
     sdfg.apply_transformations_repeated([RefineNestedAccess], validate=validate, validate_all=validate_all)
-    if program is not None:
-        save_graph(sdfg, program, "after_outer_refine_nested_access")
 
     return sdfg
