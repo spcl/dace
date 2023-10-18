@@ -10,7 +10,8 @@ from utils.paths import get_basic_sdfg_dir
 from utils.general import get_programs_data, read_source, get_sdfg, save_graph
 from utils.run_config import RunConfig
 from execute.parameters import ParametersProvider
-from dace.transformation.auto.cloudsc_auto_opt import auto_optimize_phase_1, auto_optimize_phase_2, change_strides
+from dace.transformation.auto.cloudsc_auto_opt import auto_optimize_phase_1, auto_optimize_phase_2
+from dace.transformation.change_strides import change_strides
 
 logger = logging.getLogger(__name__)
 

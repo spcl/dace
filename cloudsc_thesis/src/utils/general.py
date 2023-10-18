@@ -25,6 +25,7 @@ from dace.sdfg import utils, SDFG, nodes
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes import RemoveUnusedSymbols, ScalarToSymbolPromotion
 from dace.transformation.auto.auto_optimize import auto_optimize as dace_auto_optimize
+from dace.transformation.change_strides import change_strides
 
 from execute.data import ParametersProvider, get_iteration_ranges, get_data, is_integer
 from utils.paths import get_dacecache, get_verbose_graphs_dir
@@ -536,7 +537,7 @@ def optimize_sdfg(sdfg: SDFG, device: dace.DeviceType, use_my_auto_opt: bool = T
         save_graph(sdfg, verbose_name, "after_replace_symbols_by_values")
 
     # avoid cyclic dependency
-    from dace.transformation.auto.cloudsc_auto_opt import auto_optimize as my_auto_optimize, change_strides
+    from dace.transformation.auto.cloudsc_auto_opt import auto_optimize as my_auto_optimize
     additional_args = {}
     if symbols:
         additional_args['symbols'] = symbols
