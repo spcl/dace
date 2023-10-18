@@ -5,6 +5,7 @@ import math
 from typing import Any, List, Set, Type
 
 from dace.frontend.fortran import ast_internal_classes
+from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 
 FASTNode = Any
@@ -63,7 +64,8 @@ class LoopBasedReplacement:
             "PRODUCT": "__dace_product",
             "ANY": "__dace_any",
             "ALL": "__dace_all",
-            "COUNT": "__dace_count"
+            "COUNT": "__dace_count",
+            "MINVAL": "__dace_minval"
         }
         return replacements[func_name]
 
@@ -74,7 +76,9 @@ class LoopBasedReplacement:
             "__dace_product": "DOUBLE",
             "__dace_any": "INTEGER",
             "__dace_all": "INTEGER",
-            "__dace_count": "INTEGER"
+            "__dace_count": "INTEGER",
+            # FIXME: type should depend on array type
+            "__dace_minval": "DOUBLE"
         }
         # FIXME: Any requires sometimes returning an array of booleans
         call_type = func_types[func_name.name]
@@ -112,7 +116,6 @@ class LoopBasedReplacementTransformation(NodeTransformer):
         ParentScopeAssigner().visit(ast)
         self.scope_vars = ScopeVarsDeclarations()
         self.scope_vars.visit(ast)
-
         self.rvals = []
 
 
@@ -614,6 +617,102 @@ class Count(LoopBasedReplacement):
             return "__dace_count"
 
 
+class MinMaxValTransformation(LoopBasedReplacementTransformation):
+
+    def __init__(self, ast):
+        super().__init__(ast)
+
+    def _initialize(self):
+        self.rvals = []
+        self.argument_variable = None
+
+    def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        for arg in node.args:
+
+            array_node = self._parse_array(node, arg)
+
+            if array_node is not None:
+                self.rvals.append(array_node)
+            else:
+                raise NotImplementedError("We do not support non-array arguments for MINVAL/MAXVAL")
+
+    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+
+        if len(self.rvals) != 1:
+            raise NotImplementedError("Only one array can be summed")
+
+        self.argument_variable = self.rvals[0]
+
+        par_Decl_Range_Finder(self.argument_variable, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+
+    def _initialize_result(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+
+        return ast_internal_classes.BinOp_Node(
+            lval=node.lval,
+            op="=",
+            rval=self._result_init_value(self.argument_variable),
+            line_number=node.line_number
+        )
+
+    def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+
+        cond = ast_internal_classes.BinOp_Node(
+            lval=self.argument_variable,
+            op=self._condition_op(),
+            rval=node.lval,
+            line_number=node.line_number
+        )
+        body_if = ast_internal_classes.BinOp_Node(
+            lval=node.lval,
+            op="=",
+            rval=self.argument_variable,
+            line_number=node.line_number
+        )
+        return ast_internal_classes.If_Stmt_Node(
+            cond=cond,
+            body=body_if,
+            body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
+            line_number=node.line_number
+        )
+
+class MinVal(LoopBasedReplacement):
+
+    """
+        In this class, we implement the transformation for Fortran intrinsic COUNT.
+        The implementation is very similar to ANY and ALL.
+        The main difference is that we initialize the partial result to 0
+        and increment it if any of the evaluated conditions is true.
+
+        We do not support the KIND argument.
+    """
+    class Transformation(MinMaxValTransformation):
+
+        def __init__(self, ast):
+            super().__init__(ast)
+
+        def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
+
+            var_decl = self.scope_vars.get_var(array.parent, array.name.name)
+
+            # TODO: this should be used as a call to HUGE
+            fortran_type = var_decl.type
+            dace_type = fortrantypes2dacetypes[fortran_type]
+            from dace.dtypes import max_value
+            max_val = max_value(dace_type)
+            print(fortran_type, max_val)
+
+            if fortran_type == "INTEGER":
+                return ast_internal_classes.Int_Literal_Node(value=str(max_val))
+            elif fortran_type == "DOUBLE":
+                return ast_internal_classes.Real_Literal_Node(value=str(max_val))
+
+        def _condition_op(self):
+            return "<"
+
+        def func_name(self) -> str:
+            return "__dace_minval"
+
 class FortranIntrinsics:
 
     IMPLEMENTATIONS_AST = {
@@ -623,7 +722,8 @@ class FortranIntrinsics:
         "PRODUCT": Product,
         "ANY": Any,
         "COUNT": Count,
-        "ALL": All
+        "ALL": All,
+        "MINVAL": MinVal
     }
 
     IMPLEMENTATIONS_DACE = {
@@ -633,7 +733,8 @@ class FortranIntrinsics:
         "__dace_product": Product,
         "__dace_any": Any,
         "__dace_all": All,
-        "__dace_count": Count
+        "__dace_count": Count,
+        "__dace_minval": MinVal
     }
 
     def __init__(self):
