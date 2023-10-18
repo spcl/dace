@@ -1,3 +1,4 @@
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module provides a function to change the stride in a given SDFG """
 from typing import List, Union, Tuple
 import sympy
@@ -19,7 +20,7 @@ def list_access_nodes(
     :type sdfg: dace.SDFG
     :param array_name: The name of the wanted array
     :type array_name: str
-    :return: List of access nodes together with the state in which they were found
+    :return: List of the found access nodes together with their state
     :rtype: List[Tuple[nodes.AccessNode, Union[dace.SDFGState, dace.SDFG]]]
     """
     found_nodes = []
@@ -40,8 +41,7 @@ def change_strides(
     :param sdfg: The input SDFG
     :type sdfg: dace.SDFG
     :param stride_one_values: Length of the dimension whose stride should be set to one. Expects that each array has
-    only one dimension whose length is in this list. Expects that this list contains name of symbols or formulas with it
-    as a string (e.g. ['NBLOCKS', 'NBLOCKS + 1'])
+    only one dimension whose length is in this list. Expects that list contains name of symbols
     :type stride_one_values: List[str]
     :param schedule: Schedule to use to copy the arrays
     :type schedule: ScheduleType
