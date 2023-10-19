@@ -120,13 +120,13 @@ def test_fortran_frontend_count_array_scalar_comparison():
                     PROGRAM intrinsic_count_test
                     implicit none
                     integer, dimension(5) :: first
-                    logical, dimension(7) :: res
+                    logical, dimension(9) :: res
                     CALL intrinsic_count_test_function(first, res)
                     end
 
                     SUBROUTINE intrinsic_count_test_function(first, res)
                     integer, dimension(5) :: first
-                    logical, dimension(7) :: res
+                    logical, dimension(9) :: res
 
                     res(1) = COUNT(first .eq. 42)
                     res(2) = COUNT(first(:) .eq. 42)
@@ -135,6 +135,8 @@ def test_fortran_frontend_count_array_scalar_comparison():
                     res(5) = COUNT(first(3:5) .eq. 42)
                     res(6) = COUNT(42 .eq. first)
                     res(7) = COUNT(42 .ne. first)
+                    res(8) = COUNT(6 .lt. first)
+                    res(9) = COUNT(6 .gt. first)
 
                     END SUBROUTINE intrinsic_count_test_function
                     """
@@ -145,24 +147,24 @@ def test_fortran_frontend_count_array_scalar_comparison():
 
     size = 5
     first = np.full([size], 1, order="F", dtype=np.int32)
-    res = np.full([7], 0, order="F", dtype=np.int32)
+    res = np.full([9], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, res=res)
-    assert list(res) == [0, 0, 0, 0, 0, 0, 5]
+    assert list(res) == [0, 0, 0, 0, 0, 0, 5, 0, size]
 
     first[1] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 1, 0, 0, 1, 4]
+    assert list(res) == [1, 1, 1, 0, 0, 1, 4, 1, size - 1]
 
     first[1] = 5
     first[2] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 1, 1, 1, 4]
+    assert list(res) == [1, 1, 0, 1, 1, 1, 4, 1, size - 1]
 
     first[2] = 7
     first[3] = 42
     sdfg(first=first, res=res)
-    assert list(res) == [1, 1, 0, 0, 1, 1, 4]
+    assert list(res) == [1, 1, 0, 0, 1, 1, 4, 2, size - 2]
 
 def test_fortran_frontend_count_array_comparison_wrong_subset():
     test_string = """
