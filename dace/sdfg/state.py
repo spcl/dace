@@ -2325,12 +2325,10 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView, ControlFlowBlock):
 
     def __init__(self,
-                 label: str='',
-                 parent: Optional['ScopeBlock']=None,
-                 sdfg: Optional['dace.SDFG'] = None):
+                 label: str=''):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
-        ControlFlowBlock.__init__(self, label, parent, sdfg)
+        ControlFlowBlock.__init__(self, label)
 
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
@@ -2357,8 +2355,6 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         if not isinstance(node, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
         super().add_node(node)
-        node.parent = self
-        node.sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
         self._cached_start_block = None
         if is_start_block is True:
             self.start_block = len(self.nodes()) - 1
@@ -2634,10 +2630,8 @@ class LoopScopeBlock(ScopeBlock):
                  condition_expr: str,
                  update_expr: str,
                  label: str = '',
-                 parent: Optional[ScopeBlock] = None,
-                 sdfg: Optional['dace.SDFG'] = None,
                  inverted: bool = False):
-        super(LoopScopeBlock, self).__init__(label, parent, sdfg)
+        super(LoopScopeBlock, self).__init__(label)
 
         if initialize_expr is not None:
             self.init_statement = CodeBlock('%s = %s' % (loop_var, initialize_expr))
