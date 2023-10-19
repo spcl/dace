@@ -1118,8 +1118,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
         single state in the SDFG state machine. """
 
-    is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
-
     nosync = Property(dtype=bool, default=False, desc="Do not synchronize at the end of the state")
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
