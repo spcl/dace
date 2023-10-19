@@ -1124,7 +1124,7 @@ class Tensor(Structure):
 
         indices_pure = [idx[0] for idx in indices];
         for (lvl, index) in enumerate(indices_pure):
-            fields |= index.fields(lvl, value_count)
+            fields.update(index.fields(lvl, value_count))
                 
         abbreviation = ''.join(str(idx)[0] for idx in indices_pure)
 
