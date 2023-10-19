@@ -619,7 +619,7 @@ class TensorIndex(ABC):
         """
         Generates the fields needed for the index.
         
-        :returns: an OrderedDict of fields that need to be present in the struct
+        :returns: a Dict of fields that need to be present in the struct
         """
         pass
 
@@ -673,7 +673,7 @@ class Dense(TensorIndex):
         self._unique = unique
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return OrderedDict()
+        return {}
 
     def __repr__(self) -> str:
         s = "Dense"
@@ -744,10 +744,10 @@ class Compressed(TensorIndex):
         self._unique = unique
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return OrderedDict({
+        return {
             f"idx{lvl}_pos": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        })
+        }
 
     def __repr__(self) -> str:
         s = "Compressed"
@@ -820,9 +820,9 @@ class Singleton(TensorIndex):
         self._unique = unique
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return OrderedDict({
+        return {
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        })
+        }
     
     def __repr__(self) -> str:
         s = "Singleton"
@@ -891,9 +891,9 @@ class Range(TensorIndex):
         self._unique = unique
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return OrderedDict({
+        return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        })
+        }
         
     def __repr__(self) -> str:
         s = "Range"
@@ -958,9 +958,9 @@ class Offset(TensorIndex):
         self._unique = unique
 
     def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
-        return OrderedDict({
+        return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        })
+        }
 
     def __repr__(self) -> str:
         s = "Offset"
