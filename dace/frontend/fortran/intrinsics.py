@@ -123,7 +123,7 @@ class LoopBasedReplacementTransformation(NodeTransformer):
         pass
 
     @abstractmethod
-    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
         pass
 
     @abstractmethod
@@ -149,7 +149,7 @@ class LoopBasedReplacementTransformation(NodeTransformer):
     """
 
     @abstractmethod
-    def _update_result_type(self, node: ast_internal_classes.Execution_Part_Node, var: ast_internal_classes.Name_Node):
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
         pass
 
     def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
@@ -280,16 +280,16 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             # calls to the same intrinsic.
             self._initialize()
 
-            # Change the type of result variable
-            self._update_result_type(node, child.lval)
-
             # Visit all intrinsic arguments and extract arrays
             for i in mywalk(child.rval):
                 if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == self.func_name():
                     self._parse_call_expr_node(i)
 
             # Verify that all of intrinsic args are correct and prepare them for loop generation
-            self._summarize_args(child, newbody)
+            self._summarize_args(node, child, newbody)
+
+            # Change the type of result variable
+            self._update_result_type(child.lval)
 
             # Initialize the result variable
             init_stm = self._initialize_result(child)
@@ -345,7 +345,7 @@ class SumProduct(LoopBasedReplacementTransformation):
         self.rvals = []
         self.argument_variable = None
 
-    def _update_result_type(self, node: ast_internal_classes.Execution_Part_Node, var: ast_internal_classes.Name_Node):
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
 
         """
             For both SUM and PRODUCT, the result type depends on the input variable.
@@ -368,7 +368,7 @@ class SumProduct(LoopBasedReplacementTransformation):
                 raise NotImplementedError("We do not support non-array arguments for SUM/PRODUCT")
 
 
-    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 
         if len(self.rvals) != 1:
             raise NotImplementedError("Only one array can be summed")
@@ -466,7 +466,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         self.dominant_array = None
         self.cond = None
 
-    def _update_result_type(self, node: ast_internal_classes.Execution_Part_Node, var: ast_internal_classes.Name_Node):
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
 
         """
             For all functions, the result type is INTEGER.
@@ -495,7 +495,7 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         else:
             self.first_array, self.second_array, self.cond = self._parse_binary_op(node, arg)
 
-    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 
         rangeslen_left = []
         par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], rangeslen_left, self.count, new_func_body, self.scope_vars, True)
@@ -682,7 +682,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         self.rvals = []
         self.argument_variable = None
 
-    def _update_result_type(self, node: ast_internal_classes.Execution_Part_Node, var: ast_internal_classes.Name_Node):
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
 
         """
             For both MINVAL and MAXVAL, the result type depends on the input variable.
@@ -705,7 +705,7 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
             else:
                 raise NotImplementedError("We do not support non-array arguments for MINVAL/MAXVAL")
 
-    def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+    def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 
         if len(self.rvals) != 1:
             raise NotImplementedError("Only one array can be summed")
@@ -834,15 +834,14 @@ class Merge(LoopBasedReplacement):
         def func_name() -> str:
             return "__dace_merge"
 
-        def _update_result_type(self, node: ast_internal_classes.Execution_Part_Node, var: ast_internal_classes.Name_Node):
+        def _update_result_type(self, var: ast_internal_classes.Name_Node):
             """
                 We can ignore the result type, because we exempted this
                 transformation from generating a result.
                 In MERGE, we write directly to the destination array.
                 Thus, we store this result array for future use.
             """
-
-            self.destination_array = self._parse_array(node, var)
+            pass
 
         def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -874,7 +873,9 @@ class Merge(LoopBasedReplacement):
 
                 self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
-        def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+        def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+
+            self.destination_array = self._parse_array(exec_node, node.lval)
 
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
