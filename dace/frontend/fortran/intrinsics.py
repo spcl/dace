@@ -825,8 +825,9 @@ class Merge(LoopBasedReplacement):
 
             self.first_array = None
             self.second_array = None
-            self.dominant_array = None
-            self.cond = None
+            self.mask_first_array = None
+            self.mask_second_array = None
+            self.mask_cond = None
             self.destination_array = None
 
         @staticmethod
@@ -861,58 +862,17 @@ class Merge(LoopBasedReplacement):
             array_node = self._parse_array(node, node.args[2])
             if array_node is not None:
 
-                self.mask_array = array_node
+                self.mask_first_array = array_node
+                self.mask_cond = ast_internal_classes.BinOp_Node(
+                    op="==",
+                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                    lval=self.mask_first_array,
+                    line_number=node.line_number
+                )
 
             else:
 
-                # supports syntax ANY(logical op)
-                # the logical op can be:
-                #
-                # (1) arr1 op arr2
-                # where arr1 and arr2 are name node or array subscript node
-                # there, we need to extract shape and verify they are the same
-                #
-                # (2) arr1 op scalar
-                # there, we ignore the scalar because it's not an array
-                if not isinstance(arg, ast_internal_classes.BinOp_Node):
-                    return
-
-                self.mask_first_array  = self._parse_array(node, arg.lval)
-                self.mask_second_array  = self._parse_array(node, arg.rval)
-                has_two_arrays = self.mask_first_array is not None and self.mask_second_array is not None
-
-                # array and scalar - simplified case
-                if not has_two_arrays:
-
-                    # if one side of the operator is scalar, then parsing array
-                    # will return none
-                    self.mask_dominant_array = self.mask_first_array
-                    if self.mask_dominant_array is None:
-                        self.mask_dominant_array = self.mask_second_array
-
-                    # replace the array subscript node in the binary operation
-                    # ignore this when the operand is a scalar
-                    self.cond = copy.deepcopy(arg)
-                    if self.mask_first_array is not None:
-                        self.cond.lval = self.mask_dominant_array
-                    if self.mask_second_array is not None:
-                        self.cond.rval = self.mask_dominant_array
-                    print('process', self.cond, self.cond.lval.name.name, self.cond.rval)
-
-                    return
-
-
-                if len(self.mask_first_array.indices) != len(self.mask_second_array.indices):
-                    raise TypeError("Can't parse Fortran MERGE with different array ranks!")
-
-                for left_idx, right_idx in zip(self.mask_first_array.indices, self.mask_second_array.indices):
-                    if left_idx.type != right_idx.type:
-                        raise TypeError("Can't parse Fortran MERGE with different array ranks!")
-
-                # Now, we need to convert the array to a proper subscript node
-                self.cond = copy.deepcopy(arg)
-                self.cond.lval = self.mask_first_array
-                self.cond.rval = self.mask_second_array
+                self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
 
@@ -921,27 +881,12 @@ class Merge(LoopBasedReplacement):
             par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
             par_Decl_Range_Finder(self.second_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
             par_Decl_Range_Finder(self.destination_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
-            #par_Decl_Range_Finder(self.mask_first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
-            # FIXME: if condition for if creation
-            #self.cond = ast_internal_classes.BinOp_Node(
-            #    op="==",
-            #    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-            #    lval=copy.deepcopy(self.first_array),
-            #    line_number=node.line_number
-            #)
-            if self.cond is None:
-                par_Decl_Range_Finder(self.mask_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
-                self.cond = ast_internal_classes.BinOp_Node(
-                    op="==",
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                    lval=copy.deepcopy(self.mask_array),
-                    line_number=node.line_number
-                )
-            else:
-                # FIXME: move somewhere else
-                par_Decl_Range_Finder(self.cond.lval, [], [], [], self.count, new_func_body, self.scope_vars, True)
-                par_Decl_Range_Finder(self.cond.rval, [], [], [], self.count, new_func_body, self.scope_vars, True)
-            return
+
+            if self.mask_first_array is not None:
+                par_Decl_Range_Finder(self.mask_first_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
+            if self.mask_second_array is not None:
+                par_Decl_Range_Finder(self.mask_second_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
+
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
             """
@@ -979,7 +924,7 @@ class Merge(LoopBasedReplacement):
             ])
 
             return ast_internal_classes.If_Stmt_Node(
-                cond=self.cond,
+                cond=self.mask_cond,
                 body=body_if,
                 body_else=body_else,
                 line_number=node.line_number
