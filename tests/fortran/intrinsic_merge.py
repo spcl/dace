@@ -178,15 +178,106 @@ def test_fortran_frontend_merge_comparison_arrays():
         else:
             assert res[i] == 13
 
-    # mask comparison on array participating
-    # mask comparison on two arrays participating
-    # mask comparison - second array with shift
-    # mask comparison - both arrays wiht a shift
-    # second array - shift!
-    # merge 2d
+
+def test_fortran_frontend_merge_comparison_arrays_offset():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(14) :: mask1
+                    double precision, dimension(14) :: mask2
+                    double precision, dimension(7) :: res
+                    CALL merge_test_function(input1, input2, mask1, mask2, res)
+                    end
+
+                    SUBROUTINE merge_test_function(input1, input2, mask1, mask2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(7) :: input2
+                    double precision, dimension(14) :: mask1
+                    double precision, dimension(14) :: mask2
+                    double precision, dimension(7) :: res
+
+                    res = MERGE(input1, input2, mask1(3:9) .lt. mask2(5:11))
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+    size = 7
+
+    # Minimum is in the beginning
+    first = np.full([size], 13, order="F", dtype=np.float64)
+    second = np.full([size], 42, order="F", dtype=np.float64)
+    mask1 = np.full([size*2], 30, order="F", dtype=np.float64)
+    mask2 = np.full([size*2], 0, order="F", dtype=np.float64)
+    res = np.full([size], 40, order="F", dtype=np.float64)
+
+    mask1[2:9] = 3
+    mask2[4:11] = 4
+    sdfg(input1=first, input2=second, mask1=mask1, mask2=mask2, res=res)
+    for val in res:
+        assert val == 13
+
+
+def test_fortran_frontend_merge_array_shift():
+    """
+    Tests that the generated array map correctly handles offsets.
+    """
+    test_string = """
+                    PROGRAM merge_test
+                    implicit none
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(21) :: input2
+                    double precision, dimension(14) :: mask1
+                    double precision, dimension(14) :: mask2
+                    double precision, dimension(7) :: res
+                    CALL merge_test_function(input1, input2, mask1, mask2, res)
+                    end
+
+                    SUBROUTINE merge_test_function(input1, input2, mask1, mask2, res)
+                    double precision, dimension(7) :: input1
+                    double precision, dimension(21) :: input2
+                    double precision, dimension(14) :: mask1
+                    double precision, dimension(14) :: mask2
+                    double precision, dimension(7) :: res
+
+                    res = MERGE(input1, input2(13:19), mask1(3:9) .gt. mask2(5:11))
+
+                    END SUBROUTINE merge_test_function
+                    """
+
+    # Now test to verify it executes correctly with no offset normalization
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "merge_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+    size = 7
+
+    # Minimum is in the beginning
+    first = np.full([size], 13, order="F", dtype=np.float64)
+    second = np.full([size*3], 42, order="F", dtype=np.float64)
+    mask1 = np.full([size*2], 30, order="F", dtype=np.float64)
+    mask2 = np.full([size*2], 0, order="F", dtype=np.float64)
+    res = np.full([size], 40, order="F", dtype=np.float64)
+
+    second[12:19] = 100
+    mask1[2:9] = 3
+    mask2[4:11] = 4
+    sdfg(input1=first, input2=second, mask1=mask1, mask2=mask2, res=res)
+    for val in res:
+        assert val == 100
+
 
 if __name__ == "__main__":
 
     test_fortran_frontend_merge_1d()
     test_fortran_frontend_merge_comparison_scalar()
     test_fortran_frontend_merge_comparison_arrays()
+    test_fortran_frontend_merge_comparison_arrays_offset()
+    test_fortran_frontend_merge_array_shift()

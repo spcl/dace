@@ -219,11 +219,11 @@ class LoopBasedReplacementTransformation(NodeTransformer):
             return (dominant_array, None, cond)
 
         if len(first_array.indices) != len(second_array.indices):
-            raise TypeError("Can't parse Fortran ANY with different array ranks!")
+            raise TypeError("Can't parse Fortran binary op with different array ranks!")
 
         for left_idx, right_idx in zip(first_array.indices, second_array.indices):
             if left_idx.type != right_idx.type:
-                raise TypeError("Can't parse Fortran ANY with different array ranks!")
+                raise TypeError("Can't parse Fortran binary op with different array ranks!")
 
         # Now, we need to convert the array to a proper subscript node
         cond = copy.deepcopy(arg)
@@ -879,14 +879,22 @@ class Merge(LoopBasedReplacement):
             # The first main argument is an array -> this dictates loop boundaries
             # Other arrays, regardless if they appear as the second array or mask, need to have the same loop boundary.
             par_Decl_Range_Finder(self.first_array, self.loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
-            par_Decl_Range_Finder(self.second_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
+
+            loop_ranges = []
+            par_Decl_Range_Finder(self.second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+            self._adjust_array_ranges(node, self.second_array, self.loop_ranges, loop_ranges)
+
             par_Decl_Range_Finder(self.destination_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
 
             if self.mask_first_array is not None:
-                par_Decl_Range_Finder(self.mask_first_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
-            if self.mask_second_array is not None:
-                par_Decl_Range_Finder(self.mask_second_array, [], [], [], self.count, new_func_body, self.scope_vars, True)
+                loop_ranges = []
+                par_Decl_Range_Finder(self.mask_first_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                self._adjust_array_ranges(node, self.mask_first_array, self.loop_ranges, loop_ranges)
 
+            if self.mask_second_array is not None:
+                loop_ranges = []
+                par_Decl_Range_Finder(self.mask_second_array, loop_ranges, [], [], self.count, new_func_body, self.scope_vars, True)
+                self._adjust_array_ranges(node, self.mask_second_array, self.loop_ranges, loop_ranges)
 
         def _initialize_result(self, node: ast_internal_classes.FNode) -> Optional[ast_internal_classes.BinOp_Node]:
             """
