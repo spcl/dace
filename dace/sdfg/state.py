@@ -1004,6 +1004,18 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Query, subgraph, and replacement methods
 
+    @abc.abstractmethod
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+        raise NotImplementedError()
+
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        return self._used_symbols_internal(all_symbols)[0]
+
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         read_set = set()
         write_set = set()
@@ -2372,6 +2384,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label)
+        state.parent = self
         self._labels.add(label)
         start_block = is_start_block
         if is_start_state is not None:
@@ -2467,25 +2480,12 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         return before_state, loop_scope, after_state
 
     @abc.abstractmethod
-    def used_symbols(self,
-                     all_symbols: bool,
-                     defined_syms: Optional[Set]=None,
-                     free_syms: Optional[Set]=None,
-                     used_before_assignment: Optional[Set]=None,
-                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
-        """
-        Returns a set of symbol names that are used by the scope, but not defined within it.
-
-        :param all_symbols: If False, only returns the set of symbols that will be used
-                            in the generated code and are needed as arguments.
-        :param defined_syms: Set of already defined symbols, if any. Otherwise None.
-        :param free_syms: Set of already found free symbols, if any. Otherwise None.
-        :param used_before_assignment: Set of already found symbols that are used before they are assigned to, if any.
-                                       Otherwise None.
-        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
-                                        will be removed from the set of defined symbols.
-        :returns: Three-Tuple (Set of free symbols, set of defined symbols, set of symbols used before assignment).
-        """
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -2498,7 +2498,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         for block in ordered_blocks:
             state_symbols = set()
             if isinstance(block, ScopeBlock):
-                b_free_syms, b_defined_syms, b_used_before_syms = block.used_symbols(all_symbols)
+                b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols)
                 free_syms |= b_free_syms
                 defined_syms |= b_defined_syms
                 used_before_assignment |= b_used_before_syms
@@ -2534,10 +2534,6 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         free_syms -= defined_syms
 
         return free_syms, defined_syms, used_before_assignment
-
-    @property
-    def free_symbols(self) -> Set[str]:
-        return self.used_symbols(all_symbols=True)[0]
 
     def to_json(self, parent=None):
         graph_json = OrderedDiGraph.to_json(self)
@@ -2660,12 +2656,12 @@ class LoopScopeBlock(ScopeBlock):
         self.loop_variable = loop_var or ''
         self.inverted = inverted
 
-    def used_symbols(self,
-                     all_symbols: bool,
-                     defined_syms: Optional[Set]=None,
-                     free_syms: Optional[Set]=None,
-                     used_before_assignment: Optional[Set]=None,
-                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set]=None,
+                               free_syms: Optional[Set]=None,
+                               used_before_assignment: Optional[Set]=None,
+                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -2677,7 +2673,7 @@ class LoopScopeBlock(ScopeBlock):
             free_syms |= self.update_statement.get_free_symbols()
         free_syms |= self.scope_condition.get_free_symbols()
 
-        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
         )
         free_syms |= b_free_symbols

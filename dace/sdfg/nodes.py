@@ -263,8 +263,6 @@ class AccessNode(Node):
         return self.data
 
     def desc(self, sdfg: Union['dace.sdfg.SDFG', 'dace.sdfg.SDFGState', 'dace.sdfg.ScopeSubgraphView']):
-        if isinstance(sdfg, dace.sdfg.SDFG):
-            sdfg = sdfg.parent
         return sdfg.arrays[self.data]
 
     def validate(self, sdfg, state):

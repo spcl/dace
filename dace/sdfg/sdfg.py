@@ -779,7 +779,7 @@ class SDFG(ScopeBlock):
 
     @property
     def start_state(self):
-        self._start_block
+        return self.start_block
 
     @start_state.setter
     def start_state(self, state_id):
@@ -1231,12 +1231,12 @@ class SDFG(ScopeBlock):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self,
-                     all_symbols: bool,
-                     defined_syms: Optional[Set]=None,
-                     free_syms: Optional[Set]=None,
-                     used_before_assignment: Optional[Set]=None,
-                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set]=None,
+                               free_syms: Optional[Set]=None,
+                               used_before_assignment: Optional[Set]=None,
+                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1253,7 +1253,7 @@ class SDFG(ScopeBlock):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super().used_symbols(
+        return super()._used_symbols_internal(
             all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
             defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
         )
@@ -1330,7 +1330,7 @@ class SDFG(ScopeBlock):
         }
 
         # Add global free symbols used in the generated code to scalar arguments
-        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)[0]
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
