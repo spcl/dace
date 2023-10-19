@@ -202,11 +202,13 @@ class BlockGraphView(object):
     # Query, subgraph, and replacement methods
 
     @abc.abstractmethod
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
+    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
         """
         Returns a set of symbol names that are used in the graph.
 
         :param all_symbols: If False, only returns symbols that are needed as arguments (only used in generated code).
+        :param keep_defined_in_mapping: If True, symbols defined in inter-state edges that are in the symbol mapping
+                                        will be removed from the set of defined symbols.
         """
         raise NotImplementedError()
     
@@ -618,13 +620,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             return False
         return True
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        """
-        Returns a set of symbol names that are used in the state.
-
-        :param all_symbols: If False, only returns the set of symbols that will be used
-                            in the generated code and are needed as arguments.
-        """
+    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
         state = self.graph if isinstance(self, SubgraphView) else self
         sdfg = state.parent
         new_symbols = set()
@@ -1013,8 +1009,8 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                                keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         raise NotImplementedError()
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        return self._used_symbols_internal(all_symbols)[0]
+    def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
+        return self._used_symbols_internal(all_symbols, keep_defined_in_mapping=keep_defined_in_mapping)[0]
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         read_set = set()
@@ -2557,7 +2553,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
 
     def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
         """ Iterate over this and all nested SDFGs. """
-        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=False):
+        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=True):
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
