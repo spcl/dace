@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
     Simple RTL tasklet with a single scalar input and a single scalar output. It increments b from a up to 100.
+
+    It is intended for running simulation xilinx targets.
 """
 
 import dace
-import argparse
-
 import numpy as np
 
 # add sdfg
@@ -47,7 +47,7 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
             m_axis_b_tdata <= 0;
             s_axis_a_tready <= 1'b1;
             state <= READY;
-        end else if (s_axis_a_tvalid && state == READY) begin // case: load a 
+        end else if (s_axis_a_tvalid && state == READY) begin // case: load a
             m_axis_b_tdata <= s_axis_a_tdata;
             s_axis_a_tready <= 1'b0;
             state <= BUSY;
@@ -56,9 +56,9 @@ tasklet = state.add_tasklet(name='rtl_tasklet',
         else
             m_axis_b_tdata <= m_axis_b_tdata;
             state <= DONE;
-    end    
+    end
 
-    assign m_axis_b_tvalid  = (m_axis_b_tdata >= MAX_VAL) ? 1'b1:1'b0;  
+    assign m_axis_b_tvalid  = (m_axis_b_tdata >= MAX_VAL) ? 1'b1:1'b0;
     ''',
                             language=dace.Language.SystemVerilog)
 
@@ -76,19 +76,19 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='simulation'):
+        # init data structures
+        a = np.random.randint(0, 100, 1).astype(np.int32)
+        b = np.array([0]).astype(np.int32)
 
-    # init data structures
-    a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.array([0]).astype(np.int32)
+        # show initial values
+        print("a={}, b={}".format(a, b))
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
+        # call program
+        sdfg(A=a, B=b)
 
-    # call program
-    sdfg(A=a, B=b)
+        # show result
+        print("a={}, b={}".format(a, b))
 
-    # show result
-    print("a={}, b={}".format(a, b))
-
-    # check result
-    assert b == sdfg.constants["MAX_VAL"]
+        # check result
+        assert b == sdfg.constants["MAX_VAL"]
