@@ -40,8 +40,6 @@ def test_fortran_frontend_product_array():
         d[i] = i + 1
     res = np.full([3], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
-    print(d)
-    print(res)
     assert res[0] == np.prod(d)
     assert res[1] == np.prod(d)
     assert res[2] == np.prod(d[1:5])
