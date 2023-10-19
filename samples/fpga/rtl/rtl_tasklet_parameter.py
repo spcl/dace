@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# Simple RTL tasklet with a single scalar input and a single scalar output. It increments b from a up to 100.
-#
-# It is intended for running simulation xilinx targets.
+"""
+    Simple RTL tasklet with a single scalar input and a single scalar output. It increments b from a up to 100.
+
+    It is intended for running simulation xilinx targets.
+"""
 
 import dace
 import numpy as np

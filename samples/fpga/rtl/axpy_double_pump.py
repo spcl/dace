@@ -1,73 +1,74 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows the AXPY BLAS routine. It is implemented through Xilinx
-# IPs in order to utilize double pumping, which doubles the performance per
-# consumed FPGA resource. The double pumping operation is "inwards", which
-# means that the internal vectorization width of the core computation is half
-# that of the external vectorization width. This translates into utilizing half
-# the amount of internal computing resources, compared to a regular vectorized
-# implementetation. The block diagram of the design for a 32-bit floating-point
-# implementation using vectorization width 2 is:
-#
-#          ap_aclk          s_axis_y_in        s_axis_x_in     a
-#             │                  │                  │          │
-#             │                  │                  │          │
-#             │                  │                  │          │
-#     ┌───────┼─────────┬────────┼─────────┐        │          │
-#     │       │         │        │         │        │          │
-#     │       │         │        ▼         │        ▼          │
-#     │       │         │  ┌────────────┐  │  ┌────────────┐   │
-#     │       │         └─►│            │  └─►│            │   │
-#     │       │            │ Clock sync │     │ Clock sync │   │
-#     │       │         ┌─►│            │  ┌─►│            │   │
-#     │       ▼ 300 MHz │  └─────┬──────┘  │  └─────┬──────┘   │
-#     │ ┌────────────┐  │        │         │        │          │
-#     │ │ Clock      │  │        │         │        │          │
-#     │ │            │  ├────────┼─────────┤        │          │
-#     │ │ Multiplier │  │        │         │        │          │
-#     │ └─────┬──────┘  │        ▼ 64 bit  │        ▼ 64 bit   │
-#     │       │ 600 MHz │  ┌────────────┐  │  ┌────────────┐   │
-#     │       │         │  │            │  │  │            │   │
-#     │       └─────────┼─►│ Data issue │  └─►│ Data issue │   │
-#     │                 │  │            │     │            │   │
-#     │                 │  └─────┬──────┘     └─────┬──────┘   │
-#     │                 │        │ 32 bit           │ 32 bit   │
-#     │                 │        │                  │          │
-#     │                 │        │                  │          │
-#     │                 │        │                  ▼          ▼
-#     │                 │        │                 ┌────────────┐
-#     │                 │        │                 │            │
-#     │                 ├────────┼────────────────►│ Multiplier │
-#     │                 │        │                 │            │
-#     │                 │        │                 └─────┬──────┘
-#     │                 │        │                       │
-#     │                 │        │        ┌──────────────┘
-#     │                 │        │        │
-#     │                 │        ▼        ▼
-#     │                 │      ┌────────────┐
-#     │                 │      │            │
-#     │                 ├─────►│    Adder   │
-#     │                 │      │            │
-#     │                 │      └─────┬──────┘
-#     │                 │            │
-#     │                 │            ▼ 32 bit
-#     │                 │      ┌─────────────┐
-#     │                 │      │             │
-#     │                 ├─────►│ Data packer │
-#     │                 │      │             │
-#     │                 │      └─────┬───────┘
-#     │                 │            │ 64 bit
-#     │                 │            ▼
-#     │                 │      ┌────────────┐
-#     │                 └─────►│            │
-#     │                        │ Clock sync │
-#     └───────────────────────►│            │
-#                              └─────┬──────┘
-#                                    │
-#                                    ▼
-#                            m_axis_result_out
-#
-# It is intended for running hardware_emulation or hardware xilinx targets.
+"""
+    This sample shows the AXPY BLAS routine. It is implemented through Xilinx
+    IPs in order to utilize double pumping, which doubles the performance per
+    consumed FPGA resource. The double pumping operation is "inwards", which
+    means that the internal vectorization width of the core computation is half
+    that of the external vectorization width. This translates into utilizing half
+    the amount of internal computing resources, compared to a regular vectorized
+    implementetation. The block diagram of the design for a 32-bit floating-point
+    implementation using vectorization width 2 is:
+
+             ap_aclk          s_axis_y_in        s_axis_x_in     a
+                │                  │                  │          │
+                │                  │                  │          │
+                │                  │                  │          │
+        ┌───────┼─────────┬────────┼─────────┐        │          │
+        │       │         │        │         │        │          │
+        │       │         │        ▼         │        ▼          │
+        │       │         │  ┌────────────┐  │  ┌────────────┐   │
+        │       │         └─►│            │  └─►│            │   │
+        │       │            │ Clock sync │     │ Clock sync │   │
+        │       │         ┌─►│            │  ┌─►│            │   │
+        │       ▼ 300 MHz │  └─────┬──────┘  │  └─────┬──────┘   │
+        │ ┌────────────┐  │        │         │        │          │
+        │ │ Clock      │  │        │         │        │          │
+        │ │            │  ├────────┼─────────┤        │          │
+        │ │ Multiplier │  │        │         │        │          │
+        │ └─────┬──────┘  │        ▼ 64 bit  │        ▼ 64 bit   │
+        │       │ 600 MHz │  ┌────────────┐  │  ┌────────────┐   │
+        │       │         │  │            │  │  │            │   │
+        │       └─────────┼─►│ Data issue │  └─►│ Data issue │   │
+        │                 │  │            │     │            │   │
+        │                 │  └─────┬──────┘     └─────┬──────┘   │
+        │                 │        │ 32 bit           │ 32 bit   │
+        │                 │        │                  │          │
+        │                 │        │                  │          │
+        │                 │        │                  ▼          ▼
+        │                 │        │                 ┌────────────┐
+        │                 │        │                 │            │
+        │                 ├────────┼────────────────►│ Multiplier │
+        │                 │        │                 │            │
+        │                 │        │                 └─────┬──────┘
+        │                 │        │                       │
+        │                 │        │        ┌──────────────┘
+        │                 │        │        │
+        │                 │        ▼        ▼
+        │                 │      ┌────────────┐
+        │                 │      │            │
+        │                 ├─────►│    Adder   │
+        │                 │      │            │
+        │                 │      └─────┬──────┘
+        │                 │            │
+        │                 │            ▼ 32 bit
+        │                 │      ┌─────────────┐
+        │                 │      │             │
+        │                 ├─────►│ Data packer │
+        │                 │      │             │
+        │                 │      └─────┬───────┘
+        │                 │            │ 64 bit
+        │                 │            ▼
+        │                 │      ┌────────────┐
+        │                 └─────►│            │
+        │                        │ Clock sync │
+        └───────────────────────►│            │
+                                 └─────┬──────┘
+                                       │
+                                       ▼
+                               m_axis_result_out
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np

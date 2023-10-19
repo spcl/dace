@@ -1,10 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows how to utilize an IP core in an RTL tasklet. This is done
-# through the vector add problem, which adds two floating point vectors
-# together.
-#
-# It is intended for running hardware_emulation or hardware xilinx targets.
+"""
+    This sample shows how to utilize an IP core in an RTL tasklet. This is done
+    through the vector add problem, which adds two floating point vectors
+    together.
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np

@@ -1,5 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-
+"""
+    Test suite for testing RTL tasklets in DaCe with Verilator as a backend for simulation.
+"""
 import dace
 import numpy as np
 import pytest

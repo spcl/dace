@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# Two sequential RTL tasklets connected through a memlet.
-#
-# It is intended for running simulation xilinx targets.
+"""
+    Two sequential RTL tasklets connected through a memlet.
+
+    It is intended for running simulation xilinx targets.
+"""
 
 import dace
 import numpy as np

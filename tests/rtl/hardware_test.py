@@ -1,4 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    Test suite for testing RTL integration with DaCe targeting Xilinx FPGAs.
+"""
 import dace
 from dace.fpga_testing import rtl_test
 import numpy as np

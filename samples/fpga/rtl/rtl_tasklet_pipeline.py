@@ -1,8 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# Pipelined, AXI-handshake compliant example that increments b from a up to 100.
-#
-# It is intended for running simulation xilinx targets.
+"""
+    Pipelined, AXI-handshake compliant example that increments b from a up to 100.
+
+    It is intended for running simulation xilinx targets.
+"""
 
 import dace
 import numpy as np
