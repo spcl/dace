@@ -57,32 +57,18 @@ class SelectedKind(IntrinsicTransformation):
 
 class LoopBasedReplacement:
 
-    @staticmethod
-    def replaced_name(func_name: str) -> str:
-        replacements = {
-            "SUM": "__dace_sum",
-            "PRODUCT": "__dace_product",
-            "ANY": "__dace_any",
-            "ALL": "__dace_all",
-            "COUNT": "__dace_count",
-            "MINVAL": "__dace_minval"
-        }
-        return replacements[func_name]
+    INTRINSIC_TO_DACE = {
+        "SUM": "__dace_sum",
+        "PRODUCT": "__dace_product",
+        "ANY": "__dace_any",
+        "ALL": "__dace_all",
+        "COUNT": "__dace_count",
+        "MINVAL": "__dace_minval"
+    }
 
     @staticmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
-        func_types = {
-            "__dace_sum": "DOUBLE",
-            "__dace_product": "DOUBLE",
-            "__dace_any": "INTEGER",
-            "__dace_all": "INTEGER",
-            "__dace_count": "INTEGER",
-            # FIXME: type should depend on array type
-            "__dace_minval": "DOUBLE"
-        }
-        # FIXME: Any requires sometimes returning an array of booleans
-        call_type = func_types[func_name.name]
-        return ast_internal_classes.Call_Expr_Node(name=func_name, type=call_type, args=args.args, line_number=line)
+    def replaced_name(func_name: str) -> str:
+        return LoopBasedReplacement.INTRINSIC_TO_DACE[func_name]
 
     @staticmethod
     def has_transformation() -> bool:
@@ -113,11 +99,13 @@ class LoopBasedReplacementTransformation(NodeTransformer):
     """
     def __init__(self, ast):
         self.count = 0
+
+        # We need to rerun the assignment because transformations could have created
+        # new AST nodes
         ParentScopeAssigner().visit(ast)
         self.scope_vars = ScopeVarsDeclarations()
         self.scope_vars.visit(ast)
         self.rvals = []
-
 
     @abstractmethod
     def func_name(self) -> str:
@@ -141,6 +129,21 @@ class LoopBasedReplacementTransformation(NodeTransformer):
 
     @abstractmethod
     def _generate_loop_body(self, node: ast_internal_classes.FNode) -> ast_internal_classes.BinOp_Node:
+        pass
+
+    """
+        When replacing Fortran's AST reference to an intrinsic function, we set a dummy variable with VOID type.
+        The reason is that at the point, we do not know the types of arguments. For many intrinsics, the return
+        type will depend on the input types.
+
+        When transforming the AST, we gather all scopes and variable declarations in that scope.
+        Then, we can query the types of input arguments and properly determine the return type.
+
+        Both the type of the variable and its corresponding Var_Decl_node need to be updated!
+    """
+
+    @abstractmethod
+    def _update_result_type(self, node: ast_internal_classes.Name_Node):
         pass
 
     def _parse_array(self, node: ast_internal_classes.Execution_Part_Node, arg: ast_internal_classes.FNode) -> ast_internal_classes.Array_Subscript_Node:
@@ -185,6 +188,9 @@ class LoopBasedReplacementTransformation(NodeTransformer):
 
             # Verify that all of intrinsic args are correct and prepare them for loop generation
             self._summarize_args(child, newbody)
+
+            # Change the type of result variable
+            self._update_result_type(child.lval)
 
             # Initialize the result variable
             newbody.append(self._initialize_result(child))
@@ -237,6 +243,17 @@ class SumProduct(LoopBasedReplacementTransformation):
     def _initialize(self):
         self.rvals = []
         self.argument_variable = None
+
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
+
+        """
+            For both SUM and PRODUCT, the result type depends on the input variable.
+        """
+        input_type = self.scope_vars.get_var(var.parent, self.argument_variable.name.name)
+
+        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var.type = input_type.type
+        var_decl.type = input_type.type
 
     def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -345,6 +362,17 @@ class AnyAllCountTransformation(LoopBasedReplacementTransformation):
         self.second_array = None
         self.dominant_array = None
         self.cond = None
+
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
+
+        """
+            For all functions, the result type is INTEGER.
+            Theoretically, we should return LOGICAL for ANY and ALL,
+            but we no longer use booleans on DaCe side.
+        """
+        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var.type = "INTEGER"
+        var_decl.type = "INTEGER"
 
     def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -626,6 +654,18 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
         self.rvals = []
         self.argument_variable = None
 
+    def _update_result_type(self, var: ast_internal_classes.Name_Node):
+
+        """
+            For both MINVAL and MAXVAL, the result type depends on the input variable.
+        """
+
+        input_type = self.scope_vars.get_var(var.parent, self.argument_variable.name.name)
+
+        var_decl = self.scope_vars.get_var(var.parent, var.name)
+        var.type = input_type.type
+        var_decl.type = input_type.type
+
     def _parse_call_expr_node(self, node: ast_internal_classes.Call_Expr_Node):
 
         for arg in node.args:
@@ -700,7 +740,6 @@ class MinVal(LoopBasedReplacement):
             dace_type = fortrantypes2dacetypes[fortran_type]
             from dace.dtypes import max_value
             max_val = max_value(dace_type)
-            print(fortran_type, max_val)
 
             if fortran_type == "INTEGER":
                 return ast_internal_classes.Int_Literal_Node(value=str(max_val))
@@ -726,17 +765,6 @@ class FortranIntrinsics:
         "MINVAL": MinVal
     }
 
-    IMPLEMENTATIONS_DACE = {
-        "__dace_selected_int_kind": SelectedKind,
-        "__dace_selected_real_kind": SelectedKind,
-        "__dace_sum": Sum,
-        "__dace_product": Product,
-        "__dace_any": Any,
-        "__dace_all": All,
-        "__dace_count": Count,
-        "__dace_minval": MinVal
-    }
-
     def __init__(self):
         self._transformations_to_run = set()
 
@@ -745,7 +773,7 @@ class FortranIntrinsics:
 
     @staticmethod
     def function_names() -> List[str]:
-        return list(FortranIntrinsics.IMPLEMENTATIONS_DACE.keys())
+        return list(LoopBasedReplacement.INTRINSIC_TO_DACE.values())
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
@@ -793,4 +821,9 @@ class FortranIntrinsics:
             call_type = func_types[name.name]
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
         else:
-            return self.IMPLEMENTATIONS_DACE[name.name].replace(name, args, line)
+            # We will do the actual type replacement later
+            # To that end, we need to know the input types - but these we do not know at the moment.
+            return ast_internal_classes.Call_Expr_Node(
+                name=name, type="VOID",
+                args=args.args, line_number=line
+            )
