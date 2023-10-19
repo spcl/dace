@@ -1219,7 +1219,7 @@ class SDFG(ScopeBlock):
 
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
-        return self.all_states_recursive()
+        return list(self.all_states_recursive())
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within

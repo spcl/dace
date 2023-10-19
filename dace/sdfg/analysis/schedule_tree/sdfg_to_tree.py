@@ -273,9 +273,9 @@ def remove_name_collisions(sdfg: SDFG):
 
     for nsdfg in sdfg.all_sdfgs_recursive():
         # Rename duplicate states
-        for state in nsdfg.nodes():
+        for state in nsdfg.states():
             if state.label in state_names_seen:
-                state.set_label(data.find_new_name(state.label, state_names_seen))
+                state.label = data.find_new_name(state.label, state_names_seen)
             state_names_seen.add(state.label)
 
         replacements: Dict[str, str] = {}

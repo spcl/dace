@@ -128,7 +128,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         ##############################
         # Add initial reads to initial nested state
         initial_state: sd.SDFGState = nsdfg_node.sdfg.start_state
-        initial_state.set_label('%s_init' % map_entry.map.label)
+        initial_state.label = '%s_init' % map_entry.map.label
         for edge in edges_to_replace:
             initial_state.add_node(edge.src)
             rnode = edge.src
@@ -152,7 +152,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
         # Add the main state's contents to the last state, modifying
         # memlets appropriately.
         final_state: sd.SDFGState = nsdfg_node.sdfg.sink_nodes()[0]
-        final_state.set_label('%s_final_computation' % map_entry.map.label)
+        final_state.label = '%s_final_computation' % map_entry.map.label
         dup_nstate = copy.deepcopy(nstate)
         final_state.add_nodes_from(dup_nstate.nodes())
         for e in dup_nstate.edges():
@@ -183,7 +183,7 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
             nstate.add_edge(rnode, edge.src_conn, wnode, edge.dst_conn, new_memlet)
 
-        nstate.set_label('%s_double_buffered' % map_entry.map.label)
+        nstate.label = '%s_double_buffered' % map_entry.map.label
         # Divide by loop stride
         new_expr = symbolic.pystr_to_symbolic('((%s / %s) + 1) %% 2' % (map_param, map_rstride))
         sd.replace(nstate, '__dace_db_param', new_expr)
