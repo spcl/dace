@@ -196,6 +196,10 @@ class RedundantArray(pm.SingleStateTransformation):
         if not in_desc.transient:
             return False
 
+        # Make sure the types are both arrays or scalars
+        if not isinstance(in_desc, (data.Array, data.Scalar)) or not isinstance(out_desc, (data.Array, data.Scalar)):
+            return False
+
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
         try:
