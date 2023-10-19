@@ -615,7 +615,7 @@ class TensorIndex(ABC):
         pass
 
     @abstractmethod
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
         """
         Generates the fields needed for the index.
         
@@ -672,8 +672,8 @@ class Dense(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
-        return {}
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+        return OrderedDict()
 
     def __repr__(self) -> str:
         s = "Dense"
@@ -743,11 +743,11 @@ class Compressed(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
-        return {
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+        return OrderedDict({
             f"idx{lvl}_pos": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
+        })
 
     def __repr__(self) -> str:
         s = "Compressed"
@@ -819,10 +819,10 @@ class Singelton(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
-        return {
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+        return OrderedDict({
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
+        })
     
     def __repr__(self) -> str:
         s = "Singelton"
@@ -890,10 +890,10 @@ class Range(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
-        return {
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+        return OrderedDict({
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
+        })
         
     def __repr__(self) -> str:
         s = "Range"
@@ -957,10 +957,10 @@ class Offset(TensorIndex):
         self._ordered = ordered
         self._unique = unique
 
-    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> OrderedDict[str, Data]:
-        return {
+    def fields(self, lvl: int, dummy_symbol: symbolic.SymExpr) -> Dict[str, Data]:
+        return OrderedDict({
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
-        }
+        })
 
     def __repr__(self) -> str:
         s = "Offset"
