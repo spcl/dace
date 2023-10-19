@@ -2351,16 +2351,21 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
             self._cached_start_block = None
         return super().add_edge(src, dst, data)
 
-    def add_node(self, node, is_start_block=False):
+    def add_node(self, node, is_start_block=False, *, is_start_state: bool=None):
         if not isinstance(node, ControlFlowBlock):
             raise TypeError('Expected ControlFlowBlock, got ' + str(type(node)))
         super().add_node(node)
         self._cached_start_block = None
-        if is_start_block is True:
+        start_block = is_start_block
+        if is_start_state is not None:
+            warnings.warn('is_start_state is deprecated, use is_start_block instead')
+            start_block = is_start_state
+
+        if start_block:
             self.start_block = len(self.nodes()) - 1
             self._cached_start_block = node
 
-    def add_state(self, label=None, is_start_block=False) -> SDFGState:
+    def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
         if self._labels is None or len(self._labels) != self.number_of_nodes():
             self._labels = set(s.label for s in self.nodes())
         label = label or 'state'
@@ -2368,7 +2373,11 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label)
         self._labels.add(label)
-        self.add_node(state, is_start_block=is_start_block)
+        start_block = is_start_block
+        if is_start_state is not None:
+            warnings.warn('is_start_state is deprecated, use is_start_block instead')
+            start_block = is_start_state
+        self.add_node(state, is_start_block=start_block)
         return state
 
     def add_state_before(self, state: SDFGState, label=None, is_start_state=False) -> SDFGState:
