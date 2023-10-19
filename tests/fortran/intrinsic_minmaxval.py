@@ -31,7 +31,7 @@ def test_fortran_frontend_minval_double():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
@@ -151,7 +151,7 @@ def test_fortran_frontend_maxval_double():
 
     # Now test to verify it executes correctly with no offset normalization
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "minval_test", True)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
     size = 7
 
