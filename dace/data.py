@@ -576,7 +576,7 @@ class TensorIndex(ABC):
 
     @property
     @abstractmethod
-    def unique(sefl) -> bool:
+    def unique(self) -> bool:
         """
         True if coordinate in the level are unique, False otw.
         
@@ -588,21 +588,21 @@ class TensorIndex(ABC):
 
     @property
     @abstractmethod
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         """
         True if the level doesn't branch, false otw.
         
         A level is considered branchless if no coordinate has a sibling (another
         coordinate with same ancestor) and all coordinates in parent level have
         a child. In other words if there is a bijection between the coordinates
-        in this level and the parent level. An example of the is the Singelton
+        in this level and the parent level. An example of the is the Singleton
         index level in the COO format.
         """
         pass
 
     @property
     @abstractmethod
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         """
         True if the level is compact, false otw.
         
@@ -661,11 +661,11 @@ class Dense(TensorIndex):
         return self._unique
 
     @property
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         return False
 
     @property
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         return True
 
     def __init__(self, ordered: bool = True, unique: bool = True):
@@ -728,11 +728,11 @@ class Compressed(TensorIndex):
         return self._unique
 
     @property
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         return False
 
     @property
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         return True
 
     def __init__(self,
@@ -766,7 +766,7 @@ class Compressed(TensorIndex):
         return s
     
 
-class Singelton(TensorIndex):
+class Singleton(TensorIndex):
     """
     Tensor index that encodes a single coordinate per parent coordinate.
     
@@ -804,11 +804,11 @@ class Singelton(TensorIndex):
         return self._unique
 
     @property
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         return True
 
     @property
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         return True
 
     def __init__(self, 
@@ -825,7 +825,7 @@ class Singelton(TensorIndex):
         })
     
     def __repr__(self) -> str:
-        s = "Singelton"
+        s = "Singleton"
 
         non_defaults = []
         if self._full:
@@ -879,11 +879,11 @@ class Range(TensorIndex):
         return self._unique
 
     @property
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         return False
 
     @property
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         return False
 
     def __init__(self, ordered: bool = True, unique: bool = True):
@@ -946,11 +946,11 @@ class Offset(TensorIndex):
         return self._unique
 
     @property
-    def branchless(sefl) -> bool:
+    def branchless(self) -> bool:
         return True
 
     @property
-    def compact(sefl) -> bool:
+    def compact(self) -> bool:
         return False
 
     def __init__(self, ordered: bool = True, unique: bool = True):
@@ -1032,7 +1032,7 @@ class Tensor(Structure):
                 (M, N),
                 [
                     (dace.data.Compressed(unique=False), 0),
-                    (dace.data.Singelton(), 1),
+                    (dace.data.Singleton(), 1),
                 ],
                 nnz,
                 "CSC_Matrix",
@@ -1063,8 +1063,8 @@ class Tensor(Structure):
                 (I, J, K),
                 [
                     (dace.data.Compressed(unique=False), 0),
-                    (dace.data.Singelton(unique=False), 1),
-                    (dace.data.Singelton(), 2),
+                    (dace.data.Singleton(unique=False), 1),
+                    (dace.data.Singleton(), 2),
                 ],
                 nnz,
                 "COO_3D_Tensor",

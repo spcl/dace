@@ -111,8 +111,8 @@ def test_coo_fields():
         (I, J, K),
         [
             (dace.data.Compressed(unique=False), 0),
-            (dace.data.Singelton(unique=False), 1),
-            (dace.data.Singelton(), 2),
+            (dace.data.Singleton(unique=False), 1),
+            (dace.data.Singleton(), 2),
         ],
         nnz,
         "COO_3D_Tensor",
