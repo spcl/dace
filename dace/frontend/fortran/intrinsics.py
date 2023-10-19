@@ -63,7 +63,8 @@ class LoopBasedReplacement:
         "ANY": "__dace_any",
         "ALL": "__dace_all",
         "COUNT": "__dace_count",
-        "MINVAL": "__dace_minval"
+        "MINVAL": "__dace_minval",
+        "MAXVAL": "__dace_maxval"
     }
 
     @staticmethod
@@ -719,12 +720,9 @@ class MinMaxValTransformation(LoopBasedReplacementTransformation):
 class MinVal(LoopBasedReplacement):
 
     """
-        In this class, we implement the transformation for Fortran intrinsic COUNT.
-        The implementation is very similar to ANY and ALL.
-        The main difference is that we initialize the partial result to 0
-        and increment it if any of the evaluated conditions is true.
+        In this class, we implement the transformation for Fortran intrinsic MINVAL.
 
-        We do not support the KIND argument.
+        We do not support the MASK and DIM argument.
     """
     class Transformation(MinMaxValTransformation):
 
@@ -752,6 +750,41 @@ class MinVal(LoopBasedReplacement):
         def func_name(self) -> str:
             return "__dace_minval"
 
+
+class MaxVal(LoopBasedReplacement):
+
+    """
+        In this class, we implement the transformation for Fortran intrinsic MAXVAL.
+
+        We do not support the MASK and DIM argument.
+    """
+    class Transformation(MinMaxValTransformation):
+
+        def __init__(self, ast):
+            super().__init__(ast)
+
+        def _result_init_value(self, array: ast_internal_classes.Array_Subscript_Node):
+
+            var_decl = self.scope_vars.get_var(array.parent, array.name.name)
+
+            # TODO: this should be used as a call to HUGE
+            fortran_type = var_decl.type
+            dace_type = fortrantypes2dacetypes[fortran_type]
+            from dace.dtypes import min_value
+            min_val = min_value(dace_type)
+
+            if fortran_type == "INTEGER":
+                return ast_internal_classes.Int_Literal_Node(value=str(min_val))
+            elif fortran_type == "DOUBLE":
+                return ast_internal_classes.Real_Literal_Node(value=str(min_val))
+
+        def _condition_op(self):
+            return ">"
+
+        def func_name(self) -> str:
+            return "__dace_maxval"
+
+
 class FortranIntrinsics:
 
     IMPLEMENTATIONS_AST = {
@@ -762,7 +795,13 @@ class FortranIntrinsics:
         "ANY": Any,
         "COUNT": Count,
         "ALL": All,
-        "MINVAL": MinVal
+        "MINVAL": MinVal,
+        "MAXVAL": MaxVal
+    }
+
+    DIRECT_REPLACEMENTS = {
+        "__dace_selected_int_kind": SelectedKind,
+        "__dace_selected_real_kind": SelectedKind
     }
 
     def __init__(self):
@@ -820,6 +859,8 @@ class FortranIntrinsics:
             # FIXME: this will be progressively removed
             call_type = func_types[name.name]
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
+        elif name.name in self.DIRECT_REPLACEMENTS:
+            return self.DIRECT_REPLACEMENTS[name.name].replace(name, args, line)
         else:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
