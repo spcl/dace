@@ -526,8 +526,8 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
                 written_scalars.add(node.data)
 
     for name, desc in sdfg.arrays.items():
-        if desc.transient and desc.storage == dtypes.StorageType.Default:
-            if isinstance(desc. dt.Scalar) and not name in written_scalars:
+        if not desc.transient and desc.storage == dtypes.StorageType.Default:
+            if isinstance(desc, dt.Scalar) and not name in written_scalars:
                 continue
             desc.storage = dtypes.StorageType.GPU_Global
 
