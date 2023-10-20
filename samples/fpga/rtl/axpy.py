@@ -1,7 +1,10 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows the AXPY BLAS routine. It is implemented through Xilinx IPs in order to utilize floating point
-# operations. It is intended for running hardware_emulation or hardware xilinx targets.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    This sample shows the AXPY BLAS routine. It is implemented through Xilinx IPs in order to utilize floating point
+    operations.
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np
@@ -259,4 +262,4 @@ if __name__ == '__main__':
         expected = a * x + y
         diff = np.linalg.norm(expected - result) / N.get()
         print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+        assert diff <= 1e-5
