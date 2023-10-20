@@ -30,7 +30,7 @@ from dace.config import Config
 from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState, ScopeBlock
+from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -402,7 +402,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(ScopeBlock):
+class SDFG(ControlFlowRegion):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed

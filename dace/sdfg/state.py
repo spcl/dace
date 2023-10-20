@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 SomeNodeT = Union[nd.Node, 'ControlFlowBlock']
 SomeEdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
-SomeGraphT = Union['ScopeBlock', 'SDFGState']
+SomeGraphT = Union['ControlFlowRegion', 'SDFGState']
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -2330,7 +2330,8 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
 
 @make_properties
-class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView, ControlFlowBlock):
+class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
+                        ControlFlowBlock):
 
     def __init__(self,
                  label: str=''):
@@ -2441,7 +2442,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
 
         for block in ordered_blocks:
             state_symbols = set()
-            if isinstance(block, ScopeBlock):
+            if isinstance(block, ControlFlowRegion):
                 b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols)
                 free_syms |= b_free_syms
                 defined_syms |= b_defined_syms
@@ -2488,7 +2489,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
     ###################################################################
     # Traversal methods
 
-    def all_state_scopes_recursive(self, recurse_into_sdfgs=False) -> Iterator['ScopeBlock']:
+    def all_state_scopes_recursive(self, recurse_into_sdfgs=False) -> Iterator['ControlFlowRegion']:
         """ Iterate over this and all nested state scopes. """
         yield self
         for block in self.nodes():
@@ -2496,7 +2497,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
                         yield from node.sdfg.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
-            elif isinstance(block, ScopeBlock):
+            elif isinstance(block, ControlFlowRegion):
                 yield from block.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
 
     def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
@@ -2510,7 +2511,7 @@ class ScopeBlock(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], C
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
-            elif isinstance(block, ScopeBlock):
+            elif isinstance(block, ControlFlowRegion):
                 yield from block.all_states_recursive()
 
     def all_control_flow_blocks_recursive(self, recurse_into_sdfgs=False) -> Iterator[ControlFlowBlock]:
