@@ -2367,7 +2367,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cached_start_block = None
         start_block = is_start_block
         if is_start_state is not None:
-            warnings.warn('is_start_state is deprecated, use is_start_block instead')
+            warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
             start_block = is_start_state
 
         if start_block:
@@ -2385,7 +2385,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._labels.add(label)
         start_block = is_start_block
         if is_start_state is not None:
-            warnings.warn('is_start_state is deprecated, use is_start_block instead')
+            warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
             start_block = is_start_state
         self.add_node(state, is_start_block=start_block)
         return state

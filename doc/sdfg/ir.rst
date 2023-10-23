@@ -796,5 +796,7 @@ file uses the :func:`~dace.sdfg.sdfg.SDFG.from_file` static method. For example,
 
 The ``compress`` argument can be used to save a smaller (``gzip`` compressed) file. It can keep the same extension,
 but it is customary to use ``.sdfg.gz`` or ``.sdfgz`` to let others know it is compressed.
+It is recommended to use this option for large SDFGs, as it not only saves space, but also speeds up loading and
+editing of the SDFG in visualization tools and the VSCode extension.
 
 
