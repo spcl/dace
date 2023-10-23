@@ -18,7 +18,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties)
+                             CodeProperty, make_properties, SetProperty)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -2554,3 +2554,115 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             raise ValueError('Invalid state ID')
         self._start_block = block_id
         self._cached_start_block = self.node(block_id)
+
+
+@make_properties
+class LoopRegion(ControlFlowRegion):
+
+    update_statement = CodeProperty(optional=True, allow_none=True, default=None,
+                                    desc='The loop update statement. May be None if the update happens elsewhere.')
+    init_statement = CodeProperty(optional=True, allow_none=True, default=None,
+                                  desc='The loop init statement. May be None if the initialization happens elsewhere.')
+    loop_condition = CodeProperty(allow_none=True, default=None, desc='The loop condition')
+    inverted = Property(dtype=bool, default=False,
+                        desc='If True, the loop condition is checked after the first iteration.')
+    loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
+    break_states = SetProperty(dtype=int, desc='States that when reached break out of the loop')
+    continue_states = SetProperty(dtype=int, desc='States that when reached directly execute the next iteration')
+
+    def __init__(self,
+                 loop_var: str,
+                 initialize_expr: str,
+                 condition_expr: str,
+                 update_expr: str,
+                 label: str = '',
+                 parent: Optional[ControlFlowRegion] = None,
+                 sdfg: Optional['dace.SDFG'] = None,
+                 inverted: bool = False):
+        super(LoopRegion, self).__init__(label, parent, sdfg)
+
+        if initialize_expr is not None:
+            self.init_statement = CodeBlock('%s = %s' % (loop_var, initialize_expr))
+        else:
+            self.init_statement = None
+
+        if condition_expr:
+            self.loop_condition = CodeBlock(condition_expr)
+        else:
+            self.loop_condition = CodeBlock('True')
+
+        if update_expr is not None:
+            self.update_statement = CodeBlock('%s = %s' % (loop_var, update_expr))
+        else:
+            self.update_statement = None
+
+        self.loop_variable = loop_var or ''
+        self.inverted = inverted
+
+    def used_symbols(self,
+                     all_symbols: bool,
+                     defined_syms: Optional[Set]=None,
+                     free_syms: Optional[Set]=None,
+                     used_before_assignment: Optional[Set]=None,
+                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
+
+        defined_syms.add(self.loop_variable)
+        if self.init_statement is not None:
+            free_syms |= self.init_statement.get_free_symbols()
+        if self.update_statement is not None:
+            free_syms |= self.update_statement.get_free_symbols()
+        free_syms |= self.loop_condition.get_free_symbols()
+
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(
+            all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
+        )
+        free_syms |= b_free_symbols
+        defined_syms |= b_defined_symbols
+        used_before_assignment |= b_used_before_assignment
+
+        defined_syms -= used_before_assignment
+        free_syms -= defined_syms
+
+        return free_syms, defined_syms, used_before_assignment
+
+    def replace_dict(self, repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True, replace_keys: bool = True):
+        if replace_keys:
+            from dace.sdfg.replace import replace_properties_dict
+            replace_properties_dict(self, repl, symrepl)
+
+            if self.loop_variable and self.loop_variable in repl:
+                self.loop_variable = repl[self.loop_variable]
+
+        super().replace_dict(repl, symrepl, replace_in_graph)
+
+    def to_json(self, parent=None):
+        return super().to_json(parent)
+
+    def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
+        super().add_node(node, is_start_block, is_start_state=is_start_state)
+        if is_continue:
+            if is_break:
+                raise ValueError('Cannot set both is_continue and is_break')
+            self.continue_states.add(self.node_id(node))
+        if is_break:
+            if is_continue:
+                raise ValueError('Cannot set both is_continue and is_break')
+            self.break_states.add(self.node_id(node))
+
+    def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
+                  is_start_state: bool = None) -> SDFGState:
+        state = super().add_state(label, is_start_block, is_start_state=is_start_state)
+        if is_continue:
+            if is_break:
+                raise ValueError('Cannot set both is_continue and is_break')
+            self.continue_states.add(self.node_id(state))
+        if is_break:
+            if is_continue:
+                raise ValueError('Cannot set both is_continue and is_break')
+            self.break_states.add(self.node_id(state))
+        return state
