@@ -268,7 +268,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                         newbody.append(
@@ -284,7 +284,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                     newbody.append(
@@ -458,7 +458,11 @@ class IndexExtractor(NodeTransformer):
                             if self.normalize_offsets:
 
                                 # Find the offset of a variable to which we are assigning
-                                var_name = child.lval.name.name
+                                var_name = ""
+                                if isinstance(j, ast_internal_classes.Name_Node):
+                                    var_name = j.name
+                                else:
+                                    var_name = j.name.name
                                 variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]
 
@@ -737,8 +741,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           count: int,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
-                          declaration=True,
-                          is_sum_to_loop=False):
+                          declaration=True):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -753,6 +756,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     currentindex = 0
     indices = []
+
     offsets = scope_vars.get_var(node.parent, node.name.name).offsets
 
     for idx, i in enumerate(node.indices):
@@ -926,14 +930,36 @@ class SumToLoop(NodeTransformer):
 
                 current = child.lval
                 val = child.rval
-                rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+
+                rvals = []
+                for i in mywalk(val):
+                    if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_sum':
+
+                        for arg in i.args:
+
+                            # supports syntax SUM(arr)
+                            if isinstance(arg, ast_internal_classes.Name_Node):
+                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                                array_node.name = arg
+
+                                # If we access SUM(arr) where arr has many dimensions,
+                                # We need to create a ParDecl_Node for each dimension
+                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
+                                rvals.append(array_node)
+
+                            # supports syntax SUM(arr(:))
+                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                                rvals.append(arg)
+
                 if len(rvals) != 1:
                     raise NotImplementedError("Only one array can be summed")
                 val = rvals[0]
                 rangeposrval = []
                 rangesrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False, True)
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
 
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,
