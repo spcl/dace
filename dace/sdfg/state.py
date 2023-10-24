@@ -99,6 +99,10 @@ class BlockGraphView(object):
     def out_degree(self, node: NodeT) -> int:
         ...
 
+    @property
+    def sdfg(self) -> 'dace.sdfg.SDFG':
+        ...
+
     ###################################################################
     # Traversal methods
 
@@ -2338,6 +2342,11 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 
     def __init__(self, graph, subgraph_nodes):
         super().__init__(graph, subgraph_nodes)
+
+    @property
+    def sdfg(self) -> 'dace.sdfg.SDFG':
+        state: SDFGState = self.graph
+        return state.sdfg
 
 
 @make_properties
