@@ -29,8 +29,8 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_state(graph)
 
 
-def validate_control_flow_region(sdfg: SDFG,
-                                 region: ControlFlowRegion,
+def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
+                                 region: 'dace.sdfg.state.ControlFlowRegion',
                                  initialized_transients: Set[str],
                                  symbols: dict,
                                  references: Set[int] = None,

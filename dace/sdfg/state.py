@@ -1075,6 +1075,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         super(ControlFlowBlock, self).__init__()
         self._label = label
         self._default_lineinfo = None
+        self._sdfg = None
         self.is_collapsed = False
 
     def set_default_lineinfo(self, lineinfo: dace.dtypes.DebugInfo):
@@ -1110,6 +1111,14 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @property
     def name(self) -> str:
         return self._label
+
+    @property
+    def sdfg(self) -> 'dace.SDFG':
+        return self._sdfg
+
+    @sdfg.setter
+    def sdfg(self, sdfg: 'dace.SDFG'):
+        self._sdfg = sdfg
 
 
 @make_properties
@@ -2567,8 +2576,8 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool, default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
-    break_states = SetProperty(dtype=int, desc='States that when reached break out of the loop')
-    continue_states = SetProperty(dtype=int, desc='States that when reached directly execute the next iteration')
+    break_states = SetProperty(element_type=int, desc='States that when reached break out of the loop')
+    continue_states = SetProperty(element_type=int, desc='States that when reached directly execute the next iteration')
 
     def __init__(self,
                  loop_var: str,
@@ -2576,13 +2585,11 @@ class LoopRegion(ControlFlowRegion):
                  condition_expr: str,
                  update_expr: str,
                  label: str = '',
-                 parent: Optional[ControlFlowRegion] = None,
-                 sdfg: Optional['dace.SDFG'] = None,
                  inverted: bool = False):
-        super(LoopRegion, self).__init__(label, parent, sdfg)
+        super(LoopRegion, self).__init__(label)
 
         if initialize_expr is not None:
-            self.init_statement = CodeBlock('%s = %s' % (loop_var, initialize_expr))
+            self.init_statement = CodeBlock(initialize_expr)
         else:
             self.init_statement = None
 
@@ -2592,19 +2599,19 @@ class LoopRegion(ControlFlowRegion):
             self.loop_condition = CodeBlock('True')
 
         if update_expr is not None:
-            self.update_statement = CodeBlock('%s = %s' % (loop_var, update_expr))
+            self.update_statement = CodeBlock(update_expr)
         else:
             self.update_statement = None
 
         self.loop_variable = loop_var or ''
         self.inverted = inverted
 
-    def used_symbols(self,
-                     all_symbols: bool,
-                     defined_syms: Optional[Set]=None,
-                     free_syms: Optional[Set]=None,
-                     used_before_assignment: Optional[Set]=None,
-                     keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set]=None,
+                               free_syms: Optional[Set]=None,
+                               used_before_assignment: Optional[Set]=None,
+                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -2616,7 +2623,7 @@ class LoopRegion(ControlFlowRegion):
             free_syms |= self.update_statement.get_free_symbols()
         free_syms |= self.loop_condition.get_free_symbols()
 
-        b_free_symbols, b_defined_symbols, b_used_before_assignment = super().used_symbols(
+        b_free_symbols, b_defined_symbols, b_used_before_assignment = super()._used_symbols_internal(
             all_symbols, keep_defined_in_mapping=keep_defined_in_mapping
         )
         free_syms |= b_free_symbols
