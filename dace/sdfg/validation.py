@@ -1,18 +1,17 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
-from dace.dtypes import DebugInfo, StorageType
+from dace.dtypes import DebugInfo
 import os
-from typing import TYPE_CHECKING, Dict, List, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Set
 import warnings
-from dace import dtypes, data as dt, subsets
+from dace import dtypes, subsets
 from dace import symbolic
 
 if TYPE_CHECKING:
     import dace
     from dace.sdfg import SDFG
     from dace.sdfg import graph as gr
-    from dace.sdfg.state import ControlFlowRegion
     from dace.memlet import Memlet
 
 ###########################################
@@ -68,8 +67,11 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
         # Source
         if edge.src not in visited:
             visited.add(edge.src)
-            validate_state(edge.src, region.node_id(edge.src), sdfg, symbols, initialized_transients, references,
-                            **context)
+            if isinstance(edge.src, SDFGState):
+                validate_state(edge.src, region.node_id(edge.src), sdfg, symbols, initialized_transients, references,
+                               **context)
+            else:
+                validate_control_flow_region(sdfg, edge.src, initialized_transients, symbols, references, **context)
 
         ##########################################
         # Edge
@@ -335,7 +337,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg.scope import scope_contains_scope, is_devicelevel_gpu, is_devicelevel_fpga
 
     sdfg = sdfg or state.parent
-    state_id = state_id or sdfg.node_id(state)
+    state_id = state_id if state_id is not None else state.parent_graph.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
@@ -357,7 +359,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
-    if state._parent != sdfg:
+    if state.sdfg != sdfg:
         raise InvalidSDFGError("State does not point to the correct "
                                "parent", sdfg, state_id)
 

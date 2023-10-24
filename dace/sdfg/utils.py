@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, SomeGraphT
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -1255,14 +1255,17 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
     counter = 0
     blocks = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
 
-    for block, graph in optional_progressbar(reversed(blocks), title='Inlining Loops', n=len(blocks), progress=progress):
+    for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
+                                               n=len(blocks), progress=progress):
+        block: ControlFlowBlock = _block
+        graph: SomeGraphT = _graph
         id = block.sdfg.sdfg_id
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
 
         candidate = {
-            LoopRegionInline.block: block,
+            LoopRegionInline.loop: block,
         }
         inliner = LoopRegionInline()
         inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
