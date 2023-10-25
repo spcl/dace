@@ -31,6 +31,51 @@ class CPUCodeGen(TargetCodeGenerator):
     target_name = "cpu"
     language = "cpp"
 
+    def _define_sdfg_arguments(self, sdfg, arglist):
+
+        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
+            for k, v in struct.members.items():
+                if isinstance(v, data.Structure):
+                    _visit_structure(v, args, f'{prefix}->{k}')
+                elif isinstance(v, data.StructArray):
+                    _visit_structure(v.stype, args, f'{prefix}->{k}')
+                elif isinstance(v, data.Data):
+                    args[f'{prefix}->{k}'] = v
+
+        # Keeps track of generated connectors, so we know how to access them in nested scopes
+        args = dict(arglist)
+        for name, arg_type in arglist.items():
+            if isinstance(arg_type, data.Structure):
+                desc = sdfg.arrays[name]
+                _visit_structure(arg_type, args, name)
+            elif isinstance(arg_type, data.StructArray):
+                desc = sdfg.arrays[name]
+                desc = desc.stype
+                _visit_structure(desc, args, name)
+
+        for name, arg_type in args.items():
+            if isinstance(arg_type, data.Scalar):
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
+                if arg_type.storage is dtypes.StorageType.GPU_Global:
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
+                    continue
+
+                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+            elif isinstance(arg_type, data.Array):
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
+            elif isinstance(arg_type, data.Stream):
+                if arg_type.is_stream_array():
+                    self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
+                else:
+                    self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, data.Structure):
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
+            else:
+                raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
+                                                                                     v=str(arg_type)))
+
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
@@ -55,48 +100,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
-        def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
-            for k, v in struct.members.items():
-                if isinstance(v, data.Structure):
-                    _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
-                    _visit_structure(v.stype, args, f'{prefix}->{k}')
-                elif isinstance(v, data.Data):
-                    args[f'{prefix}->{k}'] = v
-
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
-        for name, arg_type in self._frame.arglist.items():
-            if isinstance(arg_type, data.Structure):
-                desc = sdfg.arrays[name]
-                _visit_structure(arg_type, arglist, name)
-            elif isinstance(arg_type, data.StructArray):
-                desc = sdfg.arrays[name]
-                desc = desc.stype
-                _visit_structure(desc, arglist, name)
-
-        for name, arg_type in arglist.items():
-            if isinstance(arg_type, data.Scalar):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
-                if arg_type.storage is dtypes.StorageType.GPU_Global:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-                    continue
-
-                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
-            elif isinstance(arg_type, data.Array):
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-            elif isinstance(arg_type, data.Stream):
-                if arg_type.is_stream_array():
-                    self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
-                else:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
-            elif isinstance(arg_type, data.Structure):
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
-            else:
-                raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
-                                                                                     v=str(arg_type)))
+        self._define_sdfg_arguments(sdfg, arglist)
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
@@ -297,23 +303,38 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-                       allocation_stream):
-        name = node.root_data
-        alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
+                       allocation_stream, allocate_nested_data: bool = True):
+        alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         name = alloc_name
 
-        if nodedesc.transient is False:
+        tokens = node.data.split('.')
+        top_desc = sdfg.arrays[tokens[0]]
+        top_transient = top_desc.transient
+        top_storage = top_desc.storage
+        top_lifetime = top_desc.lifetime
+
+        if top_transient is False:
             return
 
         # Check if array is already allocated
         if self._dispatcher.defined_vars.has(name):
             return
-
-        # Check if array is already declared
-        declared = self._dispatcher.declared_arrays.has(name)
+        
+        if len(tokens) > 1:
+            for i in range(len(tokens) - 1):
+                tmp_name = '.'.join(tokens[:i + 1])
+                tmp_alloc_name = cpp.ptr(tmp_name, sdfg.arrays[tmp_name], sdfg, self._frame)
+                if not self._dispatcher.defined_vars.has(tmp_alloc_name):
+                    self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(tmp_name), sdfg.arrays[tmp_name],
+                                        function_stream, declaration_stream, allocation_stream,
+                                        allocate_nested_data=False)
+            declared = True
+        else:
+            # Check if array is already declared
+            declared = self._dispatcher.declared_arrays.has(name)
 
         define_var = self._dispatcher.defined_vars.add
-        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+        if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             define_var = self._dispatcher.defined_vars.add_global
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
@@ -326,13 +347,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
-            for k, v in nodedesc.members.items():
-                if isinstance(v, data.Data):
-                    ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
-                    defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                    self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                    self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                        declaration_stream, allocation_stream)
+            if allocate_nested_data:
+                for k, v in nodedesc.members.items():
+                    if isinstance(v, data.Data):
+                        ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
+                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+                        self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
+                                            declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, (data.StructureView, data.View)):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -1576,6 +1598,10 @@ class CPUCodeGen(TargetCodeGenerator):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
+
+        fsyms = self._frame.free_symbols(node.sdfg)
+        arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        self._define_sdfg_arguments(node.sdfg, arglist)
 
         # Quick sanity check.
         # TODO(later): Is this necessary or "can_access_parent" should always be False?
