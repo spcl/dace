@@ -181,7 +181,7 @@ def test_rgf():
 
 
 if __name__ == '__main__':
-    # test_read_structure()
-    # test_write_structure()
+    test_read_structure()
+    test_write_structure()
     test_local_structure()
     test_rgf()
