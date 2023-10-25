@@ -1320,15 +1320,28 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for node in self.nodes():
             yield from node.all_edges_recursive()
 
-    def arrays_recursive(self):
+    def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
-            nested SDFGs. Yields 3-tuples of (sdfg, array name, array)."""
+            nested SDFGs. Yields 3-tuples of (sdfg, array name, array).
+
+            :param include_nested_data: If True, also yields nested data.
+            :return: A generator of (sdfg, array name, array) tuples.
+        """
+
+        def _yield_nested_data(name, arr):
+            for nname, narr in arr.members.items():
+                if isinstance(narr, dt.Structure):
+                    yield from _yield_nested_data(name + '.' + nname, narr)
+                yield self, name + '.' + nname, narr
+
         for aname, arr in self.arrays.items():
+            if isinstance(arr, dt.Structure) and include_nested_data:
+                yield from _yield_nested_data(aname, arr)
             yield self, aname, arr
         for state in self.nodes():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.arrays_recursive()
+                    yield from node.sdfg.arrays_recursive(include_nested_data=include_nested_data)
 
     def used_symbols(self, all_symbols: bool, keep_defined_in_mapping: bool=False) -> Set[str]:
         """
@@ -1608,9 +1621,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
-    def shared_transients(self, check_toplevel=True) -> List[str]:
-        """ Returns a list of transient data that appears in more than one
-            state. """
+    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> List[str]:
+        """ Returns a list of transient data that appears in more than one state.
+
+            :param check_toplevel: If True, consider the descriptors' toplevel attribute.
+            :param include_nested_data: If True, also include nested data.
+            :return: A list of transient data names.
+        """
         seen = {}
         shared = []
 
@@ -1624,12 +1641,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # If transient is accessed in more than one state, it is shared
         for state in self.nodes():
             for node in state.data_nodes():
-                dataname = node.data.split('.')[0]
-                desc = self.arrays[dataname]
-                if desc.transient:
-                    if (check_toplevel and desc.toplevel) or (dataname in seen and seen[dataname] != state):
-                        shared.append(dataname)
-                    seen[dataname] = state
+                tokens = node.data.split('.')
+                # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
+                desc = self.arrays[tokens[0]]
+                is_transient = desc.transient
+                is_toplevel = desc.toplevel
+                if include_nested_data:
+                    datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
+                else:
+                    datanames = set([tokens[0]])
+                for dataname in datanames:
+                    desc = self.arrays[dataname]
+                    if is_transient:
+                        if (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
+                            shared.append(dataname)
+                        seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
@@ -2095,14 +2121,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
         # If exists, fail
-        if name in self._arrays:
+        while name in self._arrays:
             if find_new_name:
                 name = self._find_new_name(name)
             else:
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
-        # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
-        # members of Structures.
-        name = name.replace('.', '_')
+            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+            # members of Structures.
+            name = name.replace('.', '_')
         assert name not in self._arrays
         self._arrays[name] = datadesc
 
