@@ -383,22 +383,6 @@ def emit_memlet_reference(dispatcher,
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
-    # NOTE: Multi-nesting with StructArrays must be further investigated.
-    def _visit_structure(struct: data.Structure, name: str, prefix: str):
-        for k, v in struct.members.items():
-            if isinstance(v, data.Structure):
-                _visit_structure(v, name, f'{prefix}->{k}')
-            elif isinstance(v, data.StructArray):
-                _visit_structure(v.stype, name, f'{prefix}->{k}')
-            elif isinstance(v, data.Data):
-                tokens = prefix.split('->')
-                full_name = '.'.join([name, *tokens[1:], k])
-                new_memlet = dace.Memlet.from_array(full_name, v)
-                emit_memlet_reference(dispatcher, sdfg, new_memlet, f'{prefix}->{k}', conntype._typeclass.fields[k], is_write=is_write)
-
-    if isinstance(desc, data.Structure):
-        _visit_structure(desc, memlet.data, pointer_name)
-
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
     expr = expr.replace('.', '->')
