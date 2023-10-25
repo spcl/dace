@@ -515,12 +515,29 @@ def make_transients_persistent(sdfg: SDFG,
     return result
 
 
+def apply_gpu_storage(sdfg: SDFG) -> None:
+    """ Changes the storage of the SDFG's input and output data to GPU global memory. """
+
+    written_scalars = set()
+    for state in sdfg.nodes():
+        for node in state.data_nodes():
+            desc = node.desc(sdfg)
+            if isinstance(desc, dt.Scalar) and not desc.transient and state.in_degree(node) > 0:
+                written_scalars.add(node.data)
+
+    for name, desc in sdfg.arrays.items():
+        if not desc.transient and desc.storage == dtypes.StorageType.Default:
+            if isinstance(desc, dt.Scalar) and not name in written_scalars:
+                continue
+            desc.storage = dtypes.StorageType.GPU_Global
+
+
 def auto_optimize(sdfg: SDFG,
                   device: dtypes.DeviceType,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
-                  gpu_global: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -540,6 +557,7 @@ def auto_optimize(sdfg: SDFG,
                      have been applied.
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
+    :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -566,12 +584,8 @@ def auto_optimize(sdfg: SDFG,
     # Apply GPU transformations and set library node implementations
 
     if device == dtypes.DeviceType.GPU:
-        def gpu_storage(sdfg: dace.SDFG):
-            for _, desc in sdfg.arrays.items():
-                if not desc.transient and isinstance(desc, dace.data.Array):
-                    desc.storage = dace.StorageType.GPU_Global
-        if gpu_global:
-            gpu_storage(sdfg)
+        if use_gpu_storage:
+            apply_gpu_storage(sdfg)
         sdfg.apply_gpu_transformations()
         sdfg.simplify()
 
