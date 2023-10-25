@@ -537,7 +537,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
+            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
 
             #############################################
@@ -550,7 +550,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 for node in state.data_nodes():
                     if node.data not in array_names:
                         continue
-                    instances[node.data.split('.')[0]].append((state, node))
+                    instances[node.data].append((state, node))
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
@@ -562,8 +562,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
 
             access_instances[sdfg.sdfg_id] = instances
 
-        for sdfg, name, desc in top_sdfg.arrays_recursive():
-            if not desc.transient:
+        for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
+            # NOTE/TODO: Temporary fix for nested data not having the same attributes as their parent
+            top_desc = sdfg.arrays[name.split('.')[0]]
+            top_transient = top_desc.transient
+            top_storage = top_desc.storage
+            top_lifetime = top_desc.lifetime
+            if not top_transient:
                 continue
             if name in sdfg.constants_prop:
                 # Constants do not need to be allocated
@@ -587,7 +592,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
 
             # Cases
-            if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+            if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
                 # Persistent memory is allocated in initialization code and
                 # exists in the library state structure
 
@@ -597,13 +602,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
 
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
 
-                if desc.storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
+                if top_storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
                     self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
-            elif desc.lifetime is dtypes.AllocationLifetime.Global:
+            elif top_lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
                 # exists in the library state structure (to be passed along
                 # to the right SDFG)
@@ -625,7 +630,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            if (name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG):
+            if (name in shared_transients[sdfg.sdfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG):
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
@@ -633,7 +638,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 # If unused, skip
                 if first_node_instance is None:
                     continue
-            elif desc.lifetime == dtypes.AllocationLifetime.State:
+            elif top_lifetime == dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
                 curstate: SDFGState = None
@@ -649,7 +654,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 else:
                     alloc_scope = curstate
                     alloc_state = curstate
-            elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+            elif top_lifetime == dtypes.AllocationLifetime.Scope:
                 # Scope memory (default) is either allocated in the innermost
                 # scope (e.g., Map, Consume) it is used in (i.e., greatest
                 # common denominator), or in the SDFG if used in multiple states
@@ -793,7 +798,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             else:
                 state_id = -1
 
-            desc = node.root_desc(tsdfg)
+            desc = node.desc(tsdfg)
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
                                                declare, allocate)
