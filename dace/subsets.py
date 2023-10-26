@@ -455,7 +455,7 @@ class Range(Subset):
         result = set()
         for dim in self.ranges:
             for d in dim:
-                result |= symbolic.free_symbols_and_functions(d)
+                result |= symbolic.symlist(d).keys()
         return result
 
     def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
