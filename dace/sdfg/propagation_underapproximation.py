@@ -27,8 +27,8 @@ approximation_dict: dict[Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
 loop_write_dict: dict[SDFGState, dict[str, Memlet]] = {}
-loop_dict: dict[SDFGState, (SDFGState, SDFGState,
-                            list[SDFGState], str, subsets.Range)] = {}
+loop_dict: dict[SDFGState, tuple[SDFGState, SDFGState,
+                                 list[SDFGState], str, subsets.Range]] = {}
 iteration_variables: dict[SDFGState, set[str]] = {}
 ranges_per_state: dict[SDFGState,
                        dict[str, subsets.Range]] = defaultdict(lambda: {})
@@ -989,7 +989,7 @@ class UnderapproximateWrites(ppl.Pass):
     def propagate_memlet_loop(
             self,
             sdfg: SDFG,
-            loops: dict[SDFGState, (SDFGState, SDFGState, list[SDFGState], str, subsets.Range)],
+            loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]],
             loopheader: SDFGState = None
     ):
         """
