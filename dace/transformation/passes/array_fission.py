@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple, List
+from typing import Any, Dict, Optional, Set, Tuple, List, Union
 import networkx as nx
 
 from dace import SDFG
@@ -531,7 +531,7 @@ def _dominator_tree_DFS_order(
     return visited
 
 
-def _conditional_dfs(graph: SDFG, start: SDFG = None, condition=None):
+def _conditional_dfs(graph: SDFG, start: Union[SDFGState, None] = None, condition=None):
     successors = graph.successors
     visited = set()
     node = start
