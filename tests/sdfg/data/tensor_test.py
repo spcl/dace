@@ -12,7 +12,7 @@ def test_read_csr_tensor():
     csr_obj = dace.data.Tensor(
         dace.float32,
         (M, N),
-        [(dace.data.Dense(), 0), (dace.data.Compressed(), 1)],
+        [(dace.data.TensorIndexDense(), 0), (dace.data.TensorIndexCompressed(), 1)],
         nnz,
         "CSR_Tensor")
 
@@ -63,6 +63,8 @@ def test_read_csr_tensor():
     func(A=inpA, B=B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
     ref = A.toarray()
 
+    sdfg.save("./tensor.json")
+
     assert np.allclose(B, ref)
 
 
@@ -73,7 +75,7 @@ def test_csr_fields():
     csr = dace.data.Tensor(
         dace.float32,
         (M, N),
-        [(dace.data.Dense(), 0), (dace.data.Compressed(), 1)],
+        [(dace.data.TensorIndexDense(), 0), (dace.data.TensorIndexCompressed(), 1)],
         nnz,
         "CSR_Matrix",
     )
@@ -90,9 +92,9 @@ def test_dia_fields():
         dace.float32,
         (M, N),
         [
-            (dace.data.Dense(), num_diags),
-            (dace.data.Range(), 0),
-            (dace.data.Offset(), 1),
+            (dace.data.TensorIndexDense(), num_diags),
+            (dace.data.TensorIndexRange(), 0),
+            (dace.data.TensorIndexOffset(), 1),
         ],
         nnz,
         "DIA_Matrix",
@@ -110,9 +112,9 @@ def test_coo_fields():
         dace.float32,
         (I, J, K),
         [
-            (dace.data.Compressed(unique=False), 0),
-            (dace.data.Singleton(unique=False), 1),
-            (dace.data.Singleton(), 2),
+            (dace.data.TensorIndexCompressed(unique=False), 0),
+            (dace.data.TensorIndexSingleton(unique=False), 1),
+            (dace.data.TensorIndexSingleton(), 2),
         ],
         nnz,
         "COO_3D_Tensor",
