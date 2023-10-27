@@ -342,6 +342,10 @@ class Tasklet(CodeNode):
                             'additional side effects on the system state (e.g., callback). '
                             'Defaults to None, which lets the framework make assumptions based on '
                             'the tasklet contents')
+    ignored_symbols = SetProperty(element_type=str, desc='A set of symbols to ignore when computing '
+                                  'the symbols used by this tasklet. Used to skip certain symbols in non-Python '
+                                  'tasklets, where only string analysis is possible; and to skip globals in Python '
+                                  'tasklets that should not be given as parameters to the SDFG.')
 
     def __init__(self,
                  label,
@@ -355,6 +359,7 @@ class Tasklet(CodeNode):
                  code_exit="",
                  location=None,
                  side_effects=None,
+                 ignored_symbols=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -365,6 +370,7 @@ class Tasklet(CodeNode):
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
         self.side_effects = side_effects
+        self.ignored_symbols = ignored_symbols or set()
         self.debuginfo = debuginfo
 
     @property
@@ -393,7 +399,11 @@ class Tasklet(CodeNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+        symbols_to_ignore = self.in_connectors.keys() | self.out_connectors.keys()
+        symbols_to_ignore |= self.ignored_symbols
+
+        return self.code.get_free_symbols(symbols_to_ignore)
+
 
     def has_side_effects(self, sdfg) -> bool:
         """
@@ -574,12 +584,25 @@ class NestedSDFG(CodeNode):
 
         return ret
 
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+
+        keys_to_use = set(self.symbol_mapping.keys())
+
+        # Filter out unused internal symbols from symbol mapping
+        if not all_symbols:
+            internally_used_symbols = self.sdfg.used_symbols(all_symbols=False)
+            keys_to_use &= internally_used_symbols
+
+        free_syms |= set().union(*(map(str,
+                                       pystr_to_symbolic(v).free_symbols) for k, v in self.symbol_mapping.items()
+                                   if k in keys_to_use))
+
+        return free_syms
+
     @property
     def free_symbols(self) -> Set[str]:
-        return set().union(*(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.symbol_mapping.values()),
-                           *(map(str,
-                                 pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
+        return self.used_symbols(all_symbols=True)
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
@@ -620,14 +643,28 @@ class NestedSDFG(CodeNode):
                     f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                     'Example: parameter passed to a function without a matching array within it.')
         for dname, desc in self.sdfg.arrays.items():
-            # TODO(later): Disallow scalars without access nodes (so that this
-            #              check passes for them too).
-            if isinstance(desc, data.Scalar):
-                continue
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
+
+        # Validate inout connectors
+        from dace.sdfg import utils  # Avoids circular import
+        inout_connectors = self.in_connectors.keys() & self.out_connectors.keys()
+        for conn in inout_connectors:
+            inputs = set()
+            outputs = set()
+            for edge in state.in_edges_by_connector(self, conn):
+                src = utils.get_global_memlet_path_src(sdfg, state, edge)
+                if isinstance(src, AccessNode):
+                    inputs.add(src.data)
+            for edge in state.out_edges_by_connector(self, conn):
+                dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
+                if isinstance(dst, AccessNode):
+                    outputs.add(dst.data)
+            if len(inputs - outputs) > 0:
+                raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
+                                 f"output ({outputs}) arrays")
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
@@ -649,6 +686,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -659,6 +697,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -672,6 +711,7 @@ class MapEntry(EntryNode):
         
         :see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -748,6 +788,7 @@ class MapExit(ExitNode):
         
         :see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -827,17 +868,20 @@ class Map(object):
                                default=0,
                                desc="Number of OpenMP threads executing the Map",
                                optional=True,
-                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                               optional_condition=lambda m: m.schedule in
+                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
     omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
                                 default=dtypes.OMPScheduleType.Default,
                                 desc="OpenMP schedule {static, dynamic, guided}",
                                 optional=True,
-                                optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                                optional_condition=lambda m: m.schedule in
+                                (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
     omp_chunk_size = Property(dtype=int,
                               default=0,
                               desc="OpenMP schedule chunk size",
                               optional=True,
-                              optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+                              optional_condition=lambda m: m.schedule in
+                              (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
@@ -904,6 +948,7 @@ class ConsumeEntry(EntryNode):
         
         :see: Consume
     """
+
     def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -982,6 +1027,7 @@ class ConsumeExit(ExitNode):
         
         :see: Consume
     """
+
     def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1093,6 +1139,7 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
+
     @staticmethod
     def map_type():
         return PipelineScope
@@ -1125,6 +1172,7 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
+
     @staticmethod
     def map_type():
         return PipelineScope

@@ -1,8 +1,7 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt
-from typing import Any, Dict, Optional
-from dace.symbolic import symstr
+from dace.symbolic import symstr, equal
 import dace.library
 import dace.properties
 from dace.frontend.common import op_repository as oprepo
@@ -12,6 +11,7 @@ from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_
                                               to_cublas_computetype)
 from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts)
 from .. import environments
+import warnings
 
 
 @dace.library.expansion
@@ -28,8 +28,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         cdesc = parent_sdfg.arrays[outedge.data.data]
         bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b, cdesc.shape, cdesc.strides)
 
-        if shape_a[-1] != shape_b[-2]:
-            raise SyntaxError('Matrix sizes must match')
+        res = equal(shape_a[-1], shape_b[-2])
+        if res is None:
+            warnings.warn(f"First matrix columns {shape_a[-1]} may not match second matrix rows {shape_b[-2]}",
+                          UserWarning)
+        elif not res:
+            raise SyntaxError("Matrix sizes must match")
         if bopt:
             shape_c = (bopt['b'], shape_a[-2], shape_b[-1])
         else:
@@ -436,9 +440,12 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Batched matrix-matrix product only supported on matrices")
         if len(size1) != 3:
             raise ValueError("Batched matrix-matrix product only supported on matrices")
-        if size0[-1] != size1[-2]:
-            raise ValueError("Inputs to matrix-matrix product "
-                             "must agree in the k-dimension")
+        res = equal(size0[-1], size1[-2])
+        if res is None:
+            warnings.warn(f'First tensor\'s last mode {size0[-1]} and second tensor\'s second-last mode {size1[-2]} '
+                          f'may not match', UserWarning)
+        elif not res:
+            raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size2 = out_subset.size()

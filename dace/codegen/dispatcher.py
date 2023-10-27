@@ -19,12 +19,13 @@ class DefinedType(aenum.AutoNumberEnum):
     
         :see: DefinedMemlets
     """
-    Pointer = ()
-    Scalar = ()
-    Stream = ()
-    StreamArray = ()
-    FPGA_ShiftRegister = ()
-    ArrayInterface = ()
+    Pointer = ()  # Pointer
+    Scalar = ()   # A copyable scalar moved by value (e.g., POD)
+    Object = ()   # An object moved by reference
+    Stream = ()   # A stream object moved by reference and accessed via a push/pop API
+    StreamArray = ()  # An array of Streams
+    FPGA_ShiftRegister = ()  # A shift-register object used in FPGA code generation
+    ArrayInterface = ()  # An object representing an interface to an array, used mostly in FPGA
 
 
 class DefinedMemlets:
@@ -504,11 +505,11 @@ class TargetDispatcher(object):
             dst_is_data = True
 
         # Skip copies to/from views where edge matches
-        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
+        if src_is_data and isinstance(src_node.desc(sdfg), (dt.StructureView, dt.View)):
             e = sdutil.get_view_edge(state, src_node)
             if e is edge:
                 return None
-        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
+        if dst_is_data and isinstance(dst_node.desc(sdfg), (dt.StructureView, dt.View)):
             e = sdutil.get_view_edge(state, dst_node)
             if e is edge:
                 return None

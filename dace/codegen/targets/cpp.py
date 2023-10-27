@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import sys
 import warnings
 
 import sympy as sp
@@ -108,7 +109,7 @@ def copy_expr(
     elif def_type == DefinedType.FPGA_ShiftRegister:
         return expr
 
-    elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
+    elif def_type in [DefinedType.Scalar, DefinedType.Stream, DefinedType.Object]:
 
         if add_offset:
             raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
@@ -217,6 +218,11 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
     framecode: DaCeCodeGenerator = framecode
+
+    if '.' in name:
+        root = name.split('.')[0]
+        if root in sdfg.arrays and isinstance(sdfg.arrays[root], data.Structure):
+            name = name.replace('.', '->')
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
@@ -327,7 +333,7 @@ def emit_memlet_reference(dispatcher,
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
-    elif defined_type == DefinedType.Stream:
+    elif defined_type in (DefinedType.Stream, DefinedType.Object):
         typedef = defined_ctype
         ref = '&'
         offset_expr = ''
@@ -369,6 +375,10 @@ def emit_memlet_reference(dispatcher,
 
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
+
+    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
+    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
+    expr = expr.replace('.', '->')
 
     return (typedef + ref, pointer_name, expr)
 
@@ -988,8 +998,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         if t.id not in self.sdfg.arrays:
             return super()._Name(t)
 
-        # Replace values with their code-generated names (for example,
-        # persistent arrays)
+        # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         self.write(ptr(t.id, desc, self.sdfg, self.codegen))
 
@@ -1082,11 +1091,20 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 ]
 
         if isinstance(visited_slice, ast.Tuple):
-            if len(strides) != len(visited_slice.elts):
+            # If slice is multi-dimensional and writes to array with more than 1 elements, then:
+            # - Assume this is indirection (?)
+            # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
+            if target not in self.constants:
+                desc = self.sdfg.arrays[dname]
+                if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
+                    elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
+            else:
+                elts = visited_slice.elts
+            if len(strides) != len(elts):
                 raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
-                                  'got %d)' % (len(strides), len(visited_slice.elts)))
+                                  'got %d)' % (len(strides), len(elts)))
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
@@ -1223,7 +1241,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
               and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
@@ -1258,7 +1276,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.n:
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
+                        value.value if sys.version_info >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):

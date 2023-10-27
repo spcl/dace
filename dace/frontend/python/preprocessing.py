@@ -20,6 +20,20 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+if sys.version_info < (3, 8):
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
+
+
 class DaceRecursionError(Exception):
     """
     Exception that indicates a recursion in a data-centric parsed context.
@@ -342,13 +356,13 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         # Remake keyword argument names from AST
         kwarg_names = []
         for kw in arg.keys:
-            if isinstance(kw, ast.Num):
-                kwarg_names.append(kw.n)
-            elif isinstance(kw, (ast.Str, ast.Bytes)):
-                kwarg_names.append(kw.s)
-            elif isinstance(kw, ast.NameConstant):
+            if sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
                 kwarg_names.append(kw.value)
-            elif sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
+            elif sys.version_info < (3, 8) and isinstance(kw, ast.Num):
+                kwarg_names.append(kw.n)
+            elif sys.version_info < (3, 8) and isinstance(kw, (ast.Str, ast.Bytes)):
+                kwarg_names.append(kw.s)
+            elif sys.version_info < (3, 8) and isinstance(kw, ast.NameConstant):
                 kwarg_names.append(kw.value)
             else:
                 raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
@@ -754,7 +768,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program, inline  # Avoid import loop
 
-        if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
+        if (hasattr(node.func, 'value') and isinstance(node.func.value, SDFGConvertible) or 
+                sys.version_info < (3, 8) and hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible)):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
@@ -858,7 +873,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             parsed = [
                 not isinstance(v, ast.FormattedValue) or isinstance(v.value, ast.Constant) for v in visited.values
             ]
-            values = [v.s if isinstance(v, ast.Str) else astutils.unparse(v.value) for v in visited.values]
+            values = [v.s if sys.version_info < (3, 8) and isinstance(v, ast.Str) else astutils.unparse(v.value)
+                      for v in visited.values]
             return ast.copy_location(
                 ast.Constant(kind='', value=''.join(('{%s}' % v) if not p else v for p, v in zip(parsed, values))),
                 node)
@@ -1268,7 +1284,7 @@ class ExpressionInliner(ast.NodeTransformer):
                                             node)
             else:
                 # Augment closure with new value
-                newnode = self.resolver.global_value_to_node(e, node, f'inlined_{id(contents)}', True, keep_object=True)
+                newnode = self.resolver.global_value_to_node(contents, node, f'inlined_{id(contents)}', True, keep_object=True)
             return newnode
 
         return _convert_to_ast(contents)
@@ -1358,7 +1374,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
-        if not isinstance(node.func, (ast.Num, ast.Constant)):
+        if not isinstance(node.func, (NumConstant, ast.Constant)):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
@@ -1366,10 +1382,7 @@ class CallTreeResolver(ast.NodeVisitor):
                 self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
-        if isinstance(node.func, ast.Num):
-            value = node.func.n
-        else:
-            value = node.func.value
+        value = node.func.value if sys.version_info >= (3, 8) else node.func.n
 
         if not hasattr(value, '__sdfg__') or isinstance(value, SDFG):
             return self.generic_visit(node)
@@ -1503,6 +1516,62 @@ def find_disallowed_statements(node: ast.AST):
     return None
 
 
+class MPIResolver(ast.NodeTransformer):
+    """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
+    def __init__(self, globals: Dict[str, Any]):
+        from mpi4py import MPI
+        self.globals = globals
+        self.MPI = MPI
+        self.parent = None
+    
+    def visit(self, node):
+        node.parent = self.parent
+        self.parent = node
+        node = super().visit(node)
+        if isinstance(node, ast.AST):
+            self.parent = node.parent
+        return node
+    
+    def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
+        self.generic_visit(node)
+        if node.id in self.globals:
+            obj = self.globals[node.id]
+            if isinstance(obj, self.MPI.Comm):
+                lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
+                if obj is self.MPI.COMM_NULL:
+                    newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
+                    newnode.parent = node.parent
+                    return newnode
+        return node
+    
+    def visit_Attribute(self, node: ast.Attribute) -> ast.Attribute:
+        self.generic_visit(node)
+        if isinstance(node.attr, str) and node.attr == 'Request':
+            try:
+                val = astutils.evalnode(node, self.globals)
+                if val is self.MPI.Request and not isinstance(node.parent, ast.Attribute):
+                    newnode = ast.copy_location(
+                        ast.Attribute(value=ast.Name(id='dace', ctx=ast.Load), attr='MPI_Request'), node)
+                    newnode.parent = node.parent
+                    return newnode
+            except SyntaxError:
+                pass
+        return node
+
+
+class ModuloConverter(ast.NodeTransformer):
+    """ Converts a % b expressions to (a + b) % b for C/C++ compatibility. """
+
+    def visit_BinOp(self, node: ast.BinOp) -> ast.BinOp:
+        if isinstance(node.op, ast.Mod):
+            left = self.generic_visit(node.left)
+            right = self.generic_visit(node.right)
+            newleft = ast.copy_location(ast.BinOp(left=left, op=ast.Add(), right=astutils.copy_tree(right)), left)
+            node.left = newleft
+            return node
+        return self.generic_visit(node)
+
+
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
@@ -1544,6 +1613,12 @@ def preprocess_dace_program(f: Callable[..., Any],
         newmod = global_vars[mod]
         #del global_vars[mod]
         global_vars[modval] = newmod
+    
+    try:
+        src_ast = MPIResolver(global_vars).visit(src_ast)
+    except (ImportError, ModuleNotFoundError):
+        pass
+    src_ast = ModuloConverter().visit(src_ast)
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names

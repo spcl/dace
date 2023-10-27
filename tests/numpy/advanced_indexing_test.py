@@ -4,6 +4,7 @@ Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
 import dace
+from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 import pytest
 
@@ -12,6 +13,7 @@ M = dace.symbol('M')
 
 
 def test_flat():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 30]):
         return A.flat
@@ -34,6 +36,7 @@ def test_flat_noncontiguous():
 
 
 def test_ellipsis():
+
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
         return A[1:5, ..., 0]
@@ -44,6 +47,7 @@ def test_ellipsis():
 
 
 def test_aug_implicit():
+
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
         A[:, 1:5][:, 0:2] += 5
@@ -56,6 +60,7 @@ def test_aug_implicit():
 
 
 def test_ellipsis_aug():
+
     @dace.program
     def indexing_test(A: dace.float64[5, 5, 5, 5, 5]):
         A[1:5, ..., 0] += 5
@@ -68,6 +73,7 @@ def test_ellipsis_aug():
 
 
 def test_newaxis():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 30]):
         return A[:, np.newaxis, None, :]
@@ -79,6 +85,7 @@ def test_newaxis():
 
 
 def test_multiple_newaxis():
+
     @dace.program
     def indexing_test(A: dace.float64[10, 20, 30]):
         return A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis]
@@ -90,6 +97,7 @@ def test_multiple_newaxis():
 
 
 def test_index_intarr_1d():
+
     @dace.program
     def indexing_test(A: dace.float64[N], indices: dace.int32[M]):
         return A[indices]
@@ -101,6 +109,7 @@ def test_index_intarr_1d():
 
 
 def test_index_intarr_1d_literal():
+
     @dace.program
     def indexing_test(A: dace.float64[20]):
         return A[[1, 10, 15]]
@@ -124,6 +133,7 @@ def test_index_intarr_1d_constant():
 
 
 def test_index_intarr_1d_multi():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 10, 30], indices: dace.int32[3]):
         return A[indices, 2:7:2, [15, 10, 1]]
@@ -136,6 +146,7 @@ def test_index_intarr_1d_multi():
 
 
 def test_index_intarr_nd():
+
     @dace.program
     def indexing_test(A: dace.float64[4, 3], rows: dace.int64[2, 2], columns: dace.int64[2, 2]):
         return A[rows, columns]
@@ -149,6 +160,7 @@ def test_index_intarr_nd():
 
 
 def test_index_boolarr_rhs():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 30]):
         return A[A > 15]
@@ -165,6 +177,7 @@ def test_index_boolarr_rhs():
 
 
 def test_index_multiboolarr():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 20], B: dace.bool[20]):
         A[B, B] = 2
@@ -175,11 +188,12 @@ def test_index_multiboolarr():
     B = A[:, 1] > 0
 
     # Advanced indexing with multiple boolean arrays should be disallowed
-    with pytest.raises(IndexError):
+    with pytest.raises(DaceSyntaxError):
         indexing_test(A, B)
 
 
 def test_index_boolarr_fixed():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 30], barr: dace.bool[20, 30]):
         A[barr] += 5
@@ -197,6 +211,7 @@ def test_index_boolarr_fixed():
 
 
 def test_index_boolarr_inline():
+
     @dace.program
     def indexing_test(A: dace.float64[20, 30]):
         A[A > 15] = 2

@@ -814,7 +814,8 @@ class InlineTransients(transformation.SingleStateTransformation):
         # Not every schedule is supported
         if not permissive:
             if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
-                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.GPU_Device):
+                                      dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent,
+                                      dtypes.ScheduleType.GPU_Device):
                 return False
 
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
@@ -925,7 +926,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # For now we only detect one element
+                read_set, write_set = nstate.read_and_write_sets()
                 for e in nstate.in_edges(dnode):
+                    if e.data.data not in write_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in out_candidates:
@@ -941,6 +947,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                         continue
                     out_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
                 for e in nstate.out_edges(dnode):
+                    if e.data.data not in read_set:
+                        # Skip data which is not in the read and write set of the state -> there also won't be a
+                        # connector
+                        continue
                     # If more than one unique element detected, remove from
                     # candidates
                     if e.data.data in in_candidates:
@@ -1000,7 +1010,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Check w.r.t. loops
-                if len(nstate.ranges) > 0:
+                if nstate is not None and len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
@@ -1022,7 +1032,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
 
                 # If there are any symbols here that are not defined
                 # in "defined_symbols"
-                missing_symbols = (memlet.free_symbols - set(nsdfg.symbol_mapping.keys()))
+                missing_symbols = (memlet.get_free_symbols_by_indices(list(indices), list(indices)) - set(nsdfg.symbol_mapping.keys()))
                 if missing_symbols:
                     ignore.add(cname)
                     continue

@@ -1,13 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 from copy import deepcopy as dc
-from dace.config import Config
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
 from dace.libraries.blas import blas_helpers
+from dace.libraries.blas import environments as blas_environments
 from dace.transformation.transformation import ExpandTransformation
-from .. import environments
 import warnings
 
 
@@ -96,7 +95,7 @@ class ExpandTransposePure(ExpandTransformation):
 @dace.library.expansion
 class ExpandTransposeMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -136,7 +135,7 @@ class ExpandTransposeMKL(ExpandTransformation):
 @dace.library.expansion
 class ExpandTransposeOpenBLAS(ExpandTransformation):
 
-    environments = [environments.openblas.OpenBLAS]
+    environments = [blas_environments.openblas.OpenBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -173,7 +172,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
 @dace.library.expansion
 class ExpandTransposeCuBLAS(ExpandTransformation):
 
-    environments = [environments.cublas.cuBLAS]
+    environments = [blas_environments.cublas.cuBLAS]
 
     @staticmethod
     def expansion(node, state, sdfg, **kwargs):
@@ -192,7 +191,7 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         beta = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()"
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
 
-        code = (environments.cublas.cuBLAS.handle_setup_code(node) + f"""cublas{func}(
+        code = (blas_environments.cublas.cuBLAS.handle_setup_code(node) + f"""cublas{func}(
                     __dace_cublas_handle, CUBLAS_OP_T, CUBLAS_OP_N,
                     {m}, {n}, {alpha}, ({cdtype}*)_inp, {n}, {beta}, ({cdtype}*)_inp, {m}, ({cdtype}*)_out, {m});
                 """)
@@ -216,7 +215,7 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandTransposeOpenBLAS,
         "cuBLAS": ExpandTransposeCuBLAS
     }
-    default_implementation = None
+    default_implementation = 'pure'
 
     dtype = dace.properties.TypeClassProperty(allow_none=True)
 

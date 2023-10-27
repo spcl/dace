@@ -666,6 +666,32 @@ def test_dynamic_mapind():
     sdfg.compile()
 
 
+@pytest.mark.parametrize('compile_time_evaluatable', (False, True))
+def test_ternary_expression(compile_time_evaluatable):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_symbol('M', dace.int32)
+    sdfg.add_scalar('a', dace.int32, transient=True)
+    state = sdfg.add_state()
+
+    if compile_time_evaluatable:
+        expr = '1 if N > N else 2'
+    else:
+        expr = '1 if N > M else 2'
+
+    # Test that symbolic conversion works
+    symexpr = dace.symbolic.pystr_to_symbolic(expr)
+    if compile_time_evaluatable:
+        assert symexpr == 2
+
+    t = state.add_tasklet('doit', {}, {'out'}, f'out = {expr}')
+    state.add_edge(t, 'out', state.add_access('a'), None, dace.Memlet('a[0]'))
+
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert promoted == {'a'}
+    sdfg.compile()
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -687,3 +713,5 @@ if __name__ == '__main__':
     test_multiple_boolop()
     test_multidim_cpp()
     test_dynamic_mapind()
+    test_ternary_expression(False)
+    test_ternary_expression(True)

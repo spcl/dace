@@ -40,6 +40,7 @@ def test_gpu_access_on_host_interstate_invalid():
 
 @pytest.mark.gpu
 def test_gpu_access_on_host_tasklet():
+
     @dace.program
     def tester(a: dace.float64[20] @ dace.StorageType.GPU_Global):
         for i in dace.map[0:20] @ dace.ScheduleType.CPU_Multicore:
@@ -49,7 +50,29 @@ def test_gpu_access_on_host_tasklet():
         tester.to_sdfg(validate=True)
 
 
+@pytest.mark.gpu
+def test_gpu_access_on_device_interstate_edge_default():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    state = sdfg.add_state()
+
+    me, mx = state.add_map('test', dict(i='0:20'))
+
+    nsdfg = dace.SDFG('nester')
+    nsdfg.add_array('A', [20], dace.float64, storage=dace.StorageType.GPU_Global)
+    state1 = nsdfg.add_state()
+    state2 = nsdfg.add_state()
+    nsdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(s='A[4]')))
+
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A'}, {})
+    state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:20]'))
+    state.add_nedge(nsdfg_node, mx, dace.Memlet())
+
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_gpu_access_on_host_interstate_ok()
     test_gpu_access_on_host_interstate_invalid()
     test_gpu_access_on_host_tasklet()
+    test_gpu_access_on_device_interstate_edge_default()
