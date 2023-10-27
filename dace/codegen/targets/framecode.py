@@ -886,8 +886,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
 
             # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
             # redefine the symbols in such cases.
-            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys()
-                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
+            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping
+                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName]) == str(isvarName)):
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)

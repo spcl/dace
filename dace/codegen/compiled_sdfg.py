@@ -287,6 +287,7 @@ class CompiledSDFG(object):
         result: Dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
             func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            func.restype = ctypes.c_size_t
             result[storage] = func(self._libhandle, *self._lastargs[1])
 
         return result
@@ -449,8 +450,8 @@ class CompiledSDFG(object):
                     raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
                                     (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                # GPU scalars are pointers, so this is fine
-                if atype.storage != dtypes.StorageType.GPU_Global:
+                # GPU scalars and return values are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
             elif (not isinstance(atype, (dt.Array, dt.Structure)) and
                   not isinstance(atype.dtype, dtypes.callback) and

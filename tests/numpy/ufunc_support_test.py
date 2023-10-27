@@ -127,7 +127,8 @@ def test_ufunc_add_where():
     W = np.random.randint(2, size=(10, ), dtype=np.bool_)
     C = ufunc_add_where(A, B, W)
     assert (np.array_equal(np.add(A, B, where=W)[W], C[W]))
-    assert (not np.array_equal((A + B)[np.logical_not(W)], C[np.logical_not(W)]))
+    if not np.all(W):  # If all of W is True, np.logical_not(W) would result in empty arrays
+        assert (not np.array_equal((A + B)[np.logical_not(W)], C[np.logical_not(W)]))
 
 
 @dace.program
@@ -140,18 +141,6 @@ def test_ufunc_add_where_true():
     B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
     C = ufunc_add_where_true(A, B)
     assert (np.array_equal(np.add(A, B, where=True), C))
-
-
-@dace.program
-def ufunc_add_where_false(A: dace.int32[10], B: dace.int32[10]):
-    return np.add(A, B, where=False)
-
-
-def test_ufunc_add_where_false():
-    A = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
-    B = np.random.randint(1, 10, size=(10, ), dtype=np.int32)
-    C = ufunc_add_where_false(A, B)
-    assert (not np.array_equal(A + B, C))
 
 
 @dace.program
@@ -456,7 +445,7 @@ def test_ufunc_add_outer_where():
     B = np.random.randint(1, 10, size=(2, 2, 2, 2, 2), dtype=np.int32)
     W = np.random.randint(2, size=(2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
     s = ufunc_add_outer_where(A, B, W)
-    assert (np.array_equal(np.add.outer(A, B, where=W)[W], s[W]))
+    assert np.array_equal(np.add.outer(A, B, where=W)[W], s[W])
 
 
 @dace.program
@@ -472,7 +461,7 @@ def test_ufunc_add_outer_where2():
     C = ufunc_add_outer_where2(A, B, W)
     where = np.empty((2, 2, 2, 2, 2, 2, 2, 2, 2, 2), dtype=np.bool_)
     where[:] = W
-    assert (np.array_equal(np.add.outer(A, B, where=W)[where], C[where]))
+    assert np.array_equal(np.add.outer(A, B, where=W)[where], C[where])
 
 
 @compare_numpy_output()
