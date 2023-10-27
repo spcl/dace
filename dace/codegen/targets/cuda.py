@@ -1324,11 +1324,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     if write_scope == 'grid':
                         callsite_stream.write("if (blockIdx.x == 0 "
-                                            "&& threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
+                                              "&& threadIdx.x == 0) "
+                                              "{  // sub-graph begin", sdfg, state.node_id)
                     elif write_scope == 'block':
                         callsite_stream.write("if (threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
+                                              "{  // sub-graph begin", sdfg, state.node_id)
                     else:
                         callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
                 else:
@@ -2595,7 +2595,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
     def _get_warp_id(self) -> str:
         return f'(({self._get_thread_id()}) / warpSize)'
-    
+
     def _get_block_id(self) -> str:
         result = 'blockIdx.x'
         if self._block_dims[1] != 1:
@@ -2608,23 +2608,43 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                                           callsite_stream: CodeIOStream) -> str:
         if name not in node.location:
             return 0
-        location: Union[int, str, subsets.Range] = node.location[name]
-        if not isinstance(location, str) or ':' in location:
-            # TODO
-            raise NotImplementedError('Only one element strings are supported')
 
-        callsite_stream.write(f'if (({index_expr}) == {location}) {{')
+        location: Union[int, str, subsets.Range] = node.location[name]
+        if isinstance(location, str) and ':' in location:
+            location = subsets.Range.from_string(location)
+        elif symbolic.issymbolic(location):
+            location = sym2cpp(location)
+
+        if isinstance(location, subsets.Range):
+            # Range of indices
+            if len(location) != 1:
+                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
+            begin, end, stride = location[0]
+            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
+            cond = ''
+            cond += f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
+            if stride != 1:
+                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
+
+            callsite_stream.write(f'if ({cond}) {{')
+        else:
+            # Single-element
+            callsite_stream.write(f'if (({index_expr}) == {location}) {{')
 
         return 1
 
-    def _generate_Tasklet(self, sdfg: SDFG, dfg, state_id: int, node: nodes.Tasklet, function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+    def _generate_Tasklet(self, sdfg: SDFG, dfg, state_id: int, node: nodes.Tasklet, function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream):
         generated_preamble_scopes = 0
         if self._in_device_code:
             # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
             # add condition
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(), node, callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node, callsite_stream)
-            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
+                                                                                node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
+                                                                                callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
+                                                                                callsite_stream)
 
         # Call standard tasklet generation
         old_codegen = self._cpu_codegen.calling_codegen
