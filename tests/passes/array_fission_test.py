@@ -12,6 +12,10 @@ from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
 from dace.subsets import Subset, Range
 from typing import List, Optional, Sequence, Set, Union, Dict, Tuple
 
+N = dace.symbol("N")
+M = dace.symbol("M")
+pipeline = Pipeline([ArrayFission()])
+
 
 def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
                        access_nodes: Dict[str, Dict[SDFGState,
@@ -21,7 +25,7 @@ def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
     for original_name, state_dict in access_nodes.items():
         if original_name not in rename_dict.keys():
             rename_dict[original_name] = {}
-        for state, (reads, writes) in state_dict.items():
+        for _, (reads, writes) in state_dict.items():
             access_nodes = reads.union(writes)
             for access_node in access_nodes:
                 if access_node.data not in rename_dict[original_name].keys():
@@ -36,8 +40,9 @@ def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
             assert (name_set in rename_dict[original_name].values())
 
 
-def test_simple_conditional_write2():
-    "two conditional writes that overwrite a one-dimensional array"
+def test_simple_conditional_common_post_dominator():
+    """two conditional writes that are both postdominated by the same state
+    --> should fission array"""
 
     @dace.program
     def conditional_write(A: dace.float64[1], b: dace.bool):
@@ -73,7 +78,7 @@ def test_simple_conditional_write2():
     res0 = merge_1.add_access("res")
     merge_1.add_edge(tmp4, None, res0, None, dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["tmp"] = [set([tmp1, tmp2, tmp4, tmp0])]
@@ -90,8 +95,8 @@ def test_simple_conditional_write2():
 
 def test_simple_conditional_write_no_fission():
     """two conditional writes that overwrite a one-dimensional array
-    but the array is read before the second conditional assignment --> no fission"""
-    N = dace.symbol("N")
+    but the array is read before the second conditional assignment
+    --> no fission"""
 
     @dace.program
     def conditional_write(A: dace.float64[N]):
@@ -132,7 +137,7 @@ def test_simple_conditional_write_no_fission():
     res0 = merge_1.add_access("res")
     merge_1.add_edge(tmp4, None, res0, None, dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["tmp"] = [set([tmp0, tmp1, tmp2, tmp4])]
@@ -147,8 +152,10 @@ def test_simple_conditional_write_no_fission():
     assert_rename_sets(name_sets, access_nodes)
 
 
-def test_multiple_conditions():
-    "three conditional writes that overwrite a one-dimensional array"
+def test_three_conditional_writes_common_postdominator():
+    """three conditional writes that each overwrite a one-dimensional 
+    array and build a frontier of writes
+    --> should fission at the write frontier"""
 
     @dace.program
     def conditional_write_multiple_conditions(A: dace.float64[1],
@@ -201,7 +208,7 @@ def test_multiple_conditions():
     res0 = merge_1.add_access("res")
     merge_1.add_edge(tmp4, None, res0, None, dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["tmp"] = [set([tmp1, tmp2, tmp3, tmp4]), set([tmp0])]
@@ -217,7 +224,8 @@ def test_multiple_conditions():
 
 
 def test_simple_loop_overwrite():
-    "simple loop that overwrites a one-dimensional array"
+    """simple loop that overwrites a one-dimensional array
+    --> should introduce new array after the loop"""
 
     sdfg = dace.SDFG("two_loops_overwrite")
     sdfg.add_symbol("i", dace.int32)
@@ -243,7 +251,7 @@ def test_simple_loop_overwrite():
     after_state.add_edge(a2, None, tasklet_1, "a", dace.Memlet("A[0]"))
     after_state.add_edge(tasklet_1, "t", tmp1, None, dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [{a0, a2}, {a1}]
@@ -258,8 +266,10 @@ def test_simple_loop_overwrite():
         assert (False)
 
 
-def test_simple_loop_overwrite2():
-    "simple loop that overwrites a one-dimensional array"
+def test_loop_overwrite_multiple_writes():
+    """simple loop that overwrites a one-dimensional array. Loop contains two writes.
+    --> should introduce new Array after loop and both writes in the 
+    loop should write to the same variable after fissioning"""
 
     sdfg = dace.SDFG("two_loops_overwrite")
     sdfg.add_array("A", [N], dace.int64, transient=True)
@@ -289,9 +299,8 @@ def test_simple_loop_overwrite2():
     after_state.add_edge(a2, None, tasklet_1, "a", dace.Memlet("A[0]"))
     after_state.add_edge(tasklet_1, "t", tmp1, None, dace.Memlet("res[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
-    # make sets of accessnodes that should have the same name after the transformation
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [set([a0, a3, a2]), set([a1])]
     tmp_set_1 = set([tmp1, tmp_0])
@@ -307,8 +316,10 @@ def test_simple_loop_overwrite2():
         assert (False)
 
 
-def test_loop_read_no_fission():
-    """Full write by loop that also reads from the overwritten variable --> no Fission"""
+def test_loop_read_after_write():
+    """Full write by loop that reads from the overwritten variable 
+    after the overwriting write
+    --> should not introduce new Array"""
 
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32)
@@ -367,7 +378,8 @@ def test_loop_read_no_fission():
     after.add_edge(after_tasklet, "b", after_write_b, None,
                    dace.Memlet("B[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
+
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [set([loop1_read_a, loop1_write_a])]
     name_sets["tmp"] = [
@@ -386,8 +398,11 @@ def test_loop_read_no_fission():
         assert (False)
 
 
-def test_loop_no_phi_node():
-    """loop that has no phi node at the guard (after minimal SSA)"""
+def test_conditional_writes_loops():
+    """two loops that overwrite an array in two branches 
+    that are postdominated by the same state.
+     --> should introduce new array after loops"""
+
     sdfg = dace.SDFG('loop_no_phi_node')
     sdfg.add_array('A', [N], dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -428,7 +443,7 @@ def test_loop_no_phi_node():
     B_1 = end.add_access('B')
     end.add_edge(A_3, None, B_1, None, dace.Memlet('A[0]'))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [set([A_0]), set([A_1, A_2, A_3])]
@@ -445,7 +460,9 @@ def test_loop_no_phi_node():
 
 
 def test_loop_read_before_write_no_fission():
-    """Full write by loop that reads from the overwritten variable before it's overwritten--> no Fission"""
+    """Full write by loop that reads from the 
+    overwritten variable before it is overwritten
+    --> should not introduce new variable after loop"""
 
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32, transient=True)
@@ -495,7 +512,7 @@ def test_loop_read_before_write_no_fission():
     after.add_edge(after_read_A, None, after_write_tmp, None,
                    dace.Memlet("A[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [
@@ -506,7 +523,6 @@ def test_loop_read_before_write_no_fission():
     access_nodes: Dict[str, Dict[SDFGState, Tuple[
         Set[AccessNode],
         Set[AccessNode]]]] = result[FindAccessNodes.__name__][sdfg.sdfg_id]
-
     assert_rename_sets(name_sets, access_nodes)
     try:
         sdfg.validate()
@@ -515,7 +531,9 @@ def test_loop_read_before_write_no_fission():
 
 
 def test_loop_read_before_write_interstate():
-    """Full write by loop that also reads from the overwritten variable in an interstate edge --> no Fission"""
+    """Full write by loop that also reads from the overwritten 
+    variable in an interstate edge
+      --> should not introduce new variable after loop"""
 
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32, transient=True)
@@ -559,7 +577,7 @@ def test_loop_read_before_write_interstate():
     after.add_edge(after_tasklet, "tmp", after_write_tmp, None,
                    dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [set([loop1_write_a, after_read_A, A_access_init])]
@@ -574,80 +592,11 @@ def test_loop_read_before_write_interstate():
         assert (False)
 
 
-def test_simple_map_overwrite():
-    "simple loop that overwrites a one-dimensional array"
+def test_map_simple_overwrite():
+    """SDFG with three maps. One overwriting the array.
+    --> should introduce new array"""
+
     sdfg = dace.SDFG('branch_subscope_fission')
-    sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [2], dace.int32)
-    sdfg.add_array('B', [N], dace.int32, transient=True)
-    sdfg.add_array('C', [N], dace.int32)
-    init_state = sdfg.add_state('init')
-    guard_1 = sdfg.add_state('guard_1')
-    merge_1 = sdfg.add_state('merge_1')
-    guard_after = sdfg.add_state('guard_after')
-    after = sdfg.add_state('after')
-    merge_after = sdfg.add_state('merge_after')
-    first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
-    sdfg.add_edge(init_state, guard_1, first_assign)
-    right_cond = dace.InterstateEdge(condition='i <= 0')
-    sdfg.add_edge(guard_1, merge_1, right_cond)
-    sdfg.add_edge(merge_1, guard_after, dace.InterstateEdge())
-    sdfg.add_edge(guard_after, after, dace.InterstateEdge())
-    sdfg.add_edge(after, merge_after, dace.InterstateEdge())
-    a1 = guard_1.add_access('B')
-    guard_1.add_mapped_tasklet("overwrite_1",
-                               map_ranges={'_i': f'0:N:2'},
-                               inputs={},
-                               code=f"b = 5",
-                               outputs={"b": dace.Memlet("B[_i]")},
-                               output_nodes={"B": a1},
-                               external_edges=True)
-    src = guard_after.add_access("A")
-    dst = guard_after.add_access("B")
-    guard_after.add_mapped_tasklet("overwrite_2", {'_i': f'0:N:1'},
-                                   {"a": dace.Memlet("A[_i]")},
-                                   f"b = a", {"b": dace.Memlet("B[_i]")},
-                                   input_nodes={"A": src},
-                                   output_nodes={"B": dst},
-                                   external_edges=True)
-    guard_after.add_mapped_tasklet("incomplete_overwrite", {'_i': f'0:N:2'},
-                                   {"a": dace.Memlet("A[_i]")},
-                                   f"b = a", {"b": dace.Memlet("B[_i]")},
-                                   input_nodes={"A": src},
-                                   output_nodes={"B": dst},
-                                   external_edges=True)
-    a13 = merge_1.add_access('B')
-    t8 = merge_1.add_tasklet('t8', {'b'}, {'c'}, 'c = b + 1')
-    a14 = merge_1.add_access('C')
-    merge_1.add_edge(a13, None, t8, 'b', dace.Memlet('B[0]'))
-    merge_1.add_edge(t8, 'c', a14, None, dace.Memlet('C[0]'))
-    a10 = after.add_access('B')
-    t6 = after.add_tasklet('t6', {'b'}, {'c'}, 'c = b * 3')
-    a11 = after.add_access('C')
-    after.add_edge(a10, None, t6, 'b', dace.Memlet('B[0]'))
-    after.add_edge(t6, 'c', a11, None, dace.Memlet('C[0]'))
-
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
-
-    # make sets of accessnodes that should have the same name after the transformation
-    name_sets: Dict[str, List[Set[AccessNode]]] = {}
-    name_sets["B"] = [{a1, a13}, {dst, a10}]
-    name_sets["A"] = [{src}]
-    name_sets["C"] = [{a14, a11}]
-    try:
-        sdfg.validate()
-    except:
-        assert (False)
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[
-        Set[AccessNode],
-        Set[AccessNode]]]] = result[FindAccessNodes.__name__][sdfg.sdfg_id]
-    assert_rename_sets(name_sets, access_nodes)
-
-
-def test_simple_overwrite_2():
-    "first map does not overwrite the array"
-    sdfg = dace.SDFG('branch_subscope_fission')
-    sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [2], dace.int32)
     sdfg.add_array('B', [N], dace.int32, transient=True)
     sdfg.add_array('C', [N], dace.int32)
@@ -657,14 +606,12 @@ def test_simple_overwrite_2():
     merge_1 = sdfg.add_state('merge_1')
     guard_after = sdfg.add_state('guard_after')
     after = sdfg.add_state('after')
-    merge_after = sdfg.add_state('merge_after')
     first_assign = dace.InterstateEdge(assignments={'i': 'A[0]'})
     sdfg.add_edge(init_state, guard_1, first_assign)
     right_cond = dace.InterstateEdge(condition='i <= 0')
     sdfg.add_edge(guard_1, merge_1, right_cond)
     sdfg.add_edge(merge_1, guard_after, dace.InterstateEdge())
     sdfg.add_edge(guard_after, after, dace.InterstateEdge())
-    sdfg.add_edge(after, merge_after, dace.InterstateEdge())
     a1 = guard_1.add_access('B')
     guard_1.add_mapped_tasklet("overwrite_1",
                                map_ranges={'_i': f'0:N:2'},
@@ -703,9 +650,8 @@ def test_simple_overwrite_2():
     after.add_edge(a10, None, t6, 'b', dace.Memlet('B[0]'))
     after.add_edge(t6, 'c', a11, None, dace.Memlet('C[0]'))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    result = pipeline.apply_pass(sdfg, {})
 
-    # make sets of accessnodes that should have the same name after the transformation
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets["A"] = [{src}]
     name_sets["B"] = [{a1, a13, a20}, {dst, a10}]
@@ -715,7 +661,6 @@ def test_simple_overwrite_2():
         sdfg.validate()
     except:
         assert (False)
-
     access_nodes: Dict[str, Dict[SDFGState, Tuple[
         Set[AccessNode],
         Set[AccessNode]]]] = result[FindAccessNodes.__name__][sdfg.sdfg_id]
@@ -723,64 +668,72 @@ def test_simple_overwrite_2():
 
 
 def test_intrastate_overwrite():
-    "array is overwritten and read from sequentially in the same state"
+    """array is overwritten twice in the same state
+    --> should only make one new array"""
+
     sdfg = dace.SDFG('intrastate_overwrite')
     sdfg.add_symbol('i', dace.int32)
-    sdfg.add_array('A', [N], dace.int32)
-    sdfg.add_array('B', [N], dace.int32, transient=True)
+    sdfg.add_array('A', [N], dace.int32, transient=True)
+    sdfg.add_array('B', [N], dace.int32)
     sdfg.add_array('C', [N], dace.int32)
     sdfg.add_array("tmp", [N], dace.int32)
     init = sdfg.add_state("init")
     overwrite = sdfg.add_state("overwrite")
     sdfg.add_edge(init, overwrite, dace.InterstateEdge())
-    B_read_0 = overwrite.add_read("B")
-    A_read_1 = overwrite.add_access("A")
-    B_read_1 = overwrite.add_read("B")
     A_write_0 = overwrite.add_write("A")
-    _, map_1_entry, map_1_exit = overwrite.add_mapped_tasklet(
-        "overwrite_1", {'_i': f'0:N:1'}, {"b": dace.Memlet("B[_i]")},
-        f"a = b", {"a": dace.Memlet("A[_i]")},
-        input_nodes={"B": B_read_0},
-        output_nodes={"A": A_read_1},
-        external_edges=True)
-
-    _, map_2_entry, map_2_exit = overwrite.add_mapped_tasklet(
-        "overwrite_2", {'_i': f'0:N:1'}, {"a": dace.Memlet("A[_i]")},
-        f"b = a", {"b": dace.Memlet("B[_i]")},
-        input_nodes={"A": A_read_1},
-        output_nodes={"B": B_read_1},
-        external_edges=True)
-
-    _, map_3_entry, map_3_exit = overwrite.add_mapped_tasklet(
-        "incomplete_overwrite_2", {'_i': f'0:N:1'},
-        {"b": dace.Memlet("B[_i]")},
-        f"a = b", {"a": dace.Memlet("A[_i]")},
-        input_nodes={"B": B_read_1},
-        output_nodes={"A": A_write_0},
-        external_edges=True)
+    A_write_1 = overwrite.add_access("A")
     A_read_0 = init.add_read("A")
+    B_read_0 = overwrite.add_read("B")
+    B_read_1 = overwrite.add_read("B")
     tmp_write_0 = init.add_write("tmp")
+    _, _, _ = overwrite.add_mapped_tasklet("overwrite_1", {'_i': f'0:N:1'},
+                                           {"b": dace.Memlet("B[_i]")},
+                                           f"a = b",
+                                           {"a": dace.Memlet("A[_i]")},
+                                           input_nodes={"B": B_read_0},
+                                           output_nodes={"A": A_write_1},
+                                           external_edges=True)
+    _, _, _ = overwrite.add_mapped_tasklet("overwrite_2", {'_i': f'0:N:1'},
+                                           {"a": dace.Memlet("A[_i]")},
+                                           f"b = a",
+                                           {"b": dace.Memlet("B[_i]")},
+                                           input_nodes={"A": A_write_1},
+                                           output_nodes={"B": B_read_1},
+                                           external_edges=True)
+    _, _, _ = overwrite.add_mapped_tasklet("incomplete_overwrite_2",
+                                           {'_i': f'0:N:1'},
+                                           {"b": dace.Memlet("B[_i]")},
+                                           f"a = b",
+                                           {"a": dace.Memlet("A[_i]")},
+                                           input_nodes={"B": B_read_1},
+                                           output_nodes={"A": A_write_0},
+                                           external_edges=True)
     tasklet_1 = init.add_tasklet("copy", {"a"}, {"t"}, "t = a")
     init.add_edge(A_read_0, None, tasklet_1, "a", dace.Memlet("A[0]"))
     init.add_edge(tasklet_1, "t", tmp_write_0, None, dace.Memlet("tmp[0]"))
 
-    result = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
-    assert (False)
+    result = pipeline.apply_pass(sdfg, {})
 
     try:
         sdfg.validate()
     except:
         assert (False)
+    name_sets: Dict[str, List[Set[AccessNode]]] = {}
+    name_sets['A'] = [{A_read_0}, {A_write_0, A_write_1}]
+    name_sets['B'] = [{B_read_0, B_read_1}]
+    name_sets['tmp'] = [{tmp_write_0}]
     access_nodes: Dict[str, Dict[SDFGState, Tuple[
         Set[AccessNode],
         Set[AccessNode]]]] = result[FindAccessNodes.__name__][sdfg.sdfg_id]
+    assert_rename_sets(name_sets, access_nodes)
 
 
 def test_scalar_write_shadow_split():
     """
-    Test the scalar write shadow scopes pass with writes dominating reads across state.
+    Array is overwritten at beginning of the loop and right after the loop
+    --> should introduce new array in loop and after the loop
     """
-    # Construct the SDFG.
+
     sdfg = dace.SDFG('scalar_split')
     sdfg.add_array('A', [N], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
@@ -846,7 +799,7 @@ def test_scalar_write_shadow_split():
                   dace.InterstateEdge(condition='i >= (N - 1)'))
     sdfg.add_edge(intermediate, end, dace.InterstateEdge())
 
-    results = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    results = pipeline.apply_pass(sdfg, {})
 
     try:
         sdfg.validate()
@@ -865,9 +818,10 @@ def test_scalar_write_shadow_split():
 
 def test_scalar_write_shadow_fused():
     """
-    Test the scalar write shadow scopes pass with writes dominating reads in the same state.
+    Variable is overwritten in two consecutive loops.
+    --> should introduce new variable for each loop
     """
-    # Construct the SDFG.
+
     sdfg = dace.SDFG('scalar_fused')
     sdfg.add_array('A', [N], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
@@ -950,7 +904,7 @@ def test_scalar_write_shadow_fused():
     loop_2.add_edge(loop2_tasklet_2, 'b', b2_write, None,
                     dace.Memlet('B[i + 1]'))
 
-    results = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    results = pipeline.apply_pass(sdfg, {})
 
     try:
         sdfg.validate()
@@ -968,12 +922,12 @@ def test_scalar_write_shadow_fused():
 
 def test_scalar_write_shadow_interstate_self():
     """
-    Tests the scalar write shadow pass with interstate edge reads being shadowed by the state they're originating from.
+    Arrays are read in interstate edges going out of overwriting states.
+    --> Should introduce new variables for overwriting assignments 
+    and rename occurences in interstate edges correctly.
     """
-    # TODO: test the interstate-edges somehow
-    # Construct the SDFG.
-    sdfg = dace.SDFG('scalar_isedge')
 
+    sdfg = dace.SDFG('scalar_isedge')
     N = dace.symbol('N')
     sdfg.add_array('A', [N], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
@@ -1075,7 +1029,7 @@ def test_scalar_write_shadow_interstate_self():
     loop_2_2.add_edge(loop2_tasklet_2, 'b', loop2_write_b, None,
                       dace.Memlet('B[i + 1]'))
 
-    results = Pipeline([ArrayFission()]).apply_pass(sdfg, {})
+    results = pipeline.apply_pass(sdfg, {})
 
     try:
         sdfg.validate()
@@ -1102,10 +1056,14 @@ def test_scalar_write_shadow_interstate_self():
 
 def test_scalar_write_shadow_interstate_pred():
     """
-    Tests the scalar write shadow pass with interstate edge reads being shadowed by a predecessor state.
+    Overwriting Arrays are read in interstate 
+    edges that are not directly connected to overwriting state.
+    --> Should introduce new variables for overwriting assignments 
+    and rename occurences in interstate edges correctly.
     """
-    # Construct the SDFG.
+
     sdfg = dace.SDFG('scalar_isedge')
+    N = dace.symbol('N')
     sdfg.add_array('A', [N], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
     sdfg.add_array('tmp', [2], dace.int32, transient=True)
@@ -1120,32 +1078,10 @@ def test_scalar_write_shadow_interstate_pred():
     loop_2_2 = sdfg.add_state('loop_2_2')
     loop_2_3 = sdfg.add_state('loop_2_3')
     end_state = sdfg.add_state('end')
-    sdfg.add_edge(init_state, guard_1,
-                  dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_1, loop_1_1,
-                  dace.InterstateEdge(condition='i < (N - 1)'))
-    sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
-    tmp1_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
-    sdfg.add_edge(loop_1_2, loop_1_3, tmp1_edge)
-    sdfg.add_edge(loop_1_3, guard_1,
-                  dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard_1, intermediate,
-                  dace.InterstateEdge(condition='i >= (N - 1)'))
-    sdfg.add_edge(intermediate, guard_2,
-                  dace.InterstateEdge(assignments={'i': 0}))
-    sdfg.add_edge(guard_2, loop_2_1,
-                  dace.InterstateEdge(condition='i < (N - 1)'))
-    sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
-    tmp2_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
-    sdfg.add_edge(loop_2_2, loop_2_3, tmp2_edge)
-    sdfg.add_edge(loop_2_3, guard_2,
-                  dace.InterstateEdge(assignments={'i': 'i + 1'}))
-    sdfg.add_edge(guard_2, end_state,
-                  dace.InterstateEdge(condition='i >= (N - 1)'))
     init_tasklet = init_state.add_tasklet('init', {}, {'out'}, 'out = 0')
     init_write = init_state.add_write('tmp')
     init_state.add_edge(init_tasklet, 'out', init_write, None,
-                        dace.Memlet('tmp[0]'))
+                        dace.Memlet('tmp'))
     tmp1_tasklet = loop_1_1.add_tasklet('tmp1', {'a', 'b'}, {'out'},
                                         'out = a * b')
     tmp1_write = loop_1_1.add_write('tmp')
@@ -1165,9 +1101,9 @@ def test_scalar_write_shadow_interstate_pred():
     loop1_write_a = loop_1_3.add_write('A')
     loop1_write_b = loop_1_3.add_write('B')
     loop_1_3.add_edge(loop1_read_tmp, None, loop1_tasklet_1, 't',
-                      dace.Memlet('tmp'))
+                      dace.Memlet('tmp[0]'))
     loop_1_3.add_edge(loop1_read_tmp, None, loop1_tasklet_2, 't',
-                      dace.Memlet('tmp'))
+                      dace.Memlet('tmp[0]'))
     loop_1_3.add_edge(loop1_read_a, None, loop1_tasklet_1, 'ap',
                       dace.Memlet('A[i + 1]'))
     loop_1_3.add_edge(loop1_read_b, None, loop1_tasklet_2, 'bp',
@@ -1208,9 +1144,36 @@ def test_scalar_write_shadow_interstate_pred():
                       dace.Memlet('A[i + 1]'))
     loop_2_3.add_edge(loop2_tasklet_2, 'b', loop2_write_b, None,
                       dace.Memlet('B[i + 1]'))
+    sdfg.add_edge(init_state, guard_1,
+                  dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_1, loop_1_1,
+                  dace.InterstateEdge(condition='i < (N - 1)'))
+    sdfg.add_edge(loop_1_1, loop_1_2, dace.InterstateEdge())
+    tmp1_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
+    sdfg.add_edge(loop_1_2, loop_1_3, tmp1_edge)
+    sdfg.add_edge(loop_1_3, guard_1,
+                  dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard_1, intermediate,
+                  dace.InterstateEdge(condition='i >= (N - 1)'))
+    sdfg.add_edge(intermediate, guard_2,
+                  dace.InterstateEdge(assignments={'i': 0}))
+    sdfg.add_edge(guard_2, loop_2_1,
+                  dace.InterstateEdge(condition='i < (N - 1)'))
+    sdfg.add_edge(loop_2_1, loop_2_2, dace.InterstateEdge())
+    tmp2_edge = dace.InterstateEdge(assignments={'j': 'tmp'})
+    sdfg.add_edge(loop_2_2, loop_2_3, tmp2_edge)
+    sdfg.add_edge(loop_2_3, guard_2,
+                  dace.InterstateEdge(assignments={'i': 'i + 1'}))
+    sdfg.add_edge(guard_2, end_state,
+                  dace.InterstateEdge(condition='i >= (N - 1)'))
 
+    results = pipeline.apply_pass(sdfg, {})
+
+    try:
+        sdfg.validate()
+    except:
+        assert (False)
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
-
     name_sets['A'] = [{
         a1_read, a2_read, loop1_read_a, loop1_write_a, loop2_read_a,
         loop2_write_a
@@ -1221,28 +1184,22 @@ def test_scalar_write_shadow_interstate_pred():
     }]
     name_sets["tmp"] = [{init_write}, {tmp1_write, loop1_read_tmp},
                         {tmp2_write, loop2_read_tmp}]
-
-    # Test the pass.
-    pipeline = Pipeline([ArrayFission()])
-    results = pipeline.apply_pass(sdfg, {})
-
-    try:
-        sdfg.validate()
-    except:
-        assert (False)
     access_nodes: Dict[str, Dict[SDFGState, Tuple[
         Set[AccessNode],
         Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
     assert_rename_sets(name_sets, access_nodes)
+    assert (tmp1_write.data in tmp1_edge.assignments.values())
+    assert (tmp2_write.data in tmp2_edge.assignments.values())
 
 
 def test_loop_fake_shadow_symbolic():
-    """variable is overwritten in loop with symbolic range and read afterwards so the last
-    definition in the loop should write to the same variable as the first write"""
+    """variable is overwritten twice in loop with symbolic range and read afterwards 
+    --> array variable should be fissioned and the last write in the loop should 
+    write to the same variable as the first write"""
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_array('A', [2], dace.float64, transient=True)
-    sdfg.add_array('B', [2], dace.float64, transient=True)
+    sdfg.add_array('B', [2], dace.float64)
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
     loop = sdfg.add_state('loop')
@@ -1278,7 +1235,6 @@ def test_loop_fake_shadow_symbolic():
                   dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= N'))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     try:
@@ -1290,13 +1246,14 @@ def test_loop_fake_shadow_symbolic():
         Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets['A'] = [{init_access, end_access, loop2_access}, {loop_access}]
-    name_sets["B"] = [{loop_access_b}, {loop2_access_b}, {end_access_b}]
+    name_sets["B"] = [{loop_access_b, loop2_access_b, end_access_b}]
     assert_rename_sets(name_sets, access_nodes)
 
 
 def test_loop_fake_shadow():
-    """variable is overwritten in loop with symbolic range and read afterwards so the last
-    definition in the loop should write to the same variable as the first write"""
+    """variable is overwritten twice in loop with non-symbolic range and read afterwards 
+    --> two new variables are introduced in the loop and last write in the loop writes 
+    to variable different from the one the first write writes to"""
 
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [2], dace.float64, transient=True)
@@ -1336,7 +1293,6 @@ def test_loop_fake_shadow():
                   dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     try:
@@ -1353,8 +1309,11 @@ def test_loop_fake_shadow():
 
 
 def test_loop_fake_complex_shadow():
+    """variable is overwritten in loop with non-symbolic range
+    --> new variable is introduced for the write in the loop"""
+
     sdfg = dace.SDFG('loop_fake_shadow')
-    sdfg.add_array('A', [2], dace.float64, transient=True)
+    sdfg.add_array('A', [2], dace.float64)
     sdfg.add_array('B', [2], dace.float64, transient=True)
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
@@ -1384,7 +1343,6 @@ def test_loop_fake_complex_shadow():
                   dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     try:
@@ -1401,9 +1359,12 @@ def test_loop_fake_complex_shadow():
 
 
 def test_loop_real_shadow():
+    """Array is first overwritten in loop then read. Array is not read after loop.
+    --> should introduce loop local copy of array."""
+
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [2], dace.float64, transient=True)
-    sdfg.add_array('B', [2], dace.float64, transient=True)
+    sdfg.add_array('B', [2], dace.float64)
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
     loop = sdfg.add_state('loop')
@@ -1434,9 +1395,8 @@ def test_loop_real_shadow():
                   dace.InterstateEdge(assignments={'i': 'i + 1'}))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
-
+    sdfg.view()
     try:
         sdfg.validate()
     except:
@@ -1446,14 +1406,17 @@ def test_loop_real_shadow():
         Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets['A'] = [{init_access}, {loop_access}, {loop2_access}]
-    name_sets["B"] = [{loop_access_b}, {loop2_access_b}]
+    name_sets["B"] = [{loop_access_b, loop2_access_b}]
     assert_rename_sets(name_sets, access_nodes)
 
 
 def test_dominationless_write_branch1():
+    """Read dominated by frontier of writes
+    --> new Array should be introduced after frontier of writes"""
+
     sdfg = dace.SDFG('dominationless_write_branch')
     sdfg.add_array('A', [2], dace.float64, transient=True)
-    sdfg.add_array('B', [2], dace.float64, transient=True)
+    sdfg.add_array('B', [2], dace.float64)
     init = sdfg.add_state('init')
     guard = sdfg.add_state('guard')
     left = sdfg.add_state('left')
@@ -1481,69 +1444,23 @@ def test_dominationless_write_branch1():
     sdfg.add_edge(guard, merge, dace.InterstateEdge(condition='B[0] >= 10'))
     sdfg.add_edge(left, merge, dace.InterstateEdge())
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     name_sets: Dict[str, List[Set[AccessNode]]] = {}
     name_sets['A'] = [{init_a}, {guard_a, left_a, merge_a}]
-    name_sets["B"] = [{init_b}, {merge_b}]
+    name_sets["B"] = [{init_b, merge_b}]
     access_nodes: Dict[str, Dict[SDFGState, Tuple[
         Set[AccessNode],
         Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
     assert_rename_sets(name_sets, access_nodes)
 
 
-def test_dominationless_write_branch2():
-    sdfg = dace.SDFG('dominationless_write_branch')
-    sdfg.add_array('A', [2], dace.float64, transient=True)
-    sdfg.add_array('B', [2], dace.float64, transient=True)
-    init = sdfg.add_state('init')
-    guard = sdfg.add_state('guard')
-    left = sdfg.add_state('left')
-    merge = sdfg.add_state('merge')
-    init_a = init.add_access('A')
-    init_b = init.add_access('B')
-    init_t1 = init.add_tasklet('init_1', {}, {'a'}, 'a = 0')
-    init_t2 = init.add_tasklet('init_1', {'a'}, {'b'}, 'b = a + 1')
-    init.add_edge(init_t1, 'a', init_a, None, dace.Memlet('A'))
-    init.add_edge(init_a, None, init_t2, 'a', dace.Memlet('A'))
-    init.add_edge(init_t2, 'b', init_b, None, dace.Memlet('B'))
-    guard_a = guard.add_access('A')
-    guard_t1 = guard.add_tasklet('guard_1', {}, {'a'}, 'a = 1')
-    guard.add_edge(guard_t1, 'a', guard_a, None, dace.Memlet('A'))
-    left_a = left.add_access('A')
-    left_t1 = left.add_tasklet('left_1', {}, {'a'}, 'a = 2')
-    left.add_edge(left_t1, 'a', left_a, None, dace.Memlet('A'))
-    merge_a = merge.add_access('A')
-    merge_a_1 = merge.add_access('A')
-    merge_t1 = merge.add_tasklet('merge_1', {'a'}, {'b'}, 'b = a + 1')
-    merge.add_edge(merge_a, None, merge_t1, 'a', dace.Memlet('A'))
-    merge.add_edge(merge_t1, 'b', merge_a_1, None, dace.Memlet('A'))
-    sdfg.add_edge(init, guard, dace.InterstateEdge())
-    sdfg.add_edge(guard, left, dace.InterstateEdge(condition='B[0] < 10'))
-    sdfg.add_edge(guard, merge, dace.InterstateEdge(condition='B[0] >= 10'))
-    sdfg.add_edge(left, merge, dace.InterstateEdge())
+def test_double_nested_loops():
+    """Two loops with symbolic range overwriting array with a single write. 
+    Both loops are nested in another loop. One of the loops is again nested in another loop.
+    Array is not read after the outer loop.
+    --> should introduce local copies of array for each nested loop"""
 
-    pipeline = Pipeline([ArrayFission()])
-    results = pipeline.apply_pass(sdfg, {})
-
-    try:
-        sdfg.validate()
-    except:
-        assert (False)
-    name_sets: Dict[str, List[Set[AccessNode]]] = {}
-    name_sets['A'] = [{init_a}, {guard_a, left_a, merge_a}, {merge_a_1}]
-    name_sets["B"] = [{init_b}]
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[
-        Set[AccessNode],
-        Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
-    assert_rename_sets(name_sets, access_nodes)
-
-
-def test_nested_loops():
-    """three nested loops that overwrite two dimensional array. 
-    the innermost loop is surrounded by a loop that doesn't iterate over array range but over an empty constant range.
-    Therefore the loop nest as a whole does not overwrite the array"""
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("i", dace.int32)
@@ -1593,7 +1510,6 @@ def test_nested_loops():
     sdfg.add_edge(guard_3, guard_1, dace.InterstateEdge(condition="l < N"))
     sdfg.add_edge(guard_3, end, dace.InterstateEdge(condition="not (l < N)", ))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     sdfg.validate()
@@ -1610,10 +1526,11 @@ def test_nested_loops():
     assert_rename_sets(name_sets, access_nodes)
 
 
-def test_nested_loops2_fission():
-    """three nested loops that overwrite two dimensional array. 
-    the innermost loop is surrounded by a loop that doesn't iterate over array range but over an empty constant range.
-    Therefore the loop nest as a whole does not overwrite the array"""
+def test_nested_loops_no_read_after_outer_loop():
+    """Two loops with symbolic range overwriting array with a single write. 
+    Loops are nested in another loop. Array is not read after the outer loop.
+    --> should introduce local copies of array for each nested loop"""
+
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("i", dace.int32)
@@ -1660,7 +1577,6 @@ def test_nested_loops2_fission():
         dace.InterstateEdge(condition="l < N", assignments={"j": "0"}))
     sdfg.add_edge(guard_3, end, dace.InterstateEdge(condition="not (l < N)", ))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     sdfg.validate()
@@ -1677,10 +1593,11 @@ def test_nested_loops2_fission():
     assert_rename_sets(name_sets, access_nodes)
 
 
-def test_nested_loops2_no_fission():
-    """three nested loops that overwrite two dimensional array. 
-    the innermost loop is surrounded by a loop that doesn't iterate over array range but over an empty constant range.
-    Therefore the loop nest as a whole does not overwrite the array"""
+def test_nested_loops_read_after_outer_loop():
+    """Two loops with symbolic range overwriting array with a single write. 
+    Loops are nested in another loop. Array is directly read after the outer loop.
+    --> should not introduce local copies of array for each nested loop"""
+
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("i", dace.int32)
@@ -1730,7 +1647,6 @@ def test_nested_loops2_no_fission():
         dace.InterstateEdge(condition="l < N", assignments={"j": "0"}))
     sdfg.add_edge(guard_3, end, dace.InterstateEdge(condition="not (l < N)", ))
 
-    pipeline = Pipeline([ArrayFission()])
     results = pipeline.apply_pass(sdfg, {})
 
     sdfg.validate()
@@ -1748,20 +1664,19 @@ def test_nested_loops2_no_fission():
 
 
 if __name__ == '__main__':
-    test_simple_conditional_write2()
+    test_simple_conditional_common_post_dominator()
     test_simple_conditional_write_no_fission()
-    test_multiple_conditions()
-    test_loop_read_no_fission()
+    test_three_conditional_writes_common_postdominator()
+    test_loop_read_after_write()
     test_simple_loop_overwrite()
-    test_simple_loop_overwrite2()
-    test_loop_no_phi_node()
+    test_loop_overwrite_multiple_writes()
+    test_conditional_writes_loops()
     test_loop_read_before_write_no_fission()
     test_loop_read_before_write_interstate()
-    test_simple_map_overwrite()
-    test_simple_overwrite_2()
+    test_map_simple_overwrite()
     test_intrastate_overwrite()
-    test_nested_loops2_no_fission()
-    test_nested_loops2_fission()
+    test_nested_loops_read_after_outer_loop()
+    test_nested_loops_no_read_after_outer_loop()
     test_scalar_write_shadow_split()
     test_scalar_write_shadow_fused()
     test_scalar_write_shadow_interstate_self()
@@ -1771,5 +1686,4 @@ if __name__ == '__main__':
     test_loop_fake_complex_shadow()
     test_loop_real_shadow()
     test_dominationless_write_branch1()
-    test_dominationless_write_branch2()
-    test_nested_loops()
+    test_double_nested_loops()
