@@ -615,6 +615,66 @@ def _collect_itvars_scope(
     return surrounding_map_vars
 
 
+def _map_header_to_parent_headers(
+        loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]) -> Dict[SDFGState, Set[SDFGState]]:
+    mapping = defaultdict(set)
+    for header, loop in loops.items():
+        _, _, loop_states, _, _ = loop
+        for state in loop_states:
+            if state in loops:
+                mapping[state].add(header)
+    return mapping
+
+
+def _generate_loop_nest_tree(loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]) -> Dict[SDFGState, Set[SDFGState]]:
+    header_parents_mapping = _map_header_to_parent_headers(loops)
+    tree_dict: Dict[SDFGState, Set[SDFGState]] = defaultdict(set)
+    for header, loop in loops.items():
+        _, _, loop_states, _, _ = loop
+        for state in loop_states:
+            # if the state is a loop header and no parent header is a child of header state is a direct child
+            if state in loops and len(set(loop_states).intersection(header_parents_mapping[state])) == 0:
+                tree_dict[header].add(state)
+    return tree_dict
+
+
+def _postorder_traversal_iteratively(root: SDFGState, loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> List[SDFGState]:
+    post_order_list = []
+    if root is None:
+        return []
+    stack = [root]
+    last = None
+
+    while stack:
+        root = stack[-1]
+        if root in loop_nest_tree:
+            children = loop_nest_tree[root]
+        else:
+            children = []
+        if not children or not last is None and (last in children):
+            post_order_list.append(root)
+
+            stack.pop()
+            last = root
+        # if not, push children in stack
+        else:
+            for child in children:
+                stack.append(child)
+    return post_order_list
+
+def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]])->Set[SDFGState]:
+    all_nodes = set()
+    child_nodes = set()
+
+    for parent, children in loop_nest_tree.items():
+        all_nodes.add(parent)
+        all_nodes.update(children)
+        child_nodes.update(children)
+
+    roots = all_nodes - child_nodes
+    return roots
+
+
 class UnderapproximateWrites(ppl.Pass):
 
     def depends_on(self) -> Set[Type[Pass] | Pass]:
@@ -984,6 +1044,7 @@ class UnderapproximateWrites(ppl.Pass):
         for state in sdfg.nodes():
             self.propagate_memlets_state(sdfg, state)
 
+        loop_nest_tree = _generate_loop_nest_tree(loops)
         self.propagate_memlet_loop(sdfg, loops)
 
     def propagate_memlet_loop(
