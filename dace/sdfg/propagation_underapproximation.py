@@ -526,21 +526,6 @@ def unsqueeze_memlet_subsetList(
 
     return external_memlet
 
-
-def _find_top_loopheaders(loops: dict[SDFGState, (SDFGState, SDFGState, list[SDFGState], str, subsets.Range)]) -> Set[SDFGState]:
-    top_loopheaders = set()
-    for current_loop_header, current_loop in loops.items():
-        for other_loop_header, other_loop in loops.items():
-            if other_loop_header is current_loop_header:
-                continue
-            _, _, other_loop_states, _, _ = other_loop
-            if current_loop_header in other_loop_states:
-                break
-        else:
-            top_loopheaders.add(current_loop_header)
-    return top_loopheaders
-
-
 def _freesyms(expr):
     """
     Helper function that either returns free symbols for sympy expressions
@@ -617,10 +602,12 @@ def _collect_itvars_scope(
 
 def _map_header_to_parent_headers(
         loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]) -> Dict[SDFGState, Set[SDFGState]]:
-    mapping = defaultdict(set)
+    mapping = {}
     for header, loop in loops.items():
         _, _, loop_states, _, _ = loop
         for state in loop_states:
+            if state not in mapping:
+                mapping[state] = set()
             if state in loops:
                 mapping[state].add(header)
     return mapping
@@ -628,9 +615,10 @@ def _map_header_to_parent_headers(
 
 def _generate_loop_nest_tree(loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]) -> Dict[SDFGState, Set[SDFGState]]:
     header_parents_mapping = _map_header_to_parent_headers(loops)
-    tree_dict: Dict[SDFGState, Set[SDFGState]] = defaultdict(set)
+    tree_dict: Dict[SDFGState, Set[SDFGState]] = {}
     for header, loop in loops.items():
         _, _, loop_states, _, _ = loop
+        tree_dict[header] = set()
         for state in loop_states:
             # if the state is a loop header and no parent header is a child of header state is a direct child
             if state in loops and len(set(loop_states).intersection(header_parents_mapping[state])) == 0:
@@ -638,7 +626,7 @@ def _generate_loop_nest_tree(loops: dict[SDFGState, tuple[SDFGState, SDFGState, 
     return tree_dict
 
 
-def _postorder_traversal_iteratively(root: SDFGState, loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> List[SDFGState]:
+def _postorder_traversal(root: SDFGState, loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> List[SDFGState]:
     post_order_list = []
     if root is None:
         return []
@@ -662,7 +650,8 @@ def _postorder_traversal_iteratively(root: SDFGState, loop_nest_tree: Dict[SDFGS
                 stack.append(child)
     return post_order_list
 
-def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]])->Set[SDFGState]:
+
+def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> Set[SDFGState]:
     all_nodes = set()
     child_nodes = set()
 
@@ -1045,13 +1034,17 @@ class UnderapproximateWrites(ppl.Pass):
             self.propagate_memlets_state(sdfg, state)
 
         loop_nest_tree = _generate_loop_nest_tree(loops)
-        self.propagate_memlet_loop(sdfg, loops)
+        root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
+        for root in root_loop_headers:
+            post_order_traversal = _postorder_traversal(root, loop_nest_tree)
+            for loop_header in post_order_traversal:
+                self.propagate_memlet_loop(sdfg, loops, loop_header)
 
     def propagate_memlet_loop(
             self,
             sdfg: SDFG,
             loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]],
-            loopheader: SDFGState = None
+            loop_header: SDFGState = None
     ):
         """
         Propagate Memlets recursively out of loop constructs with representative border memlets, 
@@ -1063,7 +1056,7 @@ class UnderapproximateWrites(ppl.Pass):
         :param loops: dictionary that maps each for-loop construct to a tuple consisting of first
                     state in the loop, the last state in the loop the set of states enclosed by
                     the loop, the itearation variable and the range of the iterator variable
-        :param loopheader: a loopheader to start the propagation with. If no parameter is given,
+        :param loop_header: a loopheader to start the propagation with. If no parameter is given,
                     propagate_memlet_loop will be called recursively on the outermost loopheaders
 
         """
@@ -1082,28 +1075,16 @@ class UnderapproximateWrites(ppl.Pass):
             # -> always propagate all subsets out
 
             if memlet.subset is None:
-                return None
-            filtered_subsets = memlet.subset.subset_list if isinstance(
+                return []
+            result = memlet.subset.subset_list if isinstance(
                 memlet.subset, subsets.Subsetlist) else [memlet.subset]
-
             # range contains symbols
             if itrange.free_symbols:
-                filtered_subsets = [
-                    s for s in filtered_subsets if itvar in s.free_symbols]
+                result = [s for s in result if itvar in s.free_symbols]
 
-            return filtered_subsets
+            return result
 
-        if not loops:
-            return
-        # No loopheader was passed as an argument so we find the outermost loops
-        if loopheader is None:
-            top_loopheaders = _find_top_loopheaders(loops)
-            # propagate out of loops recursively
-            for top_loopheader in top_loopheaders:
-                self.propagate_memlet_loop(sdfg, loops, top_loopheader)
-            return
-
-        current_loop = loops[loopheader]
+        current_loop = loops[loop_header]
         begin, last_loop_state, loop_states, itvar, rng = current_loop
         if rng.num_elements() == 0:
             return
@@ -1115,23 +1096,9 @@ class UnderapproximateWrites(ppl.Pass):
         # get all the nodes that are executed unconditionally in the cfg
         # a.k.a nodes that dominate the sink states
         states = dominators[last_loop_state].intersection(set(loop_states))
-        states.update([loopheader, last_loop_state])
-        # maintain a list of states that are part of nested loops
-        ignore = []
-        for state in loop_states:
-            if state in ignore:
-                continue
+        states.update([loop_header, last_loop_state])
 
-            # recursively propagate nested loops and ignore the nested states
-            if state in loops and state is not loopheader:
-                self.propagate_memlet_loop(sdfg, loops, state)
-                _, _, nested_loop_states, _, _ = loops[state]
-                ignore += nested_loop_states
-
-            # only propagate out of current loop if state is executed unconditionally
-            if state not in states:
-                continue
-
+        for state in states:
             # iterate over the data_nodes that are actually in the current state
             # plus the data_nodes that are overwritten in the corresponding loop body
             # if the state is a loop header
@@ -1198,7 +1165,7 @@ class UnderapproximateWrites(ppl.Pass):
                     rng
                 )
 
-        loop_write_dict[loopheader] = border_memlets
+        loop_write_dict[loop_header] = border_memlets
 
     def _propagate_loop_subset(self,
                                sdfg: dace.SDFG,
