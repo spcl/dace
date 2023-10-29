@@ -1098,6 +1098,8 @@ class Subsetlist(Subset):
             self.subset_list = subset.subset_list
         elif isinstance(subset, list):
             for subset in subset:
+                if not subset:
+                    break
                 if isinstance(subset, (Range, Indices)):
                     self.subset_list.append(subset)
                 else:
