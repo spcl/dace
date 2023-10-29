@@ -430,7 +430,7 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> set[SDFGState]:
     return states
 
 
-def unsqueeze_memlet_subsetList(internal_memlet: Memlet,
+def _unsqueeze_memlet_subsetList(internal_memlet: Memlet,
                                 external_memlet: Memlet,
                                 parent_sdfg: dace.SDFG,
                                 nsdfg: NestedSDFG) -> Memlet:
@@ -685,7 +685,7 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge].src_subset = subsets.Subsetlist(
                         [approximation_dict[edge].src_subset])
 
-        self.propagate_memlets_sdfg(sdfg)
+        self._propagate_memlets_sdfg(sdfg)
 
         # Replace None with empty Subsetlist in each Memlet
         for entry in approximation_dict.values():
@@ -837,7 +837,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         return identified_loops
 
-    def propagate_memlets_nested_sdfg(
+    def _propagate_memlets_nested_sdfg(
         self,
         parent_sdfg: SDFG,
         parent_state: SDFGState,
@@ -995,12 +995,12 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge] = out_memlet
                     continue
 
-                out_memlet = unsqueeze_memlet_subsetList(
+                out_memlet = _unsqueeze_memlet_subsetList(
                     internal_memlet, out_memlet, parent_sdfg, nsdfg_node)
 
                 approximation_dict[edge] = out_memlet
 
-    def propagate_memlets_sdfg(self, sdfg: SDFG):
+    def _propagate_memlets_sdfg(self, sdfg: SDFG):
         """ Propagates memlets throughout an entire given SDFG. 
 
             :note: This is an in-place operation on the SDFG.
@@ -1012,16 +1012,16 @@ class UnderapproximateWrites(ppl.Pass):
         loop_dict.update(loops)
 
         for state in sdfg.nodes():
-            self.propagate_memlets_state(sdfg, state)
+            self._propagate_memlets_state(sdfg, state)
 
         loop_nest_tree = _generate_loop_nest_tree(loops)
         root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
         for root in root_loop_headers:
             post_order_traversal = _postorder_traversal(root, loop_nest_tree)
             for loop_header in post_order_traversal:
-                self.propagate_memlet_loop(sdfg, loops, loop_header)
+                self._propagate_memlet_loop(sdfg, loops, loop_header)
 
-    def propagate_memlet_loop(self,
+    def _propagate_memlet_loop(self,
                               sdfg: SDFG,
                               loops: dict[SDFGState,
                                           tuple[SDFGState, SDFGState,
@@ -1178,7 +1178,7 @@ class UnderapproximateWrites(ppl.Pass):
                 surrounding_itvars |= loop_nest_itvars
 
             use_dst = True
-            subset = self.propagate_subset(
+            subset = self._propagate_subset(
                 memlets,
                 arr,
                 params,
@@ -1199,7 +1199,7 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 dst_memlet.subset = subset
 
-    def propagate_memlets_state(self, sdfg: SDFG, state: SDFGState):
+    def _propagate_memlets_state(self, sdfg: SDFG, state: SDFGState):
         """ Propagates memlets throughout one SDFG state.
 
             :param sdfg: The SDFG in which the state is situated.
@@ -1253,15 +1253,15 @@ class UnderapproximateWrites(ppl.Pass):
                         iteration_variables_local))
 
                 # Propagate memlets inside the nested SDFG.
-                self.propagate_memlets_sdfg(node.sdfg)
+                self._propagate_memlets_sdfg(node.sdfg)
 
                 # Propagate memlets out of the nested SDFG.
-                self.propagate_memlets_nested_sdfg(sdfg, state, node)
+                self._propagate_memlets_nested_sdfg(sdfg, state, node)
 
         # Process scopes from the leaves upwards
-        self.propagate_memlets_scope(sdfg, state, state.scope_leaves())
+        self._propagate_memlets_scope(sdfg, state, state.scope_leaves())
 
-    def propagate_memlets_scope(self,
+    def _propagate_memlets_scope(self,
                                 sdfg: SDFG,
                                 state: SDFGState,
                                 scopes: Union[ScopeTree, List[ScopeTree]],
@@ -1368,10 +1368,10 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 internal_edge = next(e for e in internal_edges
                                      if geticonn(e) == geteconn(edge))
-                aligned_memlet = self.align_memlet(dfg_state,
+                aligned_memlet = self._align_memlet(dfg_state,
                                                    internal_edge,
                                                    dst=use_dst)
-                new_memlet = self.propagate_memlet(
+                new_memlet = self._propagate_memlet(
                     dfg_state,
                     aligned_memlet,
                     node,
@@ -1380,7 +1380,7 @@ class UnderapproximateWrites(ppl.Pass):
                     surrounding_itvars=surrounding_itvars)
             approximation_dict[edge] = new_memlet
 
-    def align_memlet(self, state: SDFGState, e: gr.MultiConnectorEdge[Memlet],
+    def _align_memlet(self, state: SDFGState, e: gr.MultiConnectorEdge[Memlet],
                      dst: bool) -> Memlet:
         """ 
         Takes Multiconnectoredge containing Memlet in DFG and swaps subset and other_subset of 
@@ -1420,7 +1420,7 @@ class UnderapproximateWrites(ppl.Pass):
         return result
 
 
-    def propagate_memlet(self,
+    def _propagate_memlet(self,
                          dfg_state,
                          memlet: Memlet,
                          scope_node: nodes.EntryNode,
@@ -1504,7 +1504,7 @@ class UnderapproximateWrites(ppl.Pass):
         # Propagate subset
         if isinstance(entry_node, nodes.MapEntry):
             mapnode = entry_node.map
-            return self.propagate_subset(aggdata,
+            return self._propagate_subset(aggdata,
                                          arr,
                                          mapnode.params,
                                          mapnode.range,
@@ -1522,9 +1522,8 @@ class UnderapproximateWrites(ppl.Pass):
             raise NotImplementedError('Unimplemented primitive: %s' %
                                       type(entry_node))
 
-    # External API
 
-    def propagate_subset(self,
+    def _propagate_subset(self,
                          memlets: List[Memlet],
                          arr: data.Data,
                          params: List[str],
