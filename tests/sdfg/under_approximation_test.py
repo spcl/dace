@@ -1,3 +1,5 @@
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+
 import dace
 from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
 from dace.subsets import Range

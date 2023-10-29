@@ -1,3 +1,5 @@
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg.state import SDFGState
 import pytest

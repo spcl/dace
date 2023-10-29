@@ -1,7 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Functionality relating to Memlet propagation (deducing external memlets
-from internal memory accesses and scope ranges).
+Pass derived from ``propagation.py`` that under-approximates write-sets of for-loops and Maps in
+an SDFG.
 """
 
 from collections import defaultdict
