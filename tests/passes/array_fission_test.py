@@ -1398,7 +1398,7 @@ def test_loop_real_shadow():
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 10'))
 
     results = pipeline.apply_pass(sdfg, {})
-    sdfg.view()
+
     try:
         sdfg.validate()
     except:
