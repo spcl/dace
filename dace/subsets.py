@@ -75,17 +75,14 @@ class Subset(object):
                 return expr
 
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-
         if not symbolic_positive:
             try:
                 bounding_box_cover = all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
                             and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
                             for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
                                                         other.min_element(), other.max_element())])
-                
                 if not bounding_box_cover:
                     return False
-                
                 # if self is an index no further distinction is needed
                 if isinstance(self, Indices):
                     return bounding_box_cover
@@ -94,7 +91,6 @@ class Subset(object):
                 # - other is a range 
                 # - other is an index
                 elif isinstance(self, Range):
-
                     # other is an index so we need to check if the step of self is such that other is covered
                     # self.start % self.step == other.index % self.step
                     if isinstance(other, Indices):
@@ -103,7 +99,6 @@ class Subset(object):
                             for start,_,step, i in zip(self.ranges, other.indices)])
                         except:
                             return False
-                    
                     # other is a range so in every dimension self.step has to divide other.step and
                     # self.start % self.step = other.start % other.step
                     if isinstance(other, Range):
@@ -118,14 +113,11 @@ class Subset(object):
                         except:
                             return False
                         return True
-                
                 # unknown type   
                 else:
                     raise TypeError
-
             except TypeError:
                 return False
-            
         else:
             try:
                 # first check if self contains other
@@ -141,22 +133,18 @@ class Subset(object):
                         if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
                                 symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
-
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
                         if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
                                 symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
-                            return False
-                                
+                            return False        
                 # if self is an index no further distinction is needed
                 if isinstance(self, Indices):
                     return True
-                
                 # if self is a range there are two cases
                 # - other is a range 
                 # - other is an index
                 elif isinstance(self, Range):
-
                     # other is an index so we need to check if the step of self is such that other is covered
                     # self.start % self.step == other.index % self.step
                     if isinstance(other, Indices):
@@ -165,7 +153,6 @@ class Subset(object):
                             for start,_,step, i in zip(self.ranges, other.indices)])
                         except:
                             return False
-                    
                     # other is a range so in every dimension self.step has to divide other.step and
                     # self.start % self.step = other.start % other.step or self.start == other.start
                     if isinstance(other, Range):
@@ -180,16 +167,12 @@ class Subset(object):
                         except:
                             return False
                     return True
-
                 # Unknown subset type
                 else:
                     raise TypeError
             except TypeError:
                 return False
-            
-
-
-        return
+        return False
 
 
     def __repr__(self):
@@ -1105,16 +1088,30 @@ class Indices(Subset):
         return None
 
 class Subsetlist(Subset):
+    """
+    Wrapper subset type that stores multiple Subsets in a list.
+    """
 
-    def __init__(self, subset_list: list[Subset]):
-        self.subset_list: list[Subset] =  [x for x in list(set(subset_list)) if x is not None]
-
+    def __init__(self, subset):
+        self.subset_list: list[Subset] = []
+        if isinstance(subset, Subsetlist):
+            self.subset_list = subset.subset_list
+        elif isinstance(subset, list):
+            for subset in subset:
+                if isinstance(subset, (Range, Indices)):
+                    self.subset_list.append(subset)
+                else:
+                    raise NotImplementedError
+        elif isinstance(subset, (Range, Indices)):
+            self.subset_list = [subset]
 
     def covers(self, other):
-        """ Returns True if this Subsetlist covers another
-            subset. If other is another SubsetList then self and other will
-            only return true if self is other. If other is a different type of subset
-            true is returned when one of the subsets in self is equal to other """
+        """ 
+        Returns True if this Subsetlist covers another subset (using a bounding box). 
+        If other is another SubsetList then self and other will
+        only return true if self is other. If other is a different type of subset
+        true is returned when one of the subsets in self is equal to other.
+        """
 
         if isinstance(other, Subsetlist):
             for subset in self.subset_list:
@@ -1127,10 +1124,12 @@ class Subsetlist(Subset):
             return any(s.covers(other) for s in self.subset_list)
         
     def covers_precise(self, other):
-        """ Returns True if this Subsetlist covers another
-            subset. If other is another SubsetList then self and other will
-            only return true if self is other. If other is a different type of subset
-            true is returned when one of the subsets in self is equal to other """
+        """ 
+        Returns True if this Subsetlist covers another
+        subset. If other is another SubsetList then self and other will
+        only return true if self is other. If other is a different type of subset
+        true is returned when one of the subsets in self is equal to other 
+        """
 
         if isinstance(other, Subsetlist):
             for subset in self.subset_list:
@@ -1155,12 +1154,6 @@ class Subsetlist(Subset):
             return 0
         return next(iter(self.subset_list)).dims()
 
-    def offset(self, other, negative, indices=None):
-        raise NotImplementedError
-
-    def offset_new(self, other, negative, indices=None):
-        raise NotImplementedError
-
     def union(self, other: Subset):
         """In place union of self with another Subset"""
         try:
@@ -1169,9 +1162,7 @@ class Subsetlist(Subset):
             elif isinstance(other, Indices) or isinstance(other, Range):
                 self.subset_list.append(other)
             else:
-                warnings.warn('Unrecognized Subset type %s in union, degenerating to'
-                            ' bounding box' % type(other).__name__)
-                return None
+                raise TypeError
         except TypeError:  # cannot determine truth value of Relational
             return None
 
@@ -1187,7 +1178,7 @@ class Subsetlist(Subset):
             subset.replace(repl_dict)
 
     def num_elements(self):
-        # TODO: write something meaningful here
+        # TODO: write something more meaningful here
         min = 0
         for subset in self.subset_list:
             try:
@@ -1284,6 +1275,9 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
+        elif isinstance(subset_a, Subsetlist) or isinstance(
+                subset_b, Subsetlist):
+            return list_union(subset_a, subset_b)
         elif type(subset_a) != type(subset_b):
             return bounding_box_union(subset_a, subset_b)
         elif isinstance(subset_a, Indices):
@@ -1294,14 +1288,23 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             # TODO(later): More involved Strided-Tiled Range union
             return bounding_box_union(subset_a, subset_b)
         else:
-            warnings.warn('Unrecognized Subset type %s in union, degenerating to'
-                          ' bounding box' % type(subset_a).__name__)
+            warnings.warn(
+                'Unrecognized Subset type %s in union, degenerating to'
+                ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
     except TypeError:  # cannot determine truth value of Relational
         return None
 
-def list_union(subset_a: Subset, subset_b: Subset)-> Subset:
-    # TODO: Make sure that all the elements in the subset lists have the same dimensions
+
+def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
+    """ 
+    Returns the union of two Subset lists.
+
+    :param subset_a: The first subset.
+    :param subset_b: The second subset.
+    :return: A Subsetlist object that contains all elements of subset_a and subset_b.
+    """
+    # TODO(later): Merge subsets in both lists if possible
     try:
         if subset_a is not None and subset_b is None:
             return subset_a
@@ -1311,19 +1314,15 @@ def list_union(subset_a: Subset, subset_b: Subset)-> Subset:
             raise TypeError('Both subsets cannot be None')
         elif type(subset_a) != type(subset_b):
             if isinstance(subset_b, Subsetlist):
-                return Subsetlist(subset_b.subset_list_.append(subset_a))
+                return Subsetlist(subset_b.subset_list.append(subset_a))
             else:
                 return Subsetlist(subset_a.subset_list.append(subset_b))
         elif isinstance(subset_a, Subsetlist):
             return Subsetlist(subset_a.subset_list + subset_b.subset_list)
         else:
-            return Subsetlist([subset_a,subset_b])
+            return Subsetlist([subset_a, subset_b])
 
-        # for subset in subset_list_a:
-        #     for other_subset in subset_list_b:
-        #         if subset.
-
-    except TypeError:  # cannot determine truth value of Relational
+    except TypeError:
         return None
 
 def intersects(subset_a: Subset, subset_b: Subset) -> Union[bool, None]:
