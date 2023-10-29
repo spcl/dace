@@ -1604,9 +1604,6 @@ class UnderapproximateWrites(ppl.Pass):
                         break
                 else:
                     # No patterns found. Underapproximate the subset with an empty subset (so None)
-                    warnings.warn('Cannot find appropriate memlet pattern to '
-                                  'propagate %s through %s' %
-                                  (str(subset), str(rng)))
                     subset = None
                 _subsets[i] = subset
 
