@@ -1,7 +1,7 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
-from typing import Any, Dict, Optional, Set, Tuple, List, Union
+from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, List, Union
 import networkx as nx
 
 from dace import SDFG
@@ -16,9 +16,10 @@ from dace.transformation.passes import analysis as ap
 
 
 class _PhiNode():
-    def __init__(self, name: str, variables: set[str]):
+
+    def __init__(self, name: str, variables: Set[str]):
         self.name: str = name
-        self.variables: set[str] = variables
+        self.variables: Set[str] = variables
 
 
 class ArrayFission(ppl.Pass):
@@ -36,16 +37,14 @@ class ArrayFission(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {UnderapproximateWrites,
-                ap.AccessSets,
-                ap.FindAccessNodes,
-                ap.StateReachability}
+        return {
+            UnderapproximateWrites, ap.AccessSets, ap.FindAccessNodes,
+            ap.StateReachability
+        }
 
     def apply_pass(
-        self,
-        sdfg: SDFG,
-        pipeline_results: Dict[str, Any]
-    ) -> Optional[Dict[str, Set[str]]]:
+            self, sdfg: SDFG,
+            pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """
         Rename scalars and arrays of size 1 based on dominated scopes.
 
@@ -58,21 +57,28 @@ class ArrayFission(ppl.Pass):
                 for each data container.
         """
         results: Dict[str, Set[str]] = defaultdict(set)
-        write_approximation: dict[Edge,
-                                  Memlet] = pipeline_results[UnderapproximateWrites.__name__]["approximation"]
-        loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]
-                                       ] = pipeline_results[UnderapproximateWrites.__name__]["loop_approximation"]
-        loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]
-                    ] = pipeline_results[UnderapproximateWrites.__name__]["loops"]
-        access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]
-                           ] = pipeline_results[ap.FindAccessNodes.__name__][sdfg.sdfg_id]
-        state_reach: Dict[SDFGState, Set[SDFGState]
-                          ] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]
-                          ] = pipeline_results[ap.AccessSets.__name__][sdfg.sdfg_id]
+        write_approximation: dict[Edge, Memlet] = pipeline_results[
+            UnderapproximateWrites.__name__]["approximation"]
+        loop_write_approximation: Dict[SDFGState, Dict[
+            str, Memlet]] = pipeline_results[
+                UnderapproximateWrites.__name__]["loop_approximation"]
+        loops: Dict[SDFGState,
+                    Tuple[SDFGState, SDFGState, List[SDFGState], str,
+                          subsets.Range]] = pipeline_results[
+                              UnderapproximateWrites.__name__]["loops"]
+        access_nodes: Dict[str, Dict[SDFGState, Tuple[
+            Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
+                ap.FindAccessNodes.__name__][sdfg.sdfg_id]
+        state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[
+            ap.StateReachability.__name__][sdfg.sdfg_id]
+        access_sets: Dict[SDFGState,
+                          Tuple[Set[str], Set[str]]] = pipeline_results[
+                              ap.AccessSets.__name__][sdfg.sdfg_id]
         # list of original array names in the sdfg that fissioning is performed on
-        array_variable_names: List[str] = [aname for aname, a in sdfg.arrays.items(
-        ) if a.transient and not a.total_size == 1]
+        array_variable_names: List[str] = [
+            aname for aname, a in sdfg.arrays.items()
+            if a.transient and not a.total_size == 1
+        ]
 
         # dictionary that stores "virtual" phi nodes for each variable and SDFGstate
         # phi nodes are represented by dictionaries that contain:
@@ -96,24 +102,11 @@ class ArrayFission(ppl.Pass):
             access_nodes,
         )
 
-        _rename(
-            sdfg,
-            write_approximation,
-            phi_nodes,
-            array_variable_names
-        )
+        _rename(sdfg, write_approximation, phi_nodes, array_variable_names)
 
-        _eliminate_phi_nodes(
-            sdfg,
-            phi_nodes,
-            def_states,
-            def_states_phi,
-            loops,
-            loop_write_approximation,
-            state_reach,
-            access_nodes,
-            access_sets
-        )
+        _eliminate_phi_nodes(sdfg, phi_nodes, def_states, def_states_phi,
+                             loops, loop_write_approximation, state_reach,
+                             access_nodes, access_sets)
 
         # store all the new names for each original variable name
         definitions: Dict[str, Set[str]] = defaultdict(None)
@@ -133,42 +126,38 @@ class ArrayFission(ppl.Pass):
 
 
 def _insert_phi_nodes(
-    sdfg: SDFG,
-    array_variable_names: List[str],
+    sdfg: SDFG, array_variable_names: List[str],
     write_approximation: dict[Edge, Memlet],
     loop_write_approximation: dict[SDFGState, dict[str, Memlet]],
-    access_nodes: Dict[str, Dict[SDFGState,
-                                 Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]]
-) -> Tuple[Dict[SDFGState, Dict[str, _PhiNode]],
-           Dict[str, set[SDFGState]],
-           Dict[str, set[SDFGState]]]:
+    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
+                                                  Set[nd.AccessNode]]]]
+) -> Tuple[Dict[SDFGState, Dict[str, _PhiNode]], Dict[str, Set[SDFGState]],
+           Dict[str, Set[SDFGState]]]:
 
     phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]] = defaultdict(None)
     for state in sdfg.states():
         phi_nodes[state] = {}
     # maps each variable to its defining writes that don't involve phi-nodes
-    defining_states: Dict[str, set[SDFGState]] = {}
+    defining_states: Dict[str, Set[SDFGState]] = {}
     # maps each variable to its defining writes that involve phi-nodes
-    defining_states_phi: Dict[str, set[SDFGState]] = {}
+    defining_states_phi: Dict[str, Set[SDFGState]] = {}
 
     defining_states_phi = _insert_phi_nodes_loopheaders(
         sdfg, array_variable_names, loop_write_approximation, phi_nodes)
 
-    defining_states = _find_defining_states(
-        sdfg, array_variable_names, phi_nodes, access_nodes, write_approximation)
+    defining_states = _find_defining_states(sdfg, array_variable_names,
+                                            phi_nodes, access_nodes,
+                                            write_approximation)
 
-    _insert_phi_nodes_regular(sdfg, defining_states,
-                              phi_nodes, defining_states_phi)
+    _insert_phi_nodes_regular(sdfg, defining_states, phi_nodes,
+                              defining_states_phi)
 
     return (phi_nodes, defining_states, defining_states_phi)
 
 
-def _rename(
-        sdfg: SDFG,
-        write_approximation: Dict[Edge, Memlet],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        array_variable_names: List[str]
-):
+def _rename(sdfg: SDFG, write_approximation: Dict[Edge, Memlet],
+            phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
+            array_variable_names: List[str]):
     # dictionary mapping each variable from the original SDFG to a dictionary mapping
     # each state to the last definition of that variable in that state
     last_defs: Dict[str, Dict[SDFGState, str]] = defaultdict(None)
@@ -177,24 +166,31 @@ def _rename(
     # traverse the dominator tree depth first and rename all variables
     dom_tree_dfs = _dominator_tree_DFS_order(sdfg, immediate_dominators)
     for current_state in dom_tree_dfs:
-        _rename_DFG_and_interstate_edges(sdfg, current_state, array_variable_names, phi_nodes, write_approximation,
-                                         last_defs, immediate_dominators)
+        _rename_DFG_and_interstate_edges(sdfg, current_state,
+                                         array_variable_names, phi_nodes,
+                                         write_approximation, last_defs,
+                                         immediate_dominators)
         _propagate_new_names_to_phi_nodes(sdfg, current_state,
-                                          array_variable_names, phi_nodes, last_defs)
+                                          array_variable_names, phi_nodes,
+                                          last_defs)
 
 
-def _eliminate_phi_nodes(
-    sdfg: SDFG,
-    phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-    def_states: Dict[str, Set[SDFGState]],
-    def_states_phi: Dict[str, Set[SDFGState]],
-    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]],
-    loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]],
-    state_reach: Dict[SDFGState, Set[SDFGState]],
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
-    access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]]
-):
-
+def _eliminate_phi_nodes(sdfg: SDFG, phi_nodes: Dict[SDFGState,
+                                                     Dict[str, _PhiNode]],
+                         def_states: Dict[str, Set[SDFGState]],
+                         def_states_phi: Dict[str, Set[SDFGState]],
+                         loops: Dict[SDFGState, Tuple[SDFGState, SDFGState,
+                                                      List[SDFGState], str,
+                                                      subsets.Range]],
+                         loop_write_approximation: Dict[SDFGState,
+                                                        Dict[str, Memlet]],
+                         state_reach: Dict[SDFGState, Set[SDFGState]],
+                         access_nodes: Dict[str,
+                                            Dict[SDFGState,
+                                                 Tuple[Set[nd.AccessNode],
+                                                       Set[nd.AccessNode]]]],
+                         access_sets: Dict[SDFGState, Tuple[Set[str],
+                                                            Set[str]]]):
     # dictionary mapping each variable in the SDFG to the states that read from it.
     # For reads in edges only take outgoing edges into account
     var_reads: Dict[str, Set[SDFGState]] = defaultdict(set)
@@ -224,14 +220,10 @@ def _eliminate_phi_nodes(
 
             # Find all states that can be reached by newname
             reached_by_def = _conditional_dfs(
-                sdfg,
-                state,
-                lambda node: (
-                    node is state
-                    or (node not in def_states_phi[original_var]
-                        and node not in def_states[original_var])
-                )
-            )
+                sdfg, lambda node:
+                (node is state or (node not in def_states_phi[original_var] and
+                                   node not in def_states[original_var])),
+                state)
 
             candidate_states = sdfg.states()
             loop_states = []
@@ -242,37 +234,41 @@ def _eliminate_phi_nodes(
             # if the phi node belongs to a loopheader that completely overwrites the array
             # and the loop does not read from the array defined by the phi node
             # only rename nodes reached by the loopheader
-            if (
-                state in loop_write_approximation
-                and original_var in loop_write_approximation[state]
-                and loop_write_approximation[state][original_var].subset.covers_precise(
-                    subsets.Range.from_array(sdfg.arrays[original_var])
-                )
-            ):
+            if (state in loop_write_approximation
+                    and original_var in loop_write_approximation[state]
+                    and loop_write_approximation[state][original_var].subset
+                    and loop_write_approximation[state]
+                [original_var].subset.covers_precise(
+                    subsets.Range.from_array(sdfg.arrays[original_var]))):
                 _, _, loop_states, _, _ = loops[state]
                 # check if loop reads from outside the loop
-                if not any(
-                        newname in [
-                            a.label for a in access_nodes[original_var][other_state][0]]
-                        or other_state in var_reads[newname]
-                        for other_state in loop_states):
+                if not any(newname in [
+                        a.label
+                        for a in access_nodes[original_var][other_state][0]
+                ] or other_state in var_reads[newname]
+                           for other_state in loop_states):
 
                     candidate_states = state_reach[state]
                     overwriting_loop = True
             # if the variable defined by the phi node is read by any other
             # state we perform renaming in the whole SDFG
             # if not we only perform phi propagation in all the states that are reachable by the defined variable
-            elif not any(other_state in state_reach[state] or other_state is state for other_state in var_reads[newname]):
+            elif not any(
+                    other_state in state_reach[state] or other_state is state
+                    for other_state in var_reads[newname]):
                 candidate_states = reached_by_def
                 is_read = False
 
             # rename phi nodes and propagate parameters
-            _rename_phi_related_phi_nodes(parameters, original_var, newname, candidate_states,
-                                          state, phi_nodes, reached_by_def, is_read)
+            _rename_phi_related_phi_nodes(parameters, original_var, newname,
+                                          candidate_states, state, phi_nodes,
+                                          reached_by_def, is_read)
             # rename accesses
             if is_read:
-                _rename_phi_related_accesses(sdfg, parameters, original_var, newname, candidate_states,
-                                             loop_states, access_nodes, access_sets, overwriting_loop)
+                _rename_phi_related_accesses(sdfg, parameters, original_var,
+                                             newname, candidate_states,
+                                             loop_states, access_nodes,
+                                             access_sets, overwriting_loop)
 
             # update var_read if any renaming was done
             if is_read:
@@ -306,16 +302,13 @@ def _eliminate_phi_nodes(
 
 
 def _rename_phi_related_accesses(
-    sdfg: SDFG,
-    phi_node_parameters: set[str],
-    original_variable: str,
-    new_name: str,
-    candidate_states: set[SDFGState],
-    loop_states: set[SDFGState],
-    access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
-    access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]],
-    overwriting_loop: bool
-):
+        sdfg: SDFG, phi_node_parameters: Set[str], original_variable: str,
+        new_name: str, candidate_states: Iterable[SDFGState],
+        loop_states: Iterable[SDFGState],
+        access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
+                                                      Set[nd.AccessNode]]]],
+        access_sets: Dict[SDFGState, Tuple[Set[str],
+                                           Set[str]]], overwriting_loop: bool):
     rename_dict = {}
     for parameter in phi_node_parameters:
         rename_dict[parameter] = new_name
@@ -338,20 +331,20 @@ def _rename_phi_related_accesses(
 
 
 def _rename_phi_related_phi_nodes(
-    phi_node_parameters: set[str],
+    phi_node_parameters: Set[str],
     original_variable: str,
     new_name: str,
-    candidate_states: set[SDFGState],
+    candidate_states: Iterable[SDFGState],
     phi_node_origin_state: SDFGState,
     phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-    reached_by_def: set[SDFGState],
+    reached_by_def: Set[SDFGState],
     is_read: bool,
 ):
     for other_state in candidate_states:
         # rename all phi nodes and propagate
-        if (not other_state is phi_node_origin_state and
-            other_state in phi_nodes and
-                original_variable in phi_nodes[other_state]):
+        if (not other_state is phi_node_origin_state
+                and other_state in phi_nodes
+                and original_variable in phi_nodes[other_state]):
 
             other_phi_node = phi_nodes[other_state][original_variable]
             new_variables = set()
@@ -373,21 +366,17 @@ def _rename_phi_related_phi_nodes(
             phi_nodes[other_state][original_variable] = other_phi_node
 
 
-def _update_last_def(
-        state: SDFGState,
-        new_def: str,
-        original_name: str,
-        last_defs:  Dict[str, Dict[SDFGState, str]]):
+def _update_last_def(state: SDFGState, new_def: str, original_name: str,
+                     last_defs: Dict[str, Dict[SDFGState, str]]):
     if not last_defs.get(original_name):
         last_defs[original_name] = {}
     last_defs[original_name][state] = new_def
 
 
-def _find_reaching_def(
-        state: SDFGState,
-        var: str, last_defs: Dict[str, Dict[SDFGState, str]],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        immediate_dominators: Dict[SDFGState, SDFGState]):
+def _find_reaching_def(state: SDFGState, var: str,
+                       last_defs: Dict[str, Dict[SDFGState, str]],
+                       phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
+                       immediate_dominators: Dict[SDFGState, SDFGState]):
     # helper function to find the reaching definition given an AccessNode and a state in the
     # original SDFG
 
@@ -406,15 +395,15 @@ def _find_reaching_def(
     return var
 
 
-def _rename_DFG_and_interstate_edges(
-        sdfg: SDFG,
-        state: SDFGState,
-        array_variable_names: List[str],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        write_approximation:  Dict[Edge, Memlet],
-        last_defs: Dict[str, Dict[SDFGState, str]],
-        immediate_dominators: Dict[SDFGState, SDFGState]
-):
+def _rename_DFG_and_interstate_edges(sdfg: SDFG, state: SDFGState,
+                                     array_variable_names: List[str],
+                                     phi_nodes: Dict[SDFGState,
+                                                     Dict[str, _PhiNode]],
+                                     write_approximation: Dict[Edge, Memlet],
+                                     last_defs: Dict[str, Dict[SDFGState,
+                                                               str]],
+                                     immediate_dominators: Dict[SDFGState,
+                                                                SDFGState]):
 
     for var in array_variable_names:
         # check if there is a phi node for the current variable in the current state
@@ -440,25 +429,25 @@ def _rename_DFG_and_interstate_edges(
         array = sdfg.arrays[var]
         array_set = subsets.Range.from_array(array)
         iedges = state.in_edges(node)
-        if (any(write_approximation[edge].subset.covers_precise(array_set) for edge in iedges) and
-                not renamed.get(var)):
+        if (any(write_approximation[edge].subset.covers_precise(array_set)
+                for edge in iedges) and not renamed.get(var)):
             # rename the variable to the reaching definition
             newdesc = array.clone()
-            newname = sdfg.add_datadesc(
-                var, newdesc, find_new_name=True)
+            newname = sdfg.add_datadesc(var, newdesc, find_new_name=True)
             _update_last_def(state, newname, var, last_defs)
             renamed[var] = True
         else:
-            newname = _find_reaching_def(
-                state, var, last_defs, phi_nodes, immediate_dominators)
+            newname = _find_reaching_def(state, var, last_defs, phi_nodes,
+                                         immediate_dominators)
         _rename_node(state, node, newname)
     # define last definition in this state if it has not been defined yet
     for var in array_variable_names:
         if not last_defs.get(var):
             last_defs[var] = {}
         if not last_defs[var].get(state):
-            last_defs[var][state] = _find_reaching_def(
-                state, var, last_defs, phi_nodes, immediate_dominators)
+            last_defs[var][state] = _find_reaching_def(state, var, last_defs,
+                                                       phi_nodes,
+                                                       immediate_dominators)
     # iterate over all the outgoing interstate edges of the current state and
     # rename all the occurences of the original variable to the last definition
     # in the current state
@@ -469,12 +458,12 @@ def _rename_DFG_and_interstate_edges(
         oedge.data.replace_dict(rename_dict)
 
 
-def _propagate_new_names_to_phi_nodes(
-        sdfg: SDFG,
-        state: SDFGState,
-        array_variable_names: List[str],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        last_defs: Dict[str, Dict[SDFGState, str]]):
+def _propagate_new_names_to_phi_nodes(sdfg: SDFG, state: SDFGState,
+                                      array_variable_names: List[str],
+                                      phi_nodes: Dict[SDFGState,
+                                                      Dict[str, _PhiNode]],
+                                      last_defs: Dict[str, Dict[SDFGState,
+                                                                str]]):
     # propagate last definition in state to phi nodes in successor states
     successors = [edge.dst for edge in sdfg.out_edges(state)]
     for successor in successors:
@@ -501,9 +490,8 @@ def _rename_node(state: SDFGState, node: nd.AccessNode, newname: str):
 
 
 def _dominator_tree_DFS_order(
-        sdfg: SDFG,
-        immediate_dominators: Dict[SDFGState, SDFGState]
-) -> List[SDFGState]:
+        sdfg: SDFG, immediate_dominators: Dict[SDFGState,
+                                               SDFGState]) -> List[SDFGState]:
     # helper function that returns the dominator tree of the SDFG in DFS order
 
     # dictionary mapping each state to the set of states dominated by that state
@@ -531,7 +519,9 @@ def _dominator_tree_DFS_order(
     return visited
 
 
-def _conditional_dfs(graph: SDFG, start: Union[SDFGState, None] = None, condition=None):
+def _conditional_dfs(graph: SDFG,
+                     condition: Callable[[SDFGState | None], bool],
+                     start: Union[SDFGState, None] = None) -> Set[SDFGState]:
     successors = graph.successors
     visited = set()
     node = start
@@ -546,12 +536,11 @@ def _conditional_dfs(graph: SDFG, start: Union[SDFGState, None] = None, conditio
 
 
 def _find_defining_states(
-        sdfg: SDFG,
-        array_variable_names: List[str],
+        sdfg: SDFG, array_variable_names: List[str],
         phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        access_nodes:  Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]],
-        write_approximation: dict[Edge, Memlet]
-) -> Dict[str, set[SDFGState]]:
+        access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
+                                                      Set[nd.AccessNode]]]],
+        write_approximation: dict[Edge, Memlet]) -> Dict[str, Set[SDFGState]]:
     def_states: Dict[str, Set[SDFGState]] = {}
 
     for var in array_variable_names:
@@ -572,8 +561,8 @@ def _find_defining_states(
             for node in write_nodes:
                 # if any of the edges fully overwrites the array add the state to
                 # the defining states
-                if any(write_approximation[edge].subset.covers_precise(array_set)
-                        for edge in state.in_edges(node)):
+                if any(write_approximation[edge].subset.covers_precise(
+                        array_set) for edge in state.in_edges(node)):
                     defining_states.add(state)
                     break
         def_states[var] = defining_states
@@ -582,21 +571,22 @@ def _find_defining_states(
 
 
 def _insert_phi_nodes_loopheaders(
-        sdfg: SDFG,
-        array_variable_names: List[str],
-        loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]]
-) -> Dict[str, Set[SDFGState]]:
+    sdfg: SDFG, array_variable_names: List[str],
+    loop_write_approximation: Dict[SDFGState, Dict[str, Memlet]],
+    phi_nodes: Dict[SDFGState, Dict[str,
+                                    _PhiNode]]) -> Dict[str, Set[SDFGState]]:
     def_states_phi: Dict[str, Set[SDFGState]] = {}
     for loopheader, write_dict in loop_write_approximation.items():
         if loopheader not in sdfg.states():
             continue
         for var, memlet in write_dict.items():
-            if loopheader in phi_nodes.keys() and var in phi_nodes[loopheader].keys():
+            if loopheader in phi_nodes.keys(
+            ) and var in phi_nodes[loopheader].keys():
                 continue
             if var not in array_variable_names:
                 continue
-            if memlet.subset.covers_precise(subsets.Range.from_array(sdfg.arrays[var])):
+            if memlet.subset.covers_precise(
+                    subsets.Range.from_array(sdfg.arrays[var])):
                 phi_nodes[loopheader][var] = _PhiNode(var, set())
                 if var not in def_states_phi:
                     def_states_phi[var] = set()
@@ -604,11 +594,10 @@ def _insert_phi_nodes_loopheaders(
     return def_states_phi
 
 
-def _insert_phi_nodes_regular(
-        sdfg: SDFG,
-        def_states: Dict[str, Set[SDFGState]],
-        phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
-        def_states_phi: Dict[str, Set[SDFGState]]):
+def _insert_phi_nodes_regular(sdfg: SDFG, def_states: Dict[str,
+                                                           Set[SDFGState]],
+                              phi_nodes: Dict[SDFGState, Dict[str, _PhiNode]],
+                              def_states_phi: Dict[str, Set[SDFGState]]):
     dominance_frontiers = nx.dominance.dominance_frontiers(
         sdfg.nx, sdfg.start_state)
     for var, defining_states in def_states.items():
