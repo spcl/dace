@@ -368,9 +368,10 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
         arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{\n#pragma HLS INLINE'

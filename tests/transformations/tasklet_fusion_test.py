@@ -213,6 +213,49 @@ def test_map_with_tasklets(language: str, with_data: bool):
     ref = map_with_tasklets.f(A, B)
     assert (np.allclose(C, ref))
 
+def test_none_connector():
+    @dace.program
+    def sdfg_none_connector(A: dace.float32[32], B: dace.float32[32]):
+        tmp = dace.define_local([32], dace.float32)
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a >> tmp[i]
+                a = 0
+
+        tmp2 = dace.define_local([32], dace.float32)
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << A[i]
+                b >> tmp2[i]
+                b = a + 1
+
+
+        for i in dace.map[0:32]:
+            with dace.tasklet:
+                a << tmp[i]
+                b << tmp2[i]
+                c >> B[i]
+                c = a + b
+
+    sdfg = sdfg_none_connector.to_sdfg()
+    sdfg.simplify()
+    applied = sdfg.apply_transformations_repeated(MapFusion)
+    assert applied == 2
+
+    map_entry = None
+    for node in sdfg.start_state.nodes():
+        if isinstance(node, dace.nodes.MapEntry):
+            map_entry = node
+            break
+    
+    assert map_entry is not None
+    assert len([edge.src_conn for edge in sdfg.start_state.out_edges(map_entry) if edge.src_conn is None]) == 1
+
+    applied = sdfg.apply_transformations_repeated(TaskletFusion)
+    assert applied == 2
+
+    assert sdfg.start_state.out_degree(map_entry) == 1
+    assert len([edge.src_conn for edge in sdfg.start_state.out_edges(map_entry) if edge.src_conn is None]) == 0
 
 if __name__ == '__main__':
     test_basic()
@@ -224,3 +267,4 @@ if __name__ == '__main__':
     test_map_with_tasklets(language='Python', with_data=True)
     test_map_with_tasklets(language='CPP', with_data=False)
     test_map_with_tasklets(language='CPP', with_data=True)
+    test_none_connector()

@@ -1,7 +1,7 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_components, ast_internal_classes
-from typing import List, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 import copy
 
 
@@ -281,7 +281,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                         newbody.append(
@@ -297,7 +297,7 @@ class CallExtractor(NodeTransformer):
                                 ast_internal_classes.Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
-                                    sizes=None,
+                                    sizes=None
                                 )
                             ]))
                     newbody.append(
@@ -323,6 +323,65 @@ class CallExtractor(NodeTransformer):
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+class ParentScopeAssigner(NodeVisitor):
+    """
+        For each node, it assigns its parent scope - program, subroutine, function.
+
+        If the parent node is one of the "parent" types, we assign it as the parent.
+        Otherwise, we look for the parent of my parent to cover nested AST nodes within
+        a single scope.
+    """
+    def __init__(self):
+        pass
+
+    def visit(self, node: ast_internal_classes.FNode, parent_node: Optional[ast_internal_classes.FNode] = None):
+
+        parent_node_types = [
+            ast_internal_classes.Subroutine_Subprogram_Node,
+            ast_internal_classes.Function_Subprogram_Node,
+            ast_internal_classes.Main_Program_Node,
+            ast_internal_classes.Module_Node
+        ]
+
+        if parent_node is not None and type(parent_node) in parent_node_types:
+            node.parent = parent_node
+        elif parent_node is not None:
+            node.parent = parent_node.parent
+
+        # Copied from `generic_visit` to recursively parse all leafs
+        for field, value in iter_fields(node):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, ast_internal_classes.FNode):
+                        self.visit(item, node)
+            elif isinstance(value, ast_internal_classes.FNode):
+                self.visit(value, node)
+
+class ScopeVarsDeclarations(NodeVisitor):
+    """
+        Creates a mapping (scope name, variable name) -> variable declaration.
+
+        The visitor is used to access information on variable dimension, sizes, and offsets.
+    """
+
+    def __init__(self):
+
+        self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+
+    def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
+        return self.scope_vars[(self._scope_name(scope), variable_name)]
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+
+        parent_name = self._scope_name(node.parent)
+        var_name = node.name
+        self.scope_vars[(parent_name, var_name)] = node
+
+    def _scope_name(self, scope: ast_internal_classes.FNode) -> str:
+        if isinstance(scope, ast_internal_classes.Main_Program_Node):
+            return scope.name.name.name
+        else:
+            return scope.name.name
 
 class IndexExtractorNodeLister(NodeVisitor):
     """
@@ -349,9 +408,20 @@ class IndexExtractor(NodeTransformer):
     Uses the IndexExtractorNodeLister to find all array subscript expressions
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the index expression with the variable.
+
+    Before parsing the AST, the transformation first runs:
+    - ParentScopeAssigner to ensure that each node knows its scope assigner.
+    - ScopeVarsDeclarations to aggregate all variable declarations for each function.
     """
-    def __init__(self, count=0):
+    def __init__(self, ast: ast_internal_classes.FNode, normalize_offsets: bool = False, count=0):
+
         self.count = count
+        self.normalize_offsets = normalize_offsets
+
+        if normalize_offsets:
+            ParentScopeAssigner().visit(ast)
+            self.scope_vars = ScopeVarsDeclarations()
+            self.scope_vars.visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
@@ -380,9 +450,11 @@ class IndexExtractor(NodeTransformer):
             lister.visit(child)
             res = lister.nodes
             temp = self.count
+
+
             if res is not None:
                 for j in res:
-                    for i in j.indices:
+                    for idx, i in enumerate(j.indices):
                         if isinstance(i, ast_internal_classes.ParDecl_Node):
                             continue
                         else:
@@ -396,16 +468,38 @@ class IndexExtractor(NodeTransformer):
                                                                        line_number=child.line_number)
                                 ],
                                                                     line_number=child.line_number))
-                            newbody.append(
-                                ast_internal_classes.BinOp_Node(
-                                    op="=",
-                                    lval=ast_internal_classes.Name_Node(name=tmp_name),
-                                    rval=ast_internal_classes.BinOp_Node(
-                                        op="-",
-                                        lval=i,
-                                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
-                                        line_number=child.line_number),
-                                    line_number=child.line_number))
+                            if self.normalize_offsets:
+
+                                # Find the offset of a variable to which we are assigning
+                                var_name = ""
+                                if isinstance(j, ast_internal_classes.Name_Node):
+                                    var_name = j.name
+                                else:
+                                    var_name = j.name.name
+                                variable = self.scope_vars.get_var(child.parent, var_name)
+                                offset = variable.offsets[idx]
+
+                                newbody.append(
+                                    ast_internal_classes.BinOp_Node(
+                                        op="=",
+                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                        rval=ast_internal_classes.BinOp_Node(
+                                            op="-",
+                                            lval=i,
+                                            rval=ast_internal_classes.Int_Literal_Node(value=str(offset)),
+                                            line_number=child.line_number),
+                                        line_number=child.line_number))
+                            else:
+                                newbody.append(
+                                    ast_internal_classes.BinOp_Node(
+                                        op="=",
+                                        lval=ast_internal_classes.Name_Node(name=tmp_name),
+                                        rval=ast_internal_classes.BinOp_Node(
+                                            op="-",
+                                            lval=i,
+                                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                            line_number=child.line_number),
+                                        line_number=child.line_number))
             newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
@@ -659,8 +753,8 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           rangepos: list,
                           count: int,
                           newbody: list,
-                          declaration=True,
-                          is_sum_to_loop=False):
+                          scope_vars: ScopeVarsDeclarations,
+                          declaration=True):
     """
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
@@ -675,16 +769,41 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     currentindex = 0
     indices = []
-    for i in node.indices:
+
+    offsets = scope_vars.get_var(node.parent, node.name.name).offsets
+
+    for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
+
             if i.type == "ALL":
-                ranges.append([
-                    ast_internal_classes.Int_Literal_Node(value="1"),
-                    ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
-                                                         type="INTEGER",
-                                                         arrname=node.name,
-                                                         pos=currentindex)
-                ])
+
+                lower_boundary = None
+                if offsets[idx] != 1:
+                    lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                else:
+                    lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
+
+                upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
+                                                        type="INTEGER",
+                                                        arrname=node.name,
+                                                        pos=currentindex)
+                """
+                    When there's an offset, we add MAX_RANGE + offset.
+                    But since the generated loop has `<=` condition, we need to subtract 1.
+                """
+                if offsets[idx] != 1:
+                    upper_boundary = ast_internal_classes.BinOp_Node(
+                        lval=upper_boundary,
+                        op="+",
+                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                    )
+                    upper_boundary = ast_internal_classes.BinOp_Node(
+                        lval=upper_boundary,
+                        op="-",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1")
+                    )
+                ranges.append([lower_boundary, upper_boundary])
+
             else:
                 ranges.append([i.range[0], i.range[1]])
             rangepos.append(currentindex)
@@ -706,8 +825,12 @@ class ArrayToLoop(NodeTransformer):
     """
     Transforms the AST by removing array expressions and replacing them with loops
     """
-    def __init__(self):
+    def __init__(self, ast):
         self.count = 0
+
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -722,7 +845,7 @@ class ArrayToLoop(NodeTransformer):
                 val = child.rval
                 ranges = []
                 rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, True)
+                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, self.scope_vars, True)
 
                 if res_range is not None and len(res_range) > 0:
                     rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -730,7 +853,7 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -804,8 +927,11 @@ class SumToLoop(NodeTransformer):
     """
     Transforms the AST by removing array sums and replacing them with loops
     """
-    def __init__(self):
+    def __init__(self, ast):
         self.count = 0
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -817,14 +943,36 @@ class SumToLoop(NodeTransformer):
 
                 current = child.lval
                 val = child.rval
-                rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
+
+                rvals = []
+                for i in mywalk(val):
+                    if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_sum':
+
+                        for arg in i.args:
+
+                            # supports syntax SUM(arr)
+                            if isinstance(arg, ast_internal_classes.Name_Node):
+                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+                                array_node.name = arg
+
+                                # If we access SUM(arr) where arr has many dimensions,
+                                # We need to create a ParDecl_Node for each dimension
+                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
+
+                                rvals.append(array_node)
+
+                            # supports syntax SUM(arr(:))
+                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
+                                rvals.append(arg)
+
                 if len(rvals) != 1:
                     raise NotImplementedError("Only one array can be summed")
                 val = rvals[0]
                 rangeposrval = []
                 rangesrval = []
 
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, False, True)
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
 
                 range_index = 0
                 body = ast_internal_classes.BinOp_Node(lval=current,

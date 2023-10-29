@@ -23,9 +23,9 @@ class MPITransformMap(transformation.SingleStateTransformation):
         .. code-block:: text
         
             Input1 -                                            Output1
-                    \                                          /
+                    \\                                         /
             Input2 --- MapEntry -- Arbitrary R  -- MapExit -- Output2
-                    /                                          \ 
+                    /                                          \\
             InputN -                                            OutputN
 
 

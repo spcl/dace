@@ -102,12 +102,8 @@ class ConstantPropagation(ppl.Pass):
                 for e in sdfg.out_edges(state):
                     e.data.replace_dict(mapping, replace_keys=False)
 
-            # If symbols are never unknown any longer, remove from SDFG
+            # Gather initial propagated symbols
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
-            # Remove from symbol repository
-            for sym in result:
-                if sym in sdfg.symbols:
-                    sdfg.remove_symbol(sym)
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
             sdfg.replace_dict({k: v
@@ -120,6 +116,14 @@ class ConstantPropagation(ppl.Pass):
                 intersection = result & edge.data.assignments.keys()
                 for sym in intersection:
                     del edge.data.assignments[sym]
+
+            # If symbols are never unknown any longer, remove from SDFG
+            fsyms = sdfg.used_symbols(all_symbols=False)
+            result = {k: v for k, v in result.items() if k not in fsyms}
+            for sym in result:
+                if sym in sdfg.symbols:
+                    # Remove from symbol repository and nested SDFG symbol mapipng
+                    sdfg.remove_symbol(sym)
 
         result = set(result.keys())
 
@@ -188,7 +192,7 @@ class ConstantPropagation(ppl.Pass):
             if len(in_edges) == 1:  # Special case, propagate as-is
                 if state not in result:  # Condition evaluates to False when state is the start-state
                     result[state] = {}
-                
+
                 # First the prior state
                 if in_edges[0].src in result:  # Condition evaluates to False when state is the start-state
                     self._propagate(result[state], result[in_edges[0].src])
