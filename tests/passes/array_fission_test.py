@@ -1663,6 +1663,98 @@ def test_nested_loops_read_after_outer_loop():
     assert_rename_sets(name_sets, access_nodes)
 
 
+def test_nested_loop():
+    """Nested loop that overwrites array before reading from it. 
+    Variable is overwritten in outer loop, directly after nested loop.
+    --> Should introduce loop-local copy of array for nested loop"""
+
+    sdfg = dace.SDFG('branch_subscope_fission')
+    sdfg.add_array('ZCOR_0', [2], dace.int32, transient=True)
+    sdfg.add_array('ZQSAT', [1], dace.int32, transient=False)
+    init_state = sdfg.add_state('init')
+    loop_begin = sdfg.add_state("loop_begin")
+    loop_body_0 = sdfg.add_state("loop_body_0")
+    loop_body_1 = sdfg.add_state("loop_body_1")
+    after_loop = sdfg.add_state("after_loop")
+    before_nloop = sdfg.add_state("before_nloop")
+    loop_guard_2 = sdfg.add_state("guard_2")
+    n_loop_body_1 = sdfg.add_state("nested_loop_body_1")
+    n_loop_body_2 = sdfg.add_state("nested_loop_body_2")
+    _, _, _ = sdfg.add_loop(init_state, before_nloop, after_loop, "i", "0",
+                            "i < N", "i + 1", loop_body_1)
+    sdfg.add_edge(before_nloop, loop_guard_2,
+                  dace.InterstateEdge(assignments={"j": "0"}))
+    sdfg.add_edge(loop_guard_2, loop_begin,
+                  dace.InterstateEdge(condition="not(j < N)"))
+    sdfg.add_edge(loop_guard_2, n_loop_body_1,
+                  dace.InterstateEdge(condition="j < N"))
+    sdfg.add_edge(n_loop_body_1, n_loop_body_2, dace.InterstateEdge())
+    sdfg.add_edge(n_loop_body_2, loop_guard_2,
+                  dace.InterstateEdge(assignments={"j": "j+1"}))
+    sdfg.add_edge(loop_begin, loop_body_0, dace.InterstateEdge())
+    sdfg.add_edge(loop_body_0, loop_body_1, dace.InterstateEdge())
+    zc_0 = loop_begin.add_access("ZCOR_0")
+    zq_0 = loop_begin.add_access("ZQSAT")
+    t_loop_begin = loop_begin.add_tasklet("loop_begin", {"zq"}, {"zc"},
+                                          "zq = zc")
+    loop_begin.add_edge(zq_0, None, t_loop_begin, "zq",
+                        dace.Memlet("ZQSAT[0]"))
+    loop_begin.add_edge(t_loop_begin, "zc", zc_0, None, dace.Memlet("ZCOR_0"))
+
+    zc_1 = loop_body_0.add_access("ZCOR_0")
+    zq_1 = loop_body_0.add_access("ZQSAT")
+    zc_2 = loop_body_0.add_access("ZCOR_0")
+    t_loop_body_0_0 = loop_body_0.add_tasklet("loop_body_0_0", {"zc"}, {"zq"},
+                                              "zq = zc")
+    t_loop_body_0_1 = loop_body_0.add_tasklet("loop_body_0_1", {"zq"}, {"zc"},
+                                              "zc = zq")
+    loop_body_0.add_edge(zc_1, None, t_loop_body_0_0, "zc",
+                         dace.Memlet("ZCOR_0"))
+    loop_body_0.add_edge(t_loop_body_0_0, "zq", zq_1, None,
+                         dace.Memlet("ZQSAT[0]"))
+    loop_body_0.add_edge(zq_1, None, t_loop_body_0_1, "zq",
+                         dace.Memlet("ZQSAT[0]"))
+    loop_body_0.add_edge(t_loop_body_0_1, "zc", zc_2, None,
+                         dace.Memlet("ZCOR_0"))
+    zc_3 = loop_body_1.add_access("ZCOR_0")
+    zq_2 = loop_body_1.add_access("ZQSAT")
+    t_loop_body_1_0 = loop_body_1.add_tasklet("loop_body_1_0", {"zc"}, {"zq"},
+                                              "zq = zc")
+    loop_body_1.add_edge(zc_3, None, t_loop_body_1_0, "zc",
+                         dace.Memlet("ZCOR_0"))
+    loop_body_1.add_edge(t_loop_body_1_0, "zq", zq_2, None,
+                         dace.Memlet("ZQSAT[0]"))
+    n_t = n_loop_body_1.add_tasklet("zero", {}, {"z"}, "z = 0")
+    zc_4 = n_loop_body_1.add_access("ZCOR_0")
+    n_loop_body_1.add_edge(n_t, "z", zc_4, None, dace.Memlet("ZCOR_0"))
+    first_tasklet = init_state.add_tasklet("zero", {}, {"z"}, "z = 0")
+    zc_9 = init_state.add_access("ZCOR_0")
+    init_state.add_edge(first_tasklet, "z", zc_9, None, dace.Memlet("ZCOR_0"))
+    zc_5 = after_loop.add_access("ZCOR_0")
+    zq_5 = after_loop.add_access("ZQSAT")
+    t_after = after_loop.add_tasklet("loop_body_1_0", {"zc"}, {"zq"},
+                                     "zq = zc")
+    after_loop.add_edge(zc_5, None, t_after, "zc", dace.Memlet("ZCOR_0"))
+    after_loop.add_edge(t_after, "zq", zq_5, None, dace.Memlet("ZQSAT[0]"))
+    zc_6 = n_loop_body_2.add_access("ZCOR_0")
+    zq_6 = n_loop_body_2.add_access("ZQSAT")
+    t_n2 = n_loop_body_2.add_tasklet("loop_body_1_0", {"zc"}, {"zq"},
+                                     "zq = zc")
+    n_loop_body_2.add_edge(zc_6, None, t_n2, "zc", dace.Memlet("ZCOR_0"))
+    n_loop_body_2.add_edge(t_n2, "zq", zq_6, None, dace.Memlet("ZQSAT[0]"))
+
+    results = pipeline.apply_pass(sdfg, {})
+
+    access_nodes: Dict[str, Dict[SDFGState, Tuple[
+        Set[AccessNode],
+        Set[AccessNode]]]] = results[FindAccessNodes.__name__][sdfg.sdfg_id]
+    name_sets: Dict[str, List[Set[AccessNode]]] = {}
+    name_sets['ZCOR_0'] = [{zc_5, zc_9, zc_2, zc_3}, {zc_0, zc_1},
+                           {zc_4, zc_6}]
+    name_sets["ZQSAT"] = [{zq_0, zq_1, zq_2, zq_5, zq_6}]
+    assert_rename_sets(name_sets, access_nodes)
+
+
 if __name__ == '__main__':
     test_simple_conditional_common_post_dominator()
     test_simple_conditional_write_no_fission()
