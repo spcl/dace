@@ -394,7 +394,6 @@ class ConstantRangeMemlet(MemletPattern):
 
         return True
 
-    # TODO: An integer set library should shine here (unify indices)
     def propagate(self, array, expressions, node_range):
         rng = [(None, None, 1)] * len(array.shape)
         node_range_gen = (range(rb, re, rs) for rb, re, rs in node_range)
@@ -1420,7 +1419,6 @@ class UnderapproximateWrites(ppl.Pass):
         result._is_data_src = not is_src
         return result
 
-    # External API
 
     def propagate_memlet(self,
                          dfg_state,
