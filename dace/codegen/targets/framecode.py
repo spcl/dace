@@ -131,6 +131,7 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
         # Hash file include
         if backend == 'frame':
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
@@ -181,7 +182,7 @@ class DaCeCodeGenerator(object):
         # Write state struct
         structstr = '\n'.join(self.statestruct)
         global_stream.write(f'''
-struct {sdfg.name}_t {{
+struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
 }};
 
@@ -226,6 +227,7 @@ struct {sdfg.name}_t {{
             :param callsite_stream: Stream to write to (at call site).
         """
         import dace.library
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
@@ -255,7 +257,7 @@ struct {sdfg.name}_t {{
         initparamnames_comma = (', ' + initparamnames) if initparamnames else ''
         callsite_stream.write(
             f'''
-DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
+DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__state{params_comma})
 {{
     __program_{fname}_internal(__state{paramnames_comma});
 }}''', sdfg)
@@ -263,18 +265,17 @@ DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_init_%s(%s_t *__state%s);\n' %
-                    (target.target_name, sdfg.name, initparams_comma), sdfg)
+                    f'DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n', sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' % (target.target_name, sdfg.name), sdfg)
+                    f'DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n', sdfg)
 
         callsite_stream.write(
             f"""
-DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
+DACE_EXPORTED {mangle_dace_state_struct_name(sdfg)} *__dace_init_{sdfg.name}({initparams})
 {{
     int __result = 0;
-    {sdfg.name}_t *__state = new {sdfg.name}_t;
+    {mangle_dace_state_struct_name(sdfg)} *__state = new {mangle_dace_state_struct_name(sdfg)};
 
             """, sdfg)
 
@@ -306,7 +307,7 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
     return __state;
 }}
 
-DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
+DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} *__state)
 {{
     int __err = 0;
 """, sdfg)
@@ -352,6 +353,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
         pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
         """
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
         
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
@@ -374,7 +376,7 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # Size query functions
             callsite_stream.write(
                 f'''
-DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({sdfg.name}_t *__state{initparams_comma})
+DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma})
 {{
     return {sym2cpp(size)};
 }}
@@ -383,7 +385,7 @@ DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({sdfg.name}_
             # Pointer set functions
             callsite_stream.write(
                 f'''
-DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__state, char *ptr{initparams_comma})
+DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_struct_name(sdfg)} *__state, char *ptr{initparams_comma})
 {{''', sdfg)
             
             offset = 0
@@ -828,6 +830,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
 
         if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
             sdfg_id = '_%d' % sdfg.sdfg_id
@@ -931,7 +934,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             params = sdfg.signature(arglist=self.arglist)
             if params:
                 params = ', ' + params
-            function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))
+            function_signature = f'void __program_{sdfg.name}_internal({mangle_dace_state_struct_name(sdfg)}*__state{params})\n{{'
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
             self.generate_external_memory_management(sdfg, footer_stream)

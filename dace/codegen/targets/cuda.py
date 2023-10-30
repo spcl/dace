@@ -23,7 +23,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
-                                      synchronize_streams, unparse_cr, unparse_cr_split)
+                                      synchronize_streams, unparse_cr, unparse_cr_split, mangle_dace_state_struct_name)
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -345,12 +345,12 @@ class CUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg.name}_t *__state);
+DACE_EXPORTED int __dace_init_cuda({mangle_dace_state_struct_name(sdfg)} *__state{params});
+DACE_EXPORTED int __dace_exit_cuda({mangle_dace_state_struct_name(sdfg)} *__state);
 
 {other_globalcode}
 
-int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
+int __dace_init_cuda({mangle_dace_state_struct_name(sdfg)} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -389,7 +389,7 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg.name}_t *__state) {{
+int __dace_exit_cuda({mangle_dace_state_struct_name(sdfg)} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -409,7 +409,7 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
+DACE_EXPORTED bool __dace_gpu_set_stream({mangle_dace_state_struct_name(sdfg)} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -419,7 +419,7 @@ DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, g
     return true;
 }}
 
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
+DACE_EXPORTED void __dace_gpu_set_all_streams({mangle_dace_state_struct_name(sdfg)} *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
@@ -1567,7 +1567,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self.scope_entry_stream = old_entry_stream
         self.scope_exit_stream = old_exit_stream
 
-        state_param = [f'{self._global_sdfg.name}_t *__state']
+        state_param = [f'{mangle_dace_state_struct_name(self._global_sdfg)} *__state']
 
         # Write callback function definition
         self._localcode.write(

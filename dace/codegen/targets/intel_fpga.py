@@ -143,13 +143,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             params_comma = ', ' + params_comma
 
         host_code.write("""
-DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
+DACE_EXPORTED int __dace_init_intel_fpga({cpp.mangle_dace_state_struct_name(sdfg)} *__state{signature}) {{{emulation_flag}
     __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
+DACE_EXPORTED int __dace_exit_intel_fpga({cpp.mangle_dace_state_struct_name(sdfg)} *__state) {{
     delete __state->fpga_context;
     return 0;
 }}

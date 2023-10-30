@@ -141,7 +141,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             params_comma = ', ' + params_comma
 
         host_code.write("""
-DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
+DACE_EXPORTED int __dace_init_xilinx({cpp.mangle_dace_state_struct_name(sdfg)} *__state{signature}) {{
     {environment_variables}
 
     __state->fpga_context = new dace_fpga_context();
@@ -149,7 +149,7 @@ DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_xilinx({sdfg.name}_t *__state) {{
+DACE_EXPORTED int __dace_exit_xilinx({mangle_dace_state_struct_name(sdfg)} *__state) {{
     delete __state->fpga_context;
     return 0;
 }}
