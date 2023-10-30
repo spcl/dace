@@ -9,7 +9,7 @@ from dace.sdfg import graph as gr, utils as sdutil
 from dace import SDFG, SDFGState
 from dace.sdfg.state import StateSubgraphView
 from dace.transformation import helpers
-from dace import propagate_memlet
+from dace.sdfg.propagation import propagate_memlets_state
 
 
 class AugAssignToWCR(transformation.SingleStateTransformation):
@@ -256,6 +256,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # Remove input node and connector
         state.remove_memlet_path(inedge)
+        propagate_memlets_state(sdfg, state)
 
         # If outedge leads to non-transient, and this is a nested SDFG,
         # propagate outwards
