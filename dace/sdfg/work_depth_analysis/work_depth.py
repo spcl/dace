@@ -131,7 +131,7 @@ PYFUNC_TO_ARITHMETICS = {
     'tanh': 1,
     'math.sqrt': 1,
     'sqrt': 1,
-    'atan2:': 1,
+    'atan2': 1,
     'min': 0,
     'max': 0,
     'ceiling': 0,
@@ -241,9 +241,9 @@ def tasklet_work(tasklet_node, state):
     if tasklet_node.code.language == dtypes.Language.CPP:
         # simplified work analysis for CPP tasklets.
         for oedge in state.out_edges(tasklet_node):
-            return oedge.data.num_accesses
+            return oedge.data.num_accesses or 0     # on Lulesh this was None for some tasklet(s)
     elif tasklet_node.code.language == dtypes.Language.Python:
-        return count_arithmetic_ops_code(tasklet_node.code.code)
+        return count_arithmetic_ops_code(tasklet_node.code.code) or 0     # on Lulesh this was None for some tasklet(s)
     else:
         # other languages not implemented, count whole tasklet as work of 1
         warnings.warn('Work of tasklets only properly analyzed for Python or CPP. For all other '
@@ -289,9 +289,15 @@ def update_value_map(old, new):
 
 def do_initial_subs(w, d, eq, subs1):
     """
-    Calls subs three times for the give (w)ork and (d)epth values.
+    Calls subs three times for the given (w)ork and (d)epth values.
     """
-    return sp.simplify(w.subs(eq[0]).subs(eq[1]).subs(subs1)), sp.simplify(d.subs(eq[0]).subs(eq[1]).subs(subs1))
+    try:
+        result = sp.simplify(sp.sympify(w).subs(eq[0]).subs(eq[1]).subs(subs1)), sp.simplify(sp.sympify(d).subs(eq[0]).subs(eq[1]).subs(subs1))
+    except Exception as e:
+        print('w:', w)
+        print('d:', d)
+        raise(e)
+    return result
 
 
 def sdfg_work_depth(sdfg: SDFG,
@@ -382,8 +388,19 @@ def sdfg_work_depth(sdfg: SDFG,
     traversal_q.append((sdfg.start_state, sp.sympify(0), sp.sympify(0), None, [], [], {}))
     visited = set()
 
+    # print('number of states in this sdfg: ', len(sdfg.states()))
+    # num_states = 0
+
     while traversal_q:
         state, depth, work, ie, condition_stack, common_subexpr_stack, value_map = traversal_q.popleft()
+
+        # num_states += 1
+        # if num_states % 50 == 0:
+        #     print(state.name)
+        #     print('work:', work)
+        #     print()
+        #     print()
+
 
         if ie is not None:
             visited.add(ie)
@@ -395,7 +412,10 @@ def sdfg_work_depth(sdfg: SDFG,
             state_value_map[state] = value_map
 
         # ignore assignments such as tmp=x[0], as those do not give much information.
-        value_map = {k: v for k, v in state_value_map[state].items() if '[' not in k and '[' not in v}
+        try:
+            value_map = {pystr_to_symbolic(k): pystr_to_symbolic(v) for k, v in state_value_map[state].items()}
+        except:
+            print('gg')
         n_depth = sp.simplify((depth + state_depths[state]).subs(value_map))
         n_work = sp.simplify((work + state_works[state]).subs(value_map))
 
@@ -543,6 +563,8 @@ def scope_work_depth(
             for e in state.out_edges(node):
                 if e.data.wcr is not None:
                     t_work += count_arithmetic_ops_code(e.data.wcr)
+            if t_work is None:
+                t_work = 0
             t_work, t_depth = do_initial_subs(t_work, t_depth, equality_subs, subs1)
             work += t_work
             w_d_map[get_uuid(node, state)] = (t_work, t_depth)
