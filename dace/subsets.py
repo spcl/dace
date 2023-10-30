@@ -20,6 +20,37 @@ def nng(expr):
     except AttributeError:  # No free_symbols in expr
         return expr
 
+def bounding_box_cover_exact(subset_a, subset_b) -> bool:
+    return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
+                and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
+                for rb, re, orb, ore in zip(subset_a.min_element(), subset_a.max_element(),
+                                            subset_b.min_element(), subset_b.max_element())])
+
+def bounding_box_symbolic_positive(subset_a, subset_b, approximation = False)-> bool:
+    min_elements_a = subset_a.min_element_approx() if approximation else subset_a.min_element()
+    max_elements_a = subset_a.max_element_approx() if approximation else subset_a.max_element()
+    min_elements_b = subset_b.min_element_approx() if approximation else subset_b.min_element()
+    max_elements_b = subset_b.max_element_approx() if approximation else subset_b.max_element()
+
+    for rb, re, orb, ore in zip(min_elements_a, max_elements_a,
+                                min_elements_b, max_elements_b):
+        # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+        # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+        # TypeError. This is a workaround for the case where two expressions are the same or equal and
+        # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
+
+        # lower bound: first check whether symbolic positive condition applies
+        if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+            if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                    symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+                return False
+        # upper bound: first check whether symbolic positive condition applies
+        if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+            if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                    symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+                return False
+    return True
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
     def covers(self, other):
@@ -38,24 +69,8 @@ class Subset(object):
 
         else:
             try:
-                for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
-                                            other.min_element_approx(), other.max_element_approx()):
-                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
-                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
-
-                    # lower bound: first check whether symbolic positive condition applies
-                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
-                            return False
-
-                    # upper bound: first check whether symbolic positive condition applies
-                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
-                            return False
+                if not bounding_box_symbolic_positive(self, other, True):
+                    return False
             except TypeError:
                 return False
 
@@ -64,30 +79,26 @@ class Subset(object):
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
 
-
-
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         if not symbolic_positive:
             try:
-                bounding_box_cover = all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
-                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                            for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
-                                                        other.min_element(), other.max_element())])
+                bounding_box_cover = bounding_box_cover_exact(self, other)
                 if not bounding_box_cover:
                     return False
                 # if self is an index no further distinction is needed
                 if isinstance(self, Indices):
                     return bounding_box_cover
-                
                 # if self is a range there are two cases
-                # - other is a range 
+                # - other is a range
                 # - other is an index
                 elif isinstance(self, Range):
                     # other is an index so we need to check if the step of self is such that other is covered
                     # self.start % self.step == other.index % self.step
                     if isinstance(other, Indices):
-                        try: 
-                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                        try:
+                            return all(
+                                [(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) ==
+                                  symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
                             for start,_,step, i in zip(self.ranges, other.indices)])
                         except:
                             return False
@@ -113,23 +124,8 @@ class Subset(object):
         else:
             try:
                 # first check if self contains other
-                for rb, re, orb, ore in zip(self.min_element(), self.max_element(),
-                                            other.min_element(), other.max_element()):
-                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
-                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
-                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
-                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
-
-                    # lower bound: first check whether symbolic positive condition applies
-                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
-                            return False
-                    # upper bound: first check whether symbolic positive condition applies
-                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
-                            return False        
+                if not bounding_box_symbolic_positive(self, other):
+                    return False
                 # if self is an index no further distinction is needed
                 if isinstance(self, Indices):
                     return True
