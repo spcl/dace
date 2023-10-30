@@ -375,7 +375,8 @@ def _subexpr(dexpr, repldict):
 
 @registry.autoregister
 class ConstantRangeMemlet(MemletPattern):
-    """ Memlet pattern that matches arbitrary expressions with constant range.
+    """ 
+    Memlet pattern that matches arbitrary expressions with constant range.
     """
 
     def can_be_applied(self, expressions, variable_context, node_range,
@@ -415,8 +416,9 @@ class ConstantRangeMemlet(MemletPattern):
 
 
 def _find_unconditionally_executed_states(sdfg: SDFG) -> set[SDFGState]:
-    # find states that are executed unconditionally
-    # add dummy state as a sink
+    """
+    Returns all states that are executed unconditionally in an SDFG
+    """
     dummy_sink = sdfg.add_state("dummy_state")
     for sink_node in sdfg.sink_nodes():
         if sink_node is not dummy_sink:
@@ -434,8 +436,13 @@ def _unsqueeze_memlet_subsetList(internal_memlet: Memlet,
                                 external_memlet: Memlet,
                                 parent_sdfg: dace.SDFG,
                                 nsdfg: NestedSDFG) -> Memlet:
-    """helper method that tries to unsqueeze a memlet in a nested SDFG.
-    If it fails it falls back to an empty memlet."""
+    """
+    Helper method that tries to unsqueeze a memlet, containing a Subsetlist as subset, in 
+    a nested SDFG. If it fails it falls back to an empty memlet.
+
+    :param internal_memlet: The internal memlet to unsqueeze.
+    :param 
+    """
 
     from dace.transformation.helpers import unsqueeze_memlet
 
@@ -445,7 +452,6 @@ def _unsqueeze_memlet_subsetList(internal_memlet: Memlet,
         external_memlet.dst_subset = external_memlet.dst_subset.subset_list[0]
     if isinstance(external_memlet.src_subset, subsets.Subsetlist):
         external_memlet.src_subset = external_memlet.src_subset.subset_list[0]
-
     if isinstance(internal_memlet.subset, subsets.Subsetlist):
         _subsets = internal_memlet.subset.subset_list
     else:
@@ -1419,7 +1425,6 @@ class UnderapproximateWrites(ppl.Pass):
         result._is_data_src = not is_src
         return result
 
-
     def _propagate_memlet(self,
                          dfg_state,
                          memlet: Memlet,
@@ -1521,7 +1526,6 @@ class UnderapproximateWrites(ppl.Pass):
         else:
             raise NotImplementedError('Unimplemented primitive: %s' %
                                       type(entry_node))
-
 
     def _propagate_subset(self,
                          memlets: List[Memlet],
