@@ -10,21 +10,21 @@ import warnings
 from dace.config import Config
 
 
+def nng(expr):
+    # When dealing with set sizes, assume symbols are non-negative
+    try:
+        # TODO: Fix in symbol definition, not here
+        for sym in list(expr.free_symbols):
+            expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
+        return expr
+    except AttributeError:  # No free_symbols in expr
+        return expr
+
 class Subset(object):
     """ Defines a subset of a data descriptor. """
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
-        def nng(expr):
-            # When dealing with set sizes, assume symbols are non-negative
-            try:
-                # TODO: Fix in symbol definition, not here
-                for sym in list(expr.free_symbols):
-                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-                return expr
-            except AttributeError:  # No free_symbols in expr
-                return expr
-
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
         if not symbolic_positive:
@@ -64,15 +64,7 @@ class Subset(object):
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
 
-        def nng(expr):
-            # When dealing with set sizes, assume symbols are non-negative
-            try:
-                # TODO: Fix in symbol definition, not here
-                for sym in list(expr.free_symbols):
-                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
-                return expr
-            except AttributeError:  # No free_symbols in expr
-                return expr
+
 
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
         if not symbolic_positive:
