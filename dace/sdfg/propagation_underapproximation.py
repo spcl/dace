@@ -568,6 +568,10 @@ def _map_header_to_parent_headers(
     loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str,
                                  subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
+    """
+    Given the loops of an SDFG returns a mapping that maps each loop to its parents in the loop 
+    nest tree.
+    """
     mapping = {}
     for header, loop in loops.items():
         _, _, loop_states, _, _ = loop
@@ -583,6 +587,9 @@ def _generate_loop_nest_tree(
     loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str,
                                  subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
+    """
+    Given the loops of an SDFG returns the loop nest trees in the SDFG represented by a dictionary.
+    """
     header_parents_mapping = _map_header_to_parent_headers(loops)
     tree_dict: Dict[SDFGState, Set[SDFGState]] = {}
     for header, loop in loops.items():
@@ -600,6 +607,10 @@ def _generate_loop_nest_tree(
 def _postorder_traversal(
         root: SDFGState,
         loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> List[SDFGState]:
+    """
+    Given a loop nest tree in the form of a dictionary and the root of the tree, returns the DFS 
+    traversal order of that tree starting from the root.
+    """
     post_order_list = []
     if root is None:
         return []
@@ -626,6 +637,10 @@ def _postorder_traversal(
 
 def _find_loop_nest_roots(
         loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> Set[SDFGState]:
+    """
+    Given the loop nest trees in an SDFG in the form of a dictionary, returns the root nodes of 
+    all loop nest trees in that SDFG.
+    """
     all_nodes = set()
     child_nodes = set()
 
@@ -633,7 +648,6 @@ def _find_loop_nest_roots(
         all_nodes.add(parent)
         all_nodes.update(children)
         child_nodes.update(children)
-
     roots = all_nodes - child_nodes
     return roots
 
