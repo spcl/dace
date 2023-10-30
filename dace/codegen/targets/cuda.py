@@ -445,7 +445,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
-        if isinstance(node, nodes.NestedSDFG) and CUDACodeGen._in_device_code:
+        if CUDACodeGen._in_device_code:
             return True
         return False
 
