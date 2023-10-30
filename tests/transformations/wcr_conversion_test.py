@@ -195,10 +195,10 @@ def test_aug_assign_free_map():
     assert applied == 1
 
 
-def test_aug_assign_dependent_map():
+def test_aug_assign_state_fission_map():
 
     @dace.program
-    def sdfg_aug_assign_dependent_map(A: dace.float64[32], B: dace.float64[32]):
+    def sdfg_aug_assign_state_fission(A: dace.float64[32], B: dace.float64[32]):
         for i in dace.map[0:32]:
             with dace.tasklet:
                 a << B[i]
@@ -207,21 +207,21 @@ def test_aug_assign_dependent_map():
 
         for i in dace.map[0:32]:
             with dace.tasklet:
-                a << A[i]
-                b >> A[i]
+                a << A[0]
+                b >> A[0]
                 b = a * 2
 
         for i in dace.map[0:32]:
             with dace.tasklet:
-                a << A[i]
-                b >> B[i]
-                b = a
+                a << A[0]
+                b >> A[0]
+                b = a * 2
 
-    sdfg = sdfg_aug_assign_dependent_map.to_sdfg()
+    sdfg = sdfg_aug_assign_state_fission.to_sdfg()
     sdfg.simplify()
 
     applied = sdfg.apply_transformations_repeated(AugAssignToWCR)
-    assert applied == 1
+    assert applied == 2
 
 
 def test_free_map_permissive():
