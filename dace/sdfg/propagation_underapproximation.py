@@ -23,13 +23,13 @@ from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.graph import Edge
 
-approximation_dict: dict[Edge, Memlet] = {}
+approximation_dict: Dict[Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
-loop_write_dict: dict[SDFGState, dict[str, Memlet]] = {}
-loop_dict: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]] = {}
-iteration_variables: dict[SDFG, Set[str]] = {}
-ranges_per_state: dict[SDFGState, dict[str, subsets.Range]] = defaultdict(lambda: {})
+loop_write_dict: dict[SDFGState, Dict[str, Memlet]] = {}
+loop_dict: Dict[SDFGState, tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]] = {}
+iteration_variables: Dict[SDFG, Set[str]] = {}
+ranges_per_state: Dict[SDFGState, Dict[str, subsets.Range]] = defaultdict(lambda: {})
 
 
 @registry.make_registry
@@ -536,7 +536,7 @@ def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[Sco
 
 
 def _map_header_to_parent_headers(
-    loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]
+    loops: Dict[SDFGState, tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Given the loops of an SDFG returns a mapping that maps each loop to its parents in the loop 
@@ -554,7 +554,7 @@ def _map_header_to_parent_headers(
 
 
 def _generate_loop_nest_tree(
-    loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]
+    loops: Dict[SDFGState, tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Given the loops of an SDFG returns the loop nest trees in the SDFG represented by a dictionary.
@@ -632,7 +632,7 @@ class UnderapproximateWrites(ppl.Pass):
 
     def apply_pass(
         self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]
-    ) -> dict[str, dict[SDFGState, Any] | dict[Any, Any] | dict[SDFGState, dict[str, Memlet]]]:
+    ) -> Dict[str, Dict[SDFGState, Any] | Dict[Any, Any] | Dict[SDFGState, Dict[str, Memlet]]]:
         """
         Applies the pass to the given SDFG.
 
@@ -681,7 +681,7 @@ class UnderapproximateWrites(ppl.Pass):
 
     def _annotate_loop_ranges(
         self, sdfg: SDFG, unannotated_cycle_states: List[SDFGState]
-    ) -> Dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState], str, subsets.Range]]:
+    ) -> Dict[SDFGState, tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
         """
         Modified version of _annotate_loop_ranges from dace.sdfg.propagation
         that also returns the identified loops in a dictionary
@@ -990,7 +990,7 @@ class UnderapproximateWrites(ppl.Pass):
 
     def _propagate_memlet_loop(self,
                                sdfg: SDFG,
-                               loops: dict[SDFGState, tuple[SDFGState, SDFGState, list[SDFGState],
+                               loops: Dict[SDFGState, tuple[SDFGState, SDFGState, List[SDFGState],
                                                             str, subsets.Range]],
                                loop_header: SDFGState = None):
         """
