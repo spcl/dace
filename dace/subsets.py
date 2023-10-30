@@ -79,88 +79,54 @@ class Subset(object):
     def covers_precise(self, other):
         """ Returns True if self contains all the elements in other. """
 
+        # If self does not cover other with a bounding box union, return false.
         symbolic_positive = Config.get('optimizer', 'symbolic_positive')
-        if not symbolic_positive:
-            try:
-                bounding_box_cover = bounding_box_cover_exact(self, other)
-                if not bounding_box_cover:
-                    return False
-                # if self is an index no further distinction is needed
-                if isinstance(self, Indices):
-                    return bounding_box_cover
-                # if self is a range there are two cases
-                # - other is a range
-                # - other is an index
-                elif isinstance(self, Range):
-                    # other is an index so we need to check if the step of self is such that other is covered
-                    # self.start % self.step == other.index % self.step
-                    if isinstance(other, Indices):
-                        try:
-                            return all(
-                                [(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) ==
-                                  symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
-                            for start,_,step, i in zip(self.ranges, other.indices)])
-                        except:
-                            return False
+        try:
+            bounding_box_cover = bounding_box_cover_exact(self, other) if symbolic_positive else bounding_box_symbolic_positive(self, other)
+            if not bounding_box_cover:
+                return False
+        except TypeError:
+            return False
+
+        try:
+            # if self is an index no further distinction is needed
+            if isinstance(self, Indices):
+                return True
+
+            elif isinstance(self, Range):
+                # other is an index so we need to check if the step of self is such that other is covered
+                # self.start % self.step == other.index % self.step
+                if isinstance(other, Indices):
+                    try:
+                        return all(
+                            [(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) ==
+                              symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
+                             for start, _, step, i in zip(self.ranges, other.indices)])
+                    except:
+                        return False
+                if isinstance(other, Range):
                     # other is a range so in every dimension self.step has to divide other.step and
                     # self.start % self.step = other.start % other.step
-                    if isinstance(other, Range):
-                        try: 
-                            self_steps = [r[2] for r in self.ranges]
-                            other_steps = [r[2] for r in other.ranges]
-                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
-                                if not (ostep % step == 0 and 
-                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
-                                    return False
-                        except:
-                            return False
-                        return True
-                # unknown type   
-                else:
-                    raise TypeError
-            except TypeError:
-                return False
-        else:
-            try:
-                # first check if self contains other
-                if not bounding_box_symbolic_positive(self, other):
-                    return False
-                # if self is an index no further distinction is needed
-                if isinstance(self, Indices):
+                    try:
+                        self_steps = [r[2] for r in self.ranges]
+                        other_steps = [r[2] for r in other.ranges]
+                        for start, step, ostart, ostep in zip(self.min_element(), self_steps, other.min_element(),
+                                                              other_steps):
+                            if not (ostep % step == 0 and
+                                    ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
+                                     (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(
+                                         nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(
+                                         nng(ostep))) == True)):
+                                return False
+                    except:
+                        return False
                     return True
-                # if self is a range there are two cases
-                # - other is a range 
-                # - other is an index
-                elif isinstance(self, Range):
-                    # other is an index so we need to check if the step of self is such that other is covered
-                    # self.start % self.step == other.index % self.step
-                    if isinstance(other, Indices):
-                        try: 
-                            return all([(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
-                            for start,_,step, i in zip(self.ranges, other.indices)])
-                        except:
-                            return False
-                    # other is a range so in every dimension self.step has to divide other.step and
-                    # self.start % self.step = other.start % other.step or self.start == other.start
-                    if isinstance(other, Range):
-                        try:
-                            self_steps = [r[2] for r in self.ranges]
-                            other_steps = [r[2] for r in other.ranges]
-                            for start,step,ostart,ostep in zip(self.min_element(), self_steps, other.min_element(), other_steps):
-                                if not (ostep % step == 0 and 
-                                        ((symbolic.simplify_ext(nng(start)) == symbolic.simplify_ext(nng(ostart))) or
-                                        (symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) == symbolic.simplify_ext(nng(ostart)) % symbolic.simplify_ext(nng(ostep))) == True)):
-                                    return False
-                        except:
-                            return False
-                    return True
-                # Unknown subset type
-                else:
-                    raise TypeError
-            except TypeError:
-                return False
-        return False
+        # unknown type
+            else:
+                raise TypeError
+
+        except TypeError:
+            return False
 
 
     def __repr__(self):
