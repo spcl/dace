@@ -101,7 +101,7 @@ class Subset(object):
                         return all(
                             [(symbolic.simplify_ext(nng(start)) % symbolic.simplify_ext(nng(step)) ==
                               symbolic.simplify_ext(nng(i)) % symbolic.simplify_ext(nng(step))) == True
-                             for start, _, step, i in zip(self.ranges, other.indices)])
+                             for (start, _, step), i in zip(self.ranges, other.indices)])
                     except:
                         return False
                 if isinstance(other, Range):
