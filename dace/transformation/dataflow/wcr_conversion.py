@@ -11,6 +11,7 @@ from dace.sdfg.state import StateSubgraphView
 from dace.transformation import helpers
 from dace import propagate_memlet
 
+
 class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
@@ -154,9 +155,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            subgraph_nodes = set(
-                [e.src for e in state.bfs_edges(input, reverse=True)]
-            )
+            subgraph_nodes = set([e.src for e in state.bfs_edges(input, reverse=True)])
             subgraph_nodes.add(input)
 
             subgraph = StateSubgraphView(state, subgraph_nodes)
