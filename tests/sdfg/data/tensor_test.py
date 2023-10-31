@@ -63,8 +63,6 @@ def test_read_csr_tensor():
     func(A=inpA, B=B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
     ref = A.toarray()
 
-    sdfg.save("./tensor.json")
-
     assert np.allclose(B, ref)
 
 
