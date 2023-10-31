@@ -819,6 +819,66 @@ class UnderapproximateWrites(ppl.Pass):
             for loop_header in post_order_traversal:
                 self._underapproximate_writes_loop(sdfg, loops, loop_header)
 
+    def _underapproximate_writes_state(self, sdfg: SDFG, state: SDFGState):
+        """ Propagates memlets throughout one SDFG state.
+
+            :param sdfg: The SDFG in which the state is situated.
+            :param state: The state to propagate in.
+            :note: This is an in-place operation on the SDFG state.
+        """
+
+        # Algorithm:
+        # 1. Start propagating information from tasklets outwards (their edges
+        #    are hardcoded).
+        # 2. Traverse the neighboring nodes (topological sort, first forward to
+        #    outputs and then backward to inputs).
+        #    There are four possibilities:
+        #    a. If the neighboring node is a tasklet, skip (such edges are
+        #       immutable)
+        #    b. If the neighboring node is an array, make sure it is the correct
+        #       array. Otherwise, throw a mismatch exception.
+        #    c. If the neighboring node is a scope node, and its other edges are
+        #       not set, set the results per-array, using the union of the
+        #       obtained ranges in the previous depth.
+        #    d. If the neighboring node is a scope node, and its other edges are
+        #       already set, verify the results per-array, using the union of the
+        #       obtained ranges in the previous depth.
+        #    NOTE: The SDFG creation process ensures that all edges in the
+        #          multigraph are tagged with the appropriate array. In any case
+        #          of ambiguity, the function raises an exception.
+        # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
+        #    Accumulate information about each array in the target node.
+
+        # First, propagate nested SDFGs in a bottom-up fashion
+        def symbol_map(mapping, symbol):
+            if symbol in mapping:
+                return mapping[symbol]
+            return None
+
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+
+                map_iteration_variables = _collect_iteration_variables(state, node)
+                sdfg_iteration_variables = iteration_variables[
+                    sdfg] if sdfg in iteration_variables else set()
+                state_iteration_variables = ranges_per_state[state].keys()
+                iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
+                                             state_iteration_variables)
+
+                # apply symbol mapping of nested SDFG
+                iteration_variables[node.sdfg] = set(
+                    map(lambda x: symbol_map(node.symbol_mapping, x), iteration_variables_local))
+
+                # Propagate memlets inside the nested SDFG.
+                self._underapproximate_writes_sdfg(node.sdfg)
+
+                # Propagate memlets out of the nested SDFG.
+                self._underapproximate_writes_nested_sdfg(sdfg, state, node)
+
+        # Process scopes from the leaves upwards
+        self._underapproximate_writes_scope(sdfg, state, state.scope_leaves())
+
+
     def _underapproximate_writes_nested_sdfg(
         self,
         parent_sdfg: SDFG,
@@ -1135,64 +1195,6 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 dst_memlet.subset = subset
 
-    def _underapproximate_writes_state(self, sdfg: SDFG, state: SDFGState):
-        """ Propagates memlets throughout one SDFG state.
-
-            :param sdfg: The SDFG in which the state is situated.
-            :param state: The state to propagate in.
-            :note: This is an in-place operation on the SDFG state.
-        """
-
-        # Algorithm:
-        # 1. Start propagating information from tasklets outwards (their edges
-        #    are hardcoded).
-        # 2. Traverse the neighboring nodes (topological sort, first forward to
-        #    outputs and then backward to inputs).
-        #    There are four possibilities:
-        #    a. If the neighboring node is a tasklet, skip (such edges are
-        #       immutable)
-        #    b. If the neighboring node is an array, make sure it is the correct
-        #       array. Otherwise, throw a mismatch exception.
-        #    c. If the neighboring node is a scope node, and its other edges are
-        #       not set, set the results per-array, using the union of the
-        #       obtained ranges in the previous depth.
-        #    d. If the neighboring node is a scope node, and its other edges are
-        #       already set, verify the results per-array, using the union of the
-        #       obtained ranges in the previous depth.
-        #    NOTE: The SDFG creation process ensures that all edges in the
-        #          multigraph are tagged with the appropriate array. In any case
-        #          of ambiguity, the function raises an exception.
-        # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
-        #    Accumulate information about each array in the target node.
-
-        # First, propagate nested SDFGs in a bottom-up fashion
-        def symbol_map(mapping, symbol):
-            if symbol in mapping:
-                return mapping[symbol]
-            return None
-
-        for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-
-                map_iteration_variables = _collect_iteration_variables(state, node)
-                sdfg_iteration_variables = iteration_variables[
-                    sdfg] if sdfg in iteration_variables else set()
-                state_iteration_variables = ranges_per_state[state].keys()
-                iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
-                                             state_iteration_variables)
-
-                # apply symbol mapping of nested SDFG
-                iteration_variables[node.sdfg] = set(
-                    map(lambda x: symbol_map(node.symbol_mapping, x), iteration_variables_local))
-
-                # Propagate memlets inside the nested SDFG.
-                self._underapproximate_writes_sdfg(node.sdfg)
-
-                # Propagate memlets out of the nested SDFG.
-                self._underapproximate_writes_nested_sdfg(sdfg, state, node)
-
-        # Process scopes from the leaves upwards
-        self._underapproximate_writes_scope(sdfg, state, state.scope_leaves())
 
     def _underapproximate_writes_scope(self,
                                        sdfg: SDFG,
