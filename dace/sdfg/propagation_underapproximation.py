@@ -813,6 +813,15 @@ class UnderapproximateWrites(ppl.Pass):
         for state in sdfg.nodes():
             self._underapproximate_writes_state(sdfg, state)
 
+        self._underapproximate_writes_loops(loops, sdfg)
+
+    def _underapproximate_writes_loops(self, loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
+                                                            str, subsets.Range]],
+                                       sdfg: SDFG):
+        """
+        Helper function that calls underapproximate_writes_loops on all the loops in the SDFG in bottom up order
+        of the loop nests
+        """
         loop_nest_tree = _generate_loop_nest_tree(loops)
         root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
         for root in root_loop_headers:
@@ -841,34 +850,14 @@ class UnderapproximateWrites(ppl.Pass):
         #    c. If the neighboring node is a scope node, and its other edges are
         #       not set, set the results per-array, using the union of the
         #       obtained ranges in the previous depth.
-        #    d. If the neighboring node is a scope node, and its other edges are
-        #       already set, verify the results per-array, using the union of the
-        #       obtained ranges in the previous depth.
-        #    NOTE: The SDFG creation process ensures that all edges in the
-        #          multigraph are tagged with the appropriate array. In any case
-        #          of ambiguity, the function raises an exception.
-        # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
-        #    Accumulate information about each array in the target node.
+        # 3. For each edge in the multigraph, store the results in the global dictionary
+        #    approximation_dict
 
         # First, propagate nested SDFGs in a bottom-up fashion
-        def symbol_map(mapping, symbol):
-            if symbol in mapping:
-                return mapping[symbol]
-            return None
-
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
 
-                map_iteration_variables = _collect_iteration_variables(state, node)
-                sdfg_iteration_variables = iteration_variables[
-                    sdfg] if sdfg in iteration_variables else set()
-                state_iteration_variables = ranges_per_state[state].keys()
-                iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
-                                             state_iteration_variables)
-
-                # apply symbol mapping of nested SDFG
-                iteration_variables[node.sdfg] = set(
-                    map(lambda x: symbol_map(node.symbol_mapping, x), iteration_variables_local))
+                self._find_live_iteration_variables(node, sdfg, state)
 
                 # Propagate memlets inside the nested SDFG.
                 self._underapproximate_writes_sdfg(node.sdfg)
@@ -879,6 +868,26 @@ class UnderapproximateWrites(ppl.Pass):
         # Process scopes from the leaves upwards
         self._underapproximate_writes_scope(sdfg, state, state.scope_leaves())
 
+    def _find_live_iteration_variables(self, nsdfg: nodes.NestedSDFG,
+                                       sdfg: SDFG,
+                                       state: SDFGState):
+        """
+        Helper method that collects all iteration variables of surrounding maps and loops of a given
+        nested SDFG and stores them in the global iteration_variables dictionary after applying the
+        symbol-mapping of the nested SDFG.
+        """
+        def symbol_map(mapping, symbol):
+            if symbol in mapping:
+                return mapping[symbol]
+            return None
+        map_iteration_variables = _collect_iteration_variables(state, nsdfg)
+        sdfg_iteration_variables = iteration_variables[
+            sdfg] if sdfg in iteration_variables else set()
+        state_iteration_variables = ranges_per_state[state].keys()
+        iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
+                                     state_iteration_variables)
+        iteration_variables[nsdfg.sdfg] = set(
+            map(lambda x: symbol_map(nsdfg.symbol_mapping, x), iteration_variables_local))
 
     def _underapproximate_writes_nested_sdfg(
         self,
