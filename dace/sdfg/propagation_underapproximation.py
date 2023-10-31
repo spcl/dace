@@ -798,6 +798,27 @@ class UnderapproximateWrites(ppl.Pass):
             "loops": loop_dict
         }
 
+    def _underapproximate_writes_sdfg(self, sdfg: SDFG):
+        """ Underapproximates write-sets of loops, maps and nested SDFGs in the given SDFG.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        from dace.transformation.helpers import split_interstate_edges
+
+        split_interstate_edges(sdfg)
+        loops = _find_for_loops(sdfg)
+        loop_dict.update(loops)
+
+        for state in sdfg.nodes():
+            self._underapproximate_writes_state(sdfg, state)
+
+        loop_nest_tree = _generate_loop_nest_tree(loops)
+        root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
+        for root in root_loop_headers:
+            post_order_traversal = _postorder_traversal(root, loop_nest_tree)
+            for loop_header in post_order_traversal:
+                self._underapproximate_writes_loop(sdfg, loops, loop_header)
+
     def _underapproximate_writes_nested_sdfg(
         self,
         parent_sdfg: SDFG,
@@ -805,7 +826,7 @@ class UnderapproximateWrites(ppl.Pass):
         nsdfg_node: NestedSDFG,
     ):
         """
-        Propagate memlets out of a nested sdfg. Only consider memlets in states that are
+        Propagate writes out of a nested sdfg. Only consider memlets in states that are
         executed unconditionally.
 
         :param parent_sdfg: The parent SDFG this nested SDFG is in.
@@ -950,27 +971,6 @@ class UnderapproximateWrites(ppl.Pass):
                                                            nsdfg_node)
 
                 approximation_dict[edge] = out_memlet
-
-    def _underapproximate_writes_sdfg(self, sdfg: SDFG):
-        """ Propagates memlets throughout an entire given SDFG. 
-
-            :note: This is an in-place operation on the SDFG.
-        """
-        from dace.transformation.helpers import split_interstate_edges
-
-        split_interstate_edges(sdfg)
-        loops = _find_for_loops(sdfg)
-        loop_dict.update(loops)
-
-        for state in sdfg.nodes():
-            self._underapproximate_writes_state(sdfg, state)
-
-        loop_nest_tree = _generate_loop_nest_tree(loops)
-        root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
-        for root in root_loop_headers:
-            post_order_traversal = _postorder_traversal(root, loop_nest_tree)
-            for loop_header in post_order_traversal:
-                self._underapproximate_writes_loop(sdfg, loops, loop_header)
 
     def _underapproximate_writes_loop(self,
                                       sdfg: SDFG,
