@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     import dace.sdfg.scope
 
 
-SomeNodeT = Union[nd.Node, 'ControlFlowBlock']
-SomeEdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
-SomeGraphT = Union['ControlFlowRegion', 'SDFGState']
+NodeT = Union[nd.Node, 'ControlFlowBlock']
+EdgeT = Union[MultiConnectorEdge[mm.Memlet], Edge['dace.sdfg.InterstateEdge']]
+GraphT = Union['ControlFlowRegion', 'SDFGState']
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -84,26 +84,26 @@ class BlockGraphView(object):
     # Typing overrides
 
     @overload
-    def nodes(self) -> List[SomeNodeT]:
+    def nodes(self) -> List[NodeT]:
         ...
 
     @overload
-    def edges(self) -> List[SomeEdgeT]:
+    def edges(self) -> List[EdgeT]:
         ...
 
     @overload
-    def in_degree(self, node: SomeNodeT) -> int:
+    def in_degree(self, node: NodeT) -> int:
         ...
 
     @overload
-    def out_degree(self, node: SomeNodeT) -> int:
+    def out_degree(self, node: NodeT) -> int:
         ...
 
     ###################################################################
     # Traversal methods
 
     @abc.abstractmethod
-    def all_nodes_recursive(self) -> Iterator[Tuple[SomeNodeT, SomeGraphT]]:
+    def all_nodes_recursive(self) -> Iterator[Tuple[NodeT, GraphT]]:
         """
         Iterate over all nodes in this graph or subgraph.
         This includes control flow blocks, nodes in those blocks, and recursive control flow blocks and nodes within
@@ -114,7 +114,7 @@ class BlockGraphView(object):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def all_edges_recursive(self) -> Iterator[Tuple[SomeEdgeT, SomeGraphT]]:
+    def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         """
         Iterate over all edges in this graph or subgraph.
         This includes dataflow edges, inter-state edges, and recursive edges within nested SDFGs. It returns tuples of
@@ -336,13 +336,13 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Traversal methods
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[SomeNodeT, SomeGraphT]]:
+    def all_nodes_recursive(self) -> Iterator[Tuple[NodeT, GraphT]]:
         for node in self.nodes():
             yield node, self
             if isinstance(node, nd.NestedSDFG):
                 yield from node.sdfg.all_nodes_recursive()
 
-    def all_edges_recursive(self) -> Iterator[Tuple[SomeEdgeT, SomeGraphT]]:
+    def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
             yield e, self
         for node in self.nodes():
@@ -936,12 +936,12 @@ class ControlGraphView(BlockGraphView, abc.ABC):
     ###################################################################
     # Traversal methods
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[SomeNodeT, SomeGraphT]]:
+    def all_nodes_recursive(self) -> Iterator[Tuple[NodeT, GraphT]]:
         for node in self.nodes():
             yield node, self
             yield from node.all_nodes_recursive()
 
-    def all_edges_recursive(self) -> Iterator[Tuple[SomeEdgeT, SomeGraphT]]:
+    def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():
             yield e, self
         for node in self.nodes():
