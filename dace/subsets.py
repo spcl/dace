@@ -1041,14 +1041,14 @@ class Indices(Subset):
             return self
         return None
 
-class Subsetlist(Subset):
+class SubsetUnion(Subset):
     """
     Wrapper subset type that stores multiple Subsets in a list.
     """
 
     def __init__(self, subset):
         self.subset_list: list[Subset] = []
-        if isinstance(subset, Subsetlist):
+        if isinstance(subset, SubsetUnion):
             self.subset_list = subset.subset_list
         elif isinstance(subset, list):
             for subset in subset:
@@ -1069,7 +1069,7 @@ class Subsetlist(Subset):
         true is returned when one of the subsets in self is equal to other.
         """
 
-        if isinstance(other, Subsetlist):
+        if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
                 # check if ther is a subset in self that covers every subset in other
                 if all(subset.covers(s) for s in other.subset_list):
@@ -1087,7 +1087,7 @@ class Subsetlist(Subset):
         true is returned when one of the subsets in self is equal to other 
         """
 
-        if isinstance(other, Subsetlist):
+        if isinstance(other, SubsetUnion):
             for subset in self.subset_list:
                 # check if ther is a subset in self that covers every subset in other
                 if all(subset.covers_precise(s) for s in other.subset_list):
@@ -1113,7 +1113,7 @@ class Subsetlist(Subset):
     def union(self, other: Subset):
         """In place union of self with another Subset"""
         try:
-            if isinstance(other, Subsetlist):
+            if isinstance(other, SubsetUnion):
                 self.subset_list += other.subset_list
             elif isinstance(other, Indices) or isinstance(other, Range):
                 self.subset_list.append(other)
@@ -1231,8 +1231,8 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             return subset_b
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
-        elif isinstance(subset_a, Subsetlist) or isinstance(
-                subset_b, Subsetlist):
+        elif isinstance(subset_a, SubsetUnion) or isinstance(
+                subset_b, SubsetUnion):
             return list_union(subset_a, subset_b)
         elif type(subset_a) != type(subset_b):
             return bounding_box_union(subset_a, subset_b)
@@ -1269,14 +1269,14 @@ def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
         elif subset_a is None and subset_b is None:
             raise TypeError('Both subsets cannot be None')
         elif type(subset_a) != type(subset_b):
-            if isinstance(subset_b, Subsetlist):
-                return Subsetlist(subset_b.subset_list.append(subset_a))
+            if isinstance(subset_b, SubsetUnion):
+                return SubsetUnion(subset_b.subset_list.append(subset_a))
             else:
-                return Subsetlist(subset_a.subset_list.append(subset_b))
-        elif isinstance(subset_a, Subsetlist):
-            return Subsetlist(subset_a.subset_list + subset_b.subset_list)
+                return SubsetUnion(subset_a.subset_list.append(subset_b))
+        elif isinstance(subset_a, SubsetUnion):
+            return SubsetUnion(subset_a.subset_list + subset_b.subset_list)
         else:
-            return Subsetlist([subset_a, subset_b])
+            return SubsetUnion([subset_a, subset_b])
 
     except TypeError:
         return None
