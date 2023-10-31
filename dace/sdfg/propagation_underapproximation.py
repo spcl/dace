@@ -409,10 +409,10 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> Set[SDFGState]:
     return states
 
 
-def _unsqueeze_memlet_subsetList(internal_memlet: Memlet, external_memlet: Memlet,
-                                 parent_sdfg: dace.SDFG, nsdfg: NestedSDFG) -> Memlet:
+def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Memlet,
+                                  parent_sdfg: dace.SDFG, nsdfg: NestedSDFG) -> Memlet:
     """
-    Helper method that tries to unsqueeze a memlet, containing a Subsetlist as subset, in 
+    Helper method that tries to unsqueeze a memlet, containing a SubsetUnion as subset, in
     a nested SDFG. If it fails it falls back to an empty memlet.
 
     :param internal_memlet: The internal memlet to unsqueeze.
@@ -669,7 +669,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         self._propagate_memlets_sdfg(sdfg)
 
-        # Replace None with empty Subsetlist in each Memlet
+        # Replace None with empty SubsetUnion in each Memlet
         for entry in approximation_dict.values():
             if entry.subset is None:
                 entry.subset = subsets.SubsetUnion([])
@@ -866,7 +866,7 @@ class UnderapproximateWrites(ppl.Pass):
                         border_memlet._is_data_src = True
                         border_memlets[node.label] = border_memlet
 
-                # Given all of this access nodes' memlets union all the subsets to one subsetList
+                # Given all of this access nodes' memlets union all the subsets to one SubsetUnion
                 if len(memlets) > 0:
                     subset = subsets.SubsetUnion([])
                     for m in memlets:
@@ -962,8 +962,8 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge] = out_memlet
                     continue
 
-                out_memlet = _unsqueeze_memlet_subsetList(internal_memlet, out_memlet, parent_sdfg,
-                                                          nsdfg_node)
+                out_memlet = _unsqueeze_memlet_subsetunion(internal_memlet, out_memlet, parent_sdfg,
+                                                           nsdfg_node)
 
                 approximation_dict[edge] = out_memlet
 
@@ -1519,7 +1519,7 @@ class UnderapproximateWrites(ppl.Pass):
             if len(list(set(_subsets) - set([None]))) == 0 or _subsets is None:
                 continue
 
-            # iterate over all the subsets in the Subsetlist of the current memlet and
+            # iterate over all the subsets in the SubsetUnion of the current memlet and
             # try to apply a memletpattern. If no pattern matches fall back to the empty set
             for i, subset in enumerate(_subsets):
                 # find a pattern for the current subset

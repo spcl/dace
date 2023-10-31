@@ -1063,8 +1063,8 @@ class SubsetUnion(Subset):
 
     def covers(self, other):
         """ 
-        Returns True if this Subsetlist covers another subset (using a bounding box). 
-        If other is another SubsetList then self and other will
+        Returns True if this SubsetUnion covers another subset (using a bounding box).
+        If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
         true is returned when one of the subsets in self is equal to other.
         """
@@ -1081,8 +1081,8 @@ class SubsetUnion(Subset):
         
     def covers_precise(self, other):
         """ 
-        Returns True if this Subsetlist covers another
-        subset. If other is another SubsetList then self and other will
+        Returns True if this SubsetUnion covers another
+        subset. If other is another SubsetUnion then self and other will
         only return true if self is other. If other is a different type of subset
         true is returned when one of the subsets in self is equal to other 
         """
@@ -1258,7 +1258,7 @@ def list_union(subset_a: Subset, subset_b: Subset) -> Subset:
 
     :param subset_a: The first subset.
     :param subset_b: The second subset.
-    :return: A Subsetlist object that contains all elements of subset_a and subset_b.
+    :return: A SubsetUnion object that contains all elements of subset_a and subset_b.
     """
     # TODO(later): Merge subsets in both lists if possible
     try:
