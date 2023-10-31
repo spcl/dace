@@ -738,6 +738,48 @@ def _find_for_loops(
     return identified_loops
 
 
+def _filter_undefined_symbols(border_memlet: Memlet,
+                              outer_symbols: Dict[str, dtypes.typeclass]):
+    '''
+    Helper method that filters out subsets containing symbols which are not defined
+    outside a nested SDFG.
+
+    :note: This function operates in-place on the given memlet.
+    '''
+    if border_memlet.src_subset is not None:
+        if isinstance(border_memlet.src_subset, subsets.SubsetUnion):
+            _subsets = border_memlet.src_subset.subset_list
+        else:
+            _subsets = [border_memlet.src_subset]
+        for i, subset in enumerate(_subsets):
+            for rng in subset:
+                fall_back = False
+                for item in rng:
+                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                        fall_back = True
+                        break
+                if fall_back:
+                    _subsets[i] = None
+                    break
+        border_memlet.src_subset = subsets.SubsetUnion(_subsets)
+    if border_memlet.dst_subset is not None:
+        if isinstance(border_memlet.dst_subset, subsets.SubsetUnion):
+            _subsets = border_memlet.dst_subset.subset_list
+        else:
+            _subsets = [border_memlet.dst_subset]
+        for i, subset in enumerate(_subsets):
+            for rng in subset:
+                fall_back = False
+                for item in rng:
+                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                        fall_back = True
+                        break
+                if fall_back:
+                    _subsets[i] = None
+                    break
+        border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
+
+
 class UnderapproximateWrites(ppl.Pass):
 
     def depends_on(self) -> Set[Type[Pass] | Pass]:
@@ -905,6 +947,28 @@ class UnderapproximateWrites(ppl.Pass):
         :note: This operates in-place on the parent SDFG.
         """
 
+        def _init_border_memlet(template_memlet: Memlet,
+                                node_label: str
+                                ):
+            '''
+            Creates a Memlet with the same data as the template_memlet, stores it in the
+            border_memlets dictionary and returns it.
+            '''
+            border_memlet = Memlet(data=template_memlet.data)
+            border_memlet._is_data_src = True
+            border_memlets[node_label] = border_memlet
+            return border_memlet
+
+        def _merge_subsets(subset_a, subset_b):
+            # If the border memlet already has a set range, compute the
+            # union of the ranges to merge the subsets.
+            if subset_a is not None:
+                if subset_a.dims() != subset_b.dims():
+                    raise ValueError('Cannot merge subset ranges of unequal dimension!')
+                return subsets.list_union(subset_a, subset_b)
+            else:
+                return subset_b
+
         # Build a map of connectors to associated 'border' memlets inside
         # the nested SDFG. This map will be populated with memlets once they
         # get propagated in the SDFG.
@@ -923,38 +987,26 @@ class UnderapproximateWrites(ppl.Pass):
             for node in state.data_nodes():
                 if node.label not in border_memlets:
                     continue
-
-                border_memlet = border_memlets[node.label]
                 # Get the edges to this access node
                 edges = state.in_edges(node)
+                border_memlet = border_memlets[node.label]
 
                 # Collect all memlets belonging to this access node
                 memlets = []
                 for edge in edges:
                     inside_memlet = approximation_dict[edge]
                     memlets.append(inside_memlet)
-
+                    # initialize border memlet if it does not exist already
                     if border_memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        border_memlet = Memlet(data=inside_memlet.data)
-                        border_memlet._is_data_src = True
-                        border_memlets[node.label] = border_memlet
+                        border_memlet = _init_border_memlet(inside_memlet, node.label)
 
                 # Given all of this access nodes' memlets union all the subsets to one SubsetUnion
                 if len(memlets) > 0:
                     subset = subsets.SubsetUnion([])
-                    for m in memlets:
-                        subset = subsets.list_union(subset, m.subset)
-
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if border_memlet.subset is not None:
-                        if border_memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                        border_memlet.subset = subsets.list_union(border_memlet.subset, subset)
-                    else:
-                        border_memlet.subset = subset
+                    for memlet in memlets:
+                        subset = subsets.list_union(subset, memlet.subset)
+                    # compute the union of the ranges to merge the subsets.
+                    border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
 
             # collect the memlets for each loop
             if state in loop_write_dict:
@@ -962,23 +1014,11 @@ class UnderapproximateWrites(ppl.Pass):
                     if node_label not in border_memlets:
                         continue
                     border_memlet = border_memlets[node_label]
-
+                    # initialize border memlet if it does not exist already
                     if border_memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        border_memlet = Memlet(data=loop_memlet.data)
-                        border_memlet._is_data_src = True
-                        border_memlets[node_label] = border_memlet
-                    subset = loop_memlet.subset
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if border_memlet.subset is not None:
-                        if border_memlet.subset.dims() == subset.dims():
-                            border_memlet.subset = subsets.list_union(border_memlet.subset, subset)
-                        else:
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                    else:
-                        border_memlet.subset = subset
+                        border_memlet = _init_border_memlet(loop_memlet, node_label)
+                    # compute the union of the ranges to merge the subsets.
+                    border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.
@@ -987,42 +1027,8 @@ class UnderapproximateWrites(ppl.Pass):
             if not border_memlet:
                 continue
             border_memlet.replace(nsdfg_node.symbol_mapping)
-            # Also make sure that there's no symbol in the border memlet's
-            # range that only exists inside the nested SDFG. If that's the
-            # case, use an empty set to stay correct.
-
-            if border_memlet.src_subset is not None:
-                if isinstance(border_memlet.src_subset, subsets.SubsetUnion):
-                    _subsets = border_memlet.src_subset.subset_list
-                else:
-                    _subsets = [border_memlet.src_subset]
-                for i, subset in enumerate(_subsets):
-                    for rng in subset:
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            _subsets[i] = None
-                            break
-                border_memlet.src_subset = subsets.SubsetUnion(_subsets)
-            if border_memlet.dst_subset is not None:
-                if isinstance(border_memlet.dst_subset, subsets.SubsetUnion):
-                    _subsets = border_memlet.dst_subset.subset_list
-                else:
-                    _subsets = [border_memlet.dst_subset]
-                for i, subset in enumerate(_subsets):
-                    for rng in subset:
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            _subsets[i] = None
-                            break
-                border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
+            #filter out subsets that use symbols that are not defined outside of the nsdfg
+            _filter_undefined_symbols(border_memlet, outer_symbols)
 
         # Propagate the inside 'border' memlets outside the SDFG by
         # offsetting, and unsqueezing if necessary.
@@ -1030,17 +1036,16 @@ class UnderapproximateWrites(ppl.Pass):
             out_memlet = approximation_dict[edge]
             if edge.src_conn in border_memlets:
                 internal_memlet = border_memlets[edge.src_conn]
-
                 if internal_memlet is None:
                     out_memlet.subset = None
                     out_memlet.dst_subset = None
                     approximation_dict[edge] = out_memlet
                     continue
-
                 out_memlet = _unsqueeze_memlet_subsetunion(internal_memlet, out_memlet, parent_sdfg,
                                                            nsdfg_node)
-
                 approximation_dict[edge] = out_memlet
+
+
 
     def _underapproximate_writes_loop(self,
                                       sdfg: SDFG,
@@ -1070,7 +1075,6 @@ class UnderapproximateWrites(ppl.Pass):
             # -> only propagate subsets that contain the iterator as a symbol
             # if loop range is constant (and not empty, which is already verified)
             # -> always propagate all subsets out
-
             if memlet.subset is None:
                 return []
             result = memlet.subset.subset_list if isinstance(
@@ -1078,7 +1082,6 @@ class UnderapproximateWrites(ppl.Pass):
             # range contains symbols
             if itrange.free_symbols:
                 result = [s for s in result if itvar in s.free_symbols]
-
             return result
 
         current_loop = loops[loop_header]
