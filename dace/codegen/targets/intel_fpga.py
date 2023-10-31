@@ -3,6 +3,8 @@ import ast
 import functools
 import copy
 import itertools
+import os
+import re
 from six import StringIO
 import numpy as np
 
@@ -141,20 +143,19 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             params_comma = ', ' + params_comma
 
         host_code.write("""
-DACE_EXPORTED int __dace_init_intel_fpga({sdfg_state_name} *__state{signature}) {{{emulation_flag}
+DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
     __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
+DACE_EXPORTED int __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     delete __state->fpga_context;
     return 0;
 }}
 
 {host_code}""".format(signature=params_comma,
                       sdfg=self._global_sdfg,
-                      sdfg_state_name=cpp.mangle_dace_state_struct_name(self._global_sdfg),
                       emulation_flag=emulation_flag,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([

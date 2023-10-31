@@ -195,7 +195,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
 
     def _generate_report_setter(self, sdfg: SDFG) -> str:
         return f'''
-        DACE_EXPORTED void __dace_set_instrumented_data_report({cpp.mangle_dace_state_struct_name(sdfg)} *__state, const char *dirpath) {{
+        DACE_EXPORTED void __dace_set_instrumented_data_report({sdfg.name}_t *__state, const char *dirpath) {{
             __state->serializer->set_folder(dirpath);
         }}
         '''

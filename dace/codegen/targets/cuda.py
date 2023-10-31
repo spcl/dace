@@ -1,8 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
+import copy
 import ctypes
 import functools
+import os
 import warnings
-from typing import Dict, List, Set, Tuple, Union
+from typing import Any, Dict, List, Set, Tuple, Union
 
 import networkx as nx
 import sympy
@@ -11,6 +14,7 @@ from six import StringIO
 import dace
 from dace import data as dt
 from dace import dtypes, registry
+from dace import sdfg as sd
 from dace import subsets, symbolic
 from dace.codegen import common, cppunparse
 from dace.codegen.codeobject import CodeObject
@@ -19,7 +23,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
-                                      synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
+                                      synchronize_streams, unparse_cr, unparse_cr_split)
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -341,12 +345,12 @@ class CUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *__state{params});
+DACE_EXPORTED int __dace_exit_cuda({sdfg.name}_t *__state);
 
 {other_globalcode}
 
-int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
+int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -385,7 +389,7 @@ int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg_state_name} *__state) {{
+int __dace_exit_cuda({sdfg.name}_t *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -405,7 +409,7 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -415,7 +419,7 @@ DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streami
     return true;
 }}
 
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
@@ -423,7 +427,6 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
 
 {localcode}
 """.format(params=params_comma,
-           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
@@ -1564,7 +1567,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self.scope_entry_stream = old_entry_stream
         self.scope_exit_stream = old_exit_stream
 
-        state_param = [f'{mangle_dace_state_struct_name(self._global_sdfg)} *__state']
+        state_param = [f'{self._global_sdfg.name}_t *__state']
 
         # Write callback function definition
         self._localcode.write(
