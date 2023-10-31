@@ -623,7 +623,8 @@ def _find_for_loops(
 ) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
     """
     Modified version of _annotate_loop_ranges from dace.sdfg.propagation
-    that returns the identified loops in a dictionary
+    that returns the identified loops in a dictionary and stores the found iteration variables
+    in the global ranges_per_state dictionary.
 
     :param sdfg: The SDFG in which to look.
     :return: dictionary mapping loop headers to first state in the loop,
