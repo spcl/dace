@@ -7,6 +7,7 @@ import os
 import re
 import numpy as np
 import ast
+
 import dace
 from dace import data as dt, registry, dtypes, subsets
 from dace.config import Config
@@ -141,7 +142,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             params_comma = ', ' + params_comma
 
         host_code.write("""
-DACE_EXPORTED int __dace_init_xilinx({cpp.mangle_dace_state_struct_name(sdfg)} *__state{signature}) {{
+DACE_EXPORTED int __dace_init_xilinx({sdfg_state_name} *__state{signature}) {{
     {environment_variables}
 
     __state->fpga_context = new dace_fpga_context();
@@ -149,13 +150,14 @@ DACE_EXPORTED int __dace_init_xilinx({cpp.mangle_dace_state_struct_name(sdfg)} *
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_xilinx({mangle_dace_state_struct_name(sdfg)} *__state) {{
+DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
     delete __state->fpga_context;
     return 0;
 }}
 
 {host_code}""".format(signature=params_comma,
                       sdfg=self._global_sdfg,
+                      sdfg_state_name=cpp.mangle_dace_state_struct_name(self._global_sdfg),
                       environment_variables=set_env_vars,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([

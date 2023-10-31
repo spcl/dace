@@ -830,8 +830,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
-
         if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
             sdfg_id = '_%d' % sdfg.sdfg_id
 
@@ -926,6 +924,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Get all environments used in the generated code, including
             # dependent environments
             import dace.library  # Avoid import loops
+            from dace.codegen.targets.cpp import mangle_dace_state_struct_name
             self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
             self.generate_header(sdfg, header_global_stream, header_stream)
