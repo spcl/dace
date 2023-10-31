@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
 
 
-def mangle_dace_state_struct_name(sdfg: SDFG | str) -> str:
+def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
     """This function creates a unique name for the `SDFG`'s state `struct`.
 
     :note: Previously this was just the name of the SDFG with the suffix `_t`
