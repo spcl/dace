@@ -460,7 +460,6 @@ class SDFG(ControlFlowRegion):
                                  desc="Sub-array redistribution descriptors for this SDFG",
                                  to_json=_arrays_to_json,
                                  from_json=_arrays_from_json)
-    _with_scopes = Property(dtype=bool, default=False, desc='Contains state scopes')
 
     callback_mapping = DictProperty(str,
                                     str,
