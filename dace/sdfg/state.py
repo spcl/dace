@@ -2489,40 +2489,40 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
     ###################################################################
     # Traversal methods
 
-    def all_state_scopes_recursive(self, recurse_into_sdfgs=False) -> Iterator['ControlFlowRegion']:
-        """ Iterate over this and all nested state scopes. """
+    def all_control_flow_regions(self, recursive=False) -> Iterator['ControlFlowRegion']:
+        """ Iterate over this and all nested control flow regions. """
         yield self
         for block in self.nodes():
-            if isinstance(block, SDFGState) and recurse_into_sdfgs:
+            if isinstance(block, SDFGState) and recursive:
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
-                        yield from node.sdfg.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
+                        yield from node.sdfg.all_control_flow_regions(recursive=recursive)
             elif isinstance(block, ControlFlowRegion):
-                yield from block.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs)
+                yield from block.all_control_flow_regions(recursive=recursive)
 
     def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
         """ Iterate over this and all nested SDFGs. """
-        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=True):
+        for cfg in self.all_control_flow_regions(recursive=True):
             if isinstance(cfg, dace.SDFG):
                 yield cfg
 
-    def all_states_recursive(self) -> Iterator[SDFGState]:
+    def all_states(self) -> Iterator[SDFGState]:
         """ Iterate over all states in this control flow graph. """
         for block in self.nodes():
             if isinstance(block, SDFGState):
                 yield block
             elif isinstance(block, ControlFlowRegion):
-                yield from block.all_states_recursive()
+                yield from block.all_states()
 
-    def all_control_flow_blocks_recursive(self, recurse_into_sdfgs=False) -> Iterator[ControlFlowBlock]:
+    def all_control_flow_blocks(self, recursive=False) -> Iterator[ControlFlowBlock]:
         """ Iterate over all control flow blocks in this control flow graph. """
-        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+        for cfg in self.all_control_flow_regions(recursive=recursive):
             for block in cfg.nodes():
                 yield block
 
-    def all_interstate_edges_recursive(self, recurse_into_sdfgs=False) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
+    def all_interstate_edges(self, recursive=False) -> Iterator[Edge['dace.sdfg.InterstateEdge']]:
         """ Iterate over all interstate edges in this control flow graph. """
-        for cfg in self.all_state_scopes_recursive(recurse_into_sdfgs=recurse_into_sdfgs):
+        for cfg in self.all_control_flow_regions(recursive=recursive):
             for edge in cfg.edges():
                 yield edge
 

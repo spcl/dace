@@ -1206,7 +1206,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for cfg in sdfg.all_state_scopes_recursive():
+        for cfg in sdfg.all_control_flow_regions():
             fusible_states += cfg.number_of_edges()
 
     if progress is True:
@@ -1217,7 +1217,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
 
-        for cfg in sd.all_state_scopes_recursive():
+        for cfg in sd.all_control_flow_regions():
             while True:
                 edges = list(cfg.nx.edges)
                 applied = 0

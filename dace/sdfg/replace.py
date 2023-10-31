@@ -175,7 +175,7 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                 sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
                 del sdfg.constants_prop[aname]
 
-    for cf in sdfg.all_state_scopes_recursive():
+    for cf in sdfg.all_control_flow_regions():
         # Replace in interstate edges
         for e in cf.edges():
             e.data.replace_dict(repl, replace_keys=False)

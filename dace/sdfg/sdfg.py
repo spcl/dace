@@ -1219,7 +1219,7 @@ class SDFG(ControlFlowRegion):
 
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
-        return list(self.all_states_recursive())
+        return list(self.all_states())
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within
@@ -1468,7 +1468,7 @@ class SDFG(ControlFlowRegion):
         shared = []
 
         # If a transient is present in an inter-state edge, it is shared
-        for interstate_edge in self.all_interstate_edges_recursive():
+        for interstate_edge in self.all_interstate_edges():
             for sym in interstate_edge.data.free_symbols:
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
