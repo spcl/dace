@@ -33,7 +33,7 @@ ranges_per_state: Dict[SDFGState, Dict[str, subsets.Range]] = defaultdict(lambda
 
 
 @registry.make_registry
-class MemletPattern(object):
+class MemletPatternUnderapproximation(object):
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
@@ -46,7 +46,7 @@ class MemletPattern(object):
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
+class SeparableMemletPatternUnderapproximation(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
 
@@ -59,7 +59,7 @@ class SeparableMemletPattern(object):
 
 
 @registry.autoregister
-class SeparableMemlet(MemletPattern):
+class SeparableUnderapproximationMemlet(MemletPatternUnderapproximation):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
 
     def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
@@ -124,7 +124,7 @@ class SeparableMemlet(MemletPattern):
                 else:
                     dexprs.append(expr[dim])
 
-            for pattern_class in SeparableMemletPattern.extensions().keys():
+            for pattern_class in SeparableMemletPatternUnderapproximation.extensions().keys():
                 smpattern = pattern_class()
                 if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
                                             data_dims):
@@ -166,7 +166,7 @@ class SeparableMemlet(MemletPattern):
 
 
 @registry.autoregister
-class AffineSMemlet(SeparableMemletPattern):
+class AffineUnderapproximationSMemlet(SeparableMemletPatternUnderapproximation):
     """ 
     Separable memlet pattern that matches affine expressions, i.e., of the 
     form `a * {index} + b`. Only works for expressions like (a * i + b : a * i + b : 1)
@@ -312,7 +312,7 @@ class AffineSMemlet(SeparableMemletPattern):
 
 
 @registry.autoregister
-class ConstantSMemlet(SeparableMemletPattern):
+class ConstantUnderapproximationSMemlet(SeparableMemletPatternUnderapproximation):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
@@ -353,7 +353,7 @@ def _subexpr(dexpr, repldict):
 
 
 @registry.autoregister
-class ConstantRangeMemlet(MemletPattern):
+class ConstantRangeMemletUnderapproximation(MemletPatternUnderapproximation):
     """ 
     Memlet pattern that matches arbitrary expressions with constant range.
     """
@@ -1523,7 +1523,7 @@ class UnderapproximateWrites(ppl.Pass):
             # try to apply a memletpattern. If no pattern matches fall back to the empty set
             for i, subset in enumerate(_subsets):
                 # find a pattern for the current subset
-                for pclass in MemletPattern.extensions():
+                for pclass in MemletPatternUnderapproximation.extensions():
                     pattern = pclass()
                     if pattern.can_be_applied([subset], variable_context, rng, [md]):
                         subset = pattern.propagate(arr, [subset], rng)
