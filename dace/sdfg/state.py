@@ -280,10 +280,6 @@ class BlockGraphView(object):
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in self.arglist().items()]
 
     @abc.abstractmethod
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
-        raise NotImplementedError()
-
-    @abc.abstractmethod
     def top_level_transients(self) -> Set[str]:
         """Iterate over top-level transients of this graph."""
         raise NotImplementedError()
@@ -1033,11 +1029,6 @@ class ControlGraphView(BlockGraphView, abc.ABC):
             data_args.update(n_data_args)
             scalar_args.update(n_scalar_args)
         return data_args, scalar_args
-
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
-        # TODO: Not sure if this makes sense here.
-        from dace.sdfg.scope import _scope_subgraph
-        return _scope_subgraph(self, entry_node, include_entry, include_exit)
 
     def top_level_transients(self) -> Set[str]:
         res = set()
