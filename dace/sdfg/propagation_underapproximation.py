@@ -667,7 +667,7 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge].src_subset = subsets.SubsetUnion(
                         [approximation_dict[edge].src_subset])
 
-        self._propagate_memlets_sdfg(sdfg)
+        self._underapproximate_writes_sdfg(sdfg)
 
         # Replace None with empty SubsetUnion in each Memlet
         for entry in approximation_dict.values():
@@ -679,7 +679,7 @@ class UnderapproximateWrites(ppl.Pass):
             "loops": loop_dict
         }
 
-    def _annotate_loop_ranges(
+    def _find_loops(
         self, sdfg: SDFG, unannotated_cycle_states: List[SDFGState]
     ) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
         """
@@ -814,7 +814,7 @@ class UnderapproximateWrites(ppl.Pass):
 
         return identified_loops
 
-    def _propagate_memlets_nested_sdfg(
+    def _underapproximate_writes_nested_sdfg(
         self,
         parent_sdfg: SDFG,
         parent_state: SDFGState,
@@ -967,7 +967,7 @@ class UnderapproximateWrites(ppl.Pass):
 
                 approximation_dict[edge] = out_memlet
 
-    def _propagate_memlets_sdfg(self, sdfg: SDFG):
+    def _underapproximate_writes_sdfg(self, sdfg: SDFG):
         """ Propagates memlets throughout an entire given SDFG. 
 
             :note: This is an in-place operation on the SDFG.
@@ -975,24 +975,24 @@ class UnderapproximateWrites(ppl.Pass):
         from dace.transformation.helpers import split_interstate_edges
 
         split_interstate_edges(sdfg)
-        loops = self._annotate_loop_ranges(sdfg, [])
+        loops = self._find_loops(sdfg, [])
         loop_dict.update(loops)
 
         for state in sdfg.nodes():
-            self._propagate_memlets_state(sdfg, state)
+            self._underapproximate_writes_state(sdfg, state)
 
         loop_nest_tree = _generate_loop_nest_tree(loops)
         root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
         for root in root_loop_headers:
             post_order_traversal = _postorder_traversal(root, loop_nest_tree)
             for loop_header in post_order_traversal:
-                self._propagate_memlet_loop(sdfg, loops, loop_header)
+                self._underapproximate_writes_loop(sdfg, loops, loop_header)
 
-    def _propagate_memlet_loop(self,
-                               sdfg: SDFG,
-                               loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
+    def _underapproximate_writes_loop(self,
+                                      sdfg: SDFG,
+                                      loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
                                                             str, subsets.Range]],
-                               loop_header: SDFGState = None):
+                                      loop_header: SDFGState = None):
         """
         Propagate Memlets recursively out of loop constructs with representative border memlets, 
         similar to propagate_memlets_nested_sdfg. Only states that are executed unconditionally
@@ -1074,8 +1074,8 @@ class UnderapproximateWrites(ppl.Pass):
                         border_memlet._is_data_src = True
                         border_memlets[node.label] = border_memlet
 
-                self._propagate_loop_subset(sdfg, memlets, border_memlet, sdfg.arrays[node.label],
-                                            itvar, rng)
+                self._underapproximate_writes_loop_subset(sdfg, memlets, border_memlet, sdfg.arrays[node.label],
+                                                          itvar, rng)
 
             if state not in loop_write_dict:
                 continue
@@ -1096,19 +1096,19 @@ class UnderapproximateWrites(ppl.Pass):
                     border_memlet._is_data_src = True
                     border_memlets[node_label] = border_memlet
 
-                self._propagate_loop_subset(sdfg, [other_border_memlet], border_memlet,
-                                            sdfg.arrays[node_label], itvar, rng)
+                self._underapproximate_writes_loop_subset(sdfg, [other_border_memlet], border_memlet,
+                                                          sdfg.arrays[node_label], itvar, rng)
 
         loop_write_dict[loop_header] = border_memlets
 
-    def _propagate_loop_subset(self,
-                               sdfg: dace.SDFG,
-                               memlets: List[Memlet],
-                               dst_memlet: Memlet,
-                               arr: dace.data.Array,
-                               itvar: str,
-                               rng: subsets.Subset,
-                               loop_nest_itvars: Set[str] = None):
+    def _underapproximate_writes_loop_subset(self,
+                                             sdfg: dace.SDFG,
+                                             memlets: List[Memlet],
+                                             dst_memlet: Memlet,
+                                             arr: dace.data.Array,
+                                             itvar: str,
+                                             rng: subsets.Subset,
+                                             loop_nest_itvars: Set[str] = None):
         """
         Helper function that takes a list of (border) memlets, propagates them out of a
         loop-construct and summarizes them to one Memlet. The result is written back to dst_memlet
@@ -1133,12 +1133,12 @@ class UnderapproximateWrites(ppl.Pass):
                 surrounding_itvars |= loop_nest_itvars
 
             use_dst = True
-            subset = self._propagate_subset(memlets,
-                                            arr,
-                                            params,
-                                            rng,
-                                            use_dst=use_dst,
-                                            surrounding_itvars=surrounding_itvars).subset
+            subset = self._underapproximate_subsets(memlets,
+                                                    arr,
+                                                    params,
+                                                    rng,
+                                                    use_dst=use_dst,
+                                                    surrounding_itvars=surrounding_itvars).subset
 
             if subset is None or len(subset.subset_list) == 0:
                 return
@@ -1151,7 +1151,7 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 dst_memlet.subset = subset
 
-    def _propagate_memlets_state(self, sdfg: SDFG, state: SDFGState):
+    def _underapproximate_writes_state(self, sdfg: SDFG, state: SDFGState):
         """ Propagates memlets throughout one SDFG state.
 
             :param sdfg: The SDFG in which the state is situated.
@@ -1202,19 +1202,19 @@ class UnderapproximateWrites(ppl.Pass):
                     map(lambda x: symbol_map(node.symbol_mapping, x), iteration_variables_local))
 
                 # Propagate memlets inside the nested SDFG.
-                self._propagate_memlets_sdfg(node.sdfg)
+                self._underapproximate_writes_sdfg(node.sdfg)
 
                 # Propagate memlets out of the nested SDFG.
-                self._propagate_memlets_nested_sdfg(sdfg, state, node)
+                self._underapproximate_writes_nested_sdfg(sdfg, state, node)
 
         # Process scopes from the leaves upwards
-        self._propagate_memlets_scope(sdfg, state, state.scope_leaves())
+        self._underapproximate_writes_scope(sdfg, state, state.scope_leaves())
 
-    def _propagate_memlets_scope(self,
-                                 sdfg: SDFG,
-                                 state: SDFGState,
-                                 scopes: Union[ScopeTree, List[ScopeTree]],
-                                 propagate_exit: bool = True):
+    def _underapproximate_writes_scope(self,
+                                       sdfg: SDFG,
+                                       state: SDFGState,
+                                       scopes: Union[ScopeTree, List[ScopeTree]],
+                                       propagate_exit: bool = True):
         """ 
         Propagate memlets from the given scopes outwards. 
 
@@ -1254,17 +1254,17 @@ class UnderapproximateWrites(ppl.Pass):
 
                 # Propagate out of exit
                 if propagate_exit:
-                    self._propagate_node(state, scope.exit, surrounding_iteration_variables)
+                    self._underapproximate_writes_node(state, scope.exit, surrounding_iteration_variables)
 
                 # Add parent to next frontier
                 next_scopes.add(scope.parent)
             scopes_to_process = next_scopes
             next_scopes = set()
 
-    def _propagate_node(self,
-                        dfg_state: SDFGState,
-                        node: Union[nodes.EntryNode, nodes.ExitNode],
-                        surrounding_itvars: Set[str] = None):
+    def _underapproximate_writes_node(self,
+                                      dfg_state: SDFGState,
+                                      node: Union[nodes.EntryNode, nodes.ExitNode],
+                                      surrounding_itvars: Set[str] = None):
         """
         Helper method which propagates all memlets attached to a map scope out of the map scope.
         Can be used for both propagation directions. The propagated memlets are stored in the
@@ -1311,12 +1311,12 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
                 aligned_memlet = self._align_memlet(dfg_state, internal_edge, dst=use_dst)
-                new_memlet = self._propagate_memlet(dfg_state,
-                                                    aligned_memlet,
-                                                    node,
-                                                    True,
-                                                    connector=geteconn(edge),
-                                                    surrounding_itvars=surrounding_itvars)
+                new_memlet = self._underapproximate_memlets(dfg_state,
+                                                            aligned_memlet,
+                                                            node,
+                                                            True,
+                                                            connector=geteconn(edge),
+                                                            surrounding_itvars=surrounding_itvars)
             approximation_dict[edge] = new_memlet
 
     def _align_memlet(self, state: SDFGState, e: gr.MultiConnectorEdge[Memlet],
@@ -1357,14 +1357,14 @@ class UnderapproximateWrites(ppl.Pass):
         result._is_data_src = not is_src
         return result
 
-    def _propagate_memlet(self,
-                          dfg_state,
-                          memlet: Memlet,
-                          scope_node: nodes.EntryNode,
-                          union_inner_edges: bool,
-                          arr: dace.data.Array = None,
-                          connector=None,
-                          surrounding_itvars: Set[str] = None):
+    def _underapproximate_memlets(self,
+                                  dfg_state,
+                                  memlet: Memlet,
+                                  scope_node: nodes.EntryNode,
+                                  union_inner_edges: bool,
+                                  arr: dace.data.Array = None,
+                                  connector=None,
+                                  surrounding_itvars: Set[str] = None):
         """ Tries to propagate a memlet through a scope (computes the image of 
             the memlet function applied on an integer set of, e.g., a map range) 
             and returns a new memlet object.
@@ -1438,13 +1438,13 @@ class UnderapproximateWrites(ppl.Pass):
         # Propagate subset
         if isinstance(entry_node, nodes.MapEntry):
             mapnode = entry_node.map
-            return self._propagate_subset(aggdata,
-                                          arr,
-                                          mapnode.params,
-                                          mapnode.range,
-                                          defined_vars,
-                                          use_dst=use_dst,
-                                          surrounding_itvars=surrounding_itvars)
+            return self._underapproximate_subsets(aggdata,
+                                                  arr,
+                                                  mapnode.params,
+                                                  mapnode.range,
+                                                  defined_vars,
+                                                  use_dst=use_dst,
+                                                  surrounding_itvars=surrounding_itvars)
 
         elif isinstance(entry_node, nodes.ConsumeEntry):
             # Nothing to analyze/propagate in consume
@@ -1455,14 +1455,14 @@ class UnderapproximateWrites(ppl.Pass):
         else:
             raise NotImplementedError('Unimplemented primitive: %s' % type(entry_node))
 
-    def _propagate_subset(self,
-                          memlets: List[Memlet],
-                          arr: data.Data,
-                          params: List[str],
-                          rng: subsets.Subset,
-                          defined_variables: Set[symbolic.SymbolicType] = None,
-                          use_dst: bool = False,
-                          surrounding_itvars: Set[str] = None) -> Memlet:
+    def _underapproximate_subsets(self,
+                                  memlets: List[Memlet],
+                                  arr: data.Data,
+                                  params: List[str],
+                                  rng: subsets.Subset,
+                                  defined_variables: Set[symbolic.SymbolicType] = None,
+                                  use_dst: bool = False,
+                                  surrounding_itvars: Set[str] = None) -> Memlet:
         """ Tries to propagate a list of memlets through a range (computes the 
             image of the memlet function applied on an integer set of, e.g., a 
             map range) and returns a new memlet object.
