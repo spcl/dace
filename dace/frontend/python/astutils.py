@@ -442,9 +442,10 @@ class ExtNodeTransformer(ast.NodeTransformer):
         bodies in order to discern DaCe statements from others.
     """
     def visit_TopLevel(self, node):
-        clsname = type(node).__name__
-        if getattr(self, "visit_TopLevel" + clsname, False):
-            return getattr(self, "visit_TopLevel" + clsname)(node)
+        visitor_name = "visit_TopLevel" + type(node).__name__
+        if hasattr(self, visitor_name):
+            visitor = getattr(self, visitor_name)
+            return visitor(node)
         else:
             return self.visit(node)
 
@@ -480,11 +481,12 @@ class ExtNodeVisitor(ast.NodeVisitor):
         top-level expressions in bodies in order to discern DaCe statements 
         from others. """
     def visit_TopLevel(self, node):
-        clsname = type(node).__name__
-        if getattr(self, "visit_TopLevel" + clsname, False):
-            getattr(self, "visit_TopLevel" + clsname)(node)
+        visitor_name = "visit_TopLevel" + type(node).__name__
+        if hasattr(self, visitor_name):
+            visitor = getattr(self, visitor_name)
+            return visitor(node)
         else:
-            self.visit(node)
+            return self.visit(node)
 
     def generic_visit(self, node):
         for field, old_value in ast.iter_fields(node):
@@ -492,13 +494,14 @@ class ExtNodeVisitor(ast.NodeVisitor):
                 for value in old_value:
                     if isinstance(value, ast.AST):
                         if (field == 'body' or field == 'orelse'):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                getattr(self, "visit_TopLevel" + clsname)(value)
+                            visitor_name = "visit_TopLevel" + type(value).__name__
+                            if hasattr(self, visitor_name):
+                                visitor = getattr(self, visitor_name)
+                                return visitor(value)
                             else:
-                                self.visit(value)
+                                return self.visit(value)
                         else:
-                            self.visit(value)
+                            return self.visit(value)
             elif isinstance(old_value, ast.AST):
                 self.visit(old_value)
         return node
