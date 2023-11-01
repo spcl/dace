@@ -15,7 +15,7 @@ def fill_dace(A: dace.float64[N, N], value: dace.float64):
 #
 
 @dace.program
-def fill_dace_not_working(A: dace.float64[N, N], value: dace.float64):
+def fill_dace_can_not_working_yet(A: dace.float64[N, N], value: dace.float64):
     A.fill(value + 1)
 #
 
@@ -59,7 +59,7 @@ except BaseException as E:
 try:
     input[:] = 0
     input_ref[:] = value + 1
-    fill_dace_not_working(input, value)
+    fill_dace_can_not_working_yet(input, value)
     assert np.allclose(input, input_ref)
 except CompilationError:
     print(f"This version should not work, because it is an expression and not a scalar, so we expect it to fail.")
