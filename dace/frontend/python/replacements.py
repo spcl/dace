@@ -4233,7 +4233,7 @@ def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
 def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Number) -> str:
-    if not isinstance(value, (Number, np.bool_)):
+    if isinstance(value, (Number, np.bool_)):
         pass        # Litteral numbers passed as arguments
     elif isinstance(value, str) and isinstance(sdfg.arrays.get(value, None), data.Scalar):
         pass        # Scalars inside the sdfg (is this safe?)
