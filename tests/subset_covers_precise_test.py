@@ -107,6 +107,7 @@ def test_symbolic_boundaries_not_symbolic_positive():
     """
     Tests from test_symbolic_boundaries with symbolic_positive flag deactivated.
     """
+    symbolic_positive = Config.get('optimizer', 'symbolic_positive')
     Config.set('optimizer', 'symbolic_positive', value=False)
 
     subset1 = Range.from_string("N:M:1")
@@ -123,6 +124,8 @@ def test_symbolic_boundaries_not_symbolic_positive():
     subset2 = Range.from_string("N:M:2")
     assert (subset1.covers_precise(subset2) is False)
     assert (subset2.covers_precise(subset1) is False)
+
+    Config.set('optimizer', 'symbolic_positive', value=symbolic_positive)
 
 
 def test_range_indices():
