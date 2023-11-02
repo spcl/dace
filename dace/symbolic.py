@@ -321,7 +321,8 @@ def symlist(values):
         values = [values]
 
     for expr in values:
-        result.extend({str(k): k for k in expr.free_symbols})
+        if issymbolic(expr):
+            result.update({str(k): k for k in expr.free_symbols})
     return result
 
 
