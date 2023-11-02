@@ -602,14 +602,21 @@ def _elementwise(pv: 'ProgramVisitor',
         tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
         state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(in_array, inparr))
         state.add_edge(tasklet, '__out', out, None, Memlet.from_array(out_array, outarr))
+
+        if body in sdfg.arrays:
+            raise NotImplementedError("This mode is only possible with literals.")
     else:
+        # This is the input for the array we want to read from.
+        inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))}
+        if body in sdfg.arrays:     # In case the input is not a number but a variable we must also add it as an input.
+            inputs.update({f'{body}': Memlet.from_array(body, sdfg.arrays[body])})
+
         state.add_mapped_tasklet(
             name="_elementwise_",
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(inparr.shape)},
-            inputs={'__inp': Memlet.simple(in_array, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
+            map_ranges={f'__i{dim}': f'0:{N}' for dim, N in enumerate(inparr.shape)},
+            inputs=inputs,
             code=code,
-            outputs={'__out': Memlet.simple(out_array, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
+            outputs={'__out': Memlet.simple(out_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             external_edges=True)
 
     return out_array
@@ -4232,7 +4239,7 @@ def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('Array', 'fill')
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
-def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Number) -> str:
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number]) -> str:
     if isinstance(value, (Number, np.bool_)):
         pass        # Litteral numbers passed as arguments
     elif isinstance(value, str) and isinstance(sdfg.arrays.get(value, None), data.Scalar):
