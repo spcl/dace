@@ -104,12 +104,10 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children, result
         # If this is an Entry Node, we need to recurse further
         if isinstance(node, nd.EntryNode):
             node_queue.extend(_scope_dict_inner(graph, collections.deque(successors), node, node_to_children, result))
-        # If this is an Exit Node, we push the successors to the external
-        # queue
+        # If this is an Exit Node, we push the successors to the external queue
         elif isinstance(node, nd.ExitNode):
             external_queue.extend(successors)
-        # Otherwise, it is a plain node, and we push its successors to the
-        # same queue
+        # Otherwise, it is a plain node, and we push its successors to the same queue
         else:
             node_queue.extend(successors)
 
@@ -248,7 +246,7 @@ def is_devicelevel_gpu_kernel(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGStat
     if is_parent_nested:
         return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node, with_gpu_default=True)
     else:
-        return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)
+        return is_devicelevel_gpu(state.sdfg, state, node, with_gpu_default=True)
 
 
 def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
@@ -296,7 +294,7 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         # Traverse up nested SDFGs
         if sdfg.parent is not None:
             if isinstance(sdfg.parent, SDFGState):
-                parent = sdfg.parent.parent
+                parent = sdfg.parent.sdfg
             else:
                 parent = sdfg.parent
             state, node = next((s, n) for s in parent.nodes() for n in s.nodes()

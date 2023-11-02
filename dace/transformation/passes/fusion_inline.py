@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg.utils import fuse_states, inline_sdfgs
+from dace.sdfg.utils import fuse_states, inline_sdfgs, inline_loop_blocks
 from dace.transformation import pass_pipeline as ppl
 
 
@@ -87,6 +87,35 @@ class InlineSDFGs(ppl.Pass):
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+class InlineScopes(ppl.Pass):
+    """
+    Inlines all possible sub-scopes of an SDFG to create a state machine.
+    """
+
+    CATEGORY: str = 'Cleanup'
+
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.States | ppl.Modifies.InterstateEdges
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
+        inlined = inline_loop_blocks(sdfg, self.permissive, self.progress)
+        return inlined or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Inlined {pass_retval} scopes.'
+
+
+@dataclass(unsafe_hash=True)
+@properties.make_properties
 class FixNestedSDFGReferences(ppl.Pass):
     """
     Fixes nested SDFG references to parent state/SDFG/node
@@ -102,19 +131,19 @@ class FixNestedSDFGReferences(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         modified = 0
-        for node, state in sdfg.all_nodes_recursive():
+        for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             was_modified = False
             if node.sdfg.parent_nsdfg_node is not node:
                 was_modified = True
                 node.sdfg.parent_nsdfg_node = node
-            if node.sdfg.parent is not state:
+            if node.sdfg.parent is not parent:
                 was_modified = True
-                node.sdfg.parent = state
-            if node.sdfg.parent_sdfg is not state.parent:
+                node.sdfg.parent = parent
+            if node.sdfg.parent_sdfg is not parent.sdfg:
                 was_modified = True
-                node.sdfg.parent_sdfg = state.parent
+                node.sdfg.parent_sdfg = parent.sdfg
 
             if was_modified:
                 modified += 1

@@ -28,7 +28,7 @@ class NameValidationTests(unittest.TestCase):
             sdfg = dace.SDFG('ok')
             s1 = sdfg.add_state('also_ok')
             s2 = sdfg.add_state('also_ok')
-            s2.set_label('also_ok')
+            s2.label = 'also_ok'
             sdfg.add_edge(s1, s2, dace.InterstateEdge())
             sdfg.validate()
             self.fail('Failed to detect duplicate state')

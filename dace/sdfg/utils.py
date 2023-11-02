@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopScopeBlock, ScopeBlock
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -668,7 +668,7 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     from dace.sdfg.propagation import propagate_memlets_scope
 
     total_consolidated = 0
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
             continue
@@ -765,7 +765,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     Given a view access node, returns the last viewed access node
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     while isinstance(desc, dt.View):
@@ -781,7 +781,7 @@ def get_all_view_nodes(state: SDFGState, view: nd.AccessNode) -> List[nd.AccessN
     Given a view access node, returns a list of viewed access nodes
     if existent, else None
     """
-    sdfg = state.parent
+    sdfg = state.sdfg
     node = view
     desc = sdfg.arrays[node.data]
     result = [node]
@@ -910,10 +910,10 @@ def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
             curnode = sdict[curnode]
             if curnode.schedule != dtypes.ScheduleType.Sequential:
                 return True
-    if state.parent.parent is not None:
+    if state.sdfg.parent is not None:
         # Find nested SDFG node and continue recursion
-        nsdfg_node = next(n for n in state.parent.parent if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
-        return is_parallel(state.parent.parent, nsdfg_node)
+        nsdfg_node = next(n for n in state.sdfg.parent if isinstance(n, nd.NestedSDFG) and n.sdfg == state.sdfg)
+        return is_parallel(state.sdfg.parent, nsdfg_node)
 
     return False
 
@@ -1206,8 +1206,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            fusible_states += sd.number_of_edges()
+        for cfg in sdfg.all_state_scopes_recursive():
+            fusible_states += cfg.number_of_edges()
 
     if progress is True:
         pbar = tqdm(total=fusible_states, desc='Fusing states')
@@ -1216,33 +1216,58 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
+        for cfg in sd.all_state_scopes_recursive(recurse_into_sdfgs=False):
+            while True:
+                edges = list(cfg.nx.edges)
+                applied = 0
+                skip_nodes = set()
+                for u, v in edges:
+                    if (progress is None and tqdm is not None and (time.time() - start) > 5):
+                        progress = True
+                        pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-        while True:
-            edges = list(sd.nx.edges)
-            applied = 0
-            skip_nodes = set()
-            for u, v in edges:
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
-
-                if u in skip_nodes or v in skip_nodes:
-                    continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion()
-                sf.setup_match(sd, id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
-                    sf.apply(sd, sd)
-                    applied += 1
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
-            if applied == 0:
-                break
+                    if u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or not isinstance(u, SDFGState):
+                        continue
+                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                    sf = StateFusion()
+                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        sf.apply(cfg, sd)
+                        applied += 1
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                if applied == 0:
+                    break
     if progress:
         pbar.close()
+    return counter
+
+
+def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    # Avoid import loops
+    from dace.transformation.interstate import LoopScopeInline
+
+    counter = 0
+    blocks = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, LoopScopeBlock)]
+
+    for block, graph in optional_progressbar(reversed(blocks), title='Inlining Loops', n=len(blocks), progress=progress):
+        id = block.sdfg.sdfg_id
+
+        # We have to reevaluate every time due to changing IDs
+        block_id = graph.node_id(block)
+
+        candidate = {
+            LoopScopeInline.block: block,
+        }
+        inliner = LoopScopeInline()
+        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
+            inliner.apply(graph, block.sdfg)
+            counter += 1
+
     return counter
 
 
@@ -1269,18 +1294,18 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
 
     for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         id = node.sdfg.sdfg_id
-        sd = state.parent
+        graph = state.parent
 
         # We have to reevaluate every time due to changing IDs
-        state_id = sd.node_id(state)
+        state_id = graph.node_id(state)
         if multistate:
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                inliner.apply(state, sd)
+            inliner.setup_match(graph, id, state_id, candidate, 0, override=True)
+            if inliner.can_be_applied(state, 0, graph, permissive=permissive):
+                inliner.apply(state, state.sdfg)
                 counter += 1
                 continue
 
@@ -1288,9 +1313,9 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             InlineSDFG.nested_sdfg: node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-            inliner.apply(state, sd)
+        inliner.setup_match(graph, id, state_id, candidate, 0, override=True)
+        if inliner.can_be_applied(state, 0, graph, permissive=permissive):
+            inliner.apply(state, state.sdfg)
             counter += 1
 
     return counter
@@ -1379,7 +1404,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     """
 
     # Build a unique representation
-    sdfg = graph.parent
+    sdfg = graph.sdfg
     state = graph if isinstance(graph, SDFGState) else graph._graph
     return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
@@ -1413,7 +1438,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
         # is the View.
         n = get_view_node(state, node)
         if n and isinstance(n, nd.AccessNode):
-            d = state.parent.arrays[n.data]
+            d = state.sdfg.arrays[n.data]
             return is_nonfree_sym_dependent(n, d, state, fsymbols)
     elif isinstance(desc, dt.Array):
         if any(str(s) not in fsymbols for s in desc.free_symbols):
@@ -1451,6 +1476,47 @@ def _tswds_state(
     yield from _traverse(None, symbols)
 
 
+def _tswds_scope_block(
+    sdfg: SDFG,
+    scope: ScopeBlock,
+    symbols: Dict[str, dtypes.typeclass],
+    recursive: bool,
+) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    # Add symbols from inter-state edges along the state machine
+    start_block = scope.start_block
+    visited = set()
+    visited_edges = set()
+    for edge in scope.dfs_edges(start_block):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            if isinstance(edge.src, SDFGState):
+                yield from _tswds_state(sdfg, edge.src, symbols, recursive)
+            else:
+                yield from _tswds_scope_block(sdfg, edge.src, symbols, recursive)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+            else:
+                yield from _tswds_scope_block(sdfg, edge.dst, symbols, recursive)
+
+    # If there is only one state, the DFS will miss it
+    if start_block not in visited:
+        if isinstance(start_block, SDFGState):
+            yield from _tswds_state(sdfg, start_block, symbols, recursive)
+        else:
+            yield from _tswds_scope_block(sdfg, start_block, symbols, recursive)
+
+
 def traverse_sdfg_with_defined_symbols(
         sdfg: SDFG,
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
@@ -1465,30 +1531,7 @@ def traverse_sdfg_with_defined_symbols(
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
-    # Add symbols from inter-state edges along the state machine
-    start_state = sdfg.start_state
-    visited = set()
-    visited_edges = set()
-    for edge in sdfg.dfs_edges(start_state):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
-
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
-
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols, recursive)
+    yield from _tswds_scope_block(sdfg, sdfg, symbols, recursive)
 
 
 def is_fpga_kernel(sdfg, state):

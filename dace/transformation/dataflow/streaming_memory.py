@@ -160,10 +160,10 @@ class StreamingMemory(xf.SingleStateTransformation):
         while curstate is not None:
             if curstate.entry_node(node) is not None:
                 return False
-            if curstate.parent.parent_nsdfg_node is None:
+            if curstate.sdfg.parent_nsdfg_node is None:
                 break
-            node = curstate.parent.parent_nsdfg_node
-            curstate = curstate.parent.parent
+            node = curstate.sdfg.parent_nsdfg_node
+            curstate = curstate.sdfg.parent
 
         # Only one memlet path is allowed per outgoing/incoming edge
         edges = (graph.out_edges(access) if expr_index == 0 else graph.in_edges(access))
@@ -628,10 +628,10 @@ class StreamingComposition(xf.SingleStateTransformation):
         while curstate is not None:
             if curstate.entry_node(node) is not None:
                 return False
-            if curstate.parent.parent_nsdfg_node is None:
+            if curstate.sdfg.parent_nsdfg_node is None:
                 break
-            node = curstate.parent.parent_nsdfg_node
-            curstate = curstate.parent.parent
+            node = curstate.sdfg.parent_nsdfg_node
+            curstate = curstate.sdfg.parent
 
         # Array must not be used anywhere else in the state
         if any(n is not access and n.data == access.data for n in graph.data_nodes()):

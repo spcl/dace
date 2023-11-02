@@ -83,7 +83,7 @@ def _update_memlet_hbm(state: SDFGState, inner_edge: graph.MultiConnectorEdge,
     # If the memlet already contains the distributed subset, ignore it
     # That's helpful because of inconsistencies when nesting and because
     # one can 'hint' the correct bank assignment when using this function
-    if len(mem.subset) == len(state.parent.arrays[this_node.data].shape):
+    if len(mem.subset) == len(state.sdfg.arrays[this_node.data].shape):
         return
     new_subset = subsets.Range([[inner_subset_index, inner_subset_index, 1]] +
                                [x for x in mem.subset])
@@ -100,7 +100,7 @@ def _update_memlet_hbm(state: SDFGState, inner_edge: graph.MultiConnectorEdge,
             other_node,
             nd.NestedSDFG):  # Ignore those and update them via propagation
         new_subset = subsets.Range.from_array(
-            state.parent.arrays[this_node.data])
+            state.sdfg.arrays[this_node.data])
 
     if isinstance(other_node, nd.AccessNode):
         fwtasklet = state.add_tasklet("fwtasklet", set(["_in"]), set(["_out"]),

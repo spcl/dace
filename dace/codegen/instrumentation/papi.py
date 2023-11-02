@@ -12,7 +12,7 @@ from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import StateGraphView
+from dace.sdfg.state import DataflowGraphView
 
 import sympy as sp
 import os
@@ -392,7 +392,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         return cond
 
     @staticmethod
-    def has_surrounding_perfcounters(node, dfg: StateGraphView):
+    def has_surrounding_perfcounters(node, dfg: DataflowGraphView):
         """ Returns true if there is a possibility that this node is part of a
             section that is profiled. """
         parent = dfg.entry_node(node)
@@ -605,7 +605,7 @@ class PAPIUtils(object):
         return memlet.volume * memdata.dtype.bytes
 
     @staticmethod
-    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node, dfg: StateGraphView):
+    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node, dfg: DataflowGraphView):
         scope_dict = sdfg.node(state_id).scope_dict()
 
         out_costs = 0
@@ -636,7 +636,7 @@ class PAPIUtils(object):
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: StateGraphView, sdfg: dace.SDFG, state_id: int) -> str:
+    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: DataflowGraphView, sdfg: dace.SDFG, state_id: int) -> str:
         """ Get the amount of bytes processed by `tasklet`. The formula is
             sum(inedges * size) + sum(outedges * size) """
         in_accum = []
@@ -693,7 +693,7 @@ class PAPIUtils(object):
         return sym2cpp(input_size)
 
     @staticmethod
-    def accumulate_byte_movement(outermost_node, node, dfg: StateGraphView, sdfg, state_id):
+    def accumulate_byte_movement(outermost_node, node, dfg: DataflowGraphView, sdfg, state_id):
 
         itvars = dict()  # initialize an empty dict
 

@@ -113,7 +113,7 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         # Vectorize microkernel map
         postamble = n % 4 != 0
         entry_inner, inner_state = find_map_and_state_by_param(sdfg, 'k')
-        Vectorization.apply_to(inner_state.parent,
+        Vectorization.apply_to(inner_state.sdfg,
                                dict(vector_len=4, preamble=False, postamble=postamble),
                                map_entry=entry_inner)
 

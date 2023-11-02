@@ -31,7 +31,7 @@ def _make_sdfg(language: str, with_data: bool = False):
     sdfg.add_array('A', (N, ), datatype)
     sdfg.add_array('B', (M, ), datatype)
     sdfg.add_array('C', (M, ), datatype)
-    state = sdfg.add_state(is_start_state=True)
+    state = sdfg.add_state(is_start_block=True)
     A = state.add_read('A')
     B = state.add_read('B')
     C = state.add_write('C')

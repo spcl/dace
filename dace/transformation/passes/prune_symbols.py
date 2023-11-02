@@ -4,8 +4,9 @@ import itertools
 from dataclasses import dataclass
 from typing import Optional, Set, Tuple
 
-from dace import SDFG, dtypes, properties, symbolic
+from dace import SDFG, dtypes, properties, symbolic, SDFGState
 from dace.sdfg import nodes
+from dace.sdfg.state import LoopScopeBlock
 from dace.transformation import pass_pipeline as ppl
 
 
@@ -57,7 +58,7 @@ class RemoveUnusedSymbols(ppl.Pass):
             sid = sdfg.sdfg_id
             result = set((sid, sym) for sym in result)
 
-            for state in sdfg.nodes():
+            for state in sdfg.states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         old_symbols = self.symbols
@@ -83,25 +84,29 @@ class RemoveUnusedSymbols(ppl.Pass):
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))
 
-        for state in sdfg.nodes():
-            result |= state.free_symbols
-            # In addition to the standard free symbols, we are conservative with other tasklet languages by
-            # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
-            # ok to include
-            for node in state.nodes():
-                if isinstance(node, nodes.Tasklet):
-                    if node.code.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_global.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_init.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
-                    if node.code_exit.language != dtypes.Language.Python:
-                        result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
-                                                           node.ignored_symbols)
+        for block in sdfg.all_control_flow_blocks_recursive(recurse_into_sdfgs=False):
+            result |= block.free_symbols
+
+            if isinstance(block, SDFGState):
+                # In addition to the standard free symbols, we are conservative with other tasklet languages by
+                # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
+                # ok to include
+                for node in block.nodes():
+                    if isinstance(node, nodes.Tasklet):
+                        if node.code.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_global.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_global.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_init.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_init.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+                        if node.code_exit.language != dtypes.Language.Python:
+                            result |= symbolic.symbols_in_code(node.code_exit.as_string, sdfg.symbols.keys(),
+                                                            node.ignored_symbols)
+            elif isinstance(block, LoopScopeBlock):
+                result.add(block.loop_variable)
 
         for e in sdfg.edges():
             result |= e.data.free_symbols

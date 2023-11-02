@@ -376,7 +376,7 @@ def nest_state_subgraph(sdfg: SDFG,
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
-    if state.parent != sdfg:
+    if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
@@ -646,7 +646,7 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -656,7 +656,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     """
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state, label=label)
+    newstate = state.parent.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -1002,7 +1002,7 @@ def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph
     :return: The MultiDiGraph object.
     """
 
-    sdfg = state.parent
+    sdfg = state.sdfg
 
     # Copy the whole state
     G = MultiDiGraph()
@@ -1226,7 +1226,7 @@ def contained_in(state: SDFGState, node: nodes.Node, scope: nodes.EntryNode) -> 
     # A node is contained within itself
     if node is scope:
         return True
-    cursdfg = state.parent
+    cursdfg = state.sdfg
     curstate = state
     curscope = state.entry_node(node)
     while cursdfg is not None:
@@ -1249,7 +1249,7 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
     :param node: The node to test (optional).
     :return: A tuple of (entry node, state) or None.
     """
-    cursdfg = state.parent
+    cursdfg = state.sdfg
     curstate = state
     curscope = node
     while cursdfg is not None:
@@ -1335,8 +1335,8 @@ def can_run_state_on_fpga(state: SDFGState):
             return False
 
         # Streams have strict conditions due to code generator limitations
-        if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
-            nodedesc = graph.parent.arrays[node.data]
+        if (isinstance(node, nodes.AccessNode) and isinstance(graph.sdfg.arrays[node.data], data.Stream)):
+            nodedesc = graph.sdfg.arrays[node.data]
             sdict = graph.scope_dict()
             if nodedesc.storage in [
                     dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
@@ -1348,7 +1348,7 @@ def can_run_state_on_fpga(state: SDFGState):
                 return False
 
             # Arrays of streams cannot have symbolic size on FPGA
-            if symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
+            if symbolic.issymbolic(nodedesc.total_size, graph.sdfg.constants):
                 return False
 
             # Streams cannot be unbounded on FPGA

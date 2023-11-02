@@ -2,14 +2,15 @@
 """ State elimination transformations """
 
 import networkx as nx
-from typing import Dict, List, Set
+from typing import Dict, Set
 
-from dace import data as dt, dtypes, registry, sdfg, symbolic
+from dace import data as dt, sdfg, symbolic
+from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, SDFG, SDFGState, InterstateEdge
+from dace.sdfg.state import ScopeBlock
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.sdfg.analysis import cfg
 
 
 class EndStateElimination(transformation.MultiStateTransformation):
@@ -47,12 +48,12 @@ class EndStateElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.end_state
         # Handle orphan symbols (due to the deletion the incoming edge)
-        edge = sdfg.in_edges(state)[0]
+        edge = graph.in_edges(state)[0]
         sym_assign = edge.data.assignments.keys()
-        sdfg.remove_node(state)
+        graph.remove_node(state)
         # Remove orphan symbols
         for sym in sym_assign:
             if sym in sdfg.free_symbols:
@@ -75,7 +76,7 @@ class StartStateElimination(transformation.MultiStateTransformation):
         state = self.start_state
 
         # The transformation applies only to nested SDFGs
-        if not graph.parent:
+        if not sdfg.parent_nsdfg_node:
             return False
 
         # Only empty states can be eliminated
@@ -97,22 +98,22 @@ class StartStateElimination(transformation.MultiStateTransformation):
             return False
         # Assignments that make descriptors into symbols cannot be eliminated
         for assign in edge.data.assignments.values():
-            if graph.arrays.keys() & symbolic.free_symbols_and_functions(assign):
+            if sdfg.arrays.keys() & symbolic.free_symbols_and_functions(assign):
                 return False
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.start_state
         # Move assignments to the nested SDFG node's symbol mappings
         node = sdfg.parent_nsdfg_node
-        edge = sdfg.out_edges(state)[0]
+        edge = graph.out_edges(state)[0]
         for k, v in edge.data.assignments.items():
             node.symbol_mapping[k] = v
-        sdfg.remove_node(state)
+        graph.remove_node(state)
 
 
-def _assignments_to_consider(sdfg, edge, is_constant=False):
+def _assignments_to_consider(sdfg: SDFG, edge: Edge[InterstateEdge], is_constant: bool = False):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
         as_symbolic = symbolic.pystr_to_symbolic(assign)
@@ -166,14 +167,14 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
         # Otherwise, ensure the symbols are never set/used again in edges
         akeys = set(assignments_to_consider.keys())
-        for e in sdfg.edges():
+        for e in graph.edges():
             if e is edge:
                 continue
             if e.data.free_symbols & akeys:
                 return False
 
         # If used in any state that is not the current one, fail
-        for s in sdfg.nodes():
+        for s in graph.nodes():
             if s is state:
                 continue
             if s.free_symbols & akeys:
@@ -181,9 +182,9 @@ class StateAssignElimination(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         state = self.end_state
-        edge = sdfg.in_edges(state)[0]
+        edge = graph.in_edges(state)[0]
         # Since inter-state assignments that use an assigned value leads to
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
         # assignment separately.
@@ -199,7 +200,7 @@ class StateAssignElimination(transformation.MultiStateTransformation):
             # Remove assignments from edge
             del edge.data.assignments[varname]
 
-            for e in sdfg.edges():
+            for e in graph.edges():
                 if varname in e.data.free_symbols:
                     break
             else:
@@ -294,12 +295,12 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
 
         return True
 
-    def apply(self, _, sdfg):
+    def apply(self, graph, sdfg):
         fstate = self.first_state
         sstate = self.second_state
 
-        edge = sdfg.edges_between(fstate, sstate)[0].data
-        in_edge = sdfg.in_edges(fstate)[0].data
+        edge = graph.edges_between(fstate, sstate)[0].data
+        in_edge = graph.in_edges(fstate)[0].data
 
         to_consider = _alias_assignments(sdfg, edge)
 
@@ -496,7 +497,7 @@ class TrueConditionElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.state_a, cls.state_b)]
 
-    def can_be_applied(self, graph: SDFG, expr_index, sdfg: SDFG, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
         # Directed graph has only one edge between two nodes
@@ -512,10 +513,10 @@ class TrueConditionElimination(transformation.MultiStateTransformation):
 
         return False
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, graph, sdfg):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
-        edge = sdfg.edges_between(a, b)[0]
+        edge = graph.edges_between(a, b)[0]
         edge.data.condition = CodeBlock("1")
 
 
@@ -531,7 +532,7 @@ class FalseConditionElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.state_a, cls.state_b)]
 
-    def can_be_applied(self, graph: SDFG, expr_index, sdfg: SDFG, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
 
@@ -556,8 +557,8 @@ class FalseConditionElimination(transformation.MultiStateTransformation):
 
         return False
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, graph, sdfg):
         a: SDFGState = self.state_a
         b: SDFGState = self.state_b
-        edge = sdfg.edges_between(a, b)[0]
+        edge = graph.edges_between(a, b)[0]
         sdfg.remove_edge(edge)

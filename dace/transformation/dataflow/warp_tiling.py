@@ -55,7 +55,7 @@ class WarpTiling(xf.SingleStateTransformation):
         # Stride and offset all internal maps
         maps_to_stride = xfh.get_internal_scopes(graph, new_me, immediate=True)
         for nstate, nmap in maps_to_stride:
-            nsdfg = nstate.parent
+            nsdfg = nstate.sdfg
             nsdfg_node = nsdfg.parent_nsdfg_node
 
             # Map cannot be partitioned across a warp
@@ -123,7 +123,7 @@ class WarpTiling(xf.SingleStateTransformation):
                         write = nstate.add_write(name)
                         edge = nstate.add_nedge(read, write, copy.deepcopy(out_edge.data))
                         edge.data.wcr = None
-                        xfh.state_fission(nsdfg, SubgraphView(nstate, [read, write]))
+                        xfh.state_fission(SubgraphView(nstate, [read, write]))
 
                         newnode = nstate.add_access(name)
                         nstate.remove_edge(out_edge)

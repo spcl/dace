@@ -8,7 +8,7 @@ import pytest
 
 
 def create_zero_initialization(init_state: dace.SDFGState, array_name):
-    sdfg = init_state.parent
+    sdfg = init_state.sdfg
     array_shape = sdfg.arrays[array_name].shape
 
     array_access_node = init_state.add_write(array_name)

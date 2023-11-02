@@ -83,7 +83,8 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
-            result = obj.used_symbols(all_symbols=False)
+            intermediate = obj.used_symbols(all_symbols=False)
+            result = intermediate[0] if type(intermediate) is tuple else intermediate
         else:
             result = obj.free_symbols
         self.fsyms[k] = result
@@ -395,9 +396,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             # Footer
             callsite_stream.write('}', sdfg)
 
-    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
+    def generate_state(self,
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       global_stream: CodeIOStream,
+                       callsite_stream: CodeIOStream,
+                       generate_state_footer=True) -> None:
 
-        sid = sdfg.node_id(state)
+        sid = state.parent.node_id(state)
 
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
@@ -444,7 +450,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg, global_stream, callsite_stream):
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()
 
         opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.sdfg_id})')
@@ -491,7 +497,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
         elif isinstance(scope, nodes.EntryNode):
             return scope.schedule
         elif isinstance(scope, (SDFGState, SDFG)):
-            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
+            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.sdfg)
             if sdfg.parent_nsdfg_node is None:
                 return TOP_SCHEDULE
 
@@ -526,8 +532,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
 
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """
-        Determines where (at which scope/state/SDFG) each data descriptor
-        will be allocated/deallocated.
+        Determines where (at which scope/state/SDFG) each data descriptor will be allocated/deallocated.
 
         :param top_sdfg: The top-level SDFG to determine for.
         """
@@ -543,8 +548,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
             #############################################
             # Look for all states in which a scope-allocated array is used in
             instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
-            array_names = sdfg.arrays.keys(
-            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            array_names = sdfg.arrays.keys()
             # Iterate topologically to get state-order
             for state in sdfg.topological_sort():
                 for node in state.data_nodes():
@@ -721,7 +725,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({sdfg.name}_t *__st
                     if curscope is None:
                         curscope = curstate
                 elif isinstance(curscope, (SDFGState, SDFG)):
-                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.parent)
+                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.sdfg)
                     # Go one SDFG up
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None

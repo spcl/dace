@@ -22,7 +22,7 @@ import abc
 import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG, SDFGState, ScopeBlock
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
@@ -108,7 +108,7 @@ class PatternTransformation(TransformationBase):
         raise NotImplementedError
 
     def can_be_applied(self,
-                       graph: Union[SDFG, SDFGState],
+                       graph: Union[ScopeBlock, SDFGState],
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
@@ -126,10 +126,11 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: Union[ScopeBlock, SDFGState], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
 
+        :param graph: The graph object on which the transformation operates.
         :param sdfg: The SDFG to apply the transformation to.
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.
@@ -499,7 +500,7 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
         pass
 
     @abc.abstractmethod
-    def can_be_applied(self, graph: SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: ScopeBlock, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
 
             :param graph: SDFG object in which the match was found.
@@ -707,7 +708,7 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
-                sdfg = subgraph.graph.parent
+                sdfg = subgraph.graph.sdfg
                 self.sdfg_id = sdfg.sdfg_id
                 self.state_id = sdfg.node_id(subgraph.graph)
             elif isinstance(subgraph.graph, SDFG):

@@ -34,7 +34,7 @@ def get_uuid(element, state=None):
     if isinstance(element, SDFG):
         return ids_to_string(element.sdfg_id)
     elif isinstance(element, SDFGState):
-        return ids_to_string(element.parent.sdfg_id, element.parent.node_id(element))
+        return ids_to_string(element.sdfg.sdfg_id, element.sdfg.node_id(element))
     elif isinstance(element, nodes.Node):
         return ids_to_string(state.parent.sdfg_id, state.parent.node_id(state), state.node_id(element))
     else:
