@@ -2522,13 +2522,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             gen = getattr(self, '_generate_' + type(node).__name__, False)
             if gen is not False:  # Not every node type has a code generator here
                 gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
-            return
+                return
 
         if not CUDACodeGen._in_device_code:
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
             return
 
-        self._locals.clear_scope(self._code_state.indentation + 1)
+        if isinstance(node, nodes.ExitNode):
+            self._locals.clear_scope(self._code_state.indentation + 1)
 
         if CUDACodeGen._in_device_code and isinstance(node, nodes.MapExit):
             return  # skip
