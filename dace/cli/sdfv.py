@@ -36,7 +36,11 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:
-        if 'VSCODE_IPC_HOOK_CLI' in os.environ or 'VSCODE_GIT_IPC_HANDLE' in os.environ:
+        if (
+            'VSCODE_IPC_HOOK' in os.environ
+            or 'VSCODE_IPC_HOOK_CLI' in os.environ
+            or 'VSCODE_GIT_IPC_HANDLE' in os.environ
+        ):
             filename = tempfile.mktemp(suffix='.sdfg')
             sdfg.save(filename)
             os.system(f'code {filename}')
