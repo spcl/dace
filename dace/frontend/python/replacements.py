@@ -4239,14 +4239,38 @@ def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('Array', 'fill')
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
-def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number]) -> str:
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number, sp.Expr]) -> str:
+    assert arr in sdfg.arrays
     if isinstance(value, (Number, np.bool_)):
-        pass        # Litteral numbers passed as arguments
+        value_is_literal = True
+    elif isinstance(value, sp.Expr):
+        value_is_literal = True
+        raise NotImplementedError(f"{arr}.fill()` is not implemented for symbolic expression `{value}`.") # Look at `full`.
     elif isinstance(value, str) and isinstance(sdfg.arrays.get(value, None), data.Scalar):
-        pass        # Scalars inside the sdfg (is this safe?)
+         value_is_literal = False
     else:
-        raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=value))
-    return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
+        raise mem_parser.DaceSyntaxError(pv, None, f"The type of fill value `{f}` not supported! It was '{type(value)}'")
+
+    this_array = sdfg.arrays[arr]
+    shape      = this_array.shape
+
+    if value_is_literal:
+        body   = value      # In case `value` is a literal then the rhs of the assignement, labled as `body` is the value itself.
+        inputs = dict()     # In addition the tasklet does not have any inputs.
+    else:
+        body   = '__inp'    # In case `value` is a scale the body is the name of the connector.
+        inputs = {body: dace.Memlet(data=value, subset='0')}    # And the tasklet needs the scalar as input.
+
+    state.add_mapped_tasklet(
+        '_numpy_fill_',
+        map_ranges={f"__i{dim}": f"0:{s}" for dim, s in enumerate(shape)},
+        inputs=inputs,
+        code=f"__out = {body}",
+        outputs={'__out': dace.Memlet.simple(arr, ",".join([f"__i{dim}" for dim in range(len(shape))]))},
+        external_edges=True
+    )
+
+    return arr
 
 
 @oprepo.replaces_method('Array', 'reshape')

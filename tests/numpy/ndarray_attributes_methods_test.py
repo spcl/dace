@@ -44,11 +44,10 @@ def test_fill2(A: dace.int32[M, N], a: dace.int32):
     return A  # return A.fill(5) doesn't work because A is not copied
 
 
-# Does not work because expressions as arguments are not yet supported.
-#@compare_numpy_output()
-#def test_fill3(A: dace.int32[M, N], a: dace.int32):
-#   A.fill(a + 1)
-#   return A
+@compare_numpy_output()
+def test_fill3(A: dace.int32[M, N], a: dace.int32):
+    A.fill(a + 1)
+    return A
 
 
 @compare_numpy_output()
@@ -138,7 +137,7 @@ if __name__ == "__main__":
     test_astype()
     test_fill()
     test_fill2()
-    #test_fill3()
+    test_fill3()
     test_reshape()
     test_transpose1()
     test_transpose2()
