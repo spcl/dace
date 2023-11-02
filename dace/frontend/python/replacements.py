@@ -602,19 +602,11 @@ def _elementwise(pv: 'ProgramVisitor',
         tasklet = state.add_tasklet("_elementwise_", {'__inp'}, {'__out'}, code)
         state.add_edge(inp, None, tasklet, '__inp', Memlet.from_array(in_array, inparr))
         state.add_edge(tasklet, '__out', out, None, Memlet.from_array(out_array, outarr))
-
-        if body in sdfg.arrays:
-            raise NotImplementedError("This mode is only possible with literals.")
     else:
-        # This is the input for the array we want to read from.
-        inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))}
-        if body in sdfg.arrays:     # In case the input is not a number but a variable we must also add it as an input.
-            inputs.update({f'{body}': Memlet.from_array(body, sdfg.arrays[body])})
-
         state.add_mapped_tasklet(
             name="_elementwise_",
             map_ranges={f'__i{dim}': f'0:{N}' for dim, N in enumerate(inparr.shape)},
-            inputs=inputs,
+            inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             code=code,
             outputs={'__out': Memlet.simple(out_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             external_edges=True)
