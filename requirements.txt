@@ -19,7 +19,7 @@ ply==3.11
 PyYAML==6.0
 requests==2.31.0
 six==1.16.0
-sympy==1.12
+sympy==1.9
 urllib3==2.0.7
 websockets==11.0.3
 Werkzeug==2.3.5
