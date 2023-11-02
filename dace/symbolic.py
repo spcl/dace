@@ -321,15 +321,7 @@ def symlist(values):
         values = [values]
 
     for expr in values:
-        if isinstance(expr, SymExpr):
-            true_expr = expr.expr
-        elif isinstance(expr, sympy.Basic):
-            true_expr = expr
-        else:
-            continue
-        for atom in sympy.preorder_traversal(true_expr):
-            if isinstance(atom, symbol):
-                result[atom.name] = atom
+        result.extend({str(k): k for k in expr.free_symbols})
     return result
 
 
@@ -458,7 +450,7 @@ def resolve_symbol_to_constant(symb, start_sdfg):
         return None
 
 
-def symbols_in_ast(tree: ast.AST):
+def names_in_ast(tree: ast.AST):
     """ Walks an AST and finds all names, excluding function names. """
     symbols = []
     skip = set()

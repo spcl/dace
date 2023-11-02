@@ -158,7 +158,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             local_ignore = None
             for e in nsdfg.sdfg.out_edges(nstate):
                 # Look for symbols in condition
-                candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
+                candidates -= (set(map(str, symbolic.names_in_ast(e.data.condition.code[0]))) - ignore)
 
                 for assign in e.data.assignments.values():
                     candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
@@ -258,7 +258,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
 
         # Any array that is used in interstate edges is removed
         for e in nsdfg.sdfg.edges():
-            candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))))
+            candidates -= (set(map(str, symbolic.names_in_ast(e.data.condition.code[0]))))
             for assign in e.data.assignments.values():
                 candidates -= (symbolic.free_symbols_and_functions(assign))
 

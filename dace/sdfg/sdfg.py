@@ -247,7 +247,7 @@ class InterstateEdge(object):
         Returns a set of symbols read in this edge (including symbols in the condition and assignment values).
         """
         # Symbols in conditions and assignments
-        result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        result = set(map(str, dace.symbolic.names_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
             result |= symbolic.free_symbols_and_functions(assign)
 
@@ -266,14 +266,14 @@ class InterstateEdge(object):
         #       exlcuding keys from being considered "defined" if they have been already read.
 
         # Symbols in conditions are always free, because the condition is executed before the assignments
-        cond_symbols = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
+        cond_symbols = set(map(str, dace.symbolic.names_in_ast(self.condition.code[0])))
         # Symbols in assignment keys are candidate defined symbols
         lhs_symbols = set()
         # Symbols in assignment values are candidate free symbols
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
+            rhs_symbols |= set(map(str, dace.symbolic.names_in_ast(ast.parse(rhs))))
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
