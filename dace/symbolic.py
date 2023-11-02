@@ -177,6 +177,10 @@ class SymExpr(object):
         return super(SymExpr, cls).__new__(cls)
 
     @property
+    def free_symbols(self):
+        return self._main_expr.free_symbols | self._approx_expr.free_symbols
+    
+    @property
     def expr(self):
         return self._main_expr
 
