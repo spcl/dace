@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, SomeGraphT
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, GraphT
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
