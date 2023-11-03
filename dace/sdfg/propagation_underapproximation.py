@@ -618,124 +618,7 @@ def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> Se
     return roots
 
 
-def _find_for_loops(
-        sdfg: SDFG
-) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
-    """
-    Modified version of _annotate_loop_ranges from dace.sdfg.propagation
-    that returns the identified loops in a dictionary and stores the found iteration variables
-    in the global ranges_per_state dictionary.
 
-    :param sdfg: The SDFG in which to look.
-    :return: dictionary mapping loop headers to first state in the loop,
-            the set of states enclosed by the loop, the itearation variable,
-            the range of the iteration variable
-    """
-
-    # We import here to avoid cyclic imports.
-    from dace.transformation.interstate.loop_detection import find_for_loop
-    from dace.sdfg import utils as sdutils
-
-    # dictionary mapping loop headers to beginstate, loopstates, looprange
-    identified_loops = {}
-    for cycle in sdfg.find_cycles():
-        # In each cycle, try to identify a valid loop guard state.
-        guard = None
-        begin = None
-        itvar = None
-        for state in cycle:
-            # Try to identify a valid for-loop guard.
-            in_edges = sdfg.in_edges(state)
-            out_edges = sdfg.out_edges(state)
-
-            # A for-loop guard has two or more incoming edges (1 increment and
-            # n init, all identical), and exactly two outgoing edges (loop and
-            # exit loop).
-            if len(in_edges) < 2 or len(out_edges) != 2:
-                continue
-
-            # All incoming guard edges must set exactly one variable and it must
-            # be the same for all of them.
-            itvars = set()
-            for iedge in in_edges:
-                if len(iedge.data.assignments) > 0:
-                    if not itvars:
-                        itvars = set(iedge.data.assignments.keys())
-                    else:
-                        itvars &= set(iedge.data.assignments.keys())
-                else:
-                    itvars = None
-                    break
-            if not itvars or len(itvars) > 1:
-                continue
-            itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
-
-            # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sympy.Not(
-                    out_edges[1].data.condition_sympy())):
-                continue
-
-            # Make sure the last state of the loop (i.e. the state leading back
-            # to the guard via 'increment' edge) is part of this cycle. If not,
-            # we're looking at the guard for a nested cycle, which we ignore for
-            # this cycle.
-            increment_edge = None
-            for iedge in in_edges:
-                if itvarsym in _freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
-                    increment_edge = iedge
-                    break
-            if increment_edge is None or increment_edge.src not in cycle:
-                continue
-
-            # One of the child states must be in the loop (loop begin), and the
-            # other one must be outside the cycle (loop exit).
-            loop_state = None
-            exit_state = None
-            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
-                loop_state = out_edges[0].dst
-                exit_state = out_edges[1].dst
-            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
-                loop_state = out_edges[1].dst
-                exit_state = out_edges[0].dst
-            if loop_state is None or exit_state is None:
-                continue
-
-            # This is a valid guard state candidate.
-            guard = state
-            begin = loop_state
-            break
-
-        if guard is not None and begin is not None and itvar is not None:
-            # A guard state was identified, see if it has valid for-loop ranges
-            # and annotate the loop as such.
-
-            loop_state_list = []
-            res = find_for_loop(sdfg, guard, begin, itervar=itvar)
-            if res is None:
-                continue
-            itervar, rng, (_, last_loop_state) = res
-            # Make sure the range is flipped in a direction such that the
-            # stride is positive (in order to match subsets.Range).
-            start, stop, stride = rng
-            # This inequality needs to be checked exactly like this due to
-            # constraints in sympy/symbolic expressions, do not simplify!!!
-            if (stride < 0) == True:
-                rng = (stop, start, -stride)
-            loop_states = sdutils.dfs_conditional(sdfg,
-                                                  sources=[begin],
-                                                  condition=lambda _, child: child != guard)
-
-            if itvar not in ranges_per_state[begin]:
-
-                for loop_state in loop_states:
-                    ranges_per_state[loop_state][itervar] = subsets.Range([rng])
-                    loop_state_list.append(loop_state)
-                ranges_per_state[guard][itervar] = subsets.Range([rng])
-                identified_loops[guard] = (begin, last_loop_state, loop_state_list, itvar,
-                                           subsets.Range([rng]))
-
-    return identified_loops
 
 
 def _filter_undefined_symbols(border_memlet: Memlet,
@@ -871,13 +754,132 @@ class UnderapproximateWrites(ppl.Pass):
         from dace.transformation.helpers import split_interstate_edges
 
         split_interstate_edges(sdfg)
-        loops = _find_for_loops(sdfg)
+        loops = self._find_for_loops(sdfg)
         loop_dict.update(loops)
 
         for state in sdfg.nodes():
             self._underapproximate_writes_state(sdfg, state)
 
         self._underapproximate_writes_loops(loops, sdfg)
+
+    def _find_for_loops(self,
+            sdfg: SDFG
+    ) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
+        """
+        Modified version of _annotate_loop_ranges from dace.sdfg.propagation
+        that returns the identified loops in a dictionary and stores the found iteration variables
+        in the global ranges_per_state dictionary.
+
+        :param sdfg: The SDFG in which to look.
+        :return: dictionary mapping loop headers to first state in the loop,
+                the set of states enclosed by the loop, the itearation variable,
+                the range of the iteration variable
+        """
+
+        # We import here to avoid cyclic imports.
+        from dace.transformation.interstate.loop_detection import find_for_loop
+        from dace.sdfg import utils as sdutils
+
+        # dictionary mapping loop headers to beginstate, loopstates, looprange
+        identified_loops = {}
+        for cycle in sdfg.find_cycles():
+            # In each cycle, try to identify a valid loop guard state.
+            guard = None
+            begin = None
+            itvar = None
+            for state in cycle:
+                # Try to identify a valid for-loop guard.
+                in_edges = sdfg.in_edges(state)
+                out_edges = sdfg.out_edges(state)
+
+                # A for-loop guard has two or more incoming edges (1 increment and
+                # n init, all identical), and exactly two outgoing edges (loop and
+                # exit loop).
+                if len(in_edges) < 2 or len(out_edges) != 2:
+                    continue
+
+                # All incoming guard edges must set exactly one variable and it must
+                # be the same for all of them.
+                itvars = set()
+                for iedge in in_edges:
+                    if len(iedge.data.assignments) > 0:
+                        if not itvars:
+                            itvars = set(iedge.data.assignments.keys())
+                        else:
+                            itvars &= set(iedge.data.assignments.keys())
+                    else:
+                        itvars = None
+                        break
+                if not itvars or len(itvars) > 1:
+                    continue
+                itvar = next(iter(itvars))
+                itvarsym = pystr_to_symbolic(itvar)
+
+                # The outgoing edges must be negations of one another.
+                if out_edges[0].data.condition_sympy() != (sympy.Not(
+                        out_edges[1].data.condition_sympy())):
+                    continue
+
+                # Make sure the last state of the loop (i.e. the state leading back
+                # to the guard via 'increment' edge) is part of this cycle. If not,
+                # we're looking at the guard for a nested cycle, which we ignore for
+                # this cycle.
+                increment_edge = None
+                for iedge in in_edges:
+                    if itvarsym in _freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
+                        increment_edge = iedge
+                        break
+                if increment_edge is None or increment_edge.src not in cycle:
+                    continue
+
+                # One of the child states must be in the loop (loop begin), and the
+                # other one must be outside the cycle (loop exit).
+                loop_state = None
+                exit_state = None
+                if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
+                    loop_state = out_edges[0].dst
+                    exit_state = out_edges[1].dst
+                elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
+                    loop_state = out_edges[1].dst
+                    exit_state = out_edges[0].dst
+                if loop_state is None or exit_state is None:
+                    continue
+
+                # This is a valid guard state candidate.
+                guard = state
+                begin = loop_state
+                break
+
+            if guard is not None and begin is not None and itvar is not None:
+                # A guard state was identified, see if it has valid for-loop ranges
+                # and annotate the loop as such.
+
+                loop_state_list = []
+                res = find_for_loop(sdfg, guard, begin, itervar=itvar)
+                if res is None:
+                    continue
+                itervar, rng, (_, last_loop_state) = res
+                # Make sure the range is flipped in a direction such that the
+                # stride is positive (in order to match subsets.Range).
+                start, stop, stride = rng
+                # This inequality needs to be checked exactly like this due to
+                # constraints in sympy/symbolic expressions, do not simplify!!!
+                if (stride < 0) == True:
+                    rng = (stop, start, -stride)
+                loop_states = sdutils.dfs_conditional(sdfg,
+                                                      sources=[begin],
+                                                      condition=lambda _, child: child != guard)
+
+                if itvar not in ranges_per_state[begin]:
+
+                    for loop_state in loop_states:
+                        ranges_per_state[loop_state][itervar] = subsets.Range([rng])
+                        loop_state_list.append(loop_state)
+                    ranges_per_state[guard][itervar] = subsets.Range([rng])
+                    identified_loops[guard] = (begin, last_loop_state, loop_state_list, itvar,
+                                               subsets.Range([rng]))
+
+        return identified_loops
 
     def _underapproximate_writes_loops(self, loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
                                                             str, subsets.Range]],
