@@ -2021,7 +2021,6 @@ class SDFG(ControlFlowRegion):
         condition_expr: str,
         increment_expr: str,
         loop_end_state=None,
-        as_block=False,
     ):
         """
         Helper function that adds a looping state machine around a
@@ -2051,8 +2050,6 @@ class SDFG(ControlFlowRegion):
                                state where the loop iteration ends.
                                If None, sets the end state to
                                ``loop_state`` as well.
-        :param as_block: Add the loop as a separate loop block. False by default, in which case the loop is added
-                         as a traditional state machine loop.
         :return: A 3-tuple of (``before_state``, generated loop guard state,
                  ``after_state``).
         """
