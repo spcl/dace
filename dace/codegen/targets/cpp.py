@@ -35,13 +35,19 @@ if TYPE_CHECKING:
 
 
 def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
-    """This function creates a unique name for the `SDFG`'s state `struct`.
+    """This function creates a unique type name for the `SDFG`'s state `struct`.
 
-    :note: Previously this was just the name of the SDFG with the suffix `_t`
-           which proved not resistant enough.
+    The function uses the `compiler.codegen_state_struct_suffix`
+    configuration entry for deriving the type name of the state `struct`.
+
+    :param sdfg:    The SDFG for which the name should be generated.
     """
     name = sdfg if isinstance(sdfg, str) else sdfg.name
-    return f"{name}_state_struct_t"
+    state_suffix = Config.get("compiler", "codegen_state_struct_suffix")
+    type_name = f"{name}{state_suffix}"
+    if not dtypes.validate_name(type_name):
+        raise ValueError(f"The mangled type name `{type_name}` of the state struct of SDFG '{name}' is invalid.")
+    return type_name
 
 
 def copy_expr(
