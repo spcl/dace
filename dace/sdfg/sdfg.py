@@ -2021,6 +2021,7 @@ class SDFG(ControlFlowRegion):
         condition_expr: str,
         increment_expr: str,
         loop_end_state=None,
+        as_block=False,
     ):
         """
         Helper function that adds a looping state machine around a
@@ -2050,6 +2051,8 @@ class SDFG(ControlFlowRegion):
                                state where the loop iteration ends.
                                If None, sets the end state to
                                ``loop_state`` as well.
+        :param as_block: Add the loop as a separate loop block. False by default, in which case the loop is added
+                         as a traditional state machine loop.
         :return: A 3-tuple of (``before_state``, generated loop guard state,
                  ``after_state``).
         """
@@ -2150,6 +2153,7 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
+        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2169,6 +2173,10 @@ class SDFG(ControlFlowRegion):
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
+
+            # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
+            # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
+            sdutils.inline_loop_blocks(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0

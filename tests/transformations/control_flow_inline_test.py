@@ -164,16 +164,16 @@ def test_inline_tripple_nested_for():
     anode = comp_state.add_access('A')
     bnode = comp_state.add_access('B')
     tmpnode = comp_state.add_access('tmp')
-    tasklet = comp_state.add_tasklet('comp', {'a', 'b'}, {'tmp'}, 'tmp = a * b')
+    tasklet = comp_state.add_tasklet('comp', {'a', 'b'}, {'t'}, 't = a * b')
     comp_state.add_memlet_path(anode, tasklet, dst_conn='a', memlet=dace.Memlet.simple('A', 'i, k'))
     comp_state.add_memlet_path(bnode, tasklet, dst_conn='b', memlet=dace.Memlet.simple('B', 'k, j'))
-    comp_state.add_memlet_path(tasklet, tmpnode, src_conn='tmp', memlet=dace.Memlet.simple('tmp', 'i, j, k'))
+    comp_state.add_memlet_path(tasklet, tmpnode, src_conn='t', memlet=dace.Memlet.simple('tmp', 'i, j, k'))
 
     tmpnode2 = reduce_state.add_access('tmp')
     cnode = reduce_state.add_access('C')
-    red = reduce_state.add_reduce('lambda a, b: a + b', axes=[2])
-    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', 'i, j, k'))
-    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', 'i, j'))
+    red = reduce_state.add_reduce('lambda a, b: a + b', (2,), 0)
+    reduce_state.add_edge(tmpnode2, None, red, None, dace.Memlet.simple('tmp', '0:N, 0:M, 0:K'))
+    reduce_state.add_edge(red, None, cnode, None, dace.Memlet.simple('C', '0:N, 0:M'))
 
     sdutils.inline_loop_blocks(sdfg)
 
