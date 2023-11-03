@@ -944,7 +944,7 @@ class UnderapproximateWrites(ppl.Pass):
         nsdfg_node: NestedSDFG,
     ):
         """
-        Propagate writes out of a nested sdfg. Only consider memlets in states that are
+        Propagate writes out of a nested sdfg. Only considers memlets in states that are
         executed unconditionally.
 
         :param parent_sdfg: The parent SDFG this nested SDFG is in.
