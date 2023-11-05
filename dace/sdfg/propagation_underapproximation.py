@@ -1451,8 +1451,8 @@ class UnderapproximateWrites(ppl.Pass):
                                   defined_variables: Set[symbolic.SymbolicType] = None,
                                   use_dst: bool = False,
                                   surrounding_itvars: Set[str] = None) -> Memlet:
-        """ Tries to propagate a list of memlets through a range (computes the 
-            image of the memlet function applied on an integer set of, e.g., a 
+        """ Tries to underapproximate a list of memlets through a range (underapproximates
+            the image of the memlet function applied on an integer set of, e.g., a
             map range) and returns a new memlet object.
 
             :param memlets: The memlets to propagate.
@@ -1461,14 +1461,15 @@ class UnderapproximateWrites(ppl.Pass):
             :param rng: A subset with dimensionality len(params) that contains the
                         range to propagate with.
             :param defined_variables: A set of symbols defined that will remain the
-                                    same throughout propagation. If None, assumes
+                                    same throughout underapproximation. If None, assumes
                                     that all symbols outside of `params` have been
                                     defined.
-            :param use_dst: Whether to propagate the memlets' dst subset or use the
+            :param use_dst: Whether to underapproximate the memlets' dst subset or use the
                             src instead, depending on propagation direction.
-            :param surrounding_itvars:  set of iterator variables that surround the memlet
-                                        but are not propagated in this call
-            :return: Memlet with propagated subset and volume.
+            :param surrounding_itvars:  set of iteration variables that surround the memlet
+                                        but are not considered for the underapproximation in
+                                        this call
+            :return: Memlet with underapproximated subset.
         """
         if not surrounding_itvars:
             surrounding_itvars = set()
@@ -1487,17 +1488,17 @@ class UnderapproximateWrites(ppl.Pass):
                             defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
 
         new_subset = None
-        for md in memlets:
-            if md.is_empty():
+        for memlet in memlets:
+            if memlet.is_empty():
                 continue
 
             _subsets = None
-            if use_dst and md.dst_subset is not None:
-                _subsets = copy.deepcopy(md.dst_subset)
-            elif not use_dst and md.src_subset is not None:
-                _subsets = copy.deepcopy(md.src_subset)
+            if use_dst and memlet.dst_subset is not None:
+                _subsets = copy.deepcopy(memlet.dst_subset)
+            elif not use_dst and memlet.src_subset is not None:
+                _subsets = copy.deepcopy(memlet.src_subset)
             else:
-                _subsets = copy.deepcopy(md.subset)
+                _subsets = copy.deepcopy(memlet.subset)
 
             if isinstance(_subsets, subsets.SubsetUnion):
                 _subsets = _subsets.subset_list
@@ -1513,7 +1514,7 @@ class UnderapproximateWrites(ppl.Pass):
                 # find a pattern for the current subset
                 for pclass in MemletPatternUnderapproximation.extensions():
                     pattern = pclass()
-                    if pattern.can_be_applied([subset], variable_context, rng, [md]):
+                    if pattern.can_be_applied([subset], variable_context, rng, [memlet]):
                         subset = pattern.propagate(arr, [subset], rng)
                         break
                 else:
