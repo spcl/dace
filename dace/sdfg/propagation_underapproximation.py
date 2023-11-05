@@ -659,6 +659,17 @@ def _filter_undefined_symbols(border_memlet: Memlet,
                     break
         border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
 
+def _merge_subsets(subset_a, subset_b)->subsets.SubsetUnion:
+    """
+    Helper function that merges two subsets to a SubsetUnion and throws
+    an error if the subsets have different dimensions
+    """
+    if subset_a is not None:
+        if subset_a.dims() != subset_b.dims():
+            raise ValueError('Cannot merge subset ranges of unequal dimension!')
+        return subsets.list_union(subset_a, subset_b)
+    else:
+        return subset_b
 
 class UnderapproximateWrites(ppl.Pass):
 
@@ -960,16 +971,6 @@ class UnderapproximateWrites(ppl.Pass):
             border_memlets[node_label] = border_memlet
             return border_memlet
 
-        def _merge_subsets(subset_a, subset_b):
-            # If the border memlet already has a set range, compute the
-            # union of the ranges to merge the subsets.
-            if subset_a is not None:
-                if subset_a.dims() != subset_b.dims():
-                    raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                return subsets.list_union(subset_a, subset_b)
-            else:
-                return subset_b
-
         # Build a map of connectors to associated 'border' memlets inside
         # the nested SDFG. This map will be populated with memlets once they
         # get propagated in the SDFG.
@@ -1126,7 +1127,6 @@ class UnderapproximateWrites(ppl.Pass):
                 # collect all the subsets of the incoming memlets for the current access node
                 for edge in edges:
                     inside_memlet = copy.copy(approximation_dict[edge])
-
                     # filter out subsets that could become empty depending on assignments
                     # of symbols
                     filtered_subsets = filter_subsets(itvar, rng, inside_memlet)
@@ -1145,8 +1145,7 @@ class UnderapproximateWrites(ppl.Pass):
                 continue
             # propagate the border memlets of nested loop
             for node_label, other_border_memlet in loop_write_dict[state].items():
-                # filter out subsets that could become empty depending on assignments
-                # of symbols
+                # filter out subsets that could become empty depending on symbol assignments
                 filtered_subsets = filter_subsets(itvar, rng, other_border_memlet)
                 if not filtered_subsets:
                     continue
@@ -1180,36 +1179,26 @@ class UnderapproximateWrites(ppl.Pass):
         :param rng: The iteration range of the iteration variable
         :param loop_nest_itvars: A set of iteration variables of surrounding loops
         """
-
         if not loop_nest_itvars:
             loop_nest_itvars = set()
         if len(memlets) > 0:
             params = [itvar]
-            ranges = [rng]
-
             # get all the other iteration variables surrounding this memlet
             surrounding_itvars = iteration_variables[sdfg] if sdfg in iteration_variables else set()
             if loop_nest_itvars:
                 surrounding_itvars |= loop_nest_itvars
 
-            use_dst = True
             subset = self._underapproximate_subsets(memlets,
                                                     arr,
                                                     params,
                                                     rng,
-                                                    use_dst=use_dst,
+                                                    use_dst=True,
                                                     surrounding_itvars=surrounding_itvars).subset
 
             if subset is None or len(subset.subset_list) == 0:
                 return
-            # If the border memlet already has a set range, compute the
-            # union of the ranges to merge the subsets.
-            if dst_memlet.subset is not None:
-                if dst_memlet.subset.dims() != subset.dims():
-                    raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                dst_memlet.subset = subsets.list_union(dst_memlet.subset, subset)
-            else:
-                dst_memlet.subset = subset
+            # compute the union of the ranges to merge the subsets.
+            dst_memlet.subset = _merge_subsets(dst_memlet.subset, subset)
 
     def _underapproximate_writes_scope(self,
                                        sdfg: SDFG,
