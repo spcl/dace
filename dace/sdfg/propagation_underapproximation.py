@@ -1312,7 +1312,9 @@ class UnderapproximateWrites(ppl.Pass):
                                                             surrounding_itvars=surrounding_itvars)
             approximation_dict[edge] = new_memlet
 
-    def _align_memlet(self, state: SDFGState, edge: gr.MultiConnectorEdge[Memlet],
+    def _align_memlet(self,
+                      state: SDFGState,
+                      edge: gr.MultiConnectorEdge[Memlet],
                       dst: bool) -> Memlet:
         """ 
         Takes Multiconnectoredge containing Memlet in DFG and swaps subset and other_subset of 
@@ -1358,8 +1360,8 @@ class UnderapproximateWrites(ppl.Pass):
                                   arr: dace.data.Array = None,
                                   connector=None,
                                   surrounding_itvars: Set[str] = None):
-        """ Tries to propagate a memlet through a scope (computes the image of 
-            the memlet function applied on an integer set of, e.g., a map range) 
+        """ Tries to underapproximate a memlet through a scope (computes an underapproximation
+            of the image of the memlet function applied on an integer set of, e.g., a map range)
             and returns a new memlet object.
 
             :param dfg_state: An SDFGState object representing the graph.
@@ -1393,11 +1395,11 @@ class UnderapproximateWrites(ppl.Pass):
         sdfg = dfg_state.parent
         scope_node_symbols = set(
             conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-        defined_vars = [
+        defined_vars = {
             symbolic.pystr_to_symbolic(s)
             for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
             if s not in scope_node_symbols
-        ]
+        }
 
         # Find other adjacent edges within the connected to the scope node
         # and union their subsets
@@ -1419,13 +1421,6 @@ class UnderapproximateWrites(ppl.Pass):
 
             # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
             #        so this test cannot be used
-            # If the data container is not specified on the memlet, use other data
-            # if memlet._is_data_src is not None:
-            #     if use_dst and memlet._is_data_src:
-            #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
-            #     elif not use_dst and not memlet._is_data_src:
-            #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
-
             arr = sdfg.arrays[memlet.data]
 
         # Propagate subset
