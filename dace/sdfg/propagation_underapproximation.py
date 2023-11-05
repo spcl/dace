@@ -22,6 +22,7 @@ from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.scope import ScopeTree
 from dace.sdfg.graph import Edge
+from dace.sdfg import scope
 
 approximation_dict: Dict[Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
@@ -500,7 +501,7 @@ def _collect_iteration_variables(state: SDFGState, node: nodes.NestedSDFG) -> Se
     return params
 
 
-def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[ScopeTree, Set[str]]:
+def _collect_itvars_scope(scopes: Union[scope.ScopeTree, List[scope.ScopeTree]]) -> Dict[scope.ScopeTree, Set[str]]:
     """
     Helper method which finds all surrounding iteration variables for each scope
 
@@ -508,7 +509,7 @@ def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[Sco
     :return: A dictionary mapping each ScopeTree object in scopes to the
             list of iteration variables surrounding it
     """
-    if isinstance(scopes, ScopeTree):
+    if isinstance(scopes, scope.ScopeTree):
         scopes_to_process = [scopes]
     else:
         scopes_to_process = scopes
@@ -516,20 +517,20 @@ def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[Sco
     next_scopes = set()
     surrounding_map_vars = {}
     while len(scopes_to_process) > 0:
-        for scope in scopes_to_process:
-            if scope is None:
+        for scope_node in scopes_to_process:
+            if scope_node is None:
                 continue
-            next_scope = scope
+            next_scope = scope_node
             while next_scope:
                 next_scope = next_scope.parent
                 if next_scope is None:
                     break
                 curr_entry = next_scope.entry
-                if scope not in surrounding_map_vars:
-                    surrounding_map_vars[scope] = set()
+                if scope_node not in surrounding_map_vars:
+                    surrounding_map_vars[scope_node] = set()
                 if isinstance(curr_entry, nodes.MapEntry):
-                    surrounding_map_vars[scope] |= set(curr_entry.map.params)
-            next_scopes.add(scope.parent)
+                    surrounding_map_vars[scope_node] |= set(curr_entry.map.params)
+            next_scopes.add(scope_node.parent)
         scopes_to_process = next_scopes
         next_scopes = set()
     return surrounding_map_vars
@@ -1203,53 +1204,55 @@ class UnderapproximateWrites(ppl.Pass):
     def _underapproximate_writes_scope(self,
                                        sdfg: SDFG,
                                        state: SDFGState,
-                                       scopes: Union[ScopeTree, List[ScopeTree]],
-                                       propagate_exit: bool = True):
+                                       scopes: Union[scope.ScopeTree, List[scope.ScopeTree]]):
         """ 
         Propagate memlets from the given scopes outwards. 
 
         :param sdfg: The SDFG in which the scopes reside.
         :param state: The SDFG state in which the scopes reside.
         :param scopes: The ScopeTree object or a list thereof to start from.
-        :param propagate_entry: If False, skips propagating out of the scope entry node.
-        :param propagate_exit: If False, skips propagating out of the scope exit node.
         :note: This operation is performed in-place on the given SDFG.
         """
 
         # for each map scope find the iteration variables of surrounding maps
-        surrounding_map_vars: Dict[ScopeTree, Set[str]] = _collect_itvars_scope(scopes)
-
-        if isinstance(scopes, ScopeTree):
+        surrounding_map_vars: Dict[scope.ScopeTree, Set[str]] = _collect_itvars_scope(scopes)
+        if isinstance(scopes, scope.ScopeTree):
             scopes_to_process = [scopes]
         else:
             scopes_to_process = scopes
 
-        next_scopes = set()
-
         # Process scopes from the inputs upwards, propagating edges at the
         # entry and exit nodes
+        next_scopes = set()
         while len(scopes_to_process) > 0:
-            for scope in scopes_to_process:
-                if scope.entry is None:
+            for scope_node in scopes_to_process:
+                if scope_node.entry is None:
                     continue
 
-                map_iteration_variables = surrounding_map_vars[
-                    scope] if scope in surrounding_map_vars else set()
-                sdfg_iteration_variables = iteration_variables[
-                    sdfg] if sdfg in iteration_variables else set()
-                loop_iteration_variables = ranges_per_state[state].keys()
-                surrounding_iteration_variables = (map_iteration_variables |
-                                                   sdfg_iteration_variables |
-                                                   loop_iteration_variables)
-
-                # Propagate out of exit
-                if propagate_exit:
-                    self._underapproximate_writes_node(state, scope.exit, surrounding_iteration_variables)
-
+                surrounding_iteration_variables = self._collect_iteration_variables_scope_node(scope_node,
+                                                                                               sdfg,
+                                                                                               state,
+                                                                                               surrounding_map_vars)
+                self._underapproximate_writes_node(state, scope_node.exit, surrounding_iteration_variables)
                 # Add parent to next frontier
-                next_scopes.add(scope.parent)
+                next_scopes.add(scope_node.parent)
             scopes_to_process = next_scopes
             next_scopes = set()
+
+    def _collect_iteration_variables_scope_node(self,
+                                                scope_node: scope.ScopeTree,
+                                                sdfg: SDFG,
+                                                state: SDFGState,
+                                                surrounding_map_vars: Dict[scope.ScopeTree, Set[str]])->Set[str]:
+        map_iteration_variables = surrounding_map_vars[
+            scope_node] if scope_node in surrounding_map_vars else set()
+        sdfg_iteration_variables = iteration_variables[
+            sdfg] if sdfg in iteration_variables else set()
+        loop_iteration_variables = ranges_per_state[state].keys()
+        surrounding_iteration_variables = (map_iteration_variables |
+                                           sdfg_iteration_variables |
+                                           loop_iteration_variables)
+        return surrounding_iteration_variables
 
     def _underapproximate_writes_node(self,
                                       dfg_state: SDFGState,
