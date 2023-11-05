@@ -1312,32 +1312,32 @@ class UnderapproximateWrites(ppl.Pass):
                                                             surrounding_itvars=surrounding_itvars)
             approximation_dict[edge] = new_memlet
 
-    def _align_memlet(self, state: SDFGState, e: gr.MultiConnectorEdge[Memlet],
+    def _align_memlet(self, state: SDFGState, edge: gr.MultiConnectorEdge[Memlet],
                       dst: bool) -> Memlet:
         """ 
         Takes Multiconnectoredge containing Memlet in DFG and swaps subset and other_subset of 
         Memlet if it "points" in the wrong direction
 
         :param state: The state the memlet resides in
-        :param e: The edge containing the memlet that needs to be aligned
+        :param edge: The edge containing the memlet that needs to be aligned
         :param dst: True if Memlet should "point" to destination
 
         :return: Aligned memlet
         """
 
-        is_src = e.data._is_data_src
+        is_src = edge.data._is_data_src
         # Memlet is already aligned
         if is_src is None or (is_src and not dst) or (not is_src and dst):
-            res = approximation_dict[e]
+            res = approximation_dict[edge]
             return res
 
         # Data<->Code memlets always have one data container
-        mpath = state.memlet_path(e)
+        mpath = state.memlet_path(edge)
         if not isinstance(mpath[0].src, AccessNode) or not isinstance(mpath[-1].dst, AccessNode):
-            return approximation_dict[e]
+            return approximation_dict[edge]
 
         # Otherwise, find other data container
-        result = copy.deepcopy(approximation_dict[e])
+        result = copy.deepcopy(approximation_dict[edge])
         if dst:
             node = mpath[-1].dst
         else:
@@ -1345,8 +1345,8 @@ class UnderapproximateWrites(ppl.Pass):
 
         # Fix memlet fields
         result.data = node.data
-        result.subset = approximation_dict[e].other_subset
-        result.other_subset = approximation_dict[e].subset
+        result.subset = approximation_dict[edge].other_subset
+        result.other_subset = approximation_dict[edge].subset
         result._is_data_src = not is_src
         return result
 
