@@ -14,13 +14,11 @@ import sympy
 import dace
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 from dace.transformation.pass_pipeline import Modifies, Pass
-from dace import registry, subsets, symbolic, dtypes, data, SDFG, SDFGState, Memlet
+from dace import registry, subsets, symbolic, dtypes, data, SDFG, Memlet
 from dace.sdfg.nodes import NestedSDFG, AccessNode
-from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFGState, graph as gr
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg.scope import ScopeTree
 from dace.sdfg.graph import Edge
 from dace.sdfg import scope
 
@@ -75,6 +73,35 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
 
         # Return False if iteration variable appears in multiple dimensions
         # or if two iteration variables appear in the same dimension
+        if not self._iteration_variables_appear_multiple_times(data_dims, expressions, other_params, params):
+            return False
+
+        node_range = self._make_range(node_range)
+
+        for dim in range(data_dims):
+            dexprs = []
+            for expr in expressions:
+                if isinstance(expr[dim], symbolic.SymExpr):
+                    dexprs.append(expr[dim].expr)
+                elif isinstance(expr[dim], tuple):
+                    dexprs.append(
+                        (expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else
+                         expr[dim][0], expr[dim][1].expr if isinstance(
+                            expr[dim][1], symbolic.SymExpr) else expr[dim][1], expr[dim][2].expr
+                         if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
+                else:
+                    dexprs.append(expr[dim])
+
+            for pattern_class in SeparableUnderapproximationMemletPattern.extensions().keys():
+                smpattern = pattern_class()
+                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
+                                            data_dims):
+                    self.patterns_per_dim[dim] = smpattern
+                    break
+
+        return None not in self.patterns_per_dim
+
+    def _iteration_variables_appear_multiple_times(self, data_dims, expressions, other_params, params):
         for expr in expressions:
             for param in params:
                 occured_before = False
@@ -107,32 +134,7 @@ class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
                             continue
                         if other_param in free_symbols and param in free_symbols:
                             return False
-
-        node_range = self._make_range(node_range)
-
-        for dim in range(data_dims):
-
-            dexprs = []
-            for expr in expressions:
-                if isinstance(expr[dim], symbolic.SymExpr):
-                    dexprs.append(expr[dim].expr)
-                elif isinstance(expr[dim], tuple):
-                    dexprs.append(
-                        (expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else
-                         expr[dim][0], expr[dim][1].expr if isinstance(
-                            expr[dim][1], symbolic.SymExpr) else expr[dim][1], expr[dim][2].expr
-                         if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
-                else:
-                    dexprs.append(expr[dim])
-
-            for pattern_class in SeparableUnderapproximationMemletPattern.extensions().keys():
-                smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
-                                            data_dims):
-                    self.patterns_per_dim[dim] = smpattern
-                    break
-
-        return None not in self.patterns_per_dim
+        return True
 
     def _make_range(self, node_range):
         return subsets.Range([(rb.expr if isinstance(rb, symbolic.SymExpr) else rb,
