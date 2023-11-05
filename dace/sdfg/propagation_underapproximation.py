@@ -14,16 +14,15 @@ import sympy
 import dace
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 from dace.transformation.pass_pipeline import Modifies, Pass
-from dace import registry, subsets, symbolic, dtypes, data, SDFG, SDFGState, Memlet
+from dace import registry, subsets, symbolic, dtypes, data, SDFG, Memlet
 from dace.sdfg.nodes import NestedSDFG, AccessNode
-from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFGState, graph as gr
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
-from dace.sdfg.scope import ScopeTree
-from dace.sdfg.graph import Edge
+from dace.sdfg import graph
+from dace.sdfg import scope
 
-approximation_dict: Dict[Edge, Memlet] = {}
+approximation_dict: Dict[graph.Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
 loop_write_dict: dict[SDFGState, Dict[str, Memlet]] = {}
@@ -33,7 +32,7 @@ ranges_per_state: Dict[SDFGState, Dict[str, subsets.Range]] = defaultdict(lambda
 
 
 @registry.make_registry
-class MemletPattern(object):
+class UnderapproximationMemletPattern(object):
     """
     A pattern match on a memlet subset that can be used for propagation.
     """
@@ -46,7 +45,7 @@ class MemletPattern(object):
 
 
 @registry.make_registry
-class SeparableMemletPattern(object):
+class SeparableUnderapproximationMemletPattern(object):
     """ Memlet pattern that can be applied to each of the dimensions 
         separately. """
 
@@ -59,7 +58,7 @@ class SeparableMemletPattern(object):
 
 
 @registry.autoregister
-class SeparableMemlet(MemletPattern):
+class SeparableUnderapproximationMemlet(UnderapproximationMemletPattern):
     """ Meta-memlet pattern that applies all separable memlet patterns. """
 
     def can_be_applied(self, expressions, variable_context, node_range, orig_edges):
@@ -74,6 +73,35 @@ class SeparableMemlet(MemletPattern):
 
         # Return False if iteration variable appears in multiple dimensions
         # or if two iteration variables appear in the same dimension
+        if not self._iteration_variables_appear_multiple_times(data_dims, expressions, other_params, params):
+            return False
+
+        node_range = self._make_range(node_range)
+
+        for dim in range(data_dims):
+            dexprs = []
+            for expr in expressions:
+                if isinstance(expr[dim], symbolic.SymExpr):
+                    dexprs.append(expr[dim].expr)
+                elif isinstance(expr[dim], tuple):
+                    dexprs.append(
+                        (expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else
+                         expr[dim][0], expr[dim][1].expr if isinstance(
+                            expr[dim][1], symbolic.SymExpr) else expr[dim][1], expr[dim][2].expr
+                         if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
+                else:
+                    dexprs.append(expr[dim])
+
+            for pattern_class in SeparableUnderapproximationMemletPattern.extensions().keys():
+                smpattern = pattern_class()
+                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
+                                            data_dims):
+                    self.patterns_per_dim[dim] = smpattern
+                    break
+
+        return None not in self.patterns_per_dim
+
+    def _iteration_variables_appear_multiple_times(self, data_dims, expressions, other_params, params):
         for expr in expressions:
             for param in params:
                 occured_before = False
@@ -86,13 +114,13 @@ class SeparableMemlet(MemletPattern):
                     elif isinstance(curr_dim_expr, tuple):
                         free_symbols += curr_dim_expr[0].expr.free_symbols if isinstance(
                             curr_dim_expr[0], symbolic.SymExpr) else list(
-                                pystr_to_symbolic(curr_dim_expr[0]).expand().free_symbols)
+                            pystr_to_symbolic(curr_dim_expr[0]).expand().free_symbols)
                         free_symbols += curr_dim_expr[1].expr.free_symbols if isinstance(
                             curr_dim_expr[1], symbolic.SymExpr) else list(
-                                pystr_to_symbolic(curr_dim_expr[1]).expand().free_symbols)
+                            pystr_to_symbolic(curr_dim_expr[1]).expand().free_symbols)
                         free_symbols += curr_dim_expr[2].expr.free_symbols if isinstance(
                             curr_dim_expr[2], symbolic.SymExpr) else list(
-                                pystr_to_symbolic(curr_dim_expr[2]).expand().free_symbols)
+                            pystr_to_symbolic(curr_dim_expr[2]).expand().free_symbols)
                     else:
                         free_symbols += [curr_dim_expr]
 
@@ -106,32 +134,7 @@ class SeparableMemlet(MemletPattern):
                             continue
                         if other_param in free_symbols and param in free_symbols:
                             return False
-
-        node_range = self._make_range(node_range)
-
-        for dim in range(data_dims):
-
-            dexprs = []
-            for expr in expressions:
-                if isinstance(expr[dim], symbolic.SymExpr):
-                    dexprs.append(expr[dim].expr)
-                elif isinstance(expr[dim], tuple):
-                    dexprs.append(
-                        (expr[dim][0].expr if isinstance(expr[dim][0], symbolic.SymExpr) else
-                         expr[dim][0], expr[dim][1].expr if isinstance(
-                             expr[dim][1], symbolic.SymExpr) else expr[dim][1], expr[dim][2].expr
-                         if isinstance(expr[dim][2], symbolic.SymExpr) else expr[dim][2]))
-                else:
-                    dexprs.append(expr[dim])
-
-            for pattern_class in SeparableMemletPattern.extensions().keys():
-                smpattern = pattern_class()
-                if smpattern.can_be_applied(dexprs, variable_context, node_range, orig_edges, dim,
-                                            data_dims):
-                    self.patterns_per_dim[dim] = smpattern
-                    break
-
-        return None not in self.patterns_per_dim
+        return True
 
     def _make_range(self, node_range):
         return subsets.Range([(rb.expr if isinstance(rb, symbolic.SymExpr) else rb,
@@ -166,7 +169,7 @@ class SeparableMemlet(MemletPattern):
 
 
 @registry.autoregister
-class AffineSMemlet(SeparableMemletPattern):
+class AffineUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
     """ 
     Separable memlet pattern that matches affine expressions, i.e., of the 
     form `a * {index} + b`. Only works for expressions like (a * i + b : a * i + b : 1)
@@ -312,7 +315,7 @@ class AffineSMemlet(SeparableMemletPattern):
 
 
 @registry.autoregister
-class ConstantSMemlet(SeparableMemletPattern):
+class ConstantUnderapproximationSMemlet(SeparableUnderapproximationMemletPattern):
     """ Separable memlet pattern that matches constant (i.e., unrelated to 
         current scope) expressions.
     """
@@ -353,7 +356,7 @@ def _subexpr(dexpr, repldict):
 
 
 @registry.autoregister
-class ConstantRangeMemlet(MemletPattern):
+class ConstantRangeUnderapproximationMemlet(UnderapproximationMemletPattern):
     """ 
     Memlet pattern that matches arbitrary expressions with constant range.
     """
@@ -500,7 +503,7 @@ def _collect_iteration_variables(state: SDFGState, node: nodes.NestedSDFG) -> Se
     return params
 
 
-def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[ScopeTree, Set[str]]:
+def _collect_itvars_scope(scopes: Union[scope.ScopeTree, List[scope.ScopeTree]]) -> Dict[scope.ScopeTree, Set[str]]:
     """
     Helper method which finds all surrounding iteration variables for each scope
 
@@ -508,7 +511,7 @@ def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[Sco
     :return: A dictionary mapping each ScopeTree object in scopes to the
             list of iteration variables surrounding it
     """
-    if isinstance(scopes, ScopeTree):
+    if isinstance(scopes, scope.ScopeTree):
         scopes_to_process = [scopes]
     else:
         scopes_to_process = scopes
@@ -516,27 +519,27 @@ def _collect_itvars_scope(scopes: Union[ScopeTree, List[ScopeTree]]) -> Dict[Sco
     next_scopes = set()
     surrounding_map_vars = {}
     while len(scopes_to_process) > 0:
-        for scope in scopes_to_process:
-            if scope is None:
+        for scope_node in scopes_to_process:
+            if scope_node is None:
                 continue
-            next_scope = scope
+            next_scope = scope_node
             while next_scope:
                 next_scope = next_scope.parent
                 if next_scope is None:
                     break
                 curr_entry = next_scope.entry
-                if scope not in surrounding_map_vars:
-                    surrounding_map_vars[scope] = set()
+                if scope_node not in surrounding_map_vars:
+                    surrounding_map_vars[scope_node] = set()
                 if isinstance(curr_entry, nodes.MapEntry):
-                    surrounding_map_vars[scope] |= set(curr_entry.map.params)
-            next_scopes.add(scope.parent)
+                    surrounding_map_vars[scope_node] |= set(curr_entry.map.params)
+            next_scopes.add(scope_node.parent)
         scopes_to_process = next_scopes
         next_scopes = set()
     return surrounding_map_vars
 
 
 def _map_header_to_parent_headers(
-    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
+        loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Given the loops of an SDFG returns a mapping that maps each loop to its parents in the loop 
@@ -554,7 +557,7 @@ def _map_header_to_parent_headers(
 
 
 def _generate_loop_nest_tree(
-    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
+        loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
 ) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Given the loops of an SDFG returns the loop nest trees in the SDFG represented by a dictionary.
@@ -573,7 +576,7 @@ def _generate_loop_nest_tree(
 
 
 def _postorder_traversal(root: SDFGState, loop_nest_tree: Dict[SDFGState,
-                                                               Set[SDFGState]]) -> List[SDFGState]:
+Set[SDFGState]]) -> List[SDFGState]:
     """
     Given a loop nest tree in the form of a dictionary and the root of the tree, returns the DFS 
     traversal order of that tree starting from the root.
@@ -618,6 +621,59 @@ def _find_loop_nest_roots(loop_nest_tree: Dict[SDFGState, Set[SDFGState]]) -> Se
     return roots
 
 
+def _filter_undefined_symbols(border_memlet: Memlet,
+                              outer_symbols: Dict[str, dtypes.typeclass]):
+    '''
+    Helper method that filters out subsets containing symbols which are not defined
+    outside a nested SDFG.
+
+    :note: This function operates in-place on the given memlet.
+    '''
+    if border_memlet.src_subset is not None:
+        if isinstance(border_memlet.src_subset, subsets.SubsetUnion):
+            _subsets = border_memlet.src_subset.subset_list
+        else:
+            _subsets = [border_memlet.src_subset]
+        for i, subset in enumerate(_subsets):
+            for rng in subset:
+                fall_back = False
+                for item in rng:
+                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                        fall_back = True
+                        break
+                if fall_back:
+                    _subsets[i] = None
+                    break
+        border_memlet.src_subset = subsets.SubsetUnion(_subsets)
+    if border_memlet.dst_subset is not None:
+        if isinstance(border_memlet.dst_subset, subsets.SubsetUnion):
+            _subsets = border_memlet.dst_subset.subset_list
+        else:
+            _subsets = [border_memlet.dst_subset]
+        for i, subset in enumerate(_subsets):
+            for rng in subset:
+                fall_back = False
+                for item in rng:
+                    if any(str(s) not in outer_symbols for s in item.free_symbols):
+                        fall_back = True
+                        break
+                if fall_back:
+                    _subsets[i] = None
+                    break
+        border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
+
+def _merge_subsets(subset_a, subset_b)->subsets.SubsetUnion:
+    """
+    Helper function that merges two subsets to a SubsetUnion and throws
+    an error if the subsets have different dimensions
+    """
+    if subset_a is not None:
+        if subset_a.dims() != subset_b.dims():
+            raise ValueError('Cannot merge subset ranges of unequal dimension!')
+        return subsets.list_union(subset_a, subset_b)
+    else:
+        return subset_b
+
 class UnderapproximateWrites(ppl.Pass):
 
     def depends_on(self) -> Set[Type[Pass] | Pass]:
@@ -631,7 +687,7 @@ class UnderapproximateWrites(ppl.Pass):
         return modified & ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Symbols | ppl.Modifies.Nodes
 
     def apply_pass(
-        self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]
+            self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]
     ) -> Dict[str, Dict[SDFGState, Any] | Dict[Any, Any] | Dict[SDFGState, Dict[str, Memlet]]]:
         """
         Applies the pass to the given SDFG.
@@ -667,7 +723,7 @@ class UnderapproximateWrites(ppl.Pass):
                     approximation_dict[edge].src_subset = subsets.SubsetUnion(
                         [approximation_dict[edge].src_subset])
 
-        self._propagate_memlets_sdfg(sdfg)
+        self._underapproximate_writes_sdfg(sdfg)
 
         # Replace None with empty SubsetUnion in each Memlet
         for entry in approximation_dict.values():
@@ -679,20 +735,34 @@ class UnderapproximateWrites(ppl.Pass):
             "loops": loop_dict
         }
 
-    def _annotate_loop_ranges(
-        self, sdfg: SDFG, unannotated_cycle_states: List[SDFGState]
-    ) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
+    def _underapproximate_writes_sdfg(self, sdfg: SDFG):
+        """ Underapproximates write-sets of loops, maps and nested SDFGs in the given SDFG.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        from dace.transformation.helpers import split_interstate_edges
+
+        split_interstate_edges(sdfg)
+        loops = self._find_for_loops(sdfg)
+        loop_dict.update(loops)
+
+        for state in sdfg.nodes():
+            self._underapproximate_writes_state(sdfg, state)
+
+        self._underapproximate_writes_loops(loops, sdfg)
+
+    def _find_for_loops(self,
+                        sdfg: SDFG
+                        ) -> Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]:
         """
         Modified version of _annotate_loop_ranges from dace.sdfg.propagation
-        that also returns the identified loops in a dictionary
+        that returns the identified loops in a dictionary and stores the found iteration variables
+        in the global ranges_per_state dictionary.
 
-        Annotate each valid for loop construct with its loop variable ranges.
         :param sdfg: The SDFG in which to look.
-        :param unannotated_cycle_states: List of states in cycles without valid
-                                        for loop ranges.
         :return: dictionary mapping loop headers to first state in the loop,
                 the set of states enclosed by the loop, the itearation variable,
-                the range of the iterator variable
+                the range of the iteration variable
         """
 
         # We import here to avoid cyclic imports.
@@ -706,10 +776,10 @@ class UnderapproximateWrites(ppl.Pass):
             guard = None
             begin = None
             itvar = None
-            for v in cycle:
+            for state in cycle:
                 # Try to identify a valid for-loop guard.
-                in_edges = sdfg.in_edges(v)
-                out_edges = sdfg.out_edges(v)
+                in_edges = sdfg.in_edges(state)
+                out_edges = sdfg.out_edges(state)
 
                 # A for-loop guard has two or more incoming edges (1 increment and
                 # n init, all identical), and exactly two outgoing edges (loop and
@@ -746,12 +816,9 @@ class UnderapproximateWrites(ppl.Pass):
                 increment_edge = None
                 for iedge in in_edges:
                     if itvarsym in _freesyms(pystr_to_symbolic(iedge.data.assignments[itvar])):
-                        # if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
                         increment_edge = iedge
                         break
-                if increment_edge is None:
-                    continue
-                if increment_edge.src not in cycle:
+                if increment_edge is None or increment_edge.src not in cycle:
                     continue
 
                 # One of the child states must be in the loop (loop begin), and the
@@ -768,7 +835,7 @@ class UnderapproximateWrites(ppl.Pass):
                     continue
 
                 # This is a valid guard state candidate.
-                guard = v
+                guard = state
                 begin = loop_state
                 break
 
@@ -776,52 +843,118 @@ class UnderapproximateWrites(ppl.Pass):
                 # A guard state was identified, see if it has valid for-loop ranges
                 # and annotate the loop as such.
 
-                # Ensure that this guard's loop wasn't annotated yet.
-
                 loop_state_list = []
                 res = find_for_loop(sdfg, guard, begin, itervar=itvar)
                 if res is None:
-                    # No range detected, mark as unbounded.
-                    unannotated_cycle_states.extend(cycle)
-                else:
-                    itervar, rng, (start_states, last_loop_state) = res
+                    continue
+                itervar, rng, (_, last_loop_state) = res
+                # Make sure the range is flipped in a direction such that the
+                # stride is positive (in order to match subsets.Range).
+                start, stop, stride = rng
+                # This inequality needs to be checked exactly like this due to
+                # constraints in sympy/symbolic expressions, do not simplify!!!
+                if (stride < 0) == True:
+                    rng = (stop, start, -stride)
+                loop_states = sdutils.dfs_conditional(sdfg,
+                                                      sources=[begin],
+                                                      condition=lambda _, child: child != guard)
 
-                    # Make sure the range is flipped in a direction such that the
-                    # stride is positive (in order to match subsets.Range).
-                    start, stop, stride = rng
-                    # This inequality needs to be checked exactly like this due to
-                    # constraints in sympy/symbolic expressions, do not simplify!!!
-                    if (stride < 0) == True:
-                        rng = (stop, start, -stride)
+                if itvar not in ranges_per_state[begin]:
 
-                    loop_states = sdutils.dfs_conditional(sdfg,
-                                                          sources=[begin],
-                                                          condition=lambda _, child: child != guard)
-
-                    if itvar not in ranges_per_state[begin]:
-                        # only do this if loop has not been annotated yet
-                        for v in loop_states:
-                            ranges_per_state[v][itervar] = subsets.Range([rng])
-                            loop_state_list.append(v)
-                        ranges_per_state[guard][itervar] = subsets.Range([rng])
-                        identified_loops[guard] = (begin, last_loop_state, loop_state_list, itvar,
-                                                   subsets.Range([rng]))
-
-            else:
-                # There's no guard state, so this cycle marks all states in it as
-                # dynamically unbounded.
-                unannotated_cycle_states.extend(cycle)
+                    for loop_state in loop_states:
+                        ranges_per_state[loop_state][itervar] = subsets.Range([rng])
+                        loop_state_list.append(loop_state)
+                    ranges_per_state[guard][itervar] = subsets.Range([rng])
+                    identified_loops[guard] = (begin, last_loop_state, loop_state_list, itvar,
+                                               subsets.Range([rng]))
 
         return identified_loops
 
-    def _propagate_memlets_nested_sdfg(
-        self,
-        parent_sdfg: SDFG,
-        parent_state: SDFGState,
-        nsdfg_node: NestedSDFG,
+    def _underapproximate_writes_loops(self, loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
+    str, subsets.Range]],sdfg: SDFG):
+        """
+        Helper function that calls underapproximate_writes_loops on all the loops in the SDFG in bottom up order
+        of the loop nests
+        """
+        loop_nest_tree = _generate_loop_nest_tree(loops)
+        root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
+        for root in root_loop_headers:
+            post_order_traversal = _postorder_traversal(root, loop_nest_tree)
+            for loop_header in post_order_traversal:
+                self._underapproximate_writes_loop(sdfg, loops, loop_header)
+
+    def _underapproximate_writes_state(self, sdfg: SDFG, state: SDFGState):
+        """ Propagates memlets throughout one SDFG state.
+
+            :param sdfg: The SDFG in which the state is situated.
+            :param state: The state to propagate in.
+            :note: This is an in-place operation on the SDFG state.
+        """
+
+        # Algorithm:
+        # 1. Start propagating information from tasklets outwards (their edges
+        #    are hardcoded).
+        # 2. Traverse the neighboring nodes (topological sort, first forward to
+        #    outputs and then backward to inputs).
+        #    There are four possibilities:
+        #    a. If the neighboring node is a tasklet, skip (such edges are
+        #       immutable)
+        #    b. If the neighboring node is an array, make sure it is the correct
+        #       array. Otherwise, throw a mismatch exception.
+        #    c. If the neighboring node is a scope node, and its other edges are
+        #       not set, set the results per-array, using the union of the
+        #       obtained ranges in the previous depth.
+        # 3. For each edge in the multigraph, store the results in the global dictionary
+        #    approximation_dict
+
+        # First, propagate nested SDFGs in a bottom-up fashion
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                self._find_live_iteration_variables(node, sdfg, state)
+
+                # Propagate memlets inside the nested SDFG.
+                self._underapproximate_writes_sdfg(node.sdfg)
+
+                # Propagate memlets out of the nested SDFG.
+                self._underapproximate_writes_nested_sdfg(sdfg, state, node)
+
+        # Process scopes from the leaves upwards
+        self._underapproximate_writes_scope(sdfg, state, state.scope_leaves())
+
+    def _find_live_iteration_variables(self,
+                                       nsdfg: nodes.NestedSDFG,
+                                       sdfg: SDFG,
+                                       state: SDFGState):
+        """
+        Helper method that collects all iteration variables of surrounding maps and loops of a given
+        nested SDFG and stores them in the global iteration_variables dictionary after applying the
+        symbol-mapping of the nested SDFG.
+        """
+
+        def symbol_map(mapping, symbol):
+            if symbol in mapping:
+                return mapping[symbol]
+            return None
+
+        map_iteration_variables = _collect_iteration_variables(state, nsdfg)
+        sdfg_iteration_variables = iteration_variables[
+            sdfg] if sdfg in iteration_variables else set()
+        state_iteration_variables = ranges_per_state[state].keys()
+        iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
+                                     state_iteration_variables)
+        mapped_iteration_variables = set(
+            map(lambda x: symbol_map(nsdfg.symbol_mapping, x), iteration_variables_local))
+        if mapped_iteration_variables:
+            iteration_variables[nsdfg.sdfg] = mapped_iteration_variables
+
+    def _underapproximate_writes_nested_sdfg(
+            self,
+            parent_sdfg: SDFG,
+            parent_state: SDFGState,
+            nsdfg_node: NestedSDFG,
     ):
         """
-        Propagate memlets out of a nested sdfg. Only consider memlets in states that are
+        Propagate writes out of a nested sdfg. Only considers memlets in states that are
         executed unconditionally.
 
         :param parent_sdfg: The parent SDFG this nested SDFG is in.
@@ -829,6 +962,18 @@ class UnderapproximateWrites(ppl.Pass):
         :param nsdfg_node: The NSDFG node containing this nested SDFG.
         :note: This operates in-place on the parent SDFG.
         """
+
+        def _init_border_memlet(template_memlet: Memlet,
+                                node_label: str
+                                ):
+            '''
+            Creates a Memlet with the same data as the template_memlet, stores it in the
+            border_memlets dictionary and returns it.
+            '''
+            border_memlet = Memlet(data=template_memlet.data)
+            border_memlet._is_data_src = True
+            border_memlets[node_label] = border_memlet
+            return border_memlet
 
         # Build a map of connectors to associated 'border' memlets inside
         # the nested SDFG. This map will be populated with memlets once they
@@ -848,38 +993,26 @@ class UnderapproximateWrites(ppl.Pass):
             for node in state.data_nodes():
                 if node.label not in border_memlets:
                     continue
-
-                border_memlet = border_memlets[node.label]
                 # Get the edges to this access node
                 edges = state.in_edges(node)
+                border_memlet = border_memlets[node.label]
 
                 # Collect all memlets belonging to this access node
                 memlets = []
                 for edge in edges:
                     inside_memlet = approximation_dict[edge]
                     memlets.append(inside_memlet)
-
+                    # initialize border memlet if it does not exist already
                     if border_memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        border_memlet = Memlet(data=inside_memlet.data)
-                        border_memlet._is_data_src = True
-                        border_memlets[node.label] = border_memlet
+                        border_memlet = _init_border_memlet(inside_memlet, node.label)
 
                 # Given all of this access nodes' memlets union all the subsets to one SubsetUnion
                 if len(memlets) > 0:
                     subset = subsets.SubsetUnion([])
-                    for m in memlets:
-                        subset = subsets.list_union(subset, m.subset)
-
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if border_memlet.subset is not None:
-                        if border_memlet.subset.dims() != subset.dims():
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                        border_memlet.subset = subsets.list_union(border_memlet.subset, subset)
-                    else:
-                        border_memlet.subset = subset
+                    for memlet in memlets:
+                        subset = subsets.list_union(subset, memlet.subset)
+                    # compute the union of the ranges to merge the subsets.
+                    border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
 
             # collect the memlets for each loop
             if state in loop_write_dict:
@@ -887,23 +1020,11 @@ class UnderapproximateWrites(ppl.Pass):
                     if node_label not in border_memlets:
                         continue
                     border_memlet = border_memlets[node_label]
-
+                    # initialize border memlet if it does not exist already
                     if border_memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        border_memlet = Memlet(data=loop_memlet.data)
-                        border_memlet._is_data_src = True
-                        border_memlets[node_label] = border_memlet
-                    subset = loop_memlet.subset
-                    # If the border memlet already has a set range, compute the
-                    # union of the ranges to merge the subsets.
-                    if border_memlet.subset is not None:
-                        if border_memlet.subset.dims() == subset.dims():
-                            border_memlet.subset = subsets.list_union(border_memlet.subset, subset)
-                        else:
-                            raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                    else:
-                        border_memlet.subset = subset
+                        border_memlet = _init_border_memlet(loop_memlet, node_label)
+                    # compute the union of the ranges to merge the subsets.
+                    border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.
@@ -912,42 +1033,8 @@ class UnderapproximateWrites(ppl.Pass):
             if not border_memlet:
                 continue
             border_memlet.replace(nsdfg_node.symbol_mapping)
-            # Also make sure that there's no symbol in the border memlet's
-            # range that only exists inside the nested SDFG. If that's the
-            # case, use an empty set to stay correct.
-
-            if border_memlet.src_subset is not None:
-                if isinstance(border_memlet.src_subset, subsets.SubsetUnion):
-                    _subsets = border_memlet.src_subset.subset_list
-                else:
-                    _subsets = [border_memlet.src_subset]
-                for i, subset in enumerate(_subsets):
-                    for rng in subset:
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            _subsets[i] = None
-                            break
-                border_memlet.src_subset = subsets.SubsetUnion(_subsets)
-            if border_memlet.dst_subset is not None:
-                if isinstance(border_memlet.dst_subset, subsets.SubsetUnion):
-                    _subsets = border_memlet.dst_subset.subset_list
-                else:
-                    _subsets = [border_memlet.dst_subset]
-                for i, subset in enumerate(_subsets):
-                    for rng in subset:
-                        fall_back = False
-                        for item in rng:
-                            if any(str(s) not in outer_symbols for s in item.free_symbols):
-                                fall_back = True
-                                break
-                        if fall_back:
-                            _subsets[i] = None
-                            break
-                border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
+            # filter out subsets that use symbols that are not defined outside of the nsdfg
+            _filter_undefined_symbols(border_memlet, outer_symbols)
 
         # Propagate the inside 'border' memlets outside the SDFG by
         # offsetting, and unsqueezing if necessary.
@@ -955,44 +1042,20 @@ class UnderapproximateWrites(ppl.Pass):
             out_memlet = approximation_dict[edge]
             if edge.src_conn in border_memlets:
                 internal_memlet = border_memlets[edge.src_conn]
-
                 if internal_memlet is None:
                     out_memlet.subset = None
                     out_memlet.dst_subset = None
                     approximation_dict[edge] = out_memlet
                     continue
-
                 out_memlet = _unsqueeze_memlet_subsetunion(internal_memlet, out_memlet, parent_sdfg,
                                                            nsdfg_node)
-
                 approximation_dict[edge] = out_memlet
 
-    def _propagate_memlets_sdfg(self, sdfg: SDFG):
-        """ Propagates memlets throughout an entire given SDFG. 
-
-            :note: This is an in-place operation on the SDFG.
-        """
-        from dace.transformation.helpers import split_interstate_edges
-
-        split_interstate_edges(sdfg)
-        loops = self._annotate_loop_ranges(sdfg, [])
-        loop_dict.update(loops)
-
-        for state in sdfg.nodes():
-            self._propagate_memlets_state(sdfg, state)
-
-        loop_nest_tree = _generate_loop_nest_tree(loops)
-        root_loop_headers = _find_loop_nest_roots(loop_nest_tree)
-        for root in root_loop_headers:
-            post_order_traversal = _postorder_traversal(root, loop_nest_tree)
-            for loop_header in post_order_traversal:
-                self._propagate_memlet_loop(sdfg, loops, loop_header)
-
-    def _propagate_memlet_loop(self,
-                               sdfg: SDFG,
-                               loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
-                                                            str, subsets.Range]],
-                               loop_header: SDFGState = None):
+    def _underapproximate_writes_loop(self,
+                                      sdfg: SDFG,
+                                      loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState],
+                                      str, subsets.Range]],
+                                      loop_header: SDFGState):
         """
         Propagate Memlets recursively out of loop constructs with representative border memlets, 
         similar to propagate_memlets_nested_sdfg. Only states that are executed unconditionally
@@ -1007,6 +1070,18 @@ class UnderapproximateWrites(ppl.Pass):
                     propagate_memlet_loop will be called recursively on the outermost loopheaders
         """
 
+        def _init_border_memlet(template_memlet: Memlet,
+                                node_label: str
+                                ):
+            '''
+            Creates a Memlet with the same data as the template_memlet, stores it in the
+            border_memlets dictionary and returns it.
+            '''
+            border_memlet = Memlet(data=template_memlet.data)
+            border_memlet._is_data_src = True
+            border_memlets[node_label] = border_memlet
+            return border_memlet
+
         def filter_subsets(itvar: str, itrange: subsets.Range,
                            memlet: Memlet) -> List[subsets.Subset]:
             # helper method that filters out subsets that do not depend on the iteration variable
@@ -1016,7 +1091,6 @@ class UnderapproximateWrites(ppl.Pass):
             # -> only propagate subsets that contain the iterator as a symbol
             # if loop range is constant (and not empty, which is already verified)
             # -> always propagate all subsets out
-
             if memlet.subset is None:
                 return []
             result = memlet.subset.subset_list if isinstance(
@@ -1024,7 +1098,6 @@ class UnderapproximateWrites(ppl.Pass):
             # range contains symbols
             if itrange.free_symbols:
                 result = [s for s in result if itvar in s.free_symbols]
-
             return result
 
         current_loop = loops[loop_header]
@@ -1058,7 +1131,6 @@ class UnderapproximateWrites(ppl.Pass):
                 # collect all the subsets of the incoming memlets for the current access node
                 for edge in edges:
                     inside_memlet = copy.copy(approximation_dict[edge])
-
                     # filter out subsets that could become empty depending on assignments
                     # of symbols
                     filtered_subsets = filter_subsets(itvar, rng, inside_memlet)
@@ -1068,21 +1140,16 @@ class UnderapproximateWrites(ppl.Pass):
                     inside_memlet.subset = subsets.SubsetUnion(filtered_subsets)
                     memlets.append(inside_memlet)
                     if border_memlet is None:
-                        # Use the first encountered memlet as a 'border' memlet
-                        # and accumulate the sum on it.
-                        border_memlet = Memlet(data=inside_memlet.data)
-                        border_memlet._is_data_src = True
-                        border_memlets[node.label] = border_memlet
+                        border_memlet = _init_border_memlet(inside_memlet, node.label)
 
-                self._propagate_loop_subset(sdfg, memlets, border_memlet, sdfg.arrays[node.label],
-                                            itvar, rng)
+                self._underapproximate_writes_loop_subset(sdfg, memlets, border_memlet, sdfg.arrays[node.label],
+                                                          itvar, rng)
 
             if state not in loop_write_dict:
                 continue
             # propagate the border memlets of nested loop
             for node_label, other_border_memlet in loop_write_dict[state].items():
-                # filter out subsets that could become empty depending on assignments
-                # of symbols
+                # filter out subsets that could become empty depending on symbol assignments
                 filtered_subsets = filter_subsets(itvar, rng, other_border_memlet)
                 if not filtered_subsets:
                     continue
@@ -1090,25 +1157,21 @@ class UnderapproximateWrites(ppl.Pass):
                 other_border_memlet.subset = subsets.SubsetUnion(filtered_subsets)
                 border_memlet = border_memlets.get(node_label)
                 if border_memlet is None:
-                    # Use the first encountered memlet as a 'border' memlet
-                    # and accumulate the sum on it.
-                    border_memlet = Memlet(data=other_border_memlet.data)
-                    border_memlet._is_data_src = True
-                    border_memlets[node_label] = border_memlet
+                    border_memlet = _init_border_memlet(other_border_memlet, node_label)
 
-                self._propagate_loop_subset(sdfg, [other_border_memlet], border_memlet,
-                                            sdfg.arrays[node_label], itvar, rng)
+                self._underapproximate_writes_loop_subset(sdfg, [other_border_memlet], border_memlet,
+                                                          sdfg.arrays[node_label], itvar, rng)
 
         loop_write_dict[loop_header] = border_memlets
 
-    def _propagate_loop_subset(self,
-                               sdfg: dace.SDFG,
-                               memlets: List[Memlet],
-                               dst_memlet: Memlet,
-                               arr: dace.data.Array,
-                               itvar: str,
-                               rng: subsets.Subset,
-                               loop_nest_itvars: Set[str] = None):
+    def _underapproximate_writes_loop_subset(self,
+                                             sdfg: dace.SDFG,
+                                             memlets: List[Memlet],
+                                             dst_memlet: Memlet,
+                                             arr: dace.data.Array,
+                                             itvar: str,
+                                             rng: subsets.Subset,
+                                             loop_nest_itvars: Union[Set[str], None] = None):
         """
         Helper function that takes a list of (border) memlets, propagates them out of a
         loop-construct and summarizes them to one Memlet. The result is written back to dst_memlet
@@ -1120,151 +1183,84 @@ class UnderapproximateWrites(ppl.Pass):
         :param rng: The iteration range of the iteration variable
         :param loop_nest_itvars: A set of iteration variables of surrounding loops
         """
-
         if not loop_nest_itvars:
             loop_nest_itvars = set()
         if len(memlets) > 0:
             params = [itvar]
-            ranges = [rng]
-
             # get all the other iteration variables surrounding this memlet
             surrounding_itvars = iteration_variables[sdfg] if sdfg in iteration_variables else set()
             if loop_nest_itvars:
                 surrounding_itvars |= loop_nest_itvars
 
-            use_dst = True
-            subset = self._propagate_subset(memlets,
-                                            arr,
-                                            params,
-                                            rng,
-                                            use_dst=use_dst,
-                                            surrounding_itvars=surrounding_itvars).subset
+            subset = self._underapproximate_subsets(memlets,
+                                                    arr,
+                                                    params,
+                                                    rng,
+                                                    use_dst=True,
+                                                    surrounding_itvars=surrounding_itvars).subset
 
             if subset is None or len(subset.subset_list) == 0:
                 return
-            # If the border memlet already has a set range, compute the
-            # union of the ranges to merge the subsets.
-            if dst_memlet.subset is not None:
-                if dst_memlet.subset.dims() != subset.dims():
-                    raise ValueError('Cannot merge subset ranges of unequal dimension!')
-                dst_memlet.subset = subsets.list_union(dst_memlet.subset, subset)
-            else:
-                dst_memlet.subset = subset
+            # compute the union of the ranges to merge the subsets.
+            dst_memlet.subset = _merge_subsets(dst_memlet.subset, subset)
 
-    def _propagate_memlets_state(self, sdfg: SDFG, state: SDFGState):
-        """ Propagates memlets throughout one SDFG state.
-
-            :param sdfg: The SDFG in which the state is situated.
-            :param state: The state to propagate in.
-            :note: This is an in-place operation on the SDFG state.
-        """
-
-        # Algorithm:
-        # 1. Start propagating information from tasklets outwards (their edges
-        #    are hardcoded).
-        # 2. Traverse the neighboring nodes (topological sort, first forward to
-        #    outputs and then backward to inputs).
-        #    There are four possibilities:
-        #    a. If the neighboring node is a tasklet, skip (such edges are
-        #       immutable)
-        #    b. If the neighboring node is an array, make sure it is the correct
-        #       array. Otherwise, throw a mismatch exception.
-        #    c. If the neighboring node is a scope node, and its other edges are
-        #       not set, set the results per-array, using the union of the
-        #       obtained ranges in the previous depth.
-        #    d. If the neighboring node is a scope node, and its other edges are
-        #       already set, verify the results per-array, using the union of the
-        #       obtained ranges in the previous depth.
-        #    NOTE: The SDFG creation process ensures that all edges in the
-        #          multigraph are tagged with the appropriate array. In any case
-        #          of ambiguity, the function raises an exception.
-        # 3. For each edge in the multigraph, collect results and group by array assigned to edge.
-        #    Accumulate information about each array in the target node.
-
-        # First, propagate nested SDFGs in a bottom-up fashion
-        def symbol_map(mapping, symbol):
-            if symbol in mapping:
-                return mapping[symbol]
-            return None
-
-        for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-
-                map_iteration_variables = _collect_iteration_variables(state, node)
-                sdfg_iteration_variables = iteration_variables[
-                    sdfg] if sdfg in iteration_variables else set()
-                state_iteration_variables = ranges_per_state[state].keys()
-                iteration_variables_local = (map_iteration_variables | sdfg_iteration_variables |
-                                             state_iteration_variables)
-
-                # apply symbol mapping of nested SDFG
-                iteration_variables[node.sdfg] = set(
-                    map(lambda x: symbol_map(node.symbol_mapping, x), iteration_variables_local))
-
-                # Propagate memlets inside the nested SDFG.
-                self._propagate_memlets_sdfg(node.sdfg)
-
-                # Propagate memlets out of the nested SDFG.
-                self._propagate_memlets_nested_sdfg(sdfg, state, node)
-
-        # Process scopes from the leaves upwards
-        self._propagate_memlets_scope(sdfg, state, state.scope_leaves())
-
-    def _propagate_memlets_scope(self,
-                                 sdfg: SDFG,
-                                 state: SDFGState,
-                                 scopes: Union[ScopeTree, List[ScopeTree]],
-                                 propagate_exit: bool = True):
+    def _underapproximate_writes_scope(self,
+                                       sdfg: SDFG,
+                                       state: SDFGState,
+                                       scopes: Union[scope.ScopeTree, List[scope.ScopeTree]]):
         """ 
         Propagate memlets from the given scopes outwards. 
 
         :param sdfg: The SDFG in which the scopes reside.
         :param state: The SDFG state in which the scopes reside.
         :param scopes: The ScopeTree object or a list thereof to start from.
-        :param propagate_entry: If False, skips propagating out of the scope entry node.
-        :param propagate_exit: If False, skips propagating out of the scope exit node.
         :note: This operation is performed in-place on the given SDFG.
         """
 
         # for each map scope find the iteration variables of surrounding maps
-        surrounding_map_vars: Dict[ScopeTree, Set[str]] = _collect_itvars_scope(scopes)
-
-        if isinstance(scopes, ScopeTree):
+        surrounding_map_vars: Dict[scope.ScopeTree, Set[str]] = _collect_itvars_scope(scopes)
+        if isinstance(scopes, scope.ScopeTree):
             scopes_to_process = [scopes]
         else:
             scopes_to_process = scopes
 
-        next_scopes = set()
-
         # Process scopes from the inputs upwards, propagating edges at the
         # entry and exit nodes
+        next_scopes = set()
         while len(scopes_to_process) > 0:
-            for scope in scopes_to_process:
-                if scope.entry is None:
+            for scope_node in scopes_to_process:
+                if scope_node.entry is None:
                     continue
 
-                map_iteration_variables = surrounding_map_vars[
-                    scope] if scope in surrounding_map_vars else set()
-                sdfg_iteration_variables = iteration_variables[
-                    sdfg] if sdfg in iteration_variables else set()
-                loop_iteration_variables = ranges_per_state[state].keys()
-                surrounding_iteration_variables = (map_iteration_variables |
-                                                   sdfg_iteration_variables |
-                                                   loop_iteration_variables)
-
-                # Propagate out of exit
-                if propagate_exit:
-                    self._propagate_node(state, scope.exit, surrounding_iteration_variables)
-
+                surrounding_iteration_variables = self._collect_iteration_variables_scope_node(scope_node,
+                                                                                               sdfg,
+                                                                                               state,
+                                                                                               surrounding_map_vars)
+                self._underapproximate_writes_node(state, scope_node.exit, surrounding_iteration_variables)
                 # Add parent to next frontier
-                next_scopes.add(scope.parent)
+                next_scopes.add(scope_node.parent)
             scopes_to_process = next_scopes
             next_scopes = set()
 
-    def _propagate_node(self,
-                        dfg_state: SDFGState,
-                        node: Union[nodes.EntryNode, nodes.ExitNode],
-                        surrounding_itvars: Set[str] = None):
+    def _collect_iteration_variables_scope_node(self,
+                                                scope_node: scope.ScopeTree,
+                                                sdfg: SDFG,
+                                                state: SDFGState,
+                                                surrounding_map_vars: Dict[scope.ScopeTree, Set[str]])->Set[str]:
+        map_iteration_variables = surrounding_map_vars[
+            scope_node] if scope_node in surrounding_map_vars else set()
+        sdfg_iteration_variables = iteration_variables[
+            sdfg] if sdfg in iteration_variables else set()
+        loop_iteration_variables = ranges_per_state[state].keys()
+        surrounding_iteration_variables = (map_iteration_variables |
+                                           sdfg_iteration_variables |
+                                           loop_iteration_variables)
+        return surrounding_iteration_variables
+
+    def _underapproximate_writes_node(self,
+                                      dfg_state: SDFGState,
+                                      node: Union[nodes.EntryNode, nodes.ExitNode],
+                                      surrounding_itvars: Union[Set[str], None] = None):
         """
         Helper method which propagates all memlets attached to a map scope out of the map scope.
         Can be used for both propagation directions. The propagated memlets are stored in the
@@ -1311,40 +1307,42 @@ class UnderapproximateWrites(ppl.Pass):
             else:
                 internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
                 aligned_memlet = self._align_memlet(dfg_state, internal_edge, dst=use_dst)
-                new_memlet = self._propagate_memlet(dfg_state,
-                                                    aligned_memlet,
-                                                    node,
-                                                    True,
-                                                    connector=geteconn(edge),
-                                                    surrounding_itvars=surrounding_itvars)
+                new_memlet = self._underapproximate_memlets(dfg_state,
+                                                            aligned_memlet,
+                                                            node,
+                                                            True,
+                                                            connector=geteconn(edge),
+                                                            surrounding_itvars=surrounding_itvars)
             approximation_dict[edge] = new_memlet
 
-    def _align_memlet(self, state: SDFGState, e: gr.MultiConnectorEdge[Memlet],
+    def _align_memlet(self,
+                      state: SDFGState,
+                      edge: gr.MultiConnectorEdge[Memlet],
                       dst: bool) -> Memlet:
         """ 
         Takes Multiconnectoredge containing Memlet in DFG and swaps subset and other_subset of 
         Memlet if it "points" in the wrong direction
 
         :param state: The state the memlet resides in
-        :param e: The edge containing the memlet that needs to be aligned
+        :param edge: The edge containing the memlet that needs to be aligned
         :param dst: True if Memlet should "point" to destination
 
         :return: Aligned memlet
         """
 
-        is_src = e.data._is_data_src
+        is_src = edge.data._is_data_src
         # Memlet is already aligned
         if is_src is None or (is_src and not dst) or (not is_src and dst):
-            res = approximation_dict[e]
+            res = approximation_dict[edge]
             return res
 
         # Data<->Code memlets always have one data container
-        mpath = state.memlet_path(e)
+        mpath = state.memlet_path(edge)
         if not isinstance(mpath[0].src, AccessNode) or not isinstance(mpath[-1].dst, AccessNode):
-            return approximation_dict[e]
+            return approximation_dict[edge]
 
         # Otherwise, find other data container
-        result = copy.deepcopy(approximation_dict[e])
+        result = copy.deepcopy(approximation_dict[edge])
         if dst:
             node = mpath[-1].dst
         else:
@@ -1352,21 +1350,21 @@ class UnderapproximateWrites(ppl.Pass):
 
         # Fix memlet fields
         result.data = node.data
-        result.subset = approximation_dict[e].other_subset
-        result.other_subset = approximation_dict[e].subset
+        result.subset = approximation_dict[edge].other_subset
+        result.other_subset = approximation_dict[edge].subset
         result._is_data_src = not is_src
         return result
 
-    def _propagate_memlet(self,
-                          dfg_state,
-                          memlet: Memlet,
-                          scope_node: nodes.EntryNode,
-                          union_inner_edges: bool,
-                          arr: dace.data.Array = None,
-                          connector=None,
-                          surrounding_itvars: Set[str] = None):
-        """ Tries to propagate a memlet through a scope (computes the image of 
-            the memlet function applied on an integer set of, e.g., a map range) 
+    def _underapproximate_memlets(self,
+                                  dfg_state,
+                                  memlet: Memlet,
+                                  scope_node: Union[nodes.EntryNode, nodes.ExitNode],
+                                  union_inner_edges: bool,
+                                  arr: Union[dace.data.Array, None] = None,
+                                  connector=None,
+                                  surrounding_itvars: Union[Set[str], None] = None):
+        """ Tries to underapproximate a memlet through a scope (computes an underapproximation
+            of the image of the memlet function applied on an integer set of, e.g., a map range)
             and returns a new memlet object.
 
             :param dfg_state: An SDFGState object representing the graph.
@@ -1400,11 +1398,11 @@ class UnderapproximateWrites(ppl.Pass):
         sdfg = dfg_state.parent
         scope_node_symbols = set(
             conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-        defined_vars = [
+        defined_vars = {
             symbolic.pystr_to_symbolic(s)
             for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
             if s not in scope_node_symbols
-        ]
+        }
 
         # Find other adjacent edges within the connected to the scope node
         # and union their subsets
@@ -1426,25 +1424,18 @@ class UnderapproximateWrites(ppl.Pass):
 
             # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
             #        so this test cannot be used
-            # If the data container is not specified on the memlet, use other data
-            # if memlet._is_data_src is not None:
-            #     if use_dst and memlet._is_data_src:
-            #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
-            #     elif not use_dst and not memlet._is_data_src:
-            #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
-
             arr = sdfg.arrays[memlet.data]
 
         # Propagate subset
         if isinstance(entry_node, nodes.MapEntry):
             mapnode = entry_node.map
-            return self._propagate_subset(aggdata,
-                                          arr,
-                                          mapnode.params,
-                                          mapnode.range,
-                                          defined_vars,
-                                          use_dst=use_dst,
-                                          surrounding_itvars=surrounding_itvars)
+            return self._underapproximate_subsets(aggdata,
+                                                  arr,
+                                                  mapnode.params,
+                                                  mapnode.range,
+                                                  defined_vars,
+                                                  use_dst=use_dst,
+                                                  surrounding_itvars=surrounding_itvars)
 
         elif isinstance(entry_node, nodes.ConsumeEntry):
             # Nothing to analyze/propagate in consume
@@ -1455,16 +1446,16 @@ class UnderapproximateWrites(ppl.Pass):
         else:
             raise NotImplementedError('Unimplemented primitive: %s' % type(entry_node))
 
-    def _propagate_subset(self,
-                          memlets: List[Memlet],
-                          arr: data.Data,
-                          params: List[str],
-                          rng: subsets.Subset,
-                          defined_variables: Set[symbolic.SymbolicType] = None,
-                          use_dst: bool = False,
-                          surrounding_itvars: Set[str] = None) -> Memlet:
-        """ Tries to propagate a list of memlets through a range (computes the 
-            image of the memlet function applied on an integer set of, e.g., a 
+    def _underapproximate_subsets(self,
+                                  memlets: List[Memlet],
+                                  arr: data.Data,
+                                  params: List[str],
+                                  rng: subsets.Subset,
+                                  defined_variables: Union[Set[symbolic.SymbolicType],None] = None,
+                                  use_dst: bool = False,
+                                  surrounding_itvars: Union[Set[str], None ]= None) -> Memlet:
+        """ Tries to underapproximate a list of memlets through a range (underapproximates
+            the image of the memlet function applied on an integer set of, e.g., a
             map range) and returns a new memlet object.
 
             :param memlets: The memlets to propagate.
@@ -1473,14 +1464,15 @@ class UnderapproximateWrites(ppl.Pass):
             :param rng: A subset with dimensionality len(params) that contains the
                         range to propagate with.
             :param defined_variables: A set of symbols defined that will remain the
-                                    same throughout propagation. If None, assumes
+                                    same throughout underapproximation. If None, assumes
                                     that all symbols outside of `params` have been
                                     defined.
-            :param use_dst: Whether to propagate the memlets' dst subset or use the
+            :param use_dst: Whether to underapproximate the memlets' dst subset or use the
                             src instead, depending on propagation direction.
-            :param surrounding_itvars:  set of iterator variables that surround the memlet
-                                        but are not propagated in this call
-            :return: Memlet with propagated subset and volume.
+            :param surrounding_itvars:  set of iteration variables that surround the memlet
+                                        but are not considered for the underapproximation in
+                                        this call
+            :return: Memlet with underapproximated subset.
         """
         if not surrounding_itvars:
             surrounding_itvars = set()
@@ -1499,17 +1491,17 @@ class UnderapproximateWrites(ppl.Pass):
                             defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
 
         new_subset = None
-        for md in memlets:
-            if md.is_empty():
+        for memlet in memlets:
+            if memlet.is_empty():
                 continue
 
             _subsets = None
-            if use_dst and md.dst_subset is not None:
-                _subsets = copy.deepcopy(md.dst_subset)
-            elif not use_dst and md.src_subset is not None:
-                _subsets = copy.deepcopy(md.src_subset)
+            if use_dst and memlet.dst_subset is not None:
+                _subsets = copy.deepcopy(memlet.dst_subset)
+            elif not use_dst and memlet.src_subset is not None:
+                _subsets = copy.deepcopy(memlet.src_subset)
             else:
-                _subsets = copy.deepcopy(md.subset)
+                _subsets = copy.deepcopy(memlet.subset)
 
             if isinstance(_subsets, subsets.SubsetUnion):
                 _subsets = _subsets.subset_list
@@ -1523,9 +1515,9 @@ class UnderapproximateWrites(ppl.Pass):
             # try to apply a memletpattern. If no pattern matches fall back to the empty set
             for i, subset in enumerate(_subsets):
                 # find a pattern for the current subset
-                for pclass in MemletPattern.extensions():
+                for pclass in UnderapproximationMemletPattern.extensions():
                     pattern = pclass()
-                    if pattern.can_be_applied([subset], variable_context, rng, [md]):
+                    if pattern.can_be_applied([subset], variable_context, rng, [memlet]):
                         subset = pattern.propagate(arr, [subset], rng)
                         break
                 else:
