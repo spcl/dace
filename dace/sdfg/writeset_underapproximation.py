@@ -607,9 +607,8 @@ def _postorder_traversal(root: SDFGState, loop_nest_tree: Dict[SDFGState,
             children = loop_nest_tree[root]
         else:
             children = []
-        if not children or not last is None and (last in children):
+        if not children or last is not None and (last in children):
             post_order_list.append(root)
-
             stack.pop()
             last = root
         # if not, push children in stack
