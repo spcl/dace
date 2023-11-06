@@ -2,17 +2,13 @@
 
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg.state import SDFGState
-import pytest
 
 import dace
 import numpy as np
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.array_fission import ArrayFission
 from dace.transformation.passes.analysis import FindAccessNodes
-from dace.sdfg.writeset_underapproximation import UnderapproximateWrites
-from dace.subsets import Subset, Range
-from typing import List, Optional, Sequence, Set, Union, Dict, Tuple
+from typing import List, Set, Dict, Tuple
 
 N = dace.symbol("N")
 M = dace.symbol("M")
