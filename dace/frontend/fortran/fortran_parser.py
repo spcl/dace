@@ -66,6 +66,7 @@ class AST_translator:
             ast_internal_classes.Program_Node: self.ast2sdfg,
             ast_internal_classes.Write_Stmt_Node: self.write2sdfg,
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
+            ast_internal_classes.Break_Node: self.break2sdfg,
         }
 
     def get_dace_type(self, type):
@@ -295,7 +296,7 @@ class AST_translator:
         begin_loop_state = sdfg.add_state("BeginLoop" + name)
         end_loop_state = sdfg.add_state("EndLoop" + name)
         self.last_sdfg_states[sdfg] = begin_loop_state
-        self.last_loop_continues[sdfg] = end_loop_state
+        self.last_loop_continues[sdfg] = final_substate
         self.translate(node.body, sdfg)
 
         sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state, InterstateEdge())
@@ -1015,6 +1016,11 @@ class AST_translator:
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
 
+    def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
+
+        self.last_loop_breaks[sdfg] = self.last_sdfg_states[sdfg]
+        sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())
+
 def create_ast_from_string(
     source_string: str,
     sdfg_name: str,
@@ -1045,7 +1051,10 @@ def create_ast_from_string(
         program = ast_transforms.CallExtractor().visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
-        program = ast_transforms.SumToLoop(program).visit(program)
+
+        for transformation in own_ast.fortran_intrinsics().transformations():
+            program = transformation(program).visit(program)
+
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
 
@@ -1077,7 +1086,10 @@ def create_sdfg_from_string(
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.SumToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics().transformations():
+        program = transformation(program).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
@@ -1119,7 +1131,10 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
-    program = ast_transforms.SumToLoop(program).visit(program)
+
+    for transformation in own_ast.fortran_intrinsics():
+        program = transformation(program).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
