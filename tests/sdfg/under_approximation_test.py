@@ -13,8 +13,10 @@ pipeline = Pipeline([UnderapproximateWrites()])
 
 
 def test_2D_map_overwrites_2D_array():
-    """2-dimensional map that fully overwrites 2-dimensional array
-      --> Approximated write-set of Map to array equals shape of array"""
+    """
+    2-dimensional map that fully overwrites 2-dimensional array
+    --> Approximated write-set of Map to array equals shape of array
+    """
 
     sdfg = dace.SDFG('twoD_map')
     sdfg.add_array('B', (M, N), dace.float64)
@@ -42,9 +44,11 @@ def test_2D_map_overwrites_2D_array():
 
 
 def test_2D_map_added_indices():
-    """2-dimensional array that writes to two-dimensional array with 
+    """
+    2-dimensional array that writes to two-dimensional array with 
     subscript expression that adds two indices 
-    --> Approximated write-set of Map is empty"""
+    --> Approximated write-set of Map is empty
+    """
 
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, N), dace.float64)
@@ -69,9 +73,11 @@ def test_2D_map_added_indices():
 
 
 def test_2D_map_multiplied_indices():
-    """2-dimensional array that writes to two-dimensional array with 
+    """
+    2-dimensional array that writes to two-dimensional array with 
     subscript expression that multiplies two indices
-    --> Approximated write-set of Map is empty"""
+    --> Approximated write-set of Map is empty
+    """
 
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, N), dace.float64)
@@ -96,9 +102,11 @@ def test_2D_map_multiplied_indices():
 
 
 def test_1D_map_one_index_multiple_dims():
-    """One-dimensional map that has the same index 
+    """
+    One-dimensional map that has the same index 
     in two dimensions in a write-access
-    --> Approximated write-set of Map is empty"""
+    --> Approximated write-set of Map is empty
+    """
 
     sdfg = dace.SDFG("twoD_map")
 
@@ -121,9 +129,11 @@ def test_1D_map_one_index_multiple_dims():
 
 
 def test_1D_map_one_index_squared():
-    """One-dimensional map that multiplies the index 
+    """
+    One-dimensional map that multiplies the index 
     in the subscript expression 
-    --> Approximated write-set of Map is empty"""
+    --> Approximated write-set of Map is empty
+    """
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, ), dace.float64)
     map_state = sdfg.add_state("map")
@@ -144,9 +154,11 @@ def test_1D_map_one_index_squared():
 
 
 def test_map_tree_full_write():
-    """Two maps nested in a map. Both nested maps overwrite the whole first dimension of the array
+    """
+    Two maps nested in a map. Both nested maps overwrite the whole first dimension of the array
     together with the outer map the whole array is overwritten
-    --> Approximated write-set of Map to array equals shape of array"""
+    --> Approximated write-set of Map to array equals shape of array
+    """
 
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, N), dace.float64)
@@ -196,9 +208,11 @@ def test_map_tree_full_write():
 
 
 def test_map_tree_no_write_multiple_indices():
-    """Two maps nested in a map. Both nested writes contain an addition of 
+    """
+    Two maps nested in a map. Both nested writes contain an addition of 
     indices in the subscript expression 
-    --> Approximated write-set of outer Map to array equals shape of array"""
+    --> Approximated write-set of outer Map to array equals shape of array
+    """
 
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, N), dace.float64)
@@ -246,9 +260,11 @@ def test_map_tree_no_write_multiple_indices():
 
 
 def test_map_tree_multiple_indices_per_dimension():
-    """Two maps nested in a map. One inner Map writes to array using multiple indices. 
+    """
+    Two maps nested in a map. One inner Map writes to array using multiple indices. 
     The other inner map writes to array with affine indices
-    --> Approximated write-set of outer Map to array equals shape of array"""
+    --> Approximated write-set of outer Map to array equals shape of array
+    """
 
     sdfg = dace.SDFG("twoD_map")
     sdfg.add_array("B", (M, N), dace.float64)
@@ -297,9 +313,11 @@ def test_map_tree_multiple_indices_per_dimension():
 
 
 def test_loop_in_map_multiplied_indices():
-    """Loop nested in a map that writes to array. In the subscript expression 
+    """
+    Loop nested in a map that writes to array. In the subscript expression 
     of the write indices are multiplied  
-    --> Approximated write-set of Map to array is empty"""
+    --> Approximated write-set of Map to array is empty
+    """
 
     @dace.program
     def loop(A: dace.float64[N, M]):
@@ -319,8 +337,10 @@ def test_loop_in_map_multiplied_indices():
 
 
 def test_loop_in_map():
-    """Loop nested in a map that writes to array. Outer map overwrites the array.
-     --> Approximated write-set of Map to array equals shape of array"""
+    """
+    Loop nested in a map that writes to array. Outer map overwrites the array.
+     --> Approximated write-set of Map to array equals shape of array
+    """
 
     @dace.program
     def loop(A: dace.float64[N, M]):
@@ -340,8 +360,10 @@ def test_loop_in_map():
 
 
 def test_map_in_loop():
-    """Map nested in a loop that writes to array. Outer loop overwrites the array.
-     --> Approximated write-set of Map to array equals shape of array"""
+    """
+    Map nested in a loop that writes to array. Outer loop overwrites the array.
+     --> Approximated write-set of Map to array equals shape of array
+    """
 
     sdfg = dace.SDFG("nested")
     sdfg.add_array("B", (N, M), dace.float64)
@@ -371,9 +393,11 @@ def test_map_in_loop():
 
 
 def test_map_in_loop_multiplied_indices_first_dimension():
-    """Map nested in a loop that writes to array. Subscript expression
+    """
+    Map nested in a loop that writes to array. Subscript expression
       of array access multiplies two indicies in first dimension
-    --> Approximated write-set of loop to array is empty"""
+    --> Approximated write-set of loop to array is empty
+    """
 
     sdfg = dace.SDFG("nested")
     sdfg.add_array("B", (N, M), dace.float64)
@@ -401,9 +425,11 @@ def test_map_in_loop_multiplied_indices_first_dimension():
 
 
 def test_map_in_loop_multiplied_indices_second_dimension():
-    """Map nested in a loop that writes to array. Subscript expression
+    """
+    Map nested in a loop that writes to array. Subscript expression
       of array access multiplies two indicies in second dimension
-    --> Approximated write-set of loop to array is empty"""
+    --> Approximated write-set of loop to array is empty
+    """
     sdfg = dace.SDFG("nested")
     sdfg.add_array("B", (N, M), dace.float64)
     init = sdfg.add_state("init")
@@ -430,7 +456,8 @@ def test_map_in_loop_multiplied_indices_second_dimension():
 
 
 def test_nested_sdfg_in_map_nest():
-    """Write in nested SDFG in two-dimensional map nest.
+    """
+    Write in nested SDFG in two-dimensional map nest.
     --> should approximate write-set of map nest as shape of array."""
 
     @dace.program
@@ -462,7 +489,8 @@ def test_nested_sdfg_in_map_nest():
 
 
 def test_loop_in_nested_sdfg_in_map_partial_write():
-    """Write in nested SDFG in two-dimensional map nest. 
+    """
+    Write in nested SDFG in two-dimensional map nest. 
     Nested map does not iterate over shape of second array dimension.
     --> should approximate write-set of map nest precisely."""
 
@@ -495,7 +523,8 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
 
 
 def test_map_in_nested_sdfg_in_map():
-    """Write in Map nested in a nested SDFG nested in a map.
+    """
+    Write in Map nested in a nested SDFG nested in a map.
     --> should approximate write-set of loop nest precisely."""
 
     @dace.program
@@ -526,8 +555,10 @@ def test_map_in_nested_sdfg_in_map():
 
 
 def test_nested_sdfg_in_map_branches():
-    """Nested SDFG that overwrites second dimension of array conditionally.
-    --> should approximate write-set of map as empty"""
+    """
+    Nested SDFG that overwrites second dimension of array conditionally.
+    --> should approximate write-set of map as empty
+    """
 
     @dace.program
     def nested_loop(A: dace.float64[M, N]):
@@ -556,8 +587,10 @@ def test_nested_sdfg_in_map_branches():
 
 
 def test_simple_loop_overwrite():
-    """simple loop that overwrites a one-dimensional array
-    --> should approximate write-set of loop as shape of array"""
+    """
+    simple loop that overwrites a one-dimensional array
+    --> should approximate write-set of loop as shape of array
+    """
 
     sdfg = dace.SDFG("simple_loop")
     sdfg.add_array("A", [N], dace.int64)
@@ -578,8 +611,10 @@ def test_simple_loop_overwrite():
 
 
 def test_loop_2D_overwrite():
-    """Two-dimensional loop nest overwrites a two-dimensional array
-    --> should approximate write-set of loop nest as shape of array"""
+    """
+    Two-dimensional loop nest overwrites a two-dimensional array
+    --> should approximate write-set of loop nest as shape of array
+    """
 
     sdfg = dace.SDFG("loop_2D_overwrite")
     sdfg.add_array("A", [M, N], dace.int64)
@@ -605,10 +640,12 @@ def test_loop_2D_overwrite():
 
 
 def test_loop_2D_propagation_gap_symbolic():
-    """Three nested loops that overwrite two dimensional array.
+    """
+    Three nested loops that overwrite two dimensional array.
     Innermost loop is surrounded by loop that doesn't iterate 
     over array range and is potentially empty.
-    --> should approximate write-set to array of outer loop as empty"""
+    --> should approximate write-set to array of outer loop as empty
+    """
 
     sdfg = dace.SDFG("loop_2D_no_overwrite")
     sdfg.add_array("A", [M, N], dace.int64)
@@ -639,8 +676,10 @@ def test_loop_2D_propagation_gap_symbolic():
 
 
 def test_2_loops_overwrite():
-    """2 loops one after another overwriting an array
-    --> should approximate write-set to array of both loops as shape of array"""
+    """
+    2 loops one after another overwriting an array
+    --> should approximate write-set to array of both loops as shape of array
+    """
 
     sdfg = dace.SDFG("two_loops_overwrite")
     sdfg.add_array("A", [N], dace.int64)
@@ -669,10 +708,12 @@ def test_2_loops_overwrite():
 
 
 def test_loop_2D_overwrite_propagation_gap_non_empty():
-    """Three nested loops that overwrite two-dimensional array.
+    """
+    Three nested loops that overwrite two-dimensional array.
     Innermost loop is surrounded by a loop that doesn't iterate 
     over array range but over a non-empty constant range.
-    --> should approximate write-set to array of loop nest as shape of array"""
+    --> should approximate write-set to array of loop nest as shape of array
+    """
 
     sdfg = dace.SDFG("loop_2D_no_overwrite")
     sdfg.add_array("A", [M, N], dace.int64)
@@ -703,9 +744,11 @@ def test_loop_2D_overwrite_propagation_gap_non_empty():
 
 
 def test_loop_nest_multiplied_indices():
-    """three nested loops that write to two dimensional array.
+    """
+    three nested loops that write to two dimensional array.
     The subscript expression is a multiplication of two indices 
-    -> should approximate write-sets of loops as empty"""
+    -> should approximate write-sets of loops as empty
+    """
 
     sdfg = dace.SDFG("loop_2D_no_overwrite")
     sdfg.add_array("A", [N, N], dace.int64)
@@ -736,10 +779,12 @@ def test_loop_nest_multiplied_indices():
 
 
 def test_loop_nest_empty_nested_loop():
-    """three nested loops that write to two dimensional array.
+    """
+    three nested loops that write to two dimensional array.
     the innermost loop is surrounded by a loop that iterates over an empty range.
     --> Approximated write-set to array of outer loop is empty. 
-    Approximated write-set to array of innermost loop is equal to shape of array"""
+    Approximated write-set to array of innermost loop is equal to shape of array
+    """
 
     sdfg = dace.SDFG("loop_2D_no_overwrite")
     sdfg.add_array("A", [M, N], dace.int64)
@@ -769,9 +814,11 @@ def test_loop_nest_empty_nested_loop():
 
 
 def test_loop_nest_inner_loop_conditional():
-    """Loop nested in another loop. Nested loop is in a branch and overwrites the array.
+    """
+    Loop nested in another loop. Nested loop is in a branch and overwrites the array.
         --> should approximate write-set to array of outer loop as empty
-        and write-set to array of inner loop equal to shape of array"""
+        and write-set to array of inner loop equal to shape of array
+    """
     sdfg = dace.SDFG("loop_2D_branch")
     sdfg.add_array("A", [N], dace.int64)
     init = sdfg.add_state("init")
@@ -803,8 +850,10 @@ def test_loop_nest_inner_loop_conditional():
 
 
 def test_loop_in_nested_sdfg_in_map_multiplied_indices():
-    """Loop in nested SDFG nested in map. The subscript of the write multiplies two indices
-    --> should approximate write-set of loop as empty"""
+    """
+    Loop in nested SDFG nested in map. The subscript of the write multiplies two indices
+    --> should approximate write-set of loop as empty
+    """
 
     @dace.program
     def nested_loop(A: dace.float64[M, N]):
@@ -830,8 +879,10 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
 
 
 def test_loop_in_nested_sdfg_simple():
-    """Loop nested in a map that overwrites two-dimensional array
-    --> should approximate write-set of map to full shape of array"""
+    """
+    Loop nested in a map that overwrites two-dimensional array
+    --> should approximate write-set of map to full shape of array
+    """
 
     @dace.program
     def nested_loop(A: dace.float64[M, N]):
@@ -859,8 +910,10 @@ def test_loop_in_nested_sdfg_simple():
 
 
 def test_loop_break():
-    """Loop that has a break statement writing to array.
-        --> Approximated write-set of loop to array is empty"""
+    """
+    Loop that has a break statement writing to array.
+        --> Approximated write-set of loop to array is empty
+    """
 
     sdfg = dace.SDFG("loop_2D_no_overwrite")
     sdfg.add_array("A", [N], dace.int64)
@@ -885,8 +938,10 @@ def test_loop_break():
 
 
 def test_constant_multiplicative_2D():
-    """Array is accessed via index that is multiplied with a constant.
-    --> should approximate write-set precisely"""
+    """
+    Array is accessed via index that is multiplied with a constant.
+    --> should approximate write-set precisely
+    """
 
     A = dace.data.Array(dace.int64, (N, M))
     subset = Range.from_string("i,3*j")
@@ -908,8 +963,10 @@ def test_constant_multiplicative_2D():
 
 
 def test_affine_2D():
-    """Array is accessed via affine subscript expresion.
-    --> should approximate write-set precisely"""
+    """
+    Array is accessed via affine subscript expresion.
+    --> should approximate write-set precisely
+    """
 
     A = dace.data.Array(dace.int64, (N, M))
     subset = Range.from_string("i,3 * j + 3")
@@ -931,8 +988,10 @@ def test_affine_2D():
 
 
 def test_multiplied_variables():
-    """Two indices are multiplied in subscript expression
-    --> should fall back to empty subset"""
+    """
+    Two indices are multiplied in subscript expression
+    --> should fall back to empty subset
+    """
 
     A = dace.data.Array(dace.int64, (M, ))
     subset = Range.from_string("i * j")
@@ -950,8 +1009,10 @@ def test_multiplied_variables():
 
 
 def test_one_variable_in_2dimensions():
-    """One index occurs in two dimensions
-    --> should fall back to empty subset"""
+    """
+    One index occurs in two dimensions
+    --> should fall back to empty subset
+    """
 
     A = dace.data.Array(dace.int64, (N, M))
     subset = Range.from_string("i, i")
@@ -989,9 +1050,11 @@ def test_negative_step():
 
 
 def test_step_not_one():
-    """Array is accessed via index that is defined 
+    """
+    Array is accessed via index that is defined 
     over Range with stepsize > 1.
-    --> should approximate write-set precisely"""
+    --> should approximate write-set precisely
+"""
 
     A = dace.data.Array(dace.int64, (N, M))
     subset = Range.from_string("i")
