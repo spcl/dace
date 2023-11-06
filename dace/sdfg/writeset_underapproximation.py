@@ -27,7 +27,7 @@ from dace.sdfg import scope
 approximation_dict: Dict[graph.Edge, Memlet] = {}
 # dictionary that maps loop headers to "border memlets" that are written to in the
 # corresponding loop
-loop_write_dict: dict[SDFGState, Dict[str, Memlet]] = {}
+loop_write_dict: Dict[SDFGState, Dict[str, Memlet]] = {}
 # dictionary containing information about the for loops in the SDFG
 loop_dict: Dict[SDFGState, Tuple[SDFGState, SDFGState,
                                  List[SDFGState], str, subsets.Range]] = {}
