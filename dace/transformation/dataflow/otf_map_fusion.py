@@ -297,13 +297,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                             else:
                                 out_connector = edge.src_conn
 
-                            if out_connector not in second_map_entry.out_connectors:
-                                second_map_entry.add_out_connector(out_connector)
+                            if out_connector not in self.second_map_entry.out_connectors:
+                                self.second_map_entry.add_out_connector(out_connector)
                         else:
-                            out_connector = edge.src_conn
-
-                        if out_connector not in self.second_map_entry.out_connectors:
-                            self.second_map_entry.add_out_connector(out_connector)
+                            out_connector = None
 
                         graph.add_edge(second_map_entry, out_connector, node, edge.dst_conn, memlet)
                         graph.remove_edge(edge)
