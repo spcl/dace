@@ -10,7 +10,7 @@ from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.array_fission import ArrayFission
 from dace.transformation.passes.analysis import FindAccessNodes
-from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
+from dace.sdfg.writeset_underapproximation import UnderapproximateWrites
 from dace.subsets import Subset, Range
 from typing import List, Optional, Sequence, Set, Union, Dict, Tuple
 

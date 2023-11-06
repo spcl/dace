@@ -11,7 +11,7 @@ from dace.sdfg import SDFGState
 from dace.memlet import Memlet
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg.graph import Edge
-from dace.sdfg.propagation_underapproximation import UnderapproximateWrites
+from dace.sdfg.writeset_underapproximation import UnderapproximateWrites
 from dace.transformation.passes import analysis as ap
 
 
