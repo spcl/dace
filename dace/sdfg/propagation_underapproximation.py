@@ -31,7 +31,10 @@ loop_write_dict: dict[SDFGState, Dict[str, Memlet]] = {}
 # dictionary containing information about the for loops in the SDFG
 loop_dict: Dict[SDFGState, Tuple[SDFGState, SDFGState,
                                  List[SDFGState], str, subsets.Range]] = {}
+# dictionary mapping each nested SDFG to the iteration variables surrounding it
 iteration_variables: Dict[SDFG, Set[str]] = {}
+# dictionary mapping each state to the iteration variables surrounding it
+# (including the ones from surrounding SDFGs)
 ranges_per_state: Dict[SDFGState,
                        Dict[str, subsets.Range]] = defaultdict(lambda: {})
 
@@ -674,7 +677,7 @@ def _filter_undefined_symbols(border_memlet: Memlet,
         border_memlet.dst_subset = subsets.SubsetUnion(_subsets)
 
 
-def _merge_subsets(subset_a, subset_b) -> subsets.SubsetUnion:
+def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subsets.SubsetUnion:
     """
     Helper function that merges two subsets to a SubsetUnion and throws
     an error if the subsets have different dimensions
