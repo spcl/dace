@@ -38,9 +38,10 @@ def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
 
 
 def test_simple_conditional_common_post_dominator():
-    """two conditional writes that are both postdominated by the same state
-    --> should fission array"""
-
+    """
+    two conditional writes that are both postdominated by the same state
+    --> should fission array
+    """
     @dace.program
     def conditional_write(A: dace.float64[1], b: dace.bool):
         tmp = np.float64(0.0)
@@ -91,10 +92,11 @@ def test_simple_conditional_common_post_dominator():
 
 
 def test_simple_conditional_write_no_fission():
-    """two conditional writes that overwrite a one-dimensional array
+    """
+    two conditional writes that overwrite a one-dimensional array
     but the array is read before the second conditional assignment
-    --> no fission"""
-
+    --> no fission
+    """
     @dace.program
     def conditional_write(A: dace.float64[N]):
         tmp = np.zeros_like(A)
@@ -150,10 +152,11 @@ def test_simple_conditional_write_no_fission():
 
 
 def test_three_conditional_writes_common_postdominator():
-    """three conditional writes that each overwrite a one-dimensional 
+    """
+    three conditional writes that each overwrite a one-dimensional 
     array and build a frontier of writes
-    --> should fission at the write frontier"""
-
+    --> should fission at the write frontier
+    """
     @dace.program
     def conditional_write_multiple_conditions(A: dace.float64[1],
                                               b1: dace.bool, b2: dace.bool):
@@ -221,9 +224,10 @@ def test_three_conditional_writes_common_postdominator():
 
 
 def test_simple_loop_overwrite():
-    """simple loop that overwrites a one-dimensional array
-    --> should introduce new array after the loop"""
-
+    """
+    simple loop that overwrites a one-dimensional array
+    --> should introduce new array after the loop
+    """
     sdfg = dace.SDFG("two_loops_overwrite")
     sdfg.add_symbol("i", dace.int32)
     sdfg.add_array("A", [N], dace.int64, transient=True)
@@ -264,10 +268,11 @@ def test_simple_loop_overwrite():
 
 
 def test_loop_overwrite_multiple_writes():
-    """simple loop that overwrites a one-dimensional array. Loop contains two writes.
+    """
+    simple loop that overwrites a one-dimensional array. Loop contains two writes.
     --> should introduce new Array after loop and both writes in the 
-    loop should write to the same variable after fissioning"""
-
+    loop should write to the same variable after fissioning
+    """
     sdfg = dace.SDFG("two_loops_overwrite")
     sdfg.add_array("A", [N], dace.int64, transient=True)
     sdfg.add_array("res", [1], dace.int64)
@@ -314,10 +319,11 @@ def test_loop_overwrite_multiple_writes():
 
 
 def test_loop_read_after_write():
-    """Full write by loop that reads from the overwritten variable 
+    """
+    Full write by loop that reads from the overwritten variable 
     after the overwriting write
-    --> should not introduce new Array"""
-
+    --> should not introduce new Array
+    """
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
@@ -396,10 +402,11 @@ def test_loop_read_after_write():
 
 
 def test_conditional_writes_loops():
-    """two loops that overwrite an array in two branches 
+    """
+    two loops that overwrite an array in two branches 
     that are postdominated by the same state.
-     --> should introduce new array after loops"""
-
+     --> should introduce new array after loops
+    """
     sdfg = dace.SDFG('loop_no_phi_node')
     sdfg.add_array('A', [N], dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -457,10 +464,11 @@ def test_conditional_writes_loops():
 
 
 def test_loop_read_before_write_no_fission():
-    """Full write by loop that reads from the 
+    """
+    Full write by loop that reads from the 
     overwritten variable before it is overwritten
-    --> should not introduce new variable after loop"""
-
+    --> should not introduce new variable after loop
+    """
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32, transient=True)
     sdfg.add_array('B', [N], dace.int32)
@@ -528,10 +536,11 @@ def test_loop_read_before_write_no_fission():
 
 
 def test_loop_read_before_write_interstate():
-    """Full write by loop that also reads from the overwritten 
+    """
+    Full write by loop that also reads from the overwritten 
     variable in an interstate edge
-      --> should not introduce new variable after loop"""
-
+      --> should not introduce new variable after loop
+    """
     sdfg = dace.SDFG('scalar_isedge')
     sdfg.add_array('A', [N], dace.int32, transient=True)
     sdfg.add_array('tmp', [N], dace.int32, transient=True)
@@ -590,9 +599,10 @@ def test_loop_read_before_write_interstate():
 
 
 def test_map_simple_overwrite():
-    """SDFG with three maps. One overwriting the array.
-    --> should introduce new array"""
-
+    """
+    SDFG with three maps. One overwriting the array.
+    --> should introduce new array
+    """
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_array('A', [2], dace.int32)
     sdfg.add_array('B', [N], dace.int32, transient=True)
@@ -665,9 +675,10 @@ def test_map_simple_overwrite():
 
 
 def test_intrastate_overwrite():
-    """array is overwritten twice in the same state
-    --> should only make one new array"""
-
+    """
+    array is overwritten twice in the same state
+    --> should only make one new array
+    """
     sdfg = dace.SDFG('intrastate_overwrite')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_array('A', [N], dace.int32, transient=True)
@@ -1190,9 +1201,11 @@ def test_scalar_write_shadow_interstate_pred():
 
 
 def test_loop_fake_shadow_symbolic():
-    """variable is overwritten twice in loop with symbolic range and read afterwards 
+    """
+    variable is overwritten twice in loop with symbolic range and read afterwards 
     --> array variable should be fissioned and the last write in the loop should 
-    write to the same variable as the first write"""
+    write to the same variable as the first write
+    """    
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_array('A', [2], dace.float64, transient=True)
@@ -1248,10 +1261,11 @@ def test_loop_fake_shadow_symbolic():
 
 
 def test_loop_fake_shadow():
-    """variable is overwritten twice in loop with non-symbolic range and read afterwards 
+    """
+    variable is overwritten twice in loop with non-symbolic range and read afterwards 
     --> two new variables are introduced in the loop and last write in the loop writes 
-    to variable different from the one the first write writes to"""
-
+    to variable different from the one the first write writes to
+    """
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [2], dace.float64, transient=True)
     sdfg.add_array('B', [2], dace.float64, transient=True)
@@ -1306,9 +1320,10 @@ def test_loop_fake_shadow():
 
 
 def test_loop_fake_complex_shadow():
-    """variable is overwritten in loop with non-symbolic range
-    --> new variable is introduced for the write in the loop"""
-
+    """
+    variable is overwritten in loop with non-symbolic range
+    --> new variable is introduced for the write in the loop
+    """
     sdfg = dace.SDFG('loop_fake_shadow')
     sdfg.add_array('A', [2], dace.float64)
     sdfg.add_array('B', [2], dace.float64, transient=True)
@@ -1356,7 +1371,8 @@ def test_loop_fake_complex_shadow():
 
 
 def test_loop_real_shadow():
-    """Array is first overwritten in loop then read. Array is not read after loop.
+    """
+    Array is first overwritten in loop then read. Array is not read after loop.
     --> should introduce loop local copy of array."""
 
     sdfg = dace.SDFG('loop_fake_shadow')
@@ -1408,9 +1424,10 @@ def test_loop_real_shadow():
 
 
 def test_dominationless_write_branch1():
-    """Read dominated by frontier of writes
-    --> new Array should be introduced after frontier of writes"""
-
+    """
+    Read dominated by frontier of writes
+    --> new Array should be introduced after frontier of writes
+    """
     sdfg = dace.SDFG('dominationless_write_branch')
     sdfg.add_array('A', [2], dace.float64, transient=True)
     sdfg.add_array('B', [2], dace.float64)
@@ -1453,11 +1470,12 @@ def test_dominationless_write_branch1():
 
 
 def test_double_nested_loops():
-    """Two loops with symbolic range overwriting array with a single write. 
+    """
+    Two loops with symbolic range overwriting array with a single write. 
     Both loops are nested in another loop. One of the loops is again nested in another loop.
     Array is not read after the outer loop.
-    --> should introduce local copies of array for each nested loop"""
-
+    --> should introduce local copies of array for each nested loop
+    """
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("i", dace.int32)
@@ -1524,10 +1542,11 @@ def test_double_nested_loops():
 
 
 def test_nested_loops_no_read_after_outer_loop():
-    """Two loops with symbolic range overwriting array with a single write. 
+    """
+    Two loops with symbolic range overwriting array with a single write. 
     Loops are nested in another loop. Array is not read after the outer loop.
-    --> should introduce local copies of array for each nested loop"""
-
+    --> should introduce local copies of array for each nested loop
+    """
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
     sdfg.add_symbol("i", dace.int32)
@@ -1591,9 +1610,11 @@ def test_nested_loops_no_read_after_outer_loop():
 
 
 def test_nested_loops_read_after_outer_loop():
-    """Two loops with symbolic range overwriting array with a single write. 
+    """
+    Two loops with symbolic range overwriting array with a single write. 
     Loops are nested in another loop. Array is directly read after the outer loop.
-    --> should not introduce local copies of array for each nested loop"""
+    --> should not introduce local copies of array for each nested loop
+    """
 
     sdfg = dace.SDFG("nested_loops")
     sdfg.add_symbol("N", dace.int64)
@@ -1661,10 +1682,11 @@ def test_nested_loops_read_after_outer_loop():
 
 
 def test_nested_loop():
-    """Nested loop that overwrites array before reading from it. 
+    """
+    Nested loop that overwrites array before reading from it. 
     Variable is overwritten in outer loop, directly after nested loop.
-    --> Should introduce loop-local copy of array for nested loop"""
-
+    --> Should introduce loop-local copy of array for nested loop
+    """
     sdfg = dace.SDFG('branch_subscope_fission')
     sdfg.add_array('ZCOR_0', [2], dace.int32, transient=True)
     sdfg.add_array('ZQSAT', [1], dace.int32, transient=False)
