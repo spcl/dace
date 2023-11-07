@@ -691,9 +691,6 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
 
 class UnderapproximateWrites(ppl.Pass):
 
-    def depends_on(self) -> Set[Type[Pass] | Pass]:
-        return super().depends_on()
-
     def modifies(self) -> Modifies:
         return ppl.Modifies.InterstateEdges | ppl.Modifies.States
 
