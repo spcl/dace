@@ -692,7 +692,7 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
 class UnderapproximateWrites(ppl.Pass):
 
     def modifies(self) -> Modifies:
-        return ppl.Modifies.InterstateEdges | ppl.Modifies.States
+        return ppl.Modifies.Everything
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If anything was modified, reapply
