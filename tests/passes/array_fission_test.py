@@ -6,13 +6,13 @@ from dace.sdfg.state import SDFGState
 import dace
 import numpy as np
 from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.array_fission import ArrayFission
+from dace.transformation.passes import array_fission
 from dace.transformation.passes.analysis import FindAccessNodes
 from typing import List, Set, Dict, Tuple
 
 N = dace.symbol("N")
 M = dace.symbol("M")
-pipeline = Pipeline([ArrayFission()])
+pipeline = Pipeline([array_fission.ArrayFission()])
 
 
 def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
@@ -27,8 +27,7 @@ def assert_rename_sets(expected: Dict[str, List[Set[AccessNode]]],
             access_nodes = reads.union(writes)
             for access_node in access_nodes:
                 if access_node.data not in rename_dict[original_name].keys():
-                    rename_dict[original_name][access_node.data] = set(
-                        [access_node])
+                    rename_dict[original_name][access_node.data] = set([access_node])
                 else:
                     rename_dict[original_name][access_node.data].add(
                         access_node)
