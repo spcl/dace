@@ -700,7 +700,10 @@ class UnderapproximateWrites(ppl.Pass):
 
     def apply_pass(
             self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]
-    ) -> Dict[str, Dict[SDFGState, Any] | Dict[Any, Any] | Dict[SDFGState, Dict[str, Memlet]]]:
+    ) -> Dict[str, Union[
+            Dict[graph.Edge, Memlet],
+            Dict[SDFGState, Dict[str, Memlet]],
+            Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]]]:
         """
         Applies the pass to the given SDFG.
 
