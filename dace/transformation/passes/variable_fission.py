@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Any, Callable, Dict, Iterable, Optional, Set, Tuple, List, Union
 import networkx as nx
 
+from dace.properties import make_properties
 from dace import SDFG, properties
 from dace import subsets
 from dace.sdfg import nodes as nd
@@ -21,7 +22,7 @@ class _PhiNode():
         self.name: str = name
         self.variables: Set[str] = variables
 
-
+@make_properties
 class VariableFission(ppl.Pass):
     """
     Fission transient arrays that are dominated by full writes 
@@ -32,10 +33,6 @@ class VariableFission(ppl.Pass):
 
     fission_arrays = properties.Property(dtype=bool, default=True, desc='''If True, only fissions variables of size > 1.
                                                                         If false only fissions scalar variables.''')
-
-    def __init__(self):
-        self.fission_arrays = None
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
 
@@ -56,14 +53,13 @@ class VariableFission(ppl.Pass):
         to the whole array into separate data containers.
 
         :param sdfg: The SDFG to modify.
-        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is 
-                                populated with prior Pass results as ``{Pass subclass name: 
-                                returned object from pass}``. If not run in a pipeline, an 
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is
+                                populated with prior Pass results as ``{Pass subclass name:
+                                returned object from pass}``. If not run in a pipeline, an
                                 empty dictionary is expected.
-        :return: A dictionary mapping the original name to a set of all new names created 
+        :return: A dictionary mapping the original name to a set of all new names created
                 for each data container.
         """
-        self.fission_arrays = False
         results: Dict[str, Set[str]] = defaultdict(set)
         write_approximation: dict[Edge, Memlet] = pipeline_results[
             UnderapproximateWrites.__name__]["approximation"]
@@ -88,7 +84,7 @@ class VariableFission(ppl.Pass):
             if a.transient and not a.total_size == 1
         ] if self.fission_arrays else [
             aname for aname, a in sdfg.arrays.items()
-            if a.transient and  a.total_size == 1
+            if a.transient and a.total_size == 1
         ]
 
         # dictionary that stores "virtual" phi nodes for each variable and SDFGstate
