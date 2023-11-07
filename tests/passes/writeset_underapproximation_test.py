@@ -325,7 +325,7 @@ def test_loop_in_map_multiplied_indices():
             for j in range(M):
                 A[i, j * i] = 0
 
-    sdfg = loop.to_sdfg()
+    sdfg = loop.to_sdfg(simplify=True)
 
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -348,7 +348,7 @@ def test_loop_in_map():
             for j in range(M):
                 A[i, j] = 0
 
-    sdfg = loop.to_sdfg()
+    sdfg = loop.to_sdfg(simplify=True)
 
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -470,7 +470,7 @@ def test_nested_sdfg_in_map_nest():
                     A[i, j] = 2
                 A[i, j] = A[i, j] * A[i, j]
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
     write_approx = result["approximation"]
@@ -504,7 +504,7 @@ def test_loop_in_nested_sdfg_in_map_partial_write():
                     A[i, j] = 2
                 A[i, j] = A[i, j] * A[i, j]
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -536,7 +536,7 @@ def test_map_in_nested_sdfg_in_map():
                 A[i, :] = 2
             A[i, :] = 0
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -568,7 +568,7 @@ def test_nested_sdfg_in_map_branches():
             else:
                 A[i, :] = 2
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -861,7 +861,7 @@ def test_loop_in_nested_sdfg_in_map_multiplied_indices():
             for j in range(N):
                 A[i + 1, j * i] = 1
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
@@ -890,7 +890,7 @@ def test_loop_in_nested_sdfg_simple():
             for j in range(N):
                 A[i, j] = 1
 
-    sdfg = nested_loop.to_sdfg()
+    sdfg = nested_loop.to_sdfg(simplify=True)
 
     result = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
