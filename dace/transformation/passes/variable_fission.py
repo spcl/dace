@@ -649,7 +649,7 @@ def _dominator_tree_DFS_order(
 
 def _conditional_dfs(
         sdfg: SDFG,
-        condition: Callable[[SDFGState | None], bool],
+        condition: Callable[[Union[SDFGState, None]], bool],
         start: Union[SDFGState, None] = None
         ) -> Set[SDFGState]:
     """
