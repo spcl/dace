@@ -5,7 +5,7 @@ from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.properties import Property, make_properties
+from dace.properties import EnumProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
@@ -27,9 +27,10 @@ class MapExpansion(pm.SingleStateTransformation):
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    inner_schedule = Property(desc="Schedule for inner maps",
-                              dtype=dtypes.ScheduleType,
-                              default=dtypes.ScheduleType.Sequential)
+    inner_schedule = EnumProperty(desc="Schedule for inner maps",
+                                  dtype=dtypes.ScheduleType,
+                                  default=dtypes.ScheduleType.Sequential,
+                                  allow_none=True)
 
     @classmethod
     def expressions(cls):
@@ -47,10 +48,11 @@ class MapExpansion(pm.SingleStateTransformation):
         current_map = map_entry.map
 
         # Create new maps
+        inner_schedule = self.inner_schedule or current_map.schedule
         new_maps = [
             nodes.Map(current_map.label + '_' + str(param), [param],
                       subsets.Range([param_range]),
-                      schedule=self.inner_schedule)
+                      schedule=inner_schedule)
             for param, param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
