@@ -59,11 +59,11 @@ class CPUCodeGen(TargetCodeGenerator):
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
-                    _visit_structure(v, args, f'{prefix}.{k}')
+                    _visit_structure(v, args, f'{prefix}->{k}')
                 elif isinstance(v, data.StructArray):
-                    _visit_structure(v.stype, args, f'{prefix}.{k}')
+                    _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
-                    args[f'{prefix}.{k}'] = v
+                    args[f'{prefix}->{k}'] = v
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
@@ -221,8 +221,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     if isinstance(v, data.Data):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}.{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}.{k}", defined_type, ctypedef)
+                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                 # TODO: Find a better way to do this (the issue is with pointers of pointers)
                 if atype.endswith('*'):
                     atype = atype[:-1]
@@ -299,9 +299,6 @@ class CPUCodeGen(TargetCodeGenerator):
         name = node.data
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
-        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        alloc_name = alloc_name.replace('.', '->')
 
         if nodedesc.transient is False:
             return
@@ -331,7 +328,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(v, data.Data):
                     ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                     defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                    self._dispatcher.declared_arrays.add(f"{name}.{k}", defined_type, ctypedef)
+                    self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
@@ -1184,9 +1181,6 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
-        # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and
-        # NOTE: structures. Since structures are implemented as pointers, we replace dots with arrows.
-        ptr = ptr.replace('.', '->')
 
         if fpga.is_fpga_array(desc):
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
@@ -1496,7 +1490,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if state_struct:
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
-            arguments.append(f'{toplevel_sdfg.name}_t *__state')
+            arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
 
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
         restrict_args = []
@@ -1517,9 +1511,10 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
@@ -1528,9 +1523,10 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ['__state']
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
-            cpp.sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items()) if symname not in sdfg.constants
+            cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
+            if symname in fsyms and symname not in sdfg.constants
         ])
         return f'{sdfg_label}({args});'
 
@@ -1814,11 +1810,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Find if bounds are used within the scope
             scope = state_dfg.scope_subgraph(node, False, False)
-            fsyms = scope.free_symbols
+            fsyms = self._frame.free_symbols(scope)
             # Include external edges
             for n in scope.nodes():
                 for e in state_dfg.all_edges(n):
-                    fsyms |= e.data.free_symbols
+                    fsyms |= e.data.used_symbols(False, e)
             fsyms = set(map(str, fsyms))
 
             ntid_is_used = '__omp_num_threads' in fsyms

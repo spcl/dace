@@ -1,10 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-#
-# This sample shows how to utilize an IP core in an RTL tasklet. This is done
-# through the vector add problem, which adds two floating point vectors
-# together.
-#
-# It is intended for running hardware_emulation or hardware xilinx targets.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    This sample shows how to utilize an IP core in an RTL tasklet. This is done
+    through the vector add problem, which adds two floating point vectors
+    together.
+
+    It is intended for running hardware_emulation or hardware xilinx targets.
+"""
 
 import dace
 import numpy as np
@@ -190,4 +191,4 @@ if __name__ == '__main__':
         expected = a + b
         diff = np.linalg.norm(expected - c) / N.get()
         print("Difference:", diff)
-    exit(0 if diff <= 1e-5 else 1)
+        assert diff <= 1e-5

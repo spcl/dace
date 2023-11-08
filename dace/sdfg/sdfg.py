@@ -30,7 +30,7 @@ from dace.config import Config
 from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
@@ -62,7 +62,7 @@ class NestedDict(dict):
             token = tokens.pop(0)
             result = result.members[token]
         return result
-    
+
     def __setitem__(self, key, val):
         if isinstance(key, str) and '.' in key:
             raise KeyError('NestedDict does not support setting nested keys')
@@ -273,7 +273,7 @@ class InterstateEdge(object):
         rhs_symbols = set()
         for lhs, rhs in self.assignments.items():
             # Always add LHS symbols to the set of candidate free symbols
-            rhs_symbols |= symbolic.free_symbols_and_functions(rhs)
+            rhs_symbols |= set(map(str, dace.symbolic.symbols_in_ast(ast.parse(rhs))))
             # Add the RHS to the set of candidate defined symbols ONLY if it has not been read yet
             # This also solves the ordering issue that may arise in cases like the 3rd example above
             if lhs not in cond_symbols and lhs not in rhs_symbols:
@@ -402,7 +402,7 @@ class InterstateEdge(object):
 
 
 @make_properties
-class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
+class SDFG(ControlFlowRegion):
     """ The main intermediate representation of code in DaCe.
 
         A Stateful DataFlow multiGraph (SDFG) is a directed graph of directed
@@ -499,8 +499,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
-        self._start_state: Optional[int] = None
-        self._cached_start_state: Optional[SDFGState] = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -531,14 +529,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip derivative attributes
-            if k in ('_cached_start_state', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
+            if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
                      '_sdfg_list', '_transformation_hist'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
-        result._cached_start_state = copy.deepcopy(self._cached_start_state, memo)
+        result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
             if id(getattr(self, k)) in memo:
@@ -583,7 +581,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
-        tmp['start_state'] = self._start_state
+        tmp['start_state'] = self._start_block
 
         tmp['attributes']['name'] = self.name
         if hash:
@@ -627,7 +625,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_state' in json_obj:
-            ret._start_state = json_obj['start_state']
+            ret._start_block = json_obj['start_state']
 
         return ret
 
@@ -753,14 +751,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         for array in self.arrays.values():
             replace_properties_dict(array, repldict, symrepl)
 
-        if replace_in_graph:
-            # Replace in inter-state edges
-            for edge in self.edges():
-                edge.data.replace_dict(repldict)
-
-            # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repldict, symrepl)
+        super().replace_dict(repldict, symrepl, replace_in_graph, replace_keys)
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
@@ -787,34 +778,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     @property
     def start_state(self):
-        """ Returns the starting state of this SDFG. """
-        if self._cached_start_state is not None:
-            return self._cached_start_state
-
-        source_nodes = self.source_nodes()
-        if len(source_nodes) == 1:
-            self._cached_start_state = source_nodes[0]
-            return source_nodes[0]
-        # If starting state is ambiguous (i.e., loop to initial state or more
-        # than one possible start state), allow manually overriding start state
-        if self._start_state is not None:
-            self._cached_start_state = self.node(self._start_state)
-            return self._cached_start_state
-        raise ValueError('Ambiguous or undefined starting state for SDFG, '
-                         'please use "is_start_state=True" when adding the '
-                         'starting state with "add_state"')
+        return self.start_block
 
     @start_state.setter
     def start_state(self, state_id):
-        """ Manually sets the starting state of this SDFG.
-
-            :param state_id: The node ID (use `node_id(state)`) of the
-                             state to set.
-        """
-        if state_id < 0 or state_id >= self.number_of_nodes():
-            raise ValueError("Invalid state ID")
-        self._start_state = state_id
-        self._cached_start_state = self.node(state_id)
+        self.start_block = state_id
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -1127,7 +1095,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Verify that there are no access nodes that use this data
         if validate:
-            for state in self.nodes():
+            for state in self.states():
                 for node in state.nodes():
                     if isinstance(node, nd.AccessNode) and node.data == name:
                         raise ValueError(f"Cannot remove data descriptor "
@@ -1243,75 +1211,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def add_node(self, node, is_start_state=False):
-        """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
-            thereof.
-
-            :param node: The node to add.
-            :param is_start_state: If True, sets this node as the starting
-                                   state.
-        """
-        if not isinstance(node, SDFGState):
-            raise TypeError("Expected SDFGState, got " + str(type(node)))
-        super(SDFG, self).add_node(node)
-        self._cached_start_state = None
-        if is_start_state is True:
-            self.start_state = len(self.nodes()) - 1
-            self._cached_start_state = node
-
     def remove_node(self, node: SDFGState):
-        if node is self._cached_start_state:
-            self._cached_start_state = None
+        if node is self._cached_start_block:
+            self._cached_start_block = None
         return super().remove_node(node)
 
-    def add_edge(self, u, v, edge):
-        """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
-            subclass thereof.
-
-            :param u: Source node.
-            :param v: Destination node.
-            :param edge: The edge to add.
-        """
-        if not isinstance(u, SDFGState):
-            raise TypeError("Expected SDFGState, got: {}".format(type(u).__name__))
-        if not isinstance(v, SDFGState):
-            raise TypeError("Expected SDFGState, got: {}".format(type(v).__name__))
-        if not isinstance(edge, InterstateEdge):
-            raise TypeError("Expected InterstateEdge, got: {}".format(type(edge).__name__))
-        if v is self._cached_start_state:
-            self._cached_start_state = None
-        return super(SDFG, self).add_edge(u, v, edge)
-
     def states(self):
-        """ Alias that returns the nodes (states) in this SDFG. """
-        return self.nodes()
-
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
-        """ Iterate over all nodes in this SDFG, including states, nodes in
-            states, and recursive states and nodes within nested SDFGs,
-            returning tuples on the form (node, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for node in self.nodes():
-            yield node, self
-            yield from node.all_nodes_recursive()
-
-    def all_sdfgs_recursive(self):
-        """ Iterate over this and all nested SDFGs. """
-        yield self
-        for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.all_sdfgs_recursive()
-
-    def all_edges_recursive(self):
-        """ Iterate over all edges in this SDFG, including state edges,
-            inter-state edges, and recursively edges within nested SDFGs,
-            returning tuples on the form (edge, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for e in self.edges():
-            yield e, self
-        for node in self.nodes():
-            yield from node.all_edges_recursive()
+        """ Returns the states in this SDFG, recursing into state scope blocks. """
+        return list(self.all_states())
 
     def arrays_recursive(self):
         """ Iterate over all arrays in this SDFG, including arrays within
@@ -1323,74 +1230,55 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 if isinstance(node, nd.NestedSDFG):
                     yield from node.sdfg.arrays_recursive()
 
-    def used_symbols(self, all_symbols: bool) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG.
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set]=None,
+                               free_syms: Optional[Set]=None,
+                               used_before_assignment: Optional[Set]=None,
+                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
 
-        :param all_symbols: If False, only returns the set of symbols that will be used
-                            in the generated code and are needed as arguments.
-        """
-        defined_syms = set()
-        free_syms = set()
-
-        # Exclude data descriptor names, constants, and shapes of global data descriptors
-        not_strictly_necessary_global_symbols = set()
-        for name, desc in self.arrays.items():
+        # Exclude data descriptor names and constants
+        for name in self.arrays.keys():
             defined_syms.add(name)
-
-            if not all_symbols:
-                used_desc_symbols = desc.used_symbols(all_symbols)
-                not_strictly_necessary = (desc.used_symbols(all_symbols=True) - used_desc_symbols)
-                not_strictly_necessary_global_symbols |= set(map(str, not_strictly_necessary))
 
         defined_syms |= set(self.constants_prop.keys())
 
+        # Add used symbols from init and exit code
+        for code in self.init_code.values():
+            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+        for code in self.exit_code.values():
+            free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
+
+        return super()._used_symbols_internal(
+            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
+            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
+        )
+
+    def get_all_toplevel_symbols(self) -> Set[str]:
+        """
+        Returns a set of all symbol names that are used by the SDFG's state machine.
+        This includes all symbols in the descriptor repository and interstate edges,
+        whether free or defined. Used to identify duplicates when, e.g., inlining or
+        dealiasing a set of nested SDFGs.
+        """
+        # Exclude constants and data descriptor names
+        exclude = set(self.arrays.keys()) | set(self.constants_prop.keys())
+
+        syms = set()
+
         # Start with the set of SDFG free symbols
-        if all_symbols:
-            free_syms |= set(self.symbols.keys())
-        else:
-            free_syms |= set(s for s in self.symbols.keys() if s not in not_strictly_necessary_global_symbols)
+        syms |= set(self.symbols.keys())
 
-        # Add free state symbols
-        used_before_assignment = set()
+        # Add inter-state symbols
+        for e in self.edges():
+            syms |= set(e.data.assignments.keys())
+            syms |= e.data.free_symbols
 
-        try:
-            ordered_states = self.topological_sort(self.start_state)
-        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
-            ordered_states = self.nodes()
-
-        for state in ordered_states:
-            free_syms |= state.used_symbols(all_symbols)
-
-            # Add free inter-state symbols
-            for e in self.out_edges(state):
-                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
-                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
-                # compute the symbols that are used before being assigned.
-                efsyms = e.data.used_symbols(all_symbols)
-                defined_syms |= set(e.data.assignments.keys()) - efsyms
-                used_before_assignment.update(efsyms - defined_syms)
-                free_syms |= efsyms
-
-        # Remove symbols that were used before they were assigned
-        defined_syms -= used_before_assignment
-
-        # Subtract symbols defined in inter-state edges and constants
-        return free_syms - defined_syms
-
-    @property
-    def free_symbols(self) -> Set[str]:
-        """
-        Returns a set of symbol names that are used by the SDFG, but not
-        defined within it. This property is used to determine the symbolic
-        parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
-
-        :note: Assumes that the graph is valid (i.e., without undefined or
-               overlapping symbols).
-        """
-        return self.used_symbols(all_symbols=True)
+        # Subtract exluded symbols
+        return syms - exclude
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
@@ -1458,7 +1346,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param for_call: If True, returns arguments that can be used when calling the SDFG.
         """
         # Get global free symbols scalar arguments
-        free_symbols = free_symbols or self.free_symbols
+        free_symbols = free_symbols if free_symbols is not None else self.used_symbols(all_symbols=False)
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))
@@ -1478,6 +1366,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         arglist = arglist or self.arglist(scalars_only=not with_arrays)
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
 
+    def python_signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
+        """ Returns a list of arguments necessary to call this SDFG,
+            formatted as a list of Data-Centric Python definitions.
+
+            :param with_types: If True, includes argument types in the result.
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+            :return: A list of strings. For example: `['A: dace.float32[M]', 'b: dace.int32']`.
+        """
+        arglist = arglist or self.arglist(scalars_only=not with_arrays, free_symbols=[])
+        return [v.as_python_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
+
     def signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
 
@@ -1492,6 +1395,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param arglist: An optional cached argument list.
         """
         return ", ".join(self.signature_arglist(with_types, for_call, with_arrays, arglist))
+
+    def python_signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
+        """ Returns a Data-Centric Python signature of this SDFG, used when generating code.
+
+            :param with_types: If True, includes argument types (can be used
+                               for a function prototype). If False, only
+                               include argument names (can be used for function
+                               calls).
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+        """
+        return ", ".join(self.python_signature_arglist(with_types, for_call, with_arrays, arglist))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
@@ -1549,16 +1467,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         shared = []
 
         # If a transient is present in an inter-state edge, it is shared
-        for interstate_edge in self.edges():
+        for interstate_edge in self.all_interstate_edges():
             for sym in interstate_edge.data.free_symbols:
                 if sym in self.arrays and self.arrays[sym].transient:
                     seen[sym] = interstate_edge
                     shared.append(sym)
 
         # If transient is accessed in more than one state, it is shared
-        for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.AccessNode) and node.desc(self).transient:
+        for state in self.states():
+            for node in state.data_nodes():
+                if node.desc(self).transient:
                     if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
                                                                          and seen[node.data] != state):
                         shared.append(node.data)
@@ -1647,62 +1565,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     # Dynamic SDFG creation API
     ##############################
-    def add_state(self, label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state to this graph and returns it.
-
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
-        label = label or 'state'
-        existing_labels = self._labels
-        label = dt.find_new_name(label, existing_labels)
-        state = SDFGState(label, self)
-        self._labels.add(label)
-
-        self.add_node(state, is_start_state=is_start_state)
-        return state
-
-    def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state before an existing state, reconnecting
-            predecessors to it instead.
-
-            :param state: The state to prepend the new state before.
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        new_state = self.add_state(label, is_start_state)
-        # Reconnect
-        for e in self.in_edges(state):
-            self.remove_edge(e)
-            self.add_edge(e.src, new_state, e.data)
-        # Add unconditional connection between the new state and the current
-        self.add_edge(new_state, state, InterstateEdge())
-        return new_state
-
-    def add_state_after(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
-        """ Adds a new SDFG state after an existing state, reconnecting
-            it to the successors instead.
-
-            :param state: The state to append the new state after.
-            :param label: State label.
-            :param is_start_state: If True, resets SDFG starting state to this
-                                   state.
-            :return: A new SDFGState object.
-        """
-        new_state = self.add_state(label, is_start_state)
-        # Reconnect
-        for e in self.out_edges(state):
-            self.remove_edge(e)
-            self.add_edge(new_state, e.dst, e.data)
-        # Add unconditional connection between the current and the new state
-        self.add_edge(state, new_state, InterstateEdge())
-        return new_state
 
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
@@ -2423,7 +2285,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def fill_scope_connectors(self):
         """ Fills missing scope connectors (i.e., "IN_#"/"OUT_#" on entry/exit
             nodes) according to data on the memlets. """
-        for state in self.nodes():
+        for state in self.states():
             state.fill_scope_connectors()
 
     def predecessor_state_transitions(self, state):

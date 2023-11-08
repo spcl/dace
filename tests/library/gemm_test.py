@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import warnings
 import itertools
@@ -132,7 +132,10 @@ def run_test(implementation,
     assert diff <= 1e-5
 
 
-@pytest.mark.parametrize(('implementation', ), [('pure', ), ('MKL', ), pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ('implementation', ),
+    [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl),
+     pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],

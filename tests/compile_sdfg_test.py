@@ -51,7 +51,7 @@ def test_bad_cast_csdfg():
         return a + 1
 
     csdfg = tester.to_sdfg().compile()
-    with pytest.warns(None, match='Casting'):
+    with pytest.warns(UserWarning, match='Casting'):
         result = csdfg(0.1)
     assert result.item() == 1
 

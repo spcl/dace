@@ -1001,8 +1001,11 @@ class CodeBlock(object):
         if self.language == dace.dtypes.Language.Python:
             visitor = TaskletFreeSymbolVisitor(defined_syms)
             if self.code:
-                for stmt in self.code:
-                    visitor.visit(stmt)
+                if isinstance(self.code, list):
+                    for stmt in self.code:
+                        visitor.visit(stmt)
+                else:
+                    visitor.visit(self.code)
             return visitor.free_symbols
 
         return set()
@@ -1150,7 +1153,7 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)):
+        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices) and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
