@@ -1,11 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import ast
-import copy
 import ctypes
 import functools
-import os
 import warnings
-from typing import Any, Dict, List, Set, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 
 import networkx as nx
 import sympy
@@ -14,7 +11,6 @@ from six import StringIO
 import dace
 from dace import data as dt
 from dace import dtypes, registry
-from dace import sdfg as sd
 from dace import subsets, symbolic
 from dace.codegen import common, cppunparse
 from dace.codegen.codeobject import CodeObject
@@ -23,7 +19,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
-                                      synchronize_streams, unparse_cr, unparse_cr_split)
+                                      synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -345,12 +341,12 @@ class CUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda({sdfg.name}_t *__state{params});
-DACE_EXPORTED int __dace_exit_cuda({sdfg.name}_t *__state);
+DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
+int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -389,7 +385,7 @@ int __dace_init_cuda({sdfg.name}_t *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda({sdfg.name}_t *__state) {{
+int __dace_exit_cuda({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -409,7 +405,7 @@ int __dace_exit_cuda({sdfg.name}_t *__state) {{
     return __err;
 }}
 
-DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, gpuStream_t stream)
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -419,7 +415,7 @@ DACE_EXPORTED bool __dace_gpu_set_stream({sdfg.name}_t *__state, int streamid, g
     return true;
 }}
 
-DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_t stream)
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
@@ -427,6 +423,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
 
 {localcode}
 """.format(params=params_comma,
+           sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
@@ -445,7 +442,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg.name}_t *__state, gpuStream_
         if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
-        if isinstance(node, nodes.NestedSDFG) and CUDACodeGen._in_device_code:
+        if CUDACodeGen._in_device_code:
             return True
         return False
 
@@ -1324,11 +1321,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                     if write_scope == 'grid':
                         callsite_stream.write("if (blockIdx.x == 0 "
-                                            "&& threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
+                                              "&& threadIdx.x == 0) "
+                                              "{  // sub-graph begin", sdfg, state.node_id)
                     elif write_scope == 'block':
                         callsite_stream.write("if (threadIdx.x == 0) "
-                                            "{  // sub-graph begin", sdfg, state.node_id)
+                                              "{  // sub-graph begin", sdfg, state.node_id)
                     else:
                         callsite_stream.write("{  // subgraph begin", sdfg, state.node_id)
                 else:
@@ -1567,7 +1564,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self.scope_entry_stream = old_entry_stream
         self.scope_exit_stream = old_exit_stream
 
-        state_param = [f'{self._global_sdfg.name}_t *__state']
+        state_param = [f'{mangle_dace_state_struct_name(self._global_sdfg)} *__state']
 
         # Write callback function definition
         self._localcode.write(
@@ -1939,6 +1936,13 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                               kernel_params: list, function_stream: CodeIOStream, kernel_stream: CodeIOStream):
         node = dfg_scope.source_nodes()[0]
 
+        # Get the thread/block index type
+        ttype = Config.get('compiler', 'cuda', 'thread_id_type')
+        tidtype = getattr(dtypes, ttype, False)
+        if not isinstance(tidtype, dtypes.typeclass):
+            raise ValueError(f'Configured type "{ttype}" for ``thread_id_type`` does not match any DaCe data type. '
+                             'See ``dace.dtypes`` for available types (for example ``int32``).')
+
         # allocating shared memory for dynamic threadblock maps
         if has_dtbmap:
             kernel_stream.write(
@@ -1990,8 +1994,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
                 expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
-                kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
             # Delinearize beyond the third dimension
             if len(krange) > 3:
@@ -2010,8 +2014,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
                     )
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-                    kernel_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, node)
-                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+                    kernel_stream.write(f'{tidtype.ctype} {varname} = {expr};', sdfg, state_id, node)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, tidtype.ctype)
 
         # Dispatch internal code
         assert CUDACodeGen._in_device_code is False
@@ -2512,15 +2516,17 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):
             # Dynamically obtain node generator according to class name
-            gen = getattr(self, '_generate_' + type(node).__name__)
-            gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
-            return
+            gen = getattr(self, '_generate_' + type(node).__name__, False)
+            if gen is not False:  # Not every node type has a code generator here
+                gen(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+                return
 
         if not CUDACodeGen._in_device_code:
             self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
             return
 
-        self._locals.clear_scope(self._code_state.indentation + 1)
+        if isinstance(node, nodes.ExitNode):
+            self._locals.clear_scope(self._code_state.indentation + 1)
 
         if CUDACodeGen._in_device_code and isinstance(node, nodes.MapExit):
             return  # skip
@@ -2583,6 +2589,78 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             return
 
         self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _get_thread_id(self) -> str:
+        result = 'threadIdx.x'
+        if self._block_dims[1] != 1:
+            result += f' + ({sym2cpp(self._block_dims[0])}) * threadIdx.y'
+        if self._block_dims[2] != 1:
+            result += f' + ({sym2cpp(self._block_dims[0] * self._block_dims[1])}) * threadIdx.z'
+        return result
+
+    def _get_warp_id(self) -> str:
+        return f'(({self._get_thread_id()}) / warpSize)'
+
+    def _get_block_id(self) -> str:
+        result = 'blockIdx.x'
+        if self._block_dims[1] != 1:
+            result += f' + gridDim.x * blockIdx.y'
+        if self._block_dims[2] != 1:
+            result += f' + gridDim.x * gridDim.y * blockIdx.z'
+        return result
+
+    def _generate_condition_from_location(self, name: str, index_expr: str, node: nodes.Tasklet,
+                                          callsite_stream: CodeIOStream) -> str:
+        if name not in node.location:
+            return 0
+
+        location: Union[int, str, subsets.Range] = node.location[name]
+        if isinstance(location, str) and ':' in location:
+            location = subsets.Range.from_string(location)
+        elif symbolic.issymbolic(location):
+            location = sym2cpp(location)
+
+        if isinstance(location, subsets.Range):
+            # Range of indices
+            if len(location) != 1:
+                raise ValueError(f'Only one-dimensional ranges are allowed for {name} specialization, {location} given')
+            begin, end, stride = location[0]
+            rb, re, rs = sym2cpp(begin), sym2cpp(end), sym2cpp(stride)
+            cond = ''
+            cond += f'(({index_expr}) >= {rb}) && (({index_expr}) <= {re})'
+            if stride != 1:
+                cond += f' && ((({index_expr}) - {rb}) % {rs} == 0)'
+
+            callsite_stream.write(f'if ({cond}) {{')
+        else:
+            # Single-element
+            callsite_stream.write(f'if (({index_expr}) == {location}) {{')
+
+        return 1
+
+    def _generate_Tasklet(self, sdfg: SDFG, dfg, state_id: int, node: nodes.Tasklet, function_stream: CodeIOStream,
+                          callsite_stream: CodeIOStream):
+        generated_preamble_scopes = 0
+        if self._in_device_code:
+            # If location dictionary prescribes that the code should run on a certain group of threads/blocks,
+            # add condition
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_thread', self._get_thread_id(),
+                                                                                node, callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_warp', self._get_warp_id(), node,
+                                                                                callsite_stream)
+            generated_preamble_scopes += self._generate_condition_from_location('gpu_block', self._get_block_id(), node,
+                                                                                callsite_stream)
+
+        # Call standard tasklet generation
+        old_codegen = self._cpu_codegen.calling_codegen
+        self._cpu_codegen.calling_codegen = self
+        self._cpu_codegen._generate_Tasklet(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        self._cpu_codegen.calling_codegen = old_codegen
+
+        if generated_preamble_scopes > 0:
+            # Generate appropriate postamble
+            for i in range(generated_preamble_scopes):
+                callsite_stream.write('}', sdfg, state_id, node)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)

@@ -44,16 +44,20 @@ def fpga_global_to_local(sdfg: SDFG, max_size: int = 1048576) -> None:
         print(f'Applied {len(converted)} Global-To-Local{": " if len(converted)>0 else "."} {", ".join(converted)}')
 
 
-def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
+def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4, memory_type: str = "DDR"):
     """
     Allocates the (global) arrays to FPGA off-chip memory banks, interleaving them in a
     Round-Robin (RR) fashion. This applies to all the arrays in the SDFG hierarchy.
 
     :param sdfg: The SDFG to operate on.
     :param num_banks: number of off-chip memory banks to consider
+    :param memory_type: type of off-chip memory, either "DDR"  or "HBM" (if the target FPGA supports it)
     :return: a list containing  the number of (transient) arrays allocated to each bank
     :note: Operates in-place on the SDFG.
     """
+
+    if memory_type.upper() not in {"DDR", "HBM"}:
+        raise ValueError("Memory type should be either \"DDR\" or \"HBM\"")
 
     # keep track of memory allocated to each bank
     num_allocated = [0 for i in range(num_banks)]
@@ -61,7 +65,7 @@ def fpga_rr_interleave_containers_to_banks(sdfg: SDFG, num_banks: int = 4):
     i = 0
     for sd, aname, desc in sdfg.arrays_recursive():
         if not isinstance(desc, dt.Stream) and desc.storage == dtypes.StorageType.FPGA_Global and desc.transient:
-            desc.location["memorytype"] = "ddr"
+            desc.location["memorytype"] = memory_type.upper()
             desc.location["bank"] = str(i % num_banks)
             num_allocated[i % num_banks] = num_allocated[i % num_banks] + 1
             i = i + 1

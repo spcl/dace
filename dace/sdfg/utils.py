@@ -668,7 +668,7 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     from dace.sdfg.propagation import propagate_memlets_scope
 
     total_consolidated = 0
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
             continue
@@ -810,7 +810,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     out_edges = state.out_edges(view)
 
     # Invalid case: No data to view
-    if len(in_edges) == 0 or len(out_edges) == 0:
+    if len(in_edges) == 0 and len(out_edges) == 0:
         return None
 
     # If there is one edge (in/out) that leads (via memlet path) to an access
@@ -1206,8 +1206,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            fusible_states += sd.number_of_edges()
+        for cfg in sdfg.all_control_flow_regions():
+            fusible_states += cfg.number_of_edges()
 
     if progress is True:
         pbar = tqdm(total=fusible_states, desc='Fusing states')
@@ -1217,30 +1217,32 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
 
-        while True:
-            edges = list(sd.nx.edges)
-            applied = 0
-            skip_nodes = set()
-            for u, v in edges:
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
+        for cfg in sd.all_control_flow_regions():
+            while True:
+                edges = list(cfg.nx.edges)
+                applied = 0
+                skip_nodes = set()
+                for u, v in edges:
+                    if (progress is None and tqdm is not None and (time.time() - start) > 5):
+                        progress = True
+                        pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                if u in skip_nodes or v in skip_nodes:
-                    continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion()
-                sf.setup_match(sd, id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
-                    sf.apply(sd, sd)
-                    applied += 1
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
-            if applied == 0:
-                break
+                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or
+                        not isinstance(u, SDFGState)):
+                        continue
+                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                    sf = StateFusion()
+                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        sf.apply(cfg, sd)
+                        applied += 1
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                if applied == 0:
+                    break
     if progress:
         pbar.close()
     return counter
@@ -1396,7 +1398,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     :param state: the state that contains the node
     :param fsymbols: the free symbols to check against
     """
-    if isinstance(desc, dt.View):
+    if isinstance(desc, (dt.StructureView, dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
         e = get_view_edge(state, node)
         if e.data:
@@ -1797,3 +1799,45 @@ def get_thread_local_data(sdfg: SDFG) -> List[str]:
         if not sdfg.arrays[name].transient:
             warnings.warn(f'Found thread-local data "{name}" that is not transient.')
     return result
+
+
+def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global source node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global source node for.
+    :return: The global source node of the edge.
+    """
+    src = state.memlet_path(edge)[0].src
+    if isinstance(src, nd.AccessNode) and not sdfg.arrays[src.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.in_edges_by_connector(pnode, src.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_src(psdfg, pstate, pedge)
+    return src
+
+
+def get_global_memlet_path_dst(sdfg: SDFG, state: SDFGState, edge: MultiConnectorEdge) -> nd.Node:
+    """
+    Finds the global destination node of an edge/memlet path, crossing nested SDFG scopes.
+
+    :param sdfg: The SDFG containing the edge.
+    :param state: The state containing the edge.
+    :param edge: The edge to find the global destination node for.
+    :return: The global destination node of the edge.
+    """
+    dst = state.memlet_path(edge)[-1].dst
+    if isinstance(dst, nd.AccessNode) and not sdfg.arrays[dst.data].transient and sdfg.parent is not None:
+        psdfg = sdfg.parent_sdfg
+        pstate = sdfg.parent
+        pnode = sdfg.parent_nsdfg_node
+        pedges = list(pstate.out_edges_by_connector(pnode, dst.data))
+        if len(pedges) > 0:
+            pedge = pedges[0]
+            return get_global_memlet_path_dst(psdfg, pstate, pedge)
+    return dst

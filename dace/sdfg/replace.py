@@ -124,6 +124,7 @@ def replace_properties_dict(node: Any,
                 if lang is dtypes.Language.CPP:  # Replace in C++ code
                     prefix = ''
                     tokenized = tokenize_cpp.findall(code)
+                    active_replacements = set()
                     for name, new_name in reduced_repl.items():
                         if name not in tokenized:
                             continue
@@ -131,8 +132,14 @@ def replace_properties_dict(node: Any,
                         # Use local variables and shadowing to replace
                         replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
                         prefix = replacement + prefix
+                        active_replacements.add(name)
                     if prefix:
                         propval.code = prefix + code
+
+                        # Ignore replaced symbols since they no longer exist as reads
+                        if isinstance(node, dace.nodes.Tasklet):
+                            node._ignored_symbols.update(active_replacements)
+
                 else:
                     warnings.warn('Replacement of %s with %s was not made '
                                   'for string tasklet code of language %s' % (name, new_name, lang))
@@ -168,17 +175,18 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
                 sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
                 del sdfg.constants_prop[aname]
 
-    # Replace in interstate edges
-    for e in sdfg.edges():
-        e.data.replace_dict(repl, replace_keys=False)
+    for cf in sdfg.all_control_flow_regions():
+        # Replace in interstate edges
+        for e in cf.edges():
+            e.data.replace_dict(repl, replace_keys=False)
 
-    for state in sdfg.nodes():
-        # Replace in access nodes
-        for node in state.data_nodes():
-            if node.data in repl:
-                node.data = repl[node.data]
-
-        # Replace in memlets
-        for edge in state.edges():
-            if edge.data.data in repl:
-                edge.data.data = repl[edge.data.data]
+        for block in cf.nodes():
+            if isinstance(block, dace.SDFGState):
+                # Replace in access nodes
+                for node in block.data_nodes():
+                    if node.data in repl:
+                        node.data = repl[node.data]
+                # Replace in memlets
+                for edge in block.edges():
+                    if edge.data.data in repl:
+                        edge.data.data = repl[edge.data.data]

@@ -17,6 +17,7 @@ from dace.properties import (Property, make_properties, DataProperty, SubsetProp
 if TYPE_CHECKING:
     import dace.sdfg.graph
 
+
 @make_properties
 class Memlet(object):
     """ Data movement object. Represents the data, the subset moved, and the
@@ -176,15 +177,16 @@ class Memlet(object):
     @staticmethod
     def from_json(json_obj, context=None):
         ret = Memlet()
-        dace.serialize.set_properties_from_json(ret,
-                                                json_obj,
-                                                context=context,
-                                                ignore_properties={'src_subset', 'dst_subset', 'num_accesses', 'is_data_src'})
-        
+        dace.serialize.set_properties_from_json(
+            ret,
+            json_obj,
+            context=context,
+            ignore_properties={'src_subset', 'dst_subset', 'num_accesses', 'is_data_src'})
+
         # Allow serialized memlet to override src/dst_subset to disambiguate self-copies
         if 'is_data_src' in json_obj['attributes']:
             ret._is_data_src = json_obj['attributes']['is_data_src']
-        
+
         if context:
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']
@@ -510,17 +512,54 @@ class Memlet(object):
         if self.data is not None and self.data not in sdfg.arrays:
             raise KeyError('Array "%s" not found in SDFG' % self.data)
 
+    def used_symbols(self, all_symbols: bool, edge=None) -> Set[str]:
+        """
+        Returns a set of symbols used in this edge's properties. 
+        
+        :param all_symbols: If False, only returns the set of symbols that will be used
+                            in the generated code and are needed as arguments.
+        :param edge: If given, provides richer context-based tests for the case
+                     of ``all_symbols=False``.
+        """
+        # Symbolic properties are in volume, and the two subsets
+        result = set()
+        view_edge = False
+        if all_symbols:
+            result |= set(map(str, self.volume.free_symbols))
+        elif edge is not None:  # Not all symbols are requested, and an edge is given
+            view_edge = False
+            from dace.sdfg import nodes
+            if isinstance(edge.dst, nodes.CodeNode) or isinstance(edge.src, nodes.CodeNode):
+                view_edge = True
+            elif edge.dst_conn == 'views' and isinstance(edge.dst, nodes.AccessNode):
+                view_edge = True
+            elif edge.src_conn == 'views' and isinstance(edge.src, nodes.AccessNode):
+                view_edge = True
+
+        if not view_edge:
+            if self.src_subset:
+                result |= self.src_subset.free_symbols
+
+            if self.dst_subset:
+                result |= self.dst_subset.free_symbols
+        else:
+            # View edges do not require the end of the range nor strides
+            if self.src_subset:
+                for rb, _, _ in self.src_subset.ndrange():
+                    if symbolic.issymbolic(rb):
+                        result |= set(map(str, rb.free_symbols))
+
+            if self.dst_subset:
+                for rb, _, _ in self.dst_subset.ndrange():
+                    if symbolic.issymbolic(rb):
+                        result |= set(map(str, rb.free_symbols))
+
+        return result
+
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of symbols used in this edge's properties. """
-        # Symbolic properties are in volume, and the two subsets
-        result = set()
-        result |= set(map(str, self.volume.free_symbols))
-        if self.src_subset:
-            result |= self.src_subset.free_symbols
-        if self.dst_subset:
-            result |= self.dst_subset.free_symbols
-        return result
+        return self.used_symbols(all_symbols=True)
 
     def get_free_symbols_by_indices(self, indices_src: List[int], indices_dst: List[int]) -> Set[str]:
         """
@@ -640,6 +679,7 @@ class MemletTree(object):
         all siblings of the same edge and their children, for instance if
         multiple inputs from the same access node are used.
     """
+
     def __init__(self,
                  edge: 'dace.sdfg.graph.MultiConnectorEdge[Memlet]',
                  downwards: bool = True,

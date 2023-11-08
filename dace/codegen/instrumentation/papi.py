@@ -12,7 +12,7 @@ from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import StateGraphView
+from dace.sdfg.state import DataflowGraphView
 
 import sympy as sp
 import os
@@ -43,7 +43,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     _counters: Optional[Set[str]] = None
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._papi_used = False
@@ -350,7 +350,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     @staticmethod
     def perf_get_supersection_start_string(node, dfg, unified_id):
-        if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
             # Nested SuperSections are not supported. Therefore, we mark the
             # outermost section and disallow internal scopes from creating it.
             if not hasattr(node.map, '_can_be_supersection_start'):
@@ -360,7 +360,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             for x in children:
                 if not hasattr(x.map, '_can_be_supersection_start'):
                     x.map._can_be_supersection_start = True
-                if x.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                if x.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
 
                     x.map._can_be_supersection_start = False
                 elif x.map.schedule == dtypes.ScheduleType.Sequential:
@@ -392,7 +392,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         return cond
 
     @staticmethod
-    def has_surrounding_perfcounters(node, dfg: StateGraphView):
+    def has_surrounding_perfcounters(node, dfg: DataflowGraphView):
         """ Returns true if there is a possibility that this node is part of a
             section that is profiled. """
         parent = dfg.entry_node(node)
@@ -448,7 +448,7 @@ class PAPIUtils(object):
     def available_counters() -> Dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
-        \*nix based systems with ``grep`` and ``papi-tools`` installed.
+        *nix based systems with ``grep`` and ``papi-tools`` installed.
         
         :return: A set of available PAPI counters in the form of a dictionary
                  mapping from counter name to the number of native hardware
@@ -605,7 +605,7 @@ class PAPIUtils(object):
         return memlet.volume * memdata.dtype.bytes
 
     @staticmethod
-    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node, dfg: StateGraphView):
+    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node, dfg: DataflowGraphView):
         scope_dict = sdfg.node(state_id).scope_dict()
 
         out_costs = 0
@@ -636,7 +636,10 @@ class PAPIUtils(object):
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: StateGraphView, sdfg: dace.SDFG, state_id: int) -> str:
+    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode,
+                                  dfg: DataflowGraphView,
+                                  sdfg: dace.SDFG,
+                                  state_id: int) -> str:
         """ Get the amount of bytes processed by `tasklet`. The formula is
             sum(inedges * size) + sum(outedges * size) """
         in_accum = []
@@ -693,7 +696,7 @@ class PAPIUtils(object):
         return sym2cpp(input_size)
 
     @staticmethod
-    def accumulate_byte_movement(outermost_node, node, dfg: StateGraphView, sdfg, state_id):
+    def accumulate_byte_movement(outermost_node, node, dfg: DataflowGraphView, sdfg, state_id):
 
         itvars = dict()  # initialize an empty dict
 

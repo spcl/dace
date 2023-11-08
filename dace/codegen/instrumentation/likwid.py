@@ -69,7 +69,7 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         the Likwid tool.
     """
 
-    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
+    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._likwid_used = False

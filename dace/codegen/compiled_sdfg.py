@@ -239,6 +239,7 @@ class CompiledSDFG(object):
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
         # the path of the main sdfg file containing the state struct
         main_src_path = os.path.join(os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu",
                                      self._sdfg.name + ".cpp")
@@ -247,7 +248,7 @@ class CompiledSDFG(object):
         code_flat = code.replace("\n", " ")
 
         # try to find the first struct definition that matches the name we are looking for in the sdfg file
-        match = re.search(f"struct {self._sdfg.name}_t {{(.*?)}};", code_flat)
+        match = re.search(f"struct {mangle_dace_state_struct_name(self._sdfg)} {{(.*?)}};", code_flat)
         if match is None or len(match.groups()) != 1:
             return None
 
@@ -287,6 +288,7 @@ class CompiledSDFG(object):
         result: Dict[dtypes.StorageType, int] = {}
         for storage in self.external_memory_types:
             func = self._lib.get_symbol(f'__dace_get_external_memory_size_{storage.name}')
+            func.restype = ctypes.c_size_t
             result[storage] = func(self._libhandle, *self._lastargs[1])
 
         return result
@@ -449,12 +451,13 @@ class CompiledSDFG(object):
                     raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
                                     (type(arg).__name__, a))
             elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
-                # GPU scalars are pointers, so this is fine
-                if atype.storage != dtypes.StorageType.GPU_Global:
+                # GPU scalars and return values are pointers, so this is fine
+                if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
-            elif not isinstance(atype, dt.Array) and not isinstance(atype.dtype, dtypes.callback) and not isinstance(
-                    arg,
-                (atype.dtype.type, sp.Basic)) and not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype):
+            elif (not isinstance(atype, (dt.Array, dt.Structure)) and
+                  not isinstance(atype.dtype, dtypes.callback) and
+                  not isinstance(arg, (atype.dtype.type, sp.Basic)) and
+                  not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
                 if isinstance(arg, int) and atype.dtype.type == np.int64:
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
@@ -472,7 +475,7 @@ class CompiledSDFG(object):
                 else:
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
+            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and not isinstance(atype, dt.StructArray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
@@ -521,7 +524,7 @@ class CompiledSDFG(object):
         # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
             for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
@@ -531,7 +534,8 @@ class CompiledSDFG(object):
 
         try:
             newargs = tuple(
-                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+                actype(arg) if not isinstance(arg, (ctypes._SimpleCData)) else arg
+                for arg, actype, atype in newargs)
         except TypeError:
             # Pinpoint bad argument
             for i, (arg, actype, _) in enumerate(newargs):
