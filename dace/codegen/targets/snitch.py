@@ -801,6 +801,8 @@ class SnitchCodeGen(TargetCodeGenerator):
         """Given a list of ssr configurations, allocate SSR streamers to the data and change
         the corresponding storage types"""
 
+        if len(ssr_configs) == 0:
+            return
         allocated = 0
         for streamer, sc in enumerate(ssr_configs):
             if sc["map"] is None:
