@@ -386,3 +386,7 @@ class Use_Stmt_Node(FNode):
 class Write_Stmt_Node(FNode):
     _attributes = ()
     _fields = ('args', )
+
+class Break_Node(FNode):
+    _attributes = ()
+    _fields = ()
