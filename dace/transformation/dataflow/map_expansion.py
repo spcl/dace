@@ -1,16 +1,18 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-expansion transformation. """
 
 from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
 import dace
 from dace import dtypes, subsets, symbolic
+from dace.properties import EnumProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 
 
+@make_properties
 class MapExpansion(pm.SingleStateTransformation):
     """ Implements the map-expansion pattern.
 
@@ -25,14 +27,16 @@ class MapExpansion(pm.SingleStateTransformation):
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
+    inner_schedule = EnumProperty(desc="Schedule for inner maps",
+                                  dtype=dtypes.ScheduleType,
+                                  default=dtypes.ScheduleType.Sequential,
+                                  allow_none=True)
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self, graph: dace.SDFGState,
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
         return self.map_entry.map.get_param_num() > 1
@@ -44,10 +48,11 @@ class MapExpansion(pm.SingleStateTransformation):
         current_map = map_entry.map
 
         # Create new maps
+        inner_schedule = self.inner_schedule or current_map.schedule
         new_maps = [
             nodes.Map(current_map.label + '_' + str(param), [param],
                       subsets.Range([param_range]),
-                      schedule=dtypes.ScheduleType.Sequential)
+                      schedule=inner_schedule)
             for param, param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
