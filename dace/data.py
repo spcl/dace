@@ -484,6 +484,23 @@ class Structure(Data):
         if isinstance(s, list) or isinstance(s, tuple):
             return StructArray(self, tuple(s))
         return StructArray(self, (s, ))
+
+    # NOTE: Like Scalars?
+    @property
+    def may_alias(self) -> bool:
+        return False
+    
+    # TODO: Can Structures be optional?
+    @property
+    def optional(self) -> bool:
+        return False
+    
+    def keys(self):
+        result = self.members.keys()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+        return result
     
 
 class TensorIterationTypes(aenum.AutoNumberEnum):
@@ -1179,23 +1196,6 @@ class Tensor(Structure):
         serialize.set_properties_from_json(tensor, json_obj, context=context)
 
         return  tensor
-
-    # NOTE: Like Scalars?
-    @property
-    def may_alias(self) -> bool:
-        return False
-    
-    # TODO: Can Structures be optional?
-    @property
-    def optional(self) -> bool:
-        return False
-    
-    def keys(self):
-        result = self.members.keys()
-        for k, v in self.members.items():
-            if isinstance(v, Structure):
-                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
-        return result
 
 
 @make_properties

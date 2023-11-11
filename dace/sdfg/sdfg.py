@@ -86,7 +86,7 @@ class NestedDict(dict):
         result = super(NestedDict, self).keys()
         for k, v in self.items():
             if isinstance(v, dt.Structure):
-                result |= set(map(lambda x: k + '.' + x, v.members.keys()))
+                result |= set(map(lambda x: k + '.' + x, v.keys()))
         return result
 
 
