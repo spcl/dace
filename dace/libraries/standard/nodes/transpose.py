@@ -121,7 +121,8 @@ class ExpandTransposeMKL(ExpandTransformation):
             warnings.warn("Unsupported type for MKL omatcopy extension: " + str(dtype) + ", falling back to pure")
             return ExpandTransposePure.expansion(node, state, sdfg)
 
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        # TODO: Add stride support
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         code = ("mkl_{f}('R', 'T', {m}, {n}, {a}, {cast}_inp, "
                 "{n}, {cast}_out, {m});").format(f=func, m=m, n=n, a=alpha, cast=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
