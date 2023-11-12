@@ -429,8 +429,6 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if isinstance(node, nodes.AccessNode) and node.data in repldict:
                 orig_data[node] = node.data
                 node.data = repldict[node.data]
-            else:
-                replace_properties_dict(node, repldict)
         for edge in nstate.edges():
             if edge.data.data in repldict:
                 orig_data[edge] = edge.data.data
