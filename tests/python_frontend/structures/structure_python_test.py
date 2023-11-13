@@ -1,7 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 
+from dace.transformation.auto.auto_optimize import auto_optimize
 from scipy import sparse
 
 
@@ -180,8 +182,51 @@ def test_rgf():
     assert np.allclose(B.lower, B_lower)
 
 
+@pytest.mark.skip
+@pytest.mark.gpu
+def test_read_structure_gpu():
+
+    M, N, nnz = (dace.symbol(s) for s in ('M', 'N', 'nnz'))
+    CSR = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
+                              name='CSRMatrix')
+
+    @dace.program
+    def csr_to_dense_python(A: CSR, B: dace.float32[M, N]):
+        for i in dace.map[0:M]:
+            for idx in dace.map[A.indptr[i]:A.indptr[i + 1]]:
+                B[i, A.indices[idx]] = A.data[idx]
+    
+    rng = np.random.default_rng(42)
+    A = sparse.random(20, 20, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+    ref = A.toarray()
+
+    inpA = CSR.dtype._typeclass.as_ctypes()(indptr=A.indptr.__array_interface__['data'][0],
+                                            indices=A.indices.__array_interface__['data'][0],
+                                            data=A.data.__array_interface__['data'][0])
+    
+    # TODO: The following doesn't work because we need to create a Structure data descriptor from the ctypes class.
+    # csr_to_dense_python(inpA, B)
+    naive = csr_to_dense_python.to_sdfg(simplify=False)
+    naive.apply_gpu_transformations()
+    B = np.zeros((20, 20), dtype=np.float32)
+    naive(inpA, B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
+    assert np.allclose(B, ref)
+
+    simple = csr_to_dense_python.to_sdfg(simplify=True)
+    simple.apply_gpu_transformations()
+    B = np.zeros((20, 20), dtype=np.float32)
+    simple(inpA, B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
+    assert np.allclose(B, ref)
+
+    auto = auto_optimize(simple)
+    B = np.zeros((20, 20), dtype=np.float32)
+    auto(inpA, B, M=A.shape[0], N=A.shape[1], nnz=A.nnz)
+    assert np.allclose(B, ref)
+
+
 if __name__ == '__main__':
     test_read_structure()
     test_write_structure()
     test_local_structure()
     test_rgf()
+    # test_read_structure_gpu()
