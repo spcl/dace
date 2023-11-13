@@ -164,6 +164,15 @@ required:
                     of the code generator that generated it. Used for debugging
                     code generation.
 
+            codegen_state_struct_suffix:
+                type: str
+                default: "_state_t"
+                title: Suffix used by the code generator to mangle the state struct.
+                description: >
+                    For every SDFG the code generator is is processing a state struct is generated.
+                    The typename of this struct is derived by appending this value to the SDFG's name.
+                    Note that the suffix may only contains letters, digits and underscores.
+
             default_data_types:
                 type : str
                 default: Python

@@ -331,6 +331,36 @@ def test_trivial_fusion_nested_sdfg():
 
 
 @dace.program
+def trivial_fusion_none_connectors(B: dace.float64[10, 20]):
+    tmp = dace.define_local([10, 20], dtype=B.dtype)
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            b >> tmp[i, j]
+            b = 0
+
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << tmp[i, j]
+            b >> B[i, j]
+            b = a + 2
+
+
+def test_trivial_fusion_none_connectors():
+    sdfg = trivial_fusion_none_connectors.to_sdfg()
+    sdfg.simplify()
+    assert count_maps(sdfg) == 2
+
+    sdfg.apply_transformations(OTFMapFusion)
+    assert count_maps(sdfg) == 1
+
+    B = np.zeros((10, 20))
+    ref = np.zeros((10, 20)) + 2
+
+    sdfg(B=B)
+    assert np.allclose(B, ref)
+
+
+@dace.program
 def undefined_subset(A: dace.float64[10], B: dace.float64[10]):
     tmp = dace.define_local([10], dtype=A.dtype)
     for i in dace.map[5:10]:
@@ -703,6 +733,7 @@ if __name__ == '__main__':
     test_trivial_fusion_permute()
     test_trivial_fusion_not_remove_map()
     test_trivial_fusion_nested_sdfg()
+    test_trivial_fusion_none_connectors()
 
     # Defined subsets
     test_undefined_subset()
