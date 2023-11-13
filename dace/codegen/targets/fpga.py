@@ -652,7 +652,7 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl = []
 
             # Include state in args
-            kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
+            kernel_args_opencl.append(f"{cpp.mangle_dace_state_struct_name(self._global_sdfg)} *__state")
             kernel_args_call_host.append(f"__state")
 
             for is_output, arg_name, arg, interface_id in state_parameters:

@@ -29,7 +29,7 @@ Some of the main differences between SDFGs and other representations are:
 The Language
 ------------
 
-In a nutshell, an SDFG is a state machine of acyclic dataflow multigraphs. Here is an example graph:
+In a nutshell, an SDFG is a hierarchical state machine of acyclic dataflow multigraphs. Here is an example graph:
 
 .. raw:: html
 
@@ -43,7 +43,7 @@ In a nutshell, an SDFG is a state machine of acyclic dataflow multigraphs. Here 
 
 The cyan rectangles are called **states** and together they form a state machine, executing the code from the starting
 state and following the blue edge that matches the conditions. In each state, an acyclic multigraph controls execution
-through dataflow. There are four elements in the above state:
+through dataflow. There are four elements in the above states:
 
     * **Access nodes** (ovals) that give access to data containers
     * **Memlets** (edges/dotted arrows) that represent units of data movement
@@ -58,7 +58,14 @@ The state machine shown in the example is a for-loop (``for _ in range(5)``). Th
 the guard state controls the loop, and at the end the result is copied to the special ``__return`` data container, which
 designates the return value of the function.
 
-There are other kinds of elements in an SDFG, as detailed below.
+The state machine is analogous to a control flow graph, where states represent basic blocks. Multiple such basic blocks,
+such as with the described loop, can be put together to form a **control flow region**. This allows them to be
+represented with a single graph node in the SDFG's state machine, which is useful for optimization and analysis.
+The SDFG itself can be thought of as one big control flow region. This means that control flow regions are directed
+graphs, where nodes are states or other control flow regions, and edges are state transitions.
+
+In addition to the elements seen in the example above, there are other kinds of elements in an SDFG, which are detailed
+below.
 
 .. _sdfg-lang:
 
@@ -141,6 +148,12 @@ new value, and specifies how the update is performed. In the summation example, 
 **State**: Contains any of the above dataflow elements. A state's execution is entirely driven by dataflow, and at the
 end of each state there is an implicit synchronization point, so it will not finish executing until all the last nodes
 have been reached (this assumption can be removed in extreme cases, see :class:`~dace.sdfg.state.SDFGState.nosync`).
+
+**Control Flow Region**: Forms a directed graph of states and other control flow regions, where edges are state
+transitions. This allows representing complex control flow in a single graph node, which is useful for analysis and
+optimization. The SDFG itself is a control flow region, which means that control flow regions are recursive /
+hierarchical. Similar to the SDFG, each control flow region has a unique starting state, which is the entry point to
+the region and is executed first.
 
 **State Transition**: Transitions, internally referred to as *inter-state edges*, specify how execution proceeds after
 the end of a State. Inter-state edges optionally contain a symbolic *condition* that is checked at the end of the
@@ -783,5 +796,7 @@ file uses the :func:`~dace.sdfg.sdfg.SDFG.from_file` static method. For example,
 
 The ``compress`` argument can be used to save a smaller (``gzip`` compressed) file. It can keep the same extension,
 but it is customary to use ``.sdfg.gz`` or ``.sdfgz`` to let others know it is compressed.
+It is recommended to use this option for large SDFGs, as it not only saves space, but also speeds up loading and
+editing of the SDFG in visualization tools and the VSCode extension.
 
 

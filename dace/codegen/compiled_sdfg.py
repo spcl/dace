@@ -239,6 +239,7 @@ class CompiledSDFG(object):
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
         # the path of the main sdfg file containing the state struct
         main_src_path = os.path.join(os.path.dirname(os.path.dirname(self._lib._library_filename)), "src", "cpu",
                                      self._sdfg.name + ".cpp")
@@ -247,7 +248,7 @@ class CompiledSDFG(object):
         code_flat = code.replace("\n", " ")
 
         # try to find the first struct definition that matches the name we are looking for in the sdfg file
-        match = re.search(f"struct {self._sdfg.name}_t {{(.*?)}};", code_flat)
+        match = re.search(f"struct {mangle_dace_state_struct_name(self._sdfg)} {{(.*?)}};", code_flat)
         if match is None or len(match.groups()) != 1:
             return None
 

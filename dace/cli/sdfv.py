@@ -41,9 +41,10 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
             or 'VSCODE_IPC_HOOK_CLI' in os.environ
             or 'VSCODE_GIT_IPC_HANDLE' in os.environ
         ):
-            filename = tempfile.mktemp(suffix='.sdfg')
+            fd, filename = tempfile.mkstemp(suffix='.sdfg')
             sdfg.save(filename)
             os.system(f'code {filename}')
+            os.close(fd)
             return
 
     if type(sdfg) is dace.SDFG:

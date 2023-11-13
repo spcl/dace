@@ -116,8 +116,7 @@ class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
 
         # Replace iterate with value in each state
         for state in new_states:
-            state.set_label(state.label + '_' + itervar + '_' +
-                            (state_suffix if state_suffix is not None else str(value)))
+            state.label = state.label + '_' + itervar + '_' + (state_suffix if state_suffix is not None else str(value))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG

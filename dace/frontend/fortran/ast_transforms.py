@@ -181,9 +181,11 @@ class CallToArray(NodeTransformer):
         if funcs is None:
             funcs = []
         self.funcs = funcs
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sum", "__dace_sign", "tanh",
-            "__dace_epsilon"
+            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sign", "tanh",
+            "__dace_epsilon", *FortranIntrinsics.function_names()
         ]
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -215,8 +217,10 @@ class CallExtractorNodeLister(NodeVisitor):
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
                 stop = True
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon"
+                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         return self.generic_visit(node)
@@ -236,7 +240,8 @@ class CallExtractor(NodeTransformer):
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
-        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon"]:
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -262,31 +267,14 @@ class CallExtractor(NodeTransformer):
             if res is not None:
                 for i in range(0, len(res)):
 
-                    if (res[i].name.name == "__dace_sum"):
-                        newbody.append(
-                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[i].type,
-                                    sizes=None
-                                )
-                            ]))
-                        newbody.append(
-                            ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="tmp_call_" +
-                                                                                                str(temp)),
-                                                            op="=",
-                                                            rval=ast_internal_classes.Int_Literal_Node(value="0"),
-                                                            line_number=child.line_number))
-                    else:
-
-                        newbody.append(
-                            ast_internal_classes.Decl_Stmt_Node(vardecl=[
-                                ast_internal_classes.Var_Decl_Node(
-                                    name="tmp_call_" + str(temp),
-                                    type=res[i].type,
-                                    sizes=None
-                                )
-                            ]))
+                    newbody.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Var_Decl_Node(
+                                name="tmp_call_" + str(temp),
+                                type=res[i].type,
+                                sizes=None
+                            )
+                        ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
                                                         lval=ast_internal_classes.Name_Node(name="tmp_call_" +
@@ -343,6 +331,8 @@ class ParentScopeAssigner(NodeVisitor):
                         self.visit(item, node)
             elif isinstance(value, ast_internal_classes.FNode):
                 self.visit(value, node)
+
+        return node
 
 class ScopeVarsDeclarations(NodeVisitor):
     """
@@ -718,26 +708,10 @@ class ArrayLoopNodeLister(NodeVisitor):
         return
 
 
-class SumLoopNodeLister(NodeVisitor):
-    """
-    Finds all sum operations that have to be transformed to loops in the AST
-    """
-    def __init__(self):
-        self.nodes: List[ast_internal_classes.FNode] = []
-
-    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
-
-        if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
-            if node.rval.name.name == "__dace_sum":
-                self.nodes.append(node)
-
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        return
-
-
 def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           ranges: list,
                           rangepos: list,
+                          rangeslen: list,
                           count: int,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
@@ -746,6 +720,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     Helper function for the transformation of array operations and sums to loops
     :param node: The AST to be transformed
     :param ranges: The ranges of the loop
+    :param rangeslength: The length of ranges of the loop
     :param rangepos: The positions of the ranges
     :param count: The current count of the loop
     :param newbody: The new basic block that will contain the loop
@@ -790,9 +765,24 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         rval=ast_internal_classes.Int_Literal_Node(value="1")
                     )
                 ranges.append([lower_boundary, upper_boundary])
+                rangeslen.append(-1)
 
             else:
                 ranges.append([i.range[0], i.range[1]])
+
+                start = 0
+                if isinstance(i.range[0], ast_internal_classes.Int_Literal_Node):
+                    start = int(i.range[0].value)
+                else:
+                    start = i.range[0]
+
+                end = 0
+                if isinstance(i.range[1], ast_internal_classes.Int_Literal_Node):
+                    end = int(i.range[1].value)
+                else:
+                    end = i.range[1]
+
+                rangeslen.append(end - start + 1)
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
@@ -832,7 +822,7 @@ class ArrayToLoop(NodeTransformer):
                 val = child.rval
                 ranges = []
                 rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, self.count, newbody, self.scope_vars, True)
+                par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars, True)
 
                 if res_range is not None and len(res_range) > 0:
                     rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -840,7 +830,7 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -908,105 +898,6 @@ def mywalk(node):
         node = todo.popleft()
         todo.extend(iter_child_nodes(node))
         yield node
-
-
-class SumToLoop(NodeTransformer):
-    """
-    Transforms the AST by removing array sums and replacing them with loops
-    """
-    def __init__(self, ast):
-        self.count = 0
-        ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
-        self.scope_vars.visit(ast)
-
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        newbody = []
-        for child in node.execution:
-            lister = SumLoopNodeLister()
-            lister.visit(child)
-            res = lister.nodes
-            if res is not None and len(res) > 0:
-
-                current = child.lval
-                val = child.rval
-
-                rvals = []
-                for i in mywalk(val):
-                    if isinstance(i, ast_internal_classes.Call_Expr_Node) and i.name.name == '__dace_sum':
-
-                        for arg in i.args:
-
-                            # supports syntax SUM(arr)
-                            if isinstance(arg, ast_internal_classes.Name_Node):
-                                array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
-                                array_node.name = arg
-
-                                # If we access SUM(arr) where arr has many dimensions,
-                                # We need to create a ParDecl_Node for each dimension
-                                dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
-                                array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
-
-                                rvals.append(array_node)
-
-                            # supports syntax SUM(arr(:))
-                            if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
-                                rvals.append(arg)
-
-                if len(rvals) != 1:
-                    raise NotImplementedError("Only one array can be summed")
-                val = rvals[0]
-                rangeposrval = []
-                rangesrval = []
-
-                par_Decl_Range_Finder(val, rangesrval, rangeposrval, self.count, newbody, self.scope_vars, True)
-
-                range_index = 0
-                body = ast_internal_classes.BinOp_Node(lval=current,
-                                                       op="=",
-                                                       rval=ast_internal_classes.BinOp_Node(
-                                                           lval=current,
-                                                           op="+",
-                                                           rval=val,
-                                                           line_number=child.line_number),
-                                                       line_number=child.line_number)
-                for i in rangesrval:
-                    initrange = i[0]
-                    finalrange = i[1]
-                    init = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                        op="=",
-                        rval=initrange,
-                        line_number=child.line_number)
-                    cond = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                        op="<=",
-                        rval=finalrange,
-                        line_number=child.line_number)
-                    iter = ast_internal_classes.BinOp_Node(
-                        lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                        op="=",
-                        rval=ast_internal_classes.BinOp_Node(
-                            lval=ast_internal_classes.Name_Node(name="tmp_parfor_" + str(self.count + range_index)),
-                            op="+",
-                            rval=ast_internal_classes.Int_Literal_Node(value="1")),
-                        line_number=child.line_number)
-                    current_for = ast_internal_classes.Map_Stmt_Node(
-                        init=init,
-                        cond=cond,
-                        iter=iter,
-                        body=ast_internal_classes.Execution_Part_Node(execution=[body]),
-                        line_number=child.line_number)
-                    body = current_for
-                    range_index += 1
-
-                newbody.append(body)
-
-                self.count = self.count + range_index
-            else:
-                newbody.append(self.visit(child))
-        return ast_internal_classes.Execution_Part_Node(execution=newbody)
-
 
 class RenameVar(NodeTransformer):
     def __init__(self, oldname: str, newname: str):

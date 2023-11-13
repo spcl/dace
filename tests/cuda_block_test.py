@@ -10,8 +10,10 @@ N = dace.symbol('N')
 
 @dace.program(dace.float64[N], dace.float64[N])
 def cudahello(V, Vout):
+
     @dace.mapscope(_[0:N:32])
     def multiplication(i):
+
         @dace.map(_[0:32])
         def mult_block(bi):
             in_V << V[i + bi]
@@ -55,6 +57,7 @@ def test_gpu():
 
 @pytest.mark.gpu
 def test_different_block_sizes_nesting():
+
     @dace.program
     def nested(V: dace.float64[34], v1: dace.float64[1]):
         with dace.tasklet:
@@ -105,6 +108,7 @@ def test_different_block_sizes_nesting():
 
 @pytest.mark.gpu
 def test_custom_block_size_onemap():
+
     @dace.program
     def tester(A: dace.float64[400, 300]):
         for i, j in dace.map[0:400, 0:300]:
@@ -132,6 +136,7 @@ def test_custom_block_size_onemap():
 
 @pytest.mark.gpu
 def test_custom_block_size_twomaps():
+
     @dace.program
     def tester(A: dace.float64[400, 300, 2, 32]):
         for i, j in dace.map[0:400, 0:300]:
@@ -154,9 +159,42 @@ def test_custom_block_size_twomaps():
     sdfg.compile()
 
 
+@pytest.mark.gpu
+def test_block_thread_specialization():
+
+    @dace.program
+    def tester(A: dace.float64[200]):
+        for i in dace.map[0:200:32]:
+            for bi in dace.map[0:32]:
+                with dace.tasklet:
+                    a >> A[i + bi]
+                    a = 1
+                with dace.tasklet:  # Tasklet to be specialized
+                    a >> A[i + bi]
+                    a = 2
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations(sequential_innermaps=False)
+    tasklet = next(n for n, _ in sdfg.all_nodes_recursive()
+                   if isinstance(n, dace.nodes.Tasklet) and '2' in n.code.as_string)
+    tasklet.location['gpu_thread'] = dace.subsets.Range.from_string('2:9:3')
+    tasklet.location['gpu_block'] = 1
+
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert '>= 2' in code and '<= 8' in code
+    assert ' == 1' in code
+
+    a = np.random.rand(200)
+    ref = np.ones_like(a)
+    ref[32:64][2:9:3] = 2
+    sdfg(a)
+    assert np.allclose(a, ref)
+
+
 if __name__ == "__main__":
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()
     test_custom_block_size_onemap()
     test_custom_block_size_twomaps()
+    test_block_thread_specialization()
