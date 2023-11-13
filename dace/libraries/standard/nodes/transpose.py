@@ -156,7 +156,8 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
-        _, _, (m, n) = _get_transpose_input(node, state, sdfg)
+        # TODO: Add stride support
+        _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = 'CblasRowMajor'
         trans = 'CblasTrans'
