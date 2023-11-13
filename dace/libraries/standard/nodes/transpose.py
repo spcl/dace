@@ -142,6 +142,7 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         dtype = node.dtype
+        cast = ""
         if dtype == dace.float32:
             func = "somatcopy"
             alpha = "1.0f"
@@ -150,10 +151,12 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             alpha = "1.0"
         elif dtype == dace.complex64:
             func = "comatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            cast = "(float*)"
+            alpha = f"{cast}dace::blas::BlasConstants::Get().Complex64Pone()"
         elif dtype == dace.complex128:
             func = "zomatcopy"
-            alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            cast = "(double*)"
+            alpha = f"{cast}dace::blas::BlasConstants::Get().Complex128Pone()"
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
         # TODO: Add stride support
@@ -161,8 +164,8 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         # Adaptations for BLAS API
         order = 'CblasRowMajor'
         trans = 'CblasTrans'
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha)
+        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, {c}_inp, "
+                "{n}, {c}_out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha, c=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
