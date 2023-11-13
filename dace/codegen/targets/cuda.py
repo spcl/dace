@@ -202,12 +202,6 @@ class CUDACodeGen(TargetCodeGenerator):
                     and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
-                # sgraph = state.scope_subgraph(node)
-                # used_symbols = sgraph.used_symbols(all_symbols=False)
-                # arglist = sgraph.arglist(defined_syms, shared_transients[state.parent])
-                # arglist = {k: v for k, v in arglist.items() if not k in defined_syms or k in used_symbols}
-                # self._arglists[node] = arglist
-                # TODO/NOTE: Did we change defined_syms?
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     def _compute_pool_release(self, top_sdfg: SDFG):
@@ -1029,11 +1023,11 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write('for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
                                           '{{'.format(arrlen=array_length))
-                    # for field_name, field_type in node_dtype._data.items():
+                    # TODO: Study further when tackling Structures on GPU.
                     for field_name, field_type in node_dtype._typeclass.fields.items():
                         if isinstance(field_type, dtypes.pointer):
                             tclass = field_type.type
-                            # length = node_dtype._length[field_name]
+
                             length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
                             callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '

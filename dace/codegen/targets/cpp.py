@@ -61,7 +61,8 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
-    # TODO: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
     tokens = data_name.split('.')
     if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
         name = data_name.replace('.', '->')
@@ -585,7 +586,8 @@ def cpp_array_expr(sdfg,
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
-    # TODO: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
     tokens = memlet.data.split('.')
     if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
         name = memlet.data.replace('.', '->')

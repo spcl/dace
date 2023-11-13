@@ -309,6 +309,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
         tokens = node.data.split('.')
         top_desc = sdfg.arrays[tokens[0]]
+        # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
+        # TODO: Study what is needed in the DaCe stuck to ensure this assumption is correct.
         top_transient = top_desc.transient
         top_storage = top_desc.storage
         top_lifetime = top_desc.lifetime
@@ -644,6 +646,7 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################
             # Corner cases
 
+            # NOTE: This looks obsolete but keeping it commented out in case tests fail.
             # Writing one index
             # if (isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None
             #         and self._dispatcher.defined_vars.get(vconn)[0] == DefinedType.Scalar):
