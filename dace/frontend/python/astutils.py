@@ -553,6 +553,20 @@ class RemoveSubscripts(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+def names_in_ast(tree: ast.AST) -> List[str]:
+    """ Walks an AST and finds all names, excluding function names. """
+    symbols = []
+    skip = set()
+    for node in ast.walk(tree):
+        if node in skip:
+            continue
+        if isinstance(node, ast.Call):
+            skip.add(node.func)
+        if isinstance(node, ast.Name):
+            symbols.append(node.id)
+    return dtypes.deduplicate(symbols)
+
+
 class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     """ 
     Simple Python AST visitor to find free symbols in a code, not including

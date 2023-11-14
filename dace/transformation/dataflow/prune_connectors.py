@@ -7,6 +7,7 @@ from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties, data a
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
+from dace.frontend.python import astutils
 
 
 @properties.make_properties
@@ -158,7 +159,7 @@ class PruneSymbols(pm.SingleStateTransformation):
             local_ignore = None
             for e in nsdfg.sdfg.out_edges(nstate):
                 # Look for symbols in condition
-                candidates -= (set(map(str, symbolic.names_in_ast(e.data.condition.code[0]))) - ignore)
+                candidates -= (set(astutils.names_in_ast(e.data.condition.code[0])) - ignore)
 
                 for assign in e.data.assignments.values():
                     candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
@@ -258,7 +259,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation):
 
         # Any array that is used in interstate edges is removed
         for e in nsdfg.sdfg.edges():
-            candidates -= (set(map(str, symbolic.names_in_ast(e.data.condition.code[0]))))
+            candidates -= set(astutils.names_in_ast(e.data.condition.code[0]))
             for assign in e.data.assignments.values():
                 candidates -= (symbolic.free_symbols_and_functions(assign))
 

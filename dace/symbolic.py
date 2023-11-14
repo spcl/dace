@@ -455,20 +455,6 @@ def resolve_symbol_to_constant(symb, start_sdfg):
         return None
 
 
-def names_in_ast(tree: ast.AST):
-    """ Walks an AST and finds all names, excluding function names. """
-    symbols = []
-    skip = set()
-    for node in ast.walk(tree):
-        if node in skip:
-            continue
-        if isinstance(node, ast.Call):
-            skip.add(node.func)
-        if isinstance(node, ast.Name):
-            symbols.append(node.id)
-    return dtypes.deduplicate(symbols)
-
-
 def symbol_name_or_value(val):
     """ Returns the symbol name if symbol, otherwise the value as a string. """
     if isinstance(val, symbol):
