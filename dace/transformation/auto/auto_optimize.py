@@ -646,7 +646,6 @@ def auto_optimize(sdfg: SDFG,
 
     if symbols:
         # Specialize for all known symbols
-        known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
         known_symbols = {}
         for (s, v) in symbols.items():
             if s in sdfg.free_symbols:
