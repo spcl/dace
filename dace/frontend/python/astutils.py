@@ -493,15 +493,15 @@ class ExtNodeVisitor(ast.NodeVisitor):
             if isinstance(old_value, list):
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body' or field == 'orelse'):
+                        if field == 'body' or field == 'orelse':
                             visitor_name = "visit_TopLevel" + type(value).__name__
                             if hasattr(self, visitor_name):
                                 visitor = getattr(self, visitor_name)
-                                return visitor(value)
+                                visitor(value)
                             else:
-                                return self.visit(value)
+                                self.visit(value)
                         else:
-                            return self.visit(value)
+                            self.visit(value)
             elif isinstance(old_value, ast.AST):
                 self.visit(old_value)
         return node
