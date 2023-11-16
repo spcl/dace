@@ -566,7 +566,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
-            # TODO: Study what is needed in the DaCe stuck to ensure this assumption is correct.
+            # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.
             top_desc = sdfg.arrays[name.split('.')[0]]
             top_transient = top_desc.transient
             top_storage = top_desc.storage

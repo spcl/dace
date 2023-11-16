@@ -1224,8 +1224,8 @@ class SDFG(ControlFlowRegion):
         return super().remove_node(node)
 
     def states(self):
-        """ Alias that returns the nodes (states) in this SDFG. """
-        return self.nodes()
+        """ Returns the states in this SDFG, recursing into state scope blocks. """
+        return list(self.all_states())
 
     def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
         """ Iterate over all nodes in this SDFG, including states, nodes in

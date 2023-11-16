@@ -13,11 +13,10 @@ from functools import reduce
 import operator
 import copy
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
-from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers

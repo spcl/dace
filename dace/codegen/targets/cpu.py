@@ -310,7 +310,7 @@ class CPUCodeGen(TargetCodeGenerator):
         tokens = node.data.split('.')
         top_desc = sdfg.arrays[tokens[0]]
         # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
-        # TODO: Study what is needed in the DaCe stuck to ensure this assumption is correct.
+        # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.
         top_transient = top_desc.transient
         top_storage = top_desc.storage
         top_lifetime = top_desc.lifetime
