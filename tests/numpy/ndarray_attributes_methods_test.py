@@ -39,6 +39,18 @@ def test_fill(A: dace.int32[M, N]):
 
 
 @compare_numpy_output()
+def test_fill2(A: dace.int32[M, N], a: dace.int32):
+    A.fill(a)
+    return A  # return A.fill(5) doesn't work because A is not copied
+
+
+@compare_numpy_output()
+def test_fill3(A: dace.int32[M, N], a: dace.int32):
+    A.fill(a + 1)
+    return A
+
+
+@compare_numpy_output()
 def test_reshape(A: dace.float32[N, N]):
     return A.reshape([1, N * N])
 
@@ -124,6 +136,8 @@ if __name__ == "__main__":
     test_copy()
     test_astype()
     test_fill()
+    test_fill2()
+    test_fill3()
     test_reshape()
     test_transpose1()
     test_transpose2()
