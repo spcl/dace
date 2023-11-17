@@ -305,7 +305,7 @@ def _checkEqualIvo(lst):
 
 def symtype(expr):
     """ Returns the inferred symbol type from a symbolic expression. """
-    stypes = [s.dtype for s in symlist(expr).values()]
+    stypes = [s.dtype for s in expr.free_symbols]
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
     elif _checkEqualIvo(stypes):
@@ -313,7 +313,7 @@ def symtype(expr):
     else:
         raise TypeError('Cannot infer symbolic type from expression "%s"'
                         ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
+                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in expr.free_symbols])))
 
 
 def symlist(values):
