@@ -4237,7 +4237,7 @@ def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, va
 
     if isinstance(value, sp.Expr):
         raise NotImplementedError(
-            f"`{arr}.fill` is not implemented for symbolic expressions (`{value}`).")  # Look at `full`.
+            f"{arr}.fill is not implemented for symbolic expressions ({value}).")  # Look at `full`.
 
     if isinstance(value, (Number, np.bool_)):
         body = value
@@ -4246,11 +4246,11 @@ def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, va
         value_array = sdfg.arrays[value]
         if not isinstance(value_array, data.Scalar):
             raise mem_parser.DaceSyntaxError(
-                pv, None, f"`{arr}.fill` requires a scalar argument, but `{type(value_array)}` was given.")
+                pv, None, f"{arr}.fill requires a scalar argument, but {type(value_array)} was given.")
         body = '__inp'
         inputs = {'__inp': dace.Memlet(data=value, subset='0')}
     else:
-        raise mem_parser.DaceSyntaxError(pv, None, f"Unsupported argument `{value}` for `{arr}.fill`.")
+        raise mem_parser.DaceSyntaxError(pv, None, f"Unsupported argument '{value}' for {arr}.fill.")
 
     shape = sdfg.arrays[arr].shape
     state.add_mapped_tasklet(
