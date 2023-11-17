@@ -4231,36 +4231,38 @@ def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('Array', 'fill')
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
-def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number, sp.Expr]) -> str:
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number,
+                                                                                           sp.Expr]) -> str:
     assert arr in sdfg.arrays
+
+    if isinstance(value, sp.Expr):
+        raise NotImplementedError(
+            f"`{arr}.fill` is not implemented for symbolic expressions (`{value}`).")  # Look at `full`.
+
     if isinstance(value, (Number, np.bool_)):
-        value_is_literal = True
-    elif isinstance(value, sp.Expr):
-        value_is_literal = True
-        raise NotImplementedError(f"{arr}.fill()` is not implemented for symbolic expression `{value}`.") # Look at `full`.
-    elif isinstance(value, str) and isinstance(sdfg.arrays.get(value, None), data.Scalar):
-         value_is_literal = False
+        body = value
+        inputs = {}
+    elif isinstance(value, str) and value in sdfg.arrays:
+        value_array = sdfg.arrays[value]
+        if not isinstance(value_array, data.Scalar):
+            raise mem_parser.DaceSyntaxError(
+                pv, None, f"`{arr}.fill` requires a scalar argument, but `{type(value_array)}` was given.")
+        body = '__inp'
+        inputs = {'__inp': dace.Memlet(data=value, subset='0')}
     else:
-        raise mem_parser.DaceSyntaxError(pv, None, f"The type of fill value `{f}` not supported! It was '{type(value)}'")
+        raise mem_parser.DaceSyntaxError(pv, None, f"Unsupported argument `{value}` for `{arr}.fill`.")
 
-    this_array = sdfg.arrays[arr]
-    shape      = this_array.shape
-
-    if value_is_literal:
-        body   = value      # In case `value` is a literal then the rhs of the assignement, labled as `body` is the value itself.
-        inputs = dict()     # In addition the tasklet does not have any inputs.
-    else:
-        body   = '__inp'    # In case `value` is a scale the body is the name of the connector.
-        inputs = {body: dace.Memlet(data=value, subset='0')}    # And the tasklet needs the scalar as input.
-
+    shape = sdfg.arrays[arr].shape
     state.add_mapped_tasklet(
         '_numpy_fill_',
-        map_ranges={f"__i{dim}": f"0:{s}" for dim, s in enumerate(shape)},
+        map_ranges={
+            f"__i{dim}": f"0:{s}"
+            for dim, s in enumerate(shape)
+        },
         inputs=inputs,
         code=f"__out = {body}",
         outputs={'__out': dace.Memlet.simple(arr, ",".join([f"__i{dim}" for dim in range(len(shape))]))},
-        external_edges=True
-    )
+        external_edges=True)
 
     return arr
 
