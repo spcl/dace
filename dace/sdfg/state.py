@@ -2449,6 +2449,10 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
+                # collect symbols representing data containers
+                dsyms = {sym for sym in efsyms if sym in self.arrays}
+                for d in dsyms:
+                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
