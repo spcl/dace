@@ -605,11 +605,10 @@ def _elementwise(pv: 'ProgramVisitor',
     else:
         state.add_mapped_tasklet(
             name="_elementwise_",
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(inparr.shape)},
-            inputs={'__inp': Memlet.simple(in_array, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
+            map_ranges={f'__i{dim}': f'0:{N}' for dim, N in enumerate(inparr.shape)},
+            inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             code=code,
-            outputs={'__out': Memlet.simple(out_array, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
+            outputs={'__out': Memlet.simple(out_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             external_edges=True)
 
     return out_array
@@ -4232,10 +4231,40 @@ def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 @oprepo.replaces_method('Array', 'fill')
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
-def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Number) -> str:
-    if not isinstance(value, (Number, np.bool_)):
-        raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=value))
-    return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Union[str, Number,
+                                                                                           sp.Expr]) -> str:
+    assert arr in sdfg.arrays
+
+    if isinstance(value, sp.Expr):
+        raise NotImplementedError(
+            f"{arr}.fill is not implemented for symbolic expressions ({value}).")  # Look at `full`.
+
+    if isinstance(value, (Number, np.bool_)):
+        body = value
+        inputs = {}
+    elif isinstance(value, str) and value in sdfg.arrays:
+        value_array = sdfg.arrays[value]
+        if not isinstance(value_array, data.Scalar):
+            raise mem_parser.DaceSyntaxError(
+                pv, None, f"{arr}.fill requires a scalar argument, but {type(value_array)} was given.")
+        body = '__inp'
+        inputs = {'__inp': dace.Memlet(data=value, subset='0')}
+    else:
+        raise mem_parser.DaceSyntaxError(pv, None, f"Unsupported argument '{value}' for {arr}.fill.")
+
+    shape = sdfg.arrays[arr].shape
+    state.add_mapped_tasklet(
+        '_numpy_fill_',
+        map_ranges={
+            f"__i{dim}": f"0:{s}"
+            for dim, s in enumerate(shape)
+        },
+        inputs=inputs,
+        code=f"__out = {body}",
+        outputs={'__out': dace.Memlet.simple(arr, ",".join([f"__i{dim}" for dim in range(len(shape))]))},
+        external_edges=True)
+
+    return arr
 
 
 @oprepo.replaces_method('Array', 'reshape')
