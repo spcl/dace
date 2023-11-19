@@ -13,6 +13,7 @@ from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 from dace.sdfg.propagation import propagate_memlets_scope
 
+
 @make_properties
 class MapExpansion(pm.SingleStateTransformation):
     """ Implements the map-expansion pattern.
@@ -83,13 +84,11 @@ class MapExpansion(pm.SingleStateTransformation):
                 in_conn = edge.dst_conn
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:
-                    graph.add_memlet_path(
-                        map_entry,
-                        *entries,
-                        memlet=copy.deepcopy(edge.data),
-                        src_conn=out_conn,
-                        dst_conn=in_conn
-                    )
+                    graph.add_memlet_path(map_entry,
+                                          *entries,
+                                          memlet=copy.deepcopy(edge.data),
+                                          src_conn=out_conn,
+                                          dst_conn=in_conn)
 
         # Modify dynamic map ranges
         dynamic_edges = dace.sdfg.dynamic_map_inputs(graph, map_entry)
