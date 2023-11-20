@@ -68,10 +68,8 @@ class MapExpansion(pm.SingleStateTransformation):
         # 1. If there are no edges coming from the outside, use empty memlets
         # 2. Edges with IN_* connectors replicate along the maps
         # 3. Edges for dynamic map ranges replicate until reaching range(s)
-        from tqdm import tqdm
-
         for edge in list(graph.out_edges(map_entry)):
-            if edge.src_conn not in entries[-1].out_connectors:
+            if edge.src_conn is not None and edge.src_conn not in entries[-1].out_connectors:
                 entries[-1].add_out_connector(edge.src_conn)
 
             graph.add_edge(entries[-1], edge.src_conn, edge.dst, edge.dst_conn, memlet=copy.deepcopy(edge.data))
