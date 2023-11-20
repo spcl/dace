@@ -4,7 +4,6 @@
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.symbolic import symlist
 from dace.transformation import transformation
 from dace.sdfg.propagation import propagate_memlet
 from dace.properties import make_properties
@@ -34,10 +33,8 @@ class MapInterchange(transformation.SingleStateTransformation):
         inner_map_entry = self.inner_map_entry
 
         # Check that inner map range is independent of outer range
-        map_deps = set()
-        for s in inner_map_entry.map.range:
-            map_deps |= set(map(str, symlist(s)))
-        if any(dep in outer_map_entry.map.params for dep in map_deps):
+        map_deps = inner_map_entry.map.range.free_symbols
+        if any(param in map_deps for param in outer_map_entry.map.params):
             return False
 
         # Check that the destination of all the outgoing edges
@@ -53,10 +50,8 @@ class MapInterchange(transformation.SingleStateTransformation):
             # Check that dynamic input range memlets are independent of
             # first map range
             if e.dst_conn and not e.dst_conn.startswith('IN_'):
-                memlet_deps = set()
-                for s in e.data.subset:
-                    memlet_deps |= set(map(str, symlist(s)))
-                if any(dep in outer_map_entry.map.params for dep in memlet_deps):
+                memlet_deps = e.data.subset.free_symbols
+                if any(param in memlet_deps for param in outer_map_entry.map.params):
                     return False
 
         # Check the edges between the exits of the two maps.
