@@ -4,7 +4,7 @@
 from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
 import dace
-from dace import dtypes, subsets, symbolic
+from dace import dtypes, subsets
 from dace.properties import EnumProperty, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -86,7 +86,7 @@ class MapExpansion(pm.SingleStateTransformation):
             path = []
             for mapnode in [map_entry] + entries:
                 path.append(mapnode)
-                if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
+                if edge.dst_conn in mapnode.map.range.free_symbols:
                     graph.add_memlet_path(edge.src,
                                           *path,
                                           memlet=edge.data,
