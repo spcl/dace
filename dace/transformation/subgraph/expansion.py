@@ -2,7 +2,7 @@
 """ This module contains classes that implement the expansion transformation.
 """
 
-from dace import dtypes, registry, symbolic, subsets
+from dace import dtypes, registry, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace, SDFG, dynamic_map_inputs
@@ -318,7 +318,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 path = []
                 for mapnode in [map_entry, map_entry_inner]:
                     path.append(mapnode)
-                    if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
+                    if edge.dst_conn in mapnode.map.range.free_symbols:
                         graph.add_memlet_path(edge.src,
                                               *path,
                                               memlet=edge.data,
