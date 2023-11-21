@@ -526,7 +526,7 @@ namespace dace
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI int ifloor(const T& a)
         {
-            return (int)std::floor(a);
+            return (int)std::floor(static_cast<double>(a));
         }
 
         template<typename T>
