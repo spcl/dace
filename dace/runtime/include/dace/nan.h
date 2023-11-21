@@ -42,44 +42,77 @@ namespace dace
         };
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator*(const T& lhs,  const typeless_nan& rhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator*(const T&,  const typeless_nan&) { return typeless_nan{}; }
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator*(const typeless_nan& rhs,  const T& lhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator*(const typeless_nan&,  const T&) { return typeless_nan{}; }
+
+        inline typeless_nan
+        operator*(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
+
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator+(const T& lhs,  const typeless_nan& rhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator+(const T&,  const typeless_nan&) { return typeless_nan{}; }
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator+(const typeless_nan& rhs,  const T& lhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator+(const typeless_nan&,  const T&) { return typeless_nan{}; }
+
+        inline typeless_nan
+        operator+(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
+
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator-(const T& lhs,  const typeless_nan& rhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator-(const T&,  const typeless_nan&) { return typeless_nan{}; }
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator-(const typeless_nan& rhs,  const T& lhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator-(const typeless_nan&,  const T&) { return typeless_nan{}; }
+
+        inline typeless_nan
+        operator-(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
+
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator/(const T& lhs,  const typeless_nan& rhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator/(const T&,  const typeless_nan&) { return typeless_nan{}; }
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator/(const typeless_nan& rhs,  const T& lhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator/(const typeless_nan&,  const T&) { return typeless_nan{}; }
+
+        inline typeless_nan
+        operator/(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
+
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator%(const T& lhs,  const typeless_nan& rhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator%(const T&,  const typeless_nan&) { return typeless_nan{}; }
 
         template<typename T>
-        std::enable_if_t<std::is_floating_point<T>::value, typeless_nan>
-        operator%(const typeless_nan& rhs,  const T& lhs) { return rhs; }
+        DACE_CONSTEXPR typename std::enable_if<std::is_floating_point<T>::value, typeless_nan>::type
+        operator%(const typeless_nan&,  const T&) { return typeless_nan{}; }
+
+        inline typeless_nan
+        operator%(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
+
+	//These functions allows to perfrom operations with `typeless_nan` instances.
+#	define FADAPT(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&) { return typeless_nan{}; }
+#	define FADAPT2(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
+#	define FADAPT3(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
+#	define FADAPT4(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&, const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
+        FADAPT(tanh); FADAPT(cos); FADAPT(sin); FADAPT(sqrt); FADAPT(tan);
+        FADAPT(acos); FADAPT(asin); FADAPT(atan); FADAPT(log); FADAPT(exp);
+        FADAPT(floor); FADAPT(ceil); FADAPT(round); FADAPT(abs);
+        FADAPT2(max); FADAPT2(min);
+#       undef FADAPT4
+#       undef FADAPT3
+#       undef FADAPT2
+#	undef FADAPT
     }
 }
 
