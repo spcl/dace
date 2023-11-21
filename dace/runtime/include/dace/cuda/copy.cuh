@@ -737,7 +737,7 @@ namespace dace
     struct SharedToGlobal1D
     {
         template <typename WCR>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE, WCR wcr)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride, WCR wcr)
         {
             if (!ASYNC)
                 __syncthreads();
@@ -752,20 +752,20 @@ namespace dace
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_custom<T>::template reduce(
-                    wcr, ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    wcr, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_custom<T>::template reduce(
-                        ptr + (ltid + WRITES * BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES * BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
         }
 
         template <ReductionType REDTYPE>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride)
         {
             if (!ASYNC)
                 __syncthreads();
@@ -780,14 +780,14 @@ namespace dace
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                    ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                        ptr + (ltid + WRITES*BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
         }
