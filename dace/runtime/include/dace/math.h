@@ -3,6 +3,7 @@
 #define __DACE_MATH_H
 
 #include "pi.h"
+#include "nan.h"
 #include "types.h"
 
 #include <complex>
@@ -457,6 +458,7 @@ namespace dace
     namespace math
     {       
         static DACE_CONSTEXPR typeless_pi pi{};
+        static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
