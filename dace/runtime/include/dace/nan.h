@@ -4,9 +4,6 @@
 
 // Class to define a stateless NAN and related operators.
 
-#include <cmath>
-#include <stdexcept>
-
 namespace dace
 {
     namespace math
@@ -15,10 +12,7 @@ namespace dace
         // Defines a typeless Pi
         struct typeless_nan
         {
-            operator int() const
-            {
-                throw std::logic_error("Tried to convert a `NAN` into an `int`.");
-            }
+            operator int() const = delete;
             operator float() const
             {
                 return std::nanf("");
