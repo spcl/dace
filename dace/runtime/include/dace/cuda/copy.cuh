@@ -690,7 +690,6 @@ namespace dace
     }
 
 
-    /*
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int COPY_XLEN, int DST_XSTRIDE,
         bool ASYNC>
@@ -701,7 +700,6 @@ namespace dace
             1, COPY_XLEN, 1, 1, DST_XSTRIDE, ASYNC>(
                 smem, 1, 1, src_xstride, ptr);
     }
-    */
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int SMEM_TOTAL_ELEMENTS, int DST_XSTRIDE,
@@ -732,6 +730,7 @@ namespace dace
         }
     };
 
+    /*
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int COPY_XLEN, bool ASYNC>
     struct SharedToGlobal1D
@@ -792,6 +791,7 @@ namespace dace
             }
         }
     };
+    */
     
     // TODO: Make like SharedToGlobal1D
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
