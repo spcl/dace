@@ -2,15 +2,15 @@
 #ifndef __DACE_MATH_H
 #define __DACE_MATH_H
 
-#include "pi.h"
-#include "nan.h"
-#include "types.h"
-
 #include <complex>
 #include <numeric>
 #include <cmath>
 #include <cfloat>
 #include <type_traits>
+
+#include "pi.h"
+#include "nan.h"
+#include "types.h"
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>

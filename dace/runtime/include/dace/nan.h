@@ -27,11 +27,11 @@ namespace dace
             }
             typeless_nan operator+() const
             {
-                *this;
+                return typeless_nan{};
             }
             typeless_nan operator-() const
             {
-                *this;
+                return typeless_nan{};
             }
         };
 
@@ -94,21 +94,19 @@ namespace dace
         inline typeless_nan
         operator%(const typeless_nan&,  const typeless_nan&) { return typeless_nan{}; }
 
+    }
+}
+
 	//These functions allows to perfrom operations with `typeless_nan` instances.
-#	define FADAPT(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&) { return typeless_nan{}; }
-#	define FADAPT2(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
-#	define FADAPT3(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
-#	define FADAPT4(F) typeless_nan DACE_CONSTEXPR F (const typeless_nan&, const typeless_nan&, const typeless_nan&, const typeless_nan&) { return typeless_nan{}; }
+#	define FADAPT(F) DACE_CONSTEXPR ::dace::math::typeless_nan F (::dace::math::typeless_nan) { return ::dace::math::typeless_nan{}; }
+#	define FADAPT2(F) template<typename T1> DACE_CONSTEXPR dace::math::typeless_nan F (T1&&, dace::math::typeless_nan) { return ::dace::math::typeless_nan{}; }; \
+			  template<typename T2> DACE_CONSTEXPR dace::math::typeless_nan F (dace::math::typeless_nan, T2&&) { return ::dace::math::typeless_nan{}; }; \
+			  DACE_CONSTEXPR ::dace::math::typeless_nan F (dace::math::typeless_nan, dace::math::typeless_nan) { return ::dace::math::typeless_nan{}; }
         FADAPT(tanh); FADAPT(cos); FADAPT(sin); FADAPT(sqrt); FADAPT(tan);
         FADAPT(acos); FADAPT(asin); FADAPT(atan); FADAPT(log); FADAPT(exp);
         FADAPT(floor); FADAPT(ceil); FADAPT(round); FADAPT(abs);
         FADAPT2(max); FADAPT2(min);
-#       undef FADAPT4
-#       undef FADAPT3
 #       undef FADAPT2
 #	undef FADAPT
-    }
-}
-
 
 #endif  // __DACE_NAN_H
