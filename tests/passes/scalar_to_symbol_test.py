@@ -692,7 +692,7 @@ def test_ternary_expression(compile_time_evaluatable):
     sdfg.compile()
 
 
-def test_indirection_with_tasklet():
+def build_sdfg_indirection_with_tasklet():
     dtype = dace.float64
 
     sdfg = dace.SDFG('top')
@@ -814,20 +814,6 @@ def test_indirection_with_tasklet():
         memlet=dace.Memlet.simple('EDGES', '_edge_idx')
     )
 
-
-    N_EDGES = np.int32(5)
-    N_VERTICES = np.int32(4)
-    N_E2V_NEIGHBORS = np.int32(2)
-
-    from numpy.random import default_rng
-    rng = default_rng(42)
-
-    vertices = rng.random((N_VERTICES, ))
-    edges = rng.random((N_EDGES, ))
-    e2v_table = np.random.randint(0, N_VERTICES, (N_EDGES, N_E2V_NEIGHBORS), np.int32)
-
-    reference_edges = np.asarray([np.sum(vertices[e2v_table[idx, :]], initial=edges[idx]) for idx in range(N_EDGES)])
-
     assert sdfg.is_valid()
     # apply scalar-to-symbol promotion
     assert scalar_to_symbol.find_promotable_scalars(nsdfg) == {'_shift_idx', '_shift_offset'}
@@ -844,16 +830,67 @@ def test_indirection_with_tasklet():
         '_field_idx':'_table[___sym_indirect_idx, ___sym_offset]'
     }
 
+    return sdfg
+
+
+def test_indirection_with_tasklet():
+    sdfg = build_sdfg_indirection_with_tasklet()
+
+    N_EDGES = np.int32(5)
+    N_VERTICES = np.int32(4)
+    N_E2V_NEIGHBORS = np.int32(2)
+
+    rng = np.random.default_rng(42)
+    e = rng.random((N_EDGES,))
+    v = rng.random((N_VERTICES,))
+    e2v_table = np.random.randint(0, N_VERTICES, (N_EDGES, N_E2V_NEIGHBORS), np.int32)
+
+    e_ref = np.asarray([np.sum(v[e2v_table[idx, :]], initial=e[idx]) for idx in range(N_EDGES)])
+
     sdfg(
-        EDGES=edges,
-        VERTICES=vertices,
+        EDGES=e,
+        VERTICES=v,
         E2V_TABLE=e2v_table,
         N_EDGES=N_EDGES,
         N_VERTICES=N_VERTICES,
         N_E2V_NEIGHBORS=N_E2V_NEIGHBORS,
     )
 
-    assert np.allclose(edges, reference_edges)
+    assert np.allclose(e_ref, e)
+
+
+@pytest.mark.gpu
+def test_indirection_with_tasklet_gpu():
+    import cupy as cp
+
+    sdfg = build_sdfg_indirection_with_tasklet()
+    auto_optimize.apply_gpu_storage(sdfg)
+
+    N_EDGES = np.int32(5)
+    N_VERTICES = np.int32(4)
+    N_E2V_NEIGHBORS = np.int32(2)
+
+    rng = np.random.default_rng(42)
+    e = rng.random((N_EDGES,))
+    v = rng.random((N_VERTICES,))
+    e2v_table = np.random.randint(0, N_VERTICES, (N_EDGES, N_E2V_NEIGHBORS), np.int32)
+
+    e_ref = np.asarray([np.sum(v[e2v_table[idx, :]], initial=e[idx]) for idx in range(N_EDGES)])
+
+    e_dev = cp.asarray(e)
+    v_dev = cp.asarray(v)
+    e2v_table_dev = cp.asarray(e2v_table)
+
+    sdfg(
+        EDGES=e_dev,
+        VERTICES=v_dev,
+        E2V_TABLE=e2v_table_dev,
+        N_EDGES=N_EDGES,
+        N_VERTICES=N_VERTICES,
+        N_E2V_NEIGHBORS=N_E2V_NEIGHBORS,
+    )
+
+    assert np.allclose(e_ref, e_dev.get())
 
 
 if __name__ == '__main__':
@@ -880,3 +917,4 @@ if __name__ == '__main__':
     test_ternary_expression(False)
     test_ternary_expression(True)
     test_indirection_with_tasklet()
+    test_indirection_with_tasklet_gpu()
