@@ -939,6 +939,47 @@ class Merge(LoopBasedReplacement):
                 line_number=node.line_number
             )
 
+class MathFunctions(IntrinsicTransformation):
+
+    INTRINSIC_TO_DACE = {
+        "MIN": "min",
+        "MAX": "max",
+        "SQRT": "sqrt",
+        "ABS": "abs",
+        "EXP": "exp",
+        "COSH": "cosh",
+        "TANH": "tanh",
+        "ATAN2": "atan2",
+    }
+
+    FUNC_TYPE = {
+        "min": "DOUBLE",
+        "max": "DOUBLE",
+        "sqrt": "DOUBLE",
+        "abs": "DOUBLE",
+        "exp": "DOUBLE",
+        "tanh": "DOUBLE",
+        "cosh": "DOUBLE",
+        "atan2": "DOUBLE",
+    }
+
+    @staticmethod
+    def replacable(func_name: str) -> bool:
+        return func_name in MathFunctions.INTRINSIC_TO_DACE
+
+    @staticmethod
+    def replacable_type(func_name: str) -> bool:
+        return func_name in MathFunctions.FUNC_TYPE
+
+    @staticmethod
+    def replace(func_name: str) -> ast_internal_classes.FNode:
+        return ast_internal_classes.Name_Node(name=MathFunctions.INTRINSIC_TO_DACE[func_name])
+
+    @staticmethod
+    def replace_function_reference(name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
+        call_type = MathFunctions.FUNC_TYPE[name.name]
+        return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
+
 class FortranIntrinsics:
 
     IMPLEMENTATIONS_AST = {
@@ -971,11 +1012,18 @@ class FortranIntrinsics:
 
     @staticmethod
     def function_names() -> List[str]:
-        return list(LoopBasedReplacement.INTRINSIC_TO_DACE.values())
+        return [*list(LoopBasedReplacement.INTRINSIC_TO_DACE.values()), *list(MathFunctions.INTRINSIC_TO_DACE.values())]
+
+    @staticmethod
+    def retained_function_names() -> List[str]:
+        return list(MathFunctions.INTRINSIC_TO_DACE.values())
 
     @staticmethod
     def call_extraction_exemptions() -> List[str]:
-        return [func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+        return [
+            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION],
+            *list(MathFunctions.INTRINSIC_TO_DACE.values())
+        ]
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
 
@@ -983,39 +1031,25 @@ class FortranIntrinsics:
         replacements = {
             "INT": "__dace_int",
             "DBLE": "__dace_dble",
-            "SQRT": "sqrt",
-            "COSH": "cosh",
-            "ABS": "abs",
-            "MIN": "min",
-            "MAX": "max",
-            "EXP": "exp",
             "EPSILON": "__dace_epsilon",
-            "TANH": "tanh",
             "SIGN": "__dace_sign",
-            "EXP": "exp"
         }
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
-        else:
+        elif MathFunctions.replacable(func_name):
+            return MathFunctions.replace(func_name)
 
-            if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation)
+        if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
+            self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation)
 
-            return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
+        return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
 
     def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
 
         func_types = {
             "__dace_int": "INT",
             "__dace_dble": "DOUBLE",
-            "sqrt": "DOUBLE",
-            "cosh": "DOUBLE",
-            "abs": "DOUBLE",
-            "min": "DOUBLE",
-            "max": "DOUBLE",
-            "exp": "DOUBLE",
             "__dace_epsilon": "DOUBLE",
-            "tanh": "DOUBLE",
             "__dace_sign": "DOUBLE",
         }
         if name.name in func_types:
@@ -1024,6 +1058,8 @@ class FortranIntrinsics:
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
         elif name.name in self.DIRECT_REPLACEMENTS:
             return self.DIRECT_REPLACEMENTS[name.name].replace(name, args, line)
+        elif MathFunctions.replacable_type(name.name):
+            return MathFunctions.replace_function_reference(name, args, line)
         else:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.

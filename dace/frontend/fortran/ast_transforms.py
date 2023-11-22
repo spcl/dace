@@ -184,7 +184,7 @@ class CallToArray(NodeTransformer):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.excepted_funcs = [
-            "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min", "__dace_sign", "tanh",
+            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
             "__dace_epsilon", *FortranIntrinsics.function_names()
         ]
 
@@ -220,7 +220,7 @@ class CallExtractorNodeLister(NodeVisitor):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "malloc", "pow", "cbrt", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         return self.generic_visit(node)
@@ -241,7 +241,7 @@ class CallExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "exp", "pow", "sqrt", "cbrt", "max", "min", "abs", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "min", "max", "pow", "cbrt", "tanh", "atan2", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -368,7 +368,8 @@ class IndexExtractorNodeLister(NodeVisitor):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
             return
@@ -401,7 +402,8 @@ class IndexExtractor(NodeTransformer):
             self.scope_vars.visit(ast)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        if node.name.name in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh"]:
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
             return node
