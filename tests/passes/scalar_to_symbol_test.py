@@ -693,10 +693,10 @@ def test_ternary_expression(compile_time_evaluatable):
     sdfg.compile()
 
 
-def build_sdfg_indirection_with_tasklet():
+def build_sdfg_indirection_with_tasklet(sdfg_name: str):
     dtype = dace.float64
 
-    sdfg = dace.SDFG('top')
+    sdfg = dace.SDFG(sdfg_name)
     N_EDGES, N_VERTICES, N_E2V_NEIGHBORS = (dace.symbol(s) for s in ['N_EDGES', 'N_VERTICES', 'N_E2V_NEIGHBORS'])
     sdfg.add_array('EDGES', (N_EDGES,), dtype)
     sdfg.add_array('VERTICES', (N_VERTICES,), dtype)
@@ -835,7 +835,7 @@ def build_sdfg_indirection_with_tasklet():
 
 
 def test_indirection_with_tasklet():
-    sdfg = build_sdfg_indirection_with_tasklet()
+    sdfg = build_sdfg_indirection_with_tasklet("indirection_with_tasklet_cpu")
 
     N_EDGES = np.int32(5)
     N_VERTICES = np.int32(4)
@@ -864,7 +864,7 @@ def test_indirection_with_tasklet():
 def test_indirection_with_tasklet_gpu():
     import cupy as cp
 
-    sdfg = build_sdfg_indirection_with_tasklet()
+    sdfg = build_sdfg_indirection_with_tasklet("indirection_with_tasklet_gpu")
     auto_optimize.apply_gpu_storage(sdfg)
 
     N_EDGES = np.int32(5)
