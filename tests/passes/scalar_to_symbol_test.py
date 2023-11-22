@@ -4,6 +4,7 @@ import dace
 from dace.transformation.passes import constant_propagation, fusion_inline, scalar_to_symbol
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as xf, interstate as isxf
+from dace.transformation.auto import auto_optimize
 from dace.transformation.interstate import loop_detection as ld
 from dace import registry
 from dace.transformation import helpers as xfh
