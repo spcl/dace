@@ -1018,6 +1018,8 @@ class MathFunctions(IntrinsicTransformation):
         "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
         "NINT": MathReplacement("round_to_int", generate_aint, "INTEGER"),
         "ANINT": MathReplacement("round", generate_aint, "FIRST_ARG"),
+        "REAL": MathTransformation("float", "REAL"),
+        "DBLE": MathTransformation("double", "DOUBLE"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
@@ -1305,9 +1307,6 @@ class FortranIntrinsics:
 
         func_name = node.string
         replacements = {
-            #"INT": "__dace_int",
-            "DBLE": "__dace_dble",
-            "EPSILON": "__dace_epsilon",
             "SIGN": "__dace_sign",
         }
         if func_name in replacements:
@@ -1329,9 +1328,6 @@ class FortranIntrinsics:
     def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
 
         func_types = {
-            "__dace_int": "INT",
-            "__dace_dble": "DOUBLE",
-            "__dace_epsilon": "DOUBLE",
             "__dace_sign": "DOUBLE",
         }
         if name.name in func_types:

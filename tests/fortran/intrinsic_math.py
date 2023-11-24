@@ -616,6 +616,65 @@ def test_fortran_frontend_int():
 
     assert np.array_equal(res4, [3., 4., 4., 4., -3., -4., -4., -4.])
 
+def test_fortran_frontend_real():
+    test_string = """
+                    PROGRAM intrinsic_math_test_real
+                    implicit none
+                    double precision, dimension(2) :: d
+                    real, dimension(2) :: d2
+                    integer, dimension(2) :: d3
+                    double precision, dimension(6) :: res
+                    real, dimension(6) :: res2
+                    CALL intrinsic_math_test_function(d, d2, d3, res, res2)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, d2, d3, res, res2)
+                    integer :: n
+                    double precision, dimension(2) :: d
+                    real, dimension(2) :: d2
+                    integer, dimension(2) :: d3
+                    double precision, dimension(6) :: res
+                    real, dimension(6) :: res2
+
+                    res(1) = DBLE(d(1))
+                    res(2) = DBLE(d(2))
+                    res(3) = DBLE(d2(1))
+                    res(4) = DBLE(d2(2))
+                    res(5) = DBLE(d3(1))
+                    res(6) = DBLE(d3(2))
+
+                    res2(1) = REAL(d(1))
+                    res2(2) = REAL(d(2))
+                    res2(3) = REAL(d2(1))
+                    res2(4) = REAL(d2(2))
+                    res2(5) = REAL(d3(1))
+                    res2(6) = REAL(d3(2))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 7.0
+    d[1] = 13.11
+    d2 = np.full([size], 42, order="F", dtype=np.float32)
+    d2[0] = 7.0
+    d2[1] = 13.11
+    d3 = np.full([size], 42, order="F", dtype=np.int32)
+    d3[0] = 7
+    d3[1] = 13
+
+    res = np.full([size*3], 42, order="F", dtype=np.float64)
+    res2 = np.full([size*3], 42, order="F", dtype=np.float32)
+    sdfg(d=d, d2=d2, d3=d3, res=res, res2=res2)
+
+    assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7., 13.])
+    assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7., 13.])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_min_max()
@@ -631,3 +690,4 @@ if __name__ == "__main__":
     test_fortran_frontend_scale()
     test_fortran_frontend_exponent()
     test_fortran_frontend_int()
+    test_fortran_frontend_real()
