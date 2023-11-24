@@ -979,7 +979,7 @@ class MathFunctions(IntrinsicTransformation):
         if fname in "AINT":
             arg.name = ast_internal_classes.Name_Node(name="trunc")
         elif fname == "NINT":
-            arg.name = ast_internal_classes.Name_Node(name="round_to_int")
+            arg.name = ast_internal_classes.Name_Node(name="iround")
         elif fname == "ANINT":
             arg.name = ast_internal_classes.Name_Node(name="round")
         else:
@@ -1016,12 +1016,18 @@ class MathFunctions(IntrinsicTransformation):
         "EXPONENT": MathTransformation("frexp", "INTEGER"),
         "INT": MathTransformation("int", "INTEGER"),
         "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
-        "NINT": MathReplacement("round_to_int", generate_aint, "INTEGER"),
+        "NINT": MathReplacement("iround", generate_aint, "INTEGER"),
         "ANINT": MathReplacement("round", generate_aint, "FIRST_ARG"),
         "REAL": MathTransformation("float", "REAL"),
         "DBLE": MathTransformation("double", "DOUBLE"),
+        "SIN": MathTransformation("sin", "FIRST_ARG"),
+        "COS": MathTransformation("cos", "FIRST_ARG"),
+        "SINH": MathTransformation("sinh", "FIRST_ARG"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
+        "ASIN": MathTransformation("asin", "FIRST_ARG"),
+        "ACOS": MathTransformation("acos", "FIRST_ARG"),
+        "ATAN": MathTransformation("atan", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
     }
 
