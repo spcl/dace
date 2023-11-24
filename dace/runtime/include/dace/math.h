@@ -96,7 +96,7 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
 
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
-static DACE_CONSTEXPR DACE_HDFI int round_to_int(const T& a) {
+static DACE_CONSTEXPR DACE_HDFI int iround(const T& a) {
   return static_cast<int>(round(a));
 }
 

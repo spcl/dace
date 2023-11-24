@@ -675,6 +675,155 @@ def test_fortran_frontend_real():
     assert np.allclose(res, [7.0, 13.11, 7.0, 13.11, 7., 13.])
     assert np.allclose(res2, [7.0, 13.11, 7.0, 13.11, 7., 13.])
 
+def test_fortran_frontend_trig():
+    test_string = """
+                    PROGRAM intrinsic_math_test_trig
+                    implicit none
+                    real, dimension(3) :: d
+                    real, dimension(6) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    integer :: n
+                    real, dimension(3) :: d
+                    real, dimension(6) :: res
+
+                    DO n=1,3
+                        res(n) = SIN(d(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+3) = COS(d(n))
+                    END DO
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    d = np.full([size], 42, order="F", dtype=np.float32)
+    d[0] = 0
+    d[1] = 3.14/2
+    d[2] = 3.14
+
+    res = np.full([size*2], 42, order="F", dtype=np.float32)
+    sdfg(d=d, res=res)
+
+    assert np.allclose(res, [0.0, 0.999999702, 1.59254798E-03, 1.0, 7.96274282E-04, -0.999998748])
+
+def test_fortran_frontend_hyperbolic():
+    test_string = """
+                    PROGRAM intrinsic_math_test_hyperbolic
+                    implicit none
+                    real, dimension(3) :: d
+                    real, dimension(9) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    integer :: n
+                    real, dimension(3) :: d
+                    real, dimension(9) :: res
+
+                    DO n=1,3
+                        res(n) = SINH(d(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+3) = COSH(d(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+6) = TANH(d(n))
+                    END DO
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    d = np.full([size], 42, order="F", dtype=np.float32)
+    d[0] = 0
+    d[1] = 1
+    d[2] = 3.14
+
+    res = np.full([size*3], 42, order="F", dtype=np.float32)
+    sdfg(d=d, res=res)
+
+    assert np.allclose(res, [0.00000000, 1.17520118, 11.5302935, 1.00000000, 1.54308057, 11.5735760, 0.00000000, 0.761594176, 0.996260226])
+
+def test_fortran_frontend_trig_inverse():
+    test_string = """
+                    PROGRAM intrinsic_math_test_hyperbolic
+                    implicit none
+                    real, dimension(3) :: sincos_args
+                    real, dimension(3) :: tan_args
+                    real, dimension(6) :: tan2_args
+                    real, dimension(12) :: res
+                    CALL intrinsic_math_test_function(sincos_args, tan_args, tan2_args, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(sincos_args, tan_args, tan2_args, res)
+                    integer :: n
+                    real, dimension(3) :: sincos_args
+                    real, dimension(3) :: tan_args
+                    real, dimension(6) :: tan2_args
+                    real, dimension(12) :: res
+
+                    DO n=1,3
+                        res(n) = ASIN(sincos_args(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+3) = ACOS(sincos_args(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+6) = ATAN(tan_args(n))
+                    END DO
+
+                    DO n=1,3
+                        res(n+9) = ATAN2(tan2_args(2*n - 1), tan2_args(2*n))
+                    END DO
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 3
+    sincos_args = np.full([size], 42, order="F", dtype=np.float32)
+    sincos_args[0] = -0.5
+    sincos_args[1] = 0.0
+    sincos_args[2] = 1.0
+
+    atan_args = np.full([size], 42, order="F", dtype=np.float32)
+    atan_args[0] = 0.0
+    atan_args[1] = 1.0
+    atan_args[2] = 3.14
+
+    atan2_args = np.full([size*2], 42, order="F", dtype=np.float32)
+    atan2_args[0] = 0.0
+    atan2_args[1] = 1.0
+    atan2_args[2] = 1.0
+    atan2_args[3] = 1.0
+    atan2_args[4] = 1.0
+    atan2_args[5] = 0.0
+
+    res = np.full([size*4], 42, order="F", dtype=np.float32)
+    sdfg(sincos_args=sincos_args, tan_args=atan_args, tan2_args=atan2_args, res=res)
+
+    assert np.allclose(res, [-0.523598790, 0.00000000, 1.57079637, 2.09439516, 1.57079637, 0.00000000, 0.00000000, 0.785398185, 1.26248074, 0.00000000, 0.785398185, 1.57079637])
+
 if __name__ == "__main__":
 
     test_fortran_frontend_min_max()
@@ -691,3 +840,6 @@ if __name__ == "__main__":
     test_fortran_frontend_exponent()
     test_fortran_frontend_int()
     test_fortran_frontend_real()
+    test_fortran_frontend_trig()
+    test_fortran_frontend_hyperbolic()
+    test_fortran_frontend_trig_inverse()
