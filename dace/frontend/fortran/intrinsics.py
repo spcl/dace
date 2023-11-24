@@ -938,6 +938,7 @@ class Merge(LoopBasedReplacement):
 class MathFunctions(IntrinsicTransformation):
 
     MathTransformation = namedtuple("MathTransformation", "function return_type")
+    MathReplacement = namedtuple("MathReplacement", "function replacement_function return_type")
 
     def generate_scale(arg: ast_internal_classes.Call_Expr_Node):
 
@@ -966,6 +967,17 @@ class MathFunctions(IntrinsicTransformation):
         # pack it into parentheses, just to be sure
         return ast_internal_classes.Parenthesis_Expr_Node(expr=mult)
 
+    def generate_aint(arg: ast_internal_classes.Call_Expr_Node):
+
+        # The call to AINT can contain a second KIND parameter
+        # We ignore it a the moment.
+        # However, to map into C's trunc, we need to drop it.
+        if len(arg.args) > 1:
+            del arg.args[1]
+        arg.name = ast_internal_classes.Name_Node(name="trunc")
+
+        return arg
+
     INTRINSIC_TO_DACE = {
         "MIN": MathTransformation("min", "FIRST_ARG"),
         "MAX": MathTransformation("max", "FIRST_ARG"),
@@ -991,8 +1003,10 @@ class MathFunctions(IntrinsicTransformation):
             "REAL": MathTransformation("floor", "INTEGER"),
             "DOUBLE": MathTransformation("floor", "INTEGER")
         },
-        "SCALE": MathTransformation(generate_scale, "FIRST_ARG"),
+        "SCALE": MathReplacement(None, generate_scale, "FIRST_ARG"),
         "EXPONENT": MathTransformation("frexp", "INTEGER"),
+        "INT": MathTransformation("int", "INTEGER"),
+        "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
@@ -1071,13 +1085,13 @@ class MathFunctions(IntrinsicTransformation):
             else:
                 return_type = replacement_rule.return_type
 
-            if isinstance(replacement_rule.function, str):
+            if isinstance(replacement_rule, MathFunctions.MathTransformation):
                 call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
                 call.type = return_type
 
                 return call
             else:
-                new_call = replacement_rule.function(call)
+                new_call = replacement_rule.replacement_function(call)
                 return new_call
 
         #def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -1198,9 +1212,10 @@ class MathFunctions(IntrinsicTransformation):
         # flatten nested lists
         for f in funcs:
             if isinstance(f, dict):
-                res.extend([v.function for k, v in f.items()])
+                res.extend([v.function for k, v in f.items() if v.function is not None])
             else:
-                res.append(f.function)
+                if f.function is not None:
+                    res.append(f.function)
         return res
 
     @staticmethod
@@ -1279,7 +1294,7 @@ class FortranIntrinsics:
 
         func_name = node.string
         replacements = {
-            "INT": "__dace_int",
+            #"INT": "__dace_int",
             "DBLE": "__dace_dble",
             "EPSILON": "__dace_epsilon",
             "SIGN": "__dace_sign",

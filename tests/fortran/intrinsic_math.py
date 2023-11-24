@@ -491,8 +491,6 @@ def test_fortran_frontend_scale():
     d2[3] = 9
     res = np.full([5], 42, order="F", dtype=np.float32)
     sdfg(d=d, d2=d2, res=res)
-    print(d)
-    print(res)
 
     assert abs(res[0] - 0.570043862) < 10**-7
     assert res[1] == 176.
@@ -539,6 +537,58 @@ def test_fortran_frontend_exponent():
     assert res[2] == 4
     assert res[3] == 9
 
+def test_fortran_frontend_int():
+    test_string = """
+                    PROGRAM intrinsic_math_test_int
+                    implicit none
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: res
+                    real, dimension(4) :: res2
+                    CALL intrinsic_math_test_function(d, res, res2)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res, res2)
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: res
+                    real, dimension(4) :: res2
+
+                    res(1) = INT(d(1))
+                    res(2) = INT(d(2))
+                    res(3) = INT(d(3))
+                    res(4) = INT(d(4))
+
+                    res2(1) = AINT(d(1))
+                    res2(2) = AINT(d(2))
+                    res2(3) = AINT(d(3))
+                    ! KIND parameter is ignored
+                    res2(4) = AINT(d(4), 4)
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 4
+    d = np.full([size], 42, order="F", dtype=np.float32)
+    d[0] = 1.0
+    d[1] = 1.5
+    d[2] = 42.5
+    d[3] = -42.5
+    res = np.full([5], 42, order="F", dtype=np.int32)
+    res2 = np.full([5], 42, order="F", dtype=np.float32)
+    sdfg(d=d, res=res, res2=res2)
+
+    assert res[0] == 1
+    assert res[1] == 1
+    assert res[2] == 42
+    assert res[3] == -42
+
+    assert res2[0] == 1.
+    assert res2[1] == 1.
+    assert res2[2] == 42.
+    assert res2[3] == -42.
 
 if __name__ == "__main__":
 
@@ -553,4 +603,5 @@ if __name__ == "__main__":
     #test_fortran_frontend_modulo_integer()
     #test_fortran_frontend_floor()
     #test_fortran_frontend_scale()
-    test_fortran_frontend_exponent()
+    #test_fortran_frontend_exponent()
+    test_fortran_frontend_int()
