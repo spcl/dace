@@ -155,6 +155,160 @@ def test_fortran_frontend_exp():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+def test_fortran_frontend_log():
+    test_string = """
+                    PROGRAM intrinsic_math_test_log
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+
+                    res(1) = LOG(d(1))
+                    res(2) = LOG(d(2))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2.71
+    d[1] = 4.5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.log(d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
+def test_fortran_frontend_log():
+    test_string = """
+                    PROGRAM intrinsic_math_test_log
+                    implicit none
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+
+                    res(1) = LOG(d(1))
+                    res(2) = LOG(d(2))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2.71
+    d[1] = 4.5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.log(d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
+def test_fortran_frontend_mod_float():
+    test_string = """
+                    PROGRAM intrinsic_math_test_mod
+                    implicit none
+                    double precision, dimension(8) :: d
+                    double precision, dimension(4) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    double precision, dimension(8) :: d
+                    double precision, dimension(4) :: res
+
+                    res(1) = MOD(d(1), d(2))
+                    res(2) = MOD(d(3), d(4))
+                    res(3) = MOD(d(5), d(6))
+                    res(4) = MOD(d(7), d(8))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 8
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 17
+    d[1] = 3
+    d[2] = -17
+    d[3] = 3
+    d[4] = 17
+    d[5] = -3
+    d[6] = -17
+    d[7] = -3
+    res = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+
+    assert res[0] == 2.0
+    assert res[1] == -2.0
+    assert res[2] == 2.0
+    assert res[3] == -2.0
+
+def test_fortran_frontend_mod_integer():
+    test_string = """
+                    PROGRAM intrinsic_math_test_mod
+                    implicit none
+                    integer, dimension(8) :: d
+                    integer, dimension(4) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    integer, dimension(8) :: d
+                    integer, dimension(4) :: res
+
+                    res(1) = MOD(d(1), d(2))
+                    res(2) = MOD(d(3), d(4))
+                    res(3) = MOD(d(5), d(6))
+                    res(4) = MOD(d(7), d(8))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 8
+    d = np.full([size], 42, order="F", dtype=np.int32)
+    d[0] = 17
+    d[1] = 3
+    d[2] = -17
+    d[3] = 3
+    d[4] = 17
+    d[5] = -3
+    d[6] = -17
+    d[7] = -3
+    res = np.full([4], 42, order="F", dtype=np.int32)
+    sdfg(d=d, res=res)
+    print(res)
+
+    assert res[0] == 2
+    assert res[1] == -2
+    assert res[2] == 2
+    assert res[3] == -2
 
 if __name__ == "__main__":
 
@@ -162,3 +316,6 @@ if __name__ == "__main__":
     test_fortran_frontend_sqrt()
     test_fortran_frontend_abs()
     test_fortran_frontend_exp()
+    test_fortran_frontend_log()
+    test_fortran_frontend_mod_float()
+    test_fortran_frontend_mod_integer()

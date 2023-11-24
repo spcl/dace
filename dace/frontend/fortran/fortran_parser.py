@@ -1127,7 +1127,8 @@ def create_sdfg_from_string(
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in own_ast.fortran_intrinsics().transformations():
-        program = transformation(program).visit(program)
+        transformation.initialize(program)
+        program = transformation.visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
