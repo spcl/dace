@@ -542,15 +542,22 @@ def test_fortran_frontend_int():
                     PROGRAM intrinsic_math_test_int
                     implicit none
                     real, dimension(4) :: d
+                    real, dimension(8) :: d2
                     integer, dimension(4) :: res
                     real, dimension(4) :: res2
-                    CALL intrinsic_math_test_function(d, res, res2)
+                    integer, dimension(8) :: res3
+                    real, dimension(8) :: res4
+                    CALL intrinsic_math_test_function(d, d2, res, res2, res3, res4)
                     end
 
-                    SUBROUTINE intrinsic_math_test_function(d, res, res2)
+                    SUBROUTINE intrinsic_math_test_function(d, d2, res, res2, res3, res4)
+                    integer :: n
                     real, dimension(4) :: d
+                    real, dimension(8) :: d2
                     integer, dimension(4) :: res
                     real, dimension(4) :: res2
+                    integer, dimension(8) :: res3
+                    real, dimension(8) :: res4
 
                     res(1) = INT(d(1))
                     res(2) = INT(d(2))
@@ -562,6 +569,16 @@ def test_fortran_frontend_int():
                     res2(3) = AINT(d(3))
                     ! KIND parameter is ignored
                     res2(4) = AINT(d(4), 4)
+
+                    DO n=1,8
+                        ! KIND parameter is ignored
+                        res3(n) = NINT(d2(n), 4)
+                    END DO
+
+                    DO n=1,8
+                        ! KIND parameter is ignored
+                        res4(n) = ANINT(d2(n), 4)
+                    END DO
 
                     END SUBROUTINE intrinsic_math_test_function
                     """
@@ -576,32 +593,41 @@ def test_fortran_frontend_int():
     d[1] = 1.5
     d[2] = 42.5
     d[3] = -42.5
-    res = np.full([5], 42, order="F", dtype=np.int32)
-    res2 = np.full([5], 42, order="F", dtype=np.float32)
-    sdfg(d=d, res=res, res2=res2)
+    d2 = np.full([size*2], 42, order="F", dtype=np.float32)
+    d2[0] = 3.49
+    d2[1] = 3.5
+    d2[2] = 3.51
+    d2[3] = 4
+    d2[4] = -3.49
+    d2[5] = -3.5
+    d2[6] = -3.51
+    d2[7] = -4
+    res = np.full([4], 42, order="F", dtype=np.int32)
+    res2 = np.full([4], 42, order="F", dtype=np.float32)
+    res3 = np.full([8], 42, order="F", dtype=np.int32)
+    res4 = np.full([8], 42, order="F", dtype=np.float32)
+    sdfg(d=d, d2=d2, res=res, res2=res2, res3=res3, res4=res4)
 
-    assert res[0] == 1
-    assert res[1] == 1
-    assert res[2] == 42
-    assert res[3] == -42
+    assert np.array_equal(res, [1, 1, 42, -42])
 
-    assert res2[0] == 1.
-    assert res2[1] == 1.
-    assert res2[2] == 42.
-    assert res2[3] == -42.
+    assert np.array_equal(res2, [1., 1., 42., -42.])
+
+    assert np.array_equal(res3, [3, 4, 4, 4, -3, -4, -4, -4])
+
+    assert np.array_equal(res4, [3., 4., 4., 4., -3., -4., -4., -4.])
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_min_max()
-    #test_fortran_frontend_sqrt()
-    #test_fortran_frontend_abs()
-    #test_fortran_frontend_exp()
-    #test_fortran_frontend_log()
-    #test_fortran_frontend_mod_float()
-    #test_fortran_frontend_mod_integer()
-    #test_fortran_frontend_modulo_float()
-    #test_fortran_frontend_modulo_integer()
-    #test_fortran_frontend_floor()
-    #test_fortran_frontend_scale()
-    #test_fortran_frontend_exponent()
+    test_fortran_frontend_min_max()
+    test_fortran_frontend_sqrt()
+    test_fortran_frontend_abs()
+    test_fortran_frontend_exp()
+    test_fortran_frontend_log()
+    test_fortran_frontend_mod_float()
+    test_fortran_frontend_mod_integer()
+    test_fortran_frontend_modulo_float()
+    test_fortran_frontend_modulo_integer()
+    test_fortran_frontend_floor()
+    test_fortran_frontend_scale()
+    test_fortran_frontend_exponent()
     test_fortran_frontend_int()

@@ -974,7 +974,16 @@ class MathFunctions(IntrinsicTransformation):
         # However, to map into C's trunc, we need to drop it.
         if len(arg.args) > 1:
             del arg.args[1]
-        arg.name = ast_internal_classes.Name_Node(name="trunc")
+
+        fname = arg.name.name.split('__dace_')[1]
+        if fname in "AINT":
+            arg.name = ast_internal_classes.Name_Node(name="trunc")
+        elif fname == "NINT":
+            arg.name = ast_internal_classes.Name_Node(name="round_to_int")
+        elif fname == "ANINT":
+            arg.name = ast_internal_classes.Name_Node(name="round")
+        else:
+            raise NotImplementedError()
 
         return arg
 
@@ -1007,6 +1016,8 @@ class MathFunctions(IntrinsicTransformation):
         "EXPONENT": MathTransformation("frexp", "INTEGER"),
         "INT": MathTransformation("int", "INTEGER"),
         "AINT": MathReplacement("trunc", generate_aint, "FIRST_ARG"),
+        "NINT": MathReplacement("round_to_int", generate_aint, "INTEGER"),
+        "ANINT": MathReplacement("round", generate_aint, "FIRST_ARG"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
