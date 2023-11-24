@@ -1171,14 +1171,20 @@ def recursive_ast_improver(ast,
     dfl = ast_utils.DefModuleLister()
     dfl.get_defined_modules(ast)
     defined_modules = dfl.list_of_modules
+    main_program_mode=False
     if len(defined_modules) != 1:
         print("Defined modules: ", defined_modules)
         print("Assumption failed: Only one module per file")
+        if len(defined_modules)==0 and ast.__class__.__name__ == "Program":
+            main_program_mode=True
     ufl = ast_utils.UseModuleLister()
     ufl.get_used_modules(ast)
     objects_in_modules = ufl.objects_in_use
     used_modules = ufl.list_of_modules
-    parent_module = defined_modules[0]
+    if not main_program_mode:
+        parent_module = defined_modules[0]
+    else:
+        parent_module = ast.children[0].children[0].children[1].string
     for i in defined_modules:
         if i not in exclude_list:
             exclude_list.append(i)
@@ -1204,11 +1210,13 @@ def recursive_ast_improver(ast,
         name=i
         if i=="mo_restart_nml_and_att": 
             name="mo_restart_nmls_and_atts"
+        if i=="yomhook":
+            name="yomhook_dummy"    
         for j in source_list:
             if name in j:
                 fname = j.split("/")
                 fname = fname[len(fname) - 1]
-                if fname == name + ".f90":
+                if fname == name + ".f90" or fname == name + ".F90":
                     found = True
                     next_file = j
                     break
