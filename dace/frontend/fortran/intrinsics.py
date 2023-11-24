@@ -939,6 +939,33 @@ class MathFunctions(IntrinsicTransformation):
 
     MathTransformation = namedtuple("MathTransformation", "function return_type")
 
+    def generate_scale(arg: ast_internal_classes.Call_Expr_Node):
+
+        # SCALE(X, I) becomes: X * pow(RADIX(X), I)
+        # In our case, RADIX(X) is always 2
+        line = arg.line_number
+        x = arg.args[0]
+        i = arg.args[1]
+        const_two = ast_internal_classes.Int_Literal_Node(value="2")
+
+        # I and RADIX(X) are both integers
+        rval = ast_internal_classes.Call_Expr_Node(
+            name=ast_internal_classes.Name_Node(name="pow"),
+            type="INTEGER",
+            args=[const_two, i],
+            line_number=line
+        )
+
+        mult = ast_internal_classes.BinOp_Node(
+            op="*",
+            lval=x,
+            rval=rval,
+            line_number=line
+        )
+
+        # pack it into parentheses, just to be sure
+        return ast_internal_classes.Parenthesis_Expr_Node(expr=mult)
+
     INTRINSIC_TO_DACE = {
         "MIN": MathTransformation("min", "FIRST_ARG"),
         "MAX": MathTransformation("max", "FIRST_ARG"),
@@ -964,6 +991,7 @@ class MathFunctions(IntrinsicTransformation):
             "REAL": MathTransformation("floor", "INTEGER"),
             "DOUBLE": MathTransformation("floor", "INTEGER")
         },
+        "SCALE": MathTransformation(generate_scale, "FIRST_ARG"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
@@ -985,113 +1013,180 @@ class MathFunctions(IntrinsicTransformation):
                 return 'REAL'
             elif isinstance(arg, ast_internal_classes.Int_Literal_Node):
                 return 'INTEGER'
+            elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
+                return arg.type
             else:
                 input_type = self.scope_vars.get_var(node.parent, arg.name.name)
                 return input_type.type
 
-        def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-            newbody = []
+        def replace_call(self, old_call: ast_internal_classes.Call_Expr_Node, new_call: ast_internal_classes.FNode):
 
-            for child in node.execution:
-                lister = LoopBasedReplacementVisitor(f'__dace_{self.func_name()}')
-                lister.visit(child)
-                res = lister.nodes
+            parent = old_call.parent
 
-                #newbody.append(self.visit(child))
-                if res is None or len(res) == 0:
-                    newbody.append(self.visit(child))
-                    continue
+            # We won't need it if the CallExtractor will properly support nested function calls.
+            # Then, all function calls should be a binary op: val = func()
+            if isinstance(parent, ast_internal_classes.BinOp_Node):
+                if parent.lval == old_call:
+                    parent.lval = new_call
+                else:
+                    parent.rval = new_call
+            elif isinstance(parent, ast_internal_classes.UnOp_Node):
+                parent.lval = new_call
+            elif isinstance(parent, ast_internal_classes.Parenthesis_Expr_Node):
+                parent.expr = new_call
+            elif isinstance(parent, ast_internal_classes.Call_Expr_Node):
+                for idx, arg in enumerate(parent.args):
+                    if arg == old_call:
+                        parent.args[idx] = new_call
+                        break
+            else:
+                raise NotImplementedError()
 
-                for call in res:
+        def visit_Call_Expr_Node(self, node: ast_internal_classes.Execution_Part_Node):
 
-                    return_type = None
-                    input_type = None
-                    if isinstance(call, ast_internal_classes.BinOp_Node):
-                        input_type = self.func_type(call.rval)
-                    else:
-                        input_type = self.func_type(call)
+            if node.name.name != f'__dace_{self.func_name()}':
+                return node
+
+            # Visit all children before we expand this call.
+            # We need that to properly get the type.
+            for arg in node.args:
+                self.visit(arg)
+
+            call = node
+
+            return_type = None
+            input_type = None
+            if isinstance(call, ast_internal_classes.BinOp_Node):
+                input_type = self.func_type(call.rval)
+            else:
+                input_type = self.func_type(call)
 
 
-                    replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
-                    if isinstance(replacement_rule, dict):
-                        replacement_rule = replacement_rule[input_type]
-                    if replacement_rule.return_type == "FIRST_ARG":
-                        return_type = input_type
-                    else:
-                        return_type = replacement_rule.return_type
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
+            if isinstance(replacement_rule, dict):
+                replacement_rule = replacement_rule[input_type]
+            if replacement_rule.return_type == "FIRST_ARG":
+                return_type = input_type
+            else:
+                return_type = replacement_rule.return_type
+
+            if isinstance(replacement_rule.function, str):
+                call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+                call.type = return_type
+
+                return call
+            else:
+                new_call = replacement_rule.function(call)
+                return new_call
+
+        #def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        #    newbody = []
+
+        #    for child in node.execution:
+        #        lister = LoopBasedReplacementVisitor(f'__dace_{self.func_name()}')
+        #        lister.visit(child)
+        #        res = lister.nodes
+
+        #        #newbody.append(self.visit(child))
+        #        if res is None or len(res) == 0:
+        #            newbody.append(self.visit(child))
+        #            continue
+
+        #        for call in res:
+
+        #            return_type = None
+        #            input_type = None
+        #            if isinstance(call, ast_internal_classes.BinOp_Node):
+        #                input_type = self.func_type(call.rval)
+        #            else:
+        #                input_type = self.func_type(call)
 
 
-                    if isinstance(call, ast_internal_classes.BinOp_Node):
+        #            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
+        #            if isinstance(replacement_rule, dict):
+        #                replacement_rule = replacement_rule[input_type]
+        #            if replacement_rule.return_type == "FIRST_ARG":
+        #                return_type = input_type
+        #            else:
+        #                return_type = replacement_rule.return_type
 
-                        call.rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-                        call.rval.type = return_type
-                        #call.rval = ast_internal_classes.Call_Expr_Node(type=return_type,
-                        #                                                name=ast_internal_classes.Name_Node(name=replacement_rule.function),
-                        #                                                args=new_args,
-                        #                                                line_number=call.rval.line_number)
-                        var = call.lval
-                        name = None
-                        if isinstance(var.name, ast_internal_classes.Name_Node):
-                            name = var.name.name
-                        else:
-                            name = var.name
-                        var_decl = self.scope_vars.get_var(var.parent, name)
-                        var.type = input_type
-                        var_decl.type = input_type
-                    else:
 
-                        call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-                        call.type = return_type
+        #            if isinstance(call, ast_internal_classes.BinOp_Node):
 
-                newbody.append(child)
+        #                if isinstance(replacement_rule.function, str):
+        #                    call.rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+        #                else:
+        #                    call.rval = replacement_rule.function(call.rval)
+        #                call.rval.type = return_type
 
-                #print(res)
-                #if len(res) > 1:
-                #    raise NotImplementedError()
+        #                # replace types of return variable
+        #                var = call.lval
+        #                name = None
+        #                if isinstance(var.name, ast_internal_classes.Name_Node):
+        #                    name = var.name.name
+        #                else:
+        #                    name = var.name
+        #                var_decl = self.scope_vars.get_var(var.parent, name)
+        #                var.type = input_type
+        #                var_decl.type = input_type
+        #            else:
 
-                #print('VISIT')
-                ## check the type of the function
-                #input_type = self.func_type(res[0].rval)
-                #new_args = []
-                #for i in res[0].rval.args:
-                #    print('child', i)
-                #    new_args.append(self.visit(i))
+        #                if isinstance(replacement_rule.function, str):
+        #                    call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+        #                else:
+        #                    new_call = replacement_rule.function(call)
+        #                    self.replace_call(call, new_call)
+        #                call.type = return_type
 
-                #return_type = None
+        #        newbody.append(child)
 
-                #replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
-                #if isinstance(replacement_rule, dict):
-                #    replacement_rule = replacement_rule[input_type]
+        #        #print(res)
+        #        #if len(res) > 1:
+        #        #    raise NotImplementedError()
 
-                #if replacement_rule.return_type == "FIRST_ARG":
-                #    return_type = input_type
-                #else:
-                #    return_type = replacement_rule.return_type
+        #        #print('VISIT')
+        #        ## check the type of the function
+        #        #input_type = self.func_type(res[0].rval)
+        #        #new_args = []
+        #        #for i in res[0].rval.args:
+        #        #    print('child', i)
+        #        #    new_args.append(self.visit(i))
 
-                #new_call = ast_internal_classes.Call_Expr_Node(type=return_type,
-                #                                                name=ast_internal_classes.Name_Node(name=replacement_rule.function),
-                #                                                args=new_args,
-                #                                                line_number=res[0].rval.line_number)
+        #        #return_type = None
 
-                ## replace function name
-                ##res[0].rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+        #        #replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
+        #        #if isinstance(replacement_rule, dict):
+        #        #    replacement_rule = replacement_rule[input_type]
 
-                #var = res[0].lval
-                #print('type', input_type)
-                #name = None
-                #if isinstance(var.name, ast_internal_classes.Name_Node):
-                #    name = var.name.name
-                #else:
-                #    name = var.name
-                #var_decl = self.scope_vars.get_var(var.parent, name)
-                #var.type = input_type
-                #var_decl.type = input_type
+        #        #if replacement_rule.return_type == "FIRST_ARG":
+        #        #    return_type = input_type
+        #        #else:
+        #        #    return_type = replacement_rule.return_type
 
-                #res[0].rval = new_call
+        #        #new_call = ast_internal_classes.Call_Expr_Node(type=return_type,
+        #        #                                                name=ast_internal_classes.Name_Node(name=replacement_rule.function),
+        #        #                                                args=new_args,
+        #        #                                                line_number=res[0].rval.line_number)
 
-                #newbody.append(child)
+        #        ## replace function name
+        #        ##res[0].rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
 
-            return ast_internal_classes.Execution_Part_Node(execution=newbody)
+        #        #var = res[0].lval
+        #        #print('type', input_type)
+        #        #name = None
+        #        #if isinstance(var.name, ast_internal_classes.Name_Node):
+        #        #    name = var.name.name
+        #        #else:
+        #        #    name = var.name
+        #        #var_decl = self.scope_vars.get_var(var.parent, name)
+        #        #var.type = input_type
+        #        #var_decl.type = input_type
+
+        #        #res[0].rval = new_call
+
+        #        #newbody.append(child)
+
+        #    return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
     @staticmethod
     def dace_functions():
@@ -1222,6 +1317,6 @@ class FortranIntrinsics:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
             return ast_internal_classes.Call_Expr_Node(
-                name=name, type="INTEGER",
+                name=name, type="VOID",
                 args=args.args, line_number=line
             )
