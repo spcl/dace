@@ -992,6 +992,7 @@ class MathFunctions(IntrinsicTransformation):
             "DOUBLE": MathTransformation("floor", "INTEGER")
         },
         "SCALE": MathTransformation(generate_scale, "FIRST_ARG"),
+        "EXPONENT": MathTransformation("frexp", "INTEGER"),
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
