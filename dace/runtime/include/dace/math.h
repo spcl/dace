@@ -67,6 +67,25 @@ static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
     return value - static_cast<int>(value / modulus) * modulus;
 }
 
+// Fortran implementation of MODULO
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Modulo(const T& value, const T& modulus) {
+    // Fortran implementation for integers - find R such that value = Q * modulus + R
+    // However, R must be in [0, modulus)
+    // To achieve that, we need to cast the division to floats.
+    // Example: -17, 3 must produce 1 and not -2.
+    // If we don't use cast, the floor is called on -5, producing wrong value.
+    // Instead, we need to have floor(-5.6... ) to ensure it produces -6.
+    // Similarly, 17, -3 must produce -1 and not 2.
+    // This means that the default solution works if value and modulus have the same sign.
+    return value - floor(static_cast<float>(value) / modulus) * modulus;
+}
+
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus) {
+    return value - floor(value / modulus) * modulus;
+}
+
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
     return (numerator + denominator - 1) / denominator;

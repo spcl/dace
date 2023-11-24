@@ -227,44 +227,52 @@ def test_fortran_frontend_mod_float():
     test_string = """
                     PROGRAM intrinsic_math_test_mod
                     implicit none
-                    double precision, dimension(8) :: d
-                    double precision, dimension(4) :: res
+                    double precision, dimension(12) :: d
+                    double precision, dimension(6) :: res
                     CALL intrinsic_math_test_function(d, res)
                     end
 
                     SUBROUTINE intrinsic_math_test_function(d, res)
-                    double precision, dimension(8) :: d
-                    double precision, dimension(4) :: res
+                    double precision, dimension(12) :: d
+                    double precision, dimension(6) :: res
 
                     res(1) = MOD(d(1), d(2))
                     res(2) = MOD(d(3), d(4))
                     res(3) = MOD(d(5), d(6))
                     res(4) = MOD(d(7), d(8))
+                    res(5) = MOD(d(9), d(10))
+                    res(6) = MOD(d(11), d(12))
 
                     END SUBROUTINE intrinsic_math_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_mod", False)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    size = 8
+    size = 12
     d = np.full([size], 42, order="F", dtype=np.float64)
-    d[0] = 17
-    d[1] = 3
-    d[2] = -17
-    d[3] = 3
-    d[4] = 17
-    d[5] = -3
-    d[6] = -17
-    d[7] = -3
-    res = np.full([4], 42, order="F", dtype=np.float64)
+    d[0] = 17.
+    d[1] = 3.
+    d[2] = -17.
+    d[3] = 3.
+    d[4] = 17.
+    d[5] = -3.
+    d[6] = -17.
+    d[7] = -3.
+    d[8] = 17.5
+    d[9] = 5.5
+    d[10] = -17.5
+    d[11] = 5.5
+    res = np.full([6], 42, order="F", dtype=np.float64)
     sdfg(d=d, res=res)
 
     assert res[0] == 2.0
     assert res[1] == -2.0
     assert res[2] == 2.0
     assert res[3] == -2.0
+    assert res[4] == 1
+    assert res[5] == -1
 
 def test_fortran_frontend_mod_integer():
     test_string = """
@@ -287,11 +295,11 @@ def test_fortran_frontend_mod_integer():
                     END SUBROUTINE intrinsic_math_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_exp", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
-    size = 8
+    size = 12
     d = np.full([size], 42, order="F", dtype=np.int32)
     d[0] = 17
     d[1] = 3
@@ -303,11 +311,103 @@ def test_fortran_frontend_mod_integer():
     d[7] = -3
     res = np.full([4], 42, order="F", dtype=np.int32)
     sdfg(d=d, res=res)
-    print(res)
-
     assert res[0] == 2
     assert res[1] == -2
     assert res[2] == 2
+    assert res[3] == -2
+
+def test_fortran_frontend_modulo_float():
+    test_string = """
+                    PROGRAM intrinsic_math_test_modulo
+                    implicit none
+                    double precision, dimension(12) :: d
+                    double precision, dimension(6) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    double precision, dimension(12) :: d
+                    double precision, dimension(6) :: res
+
+                    res(1) = MODULO(d(1), d(2))
+                    res(2) = MODULO(d(3), d(4))
+                    res(3) = MODULO(d(5), d(6))
+                    res(4) = MODULO(d(7), d(8))
+                    res(5) = MODULO(d(9), d(10))
+                    res(6) = MODULO(d(11), d(12))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 12
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 17.
+    d[1] = 3.
+    d[2] = -17.
+    d[3] = 3.
+    d[4] = 17.
+    d[5] = -3.
+    d[6] = -17.
+    d[7] = -3.
+    d[8] = 17.5
+    d[9] = 5.5
+    d[10] = -17.5
+    d[11] = 5.5
+    res = np.full([6], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+
+    assert res[0] == 2.0
+    assert res[1] == 1.0
+    assert res[2] == -1.0
+    assert res[3] == -2.0
+    assert res[4] == 1.0
+    assert res[5] == 4.5
+
+def test_fortran_frontend_modulo_integer():
+    test_string = """
+                    PROGRAM intrinsic_math_test_modulo
+                    implicit none
+                    integer, dimension(8) :: d
+                    integer, dimension(4) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    integer, dimension(8) :: d
+                    integer, dimension(4) :: res
+
+                    res(1) = MODULO(d(1), d(2))
+                    res(2) = MODULO(d(3), d(4))
+                    res(3) = MODULO(d(5), d(6))
+                    res(4) = MODULO(d(7), d(8))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 12
+    d = np.full([size], 42, order="F", dtype=np.int32)
+    d[0] = 17
+    d[1] = 3
+    d[2] = -17
+    d[3] = 3
+    d[4] = 17
+    d[5] = -3
+    d[6] = -17
+    d[7] = -3
+    res = np.full([4], 42, order="F", dtype=np.int32)
+    sdfg(d=d, res=res)
+
+    assert res[0] == 2
+    assert res[1] == 1
+    assert res[2] == -1
     assert res[3] == -2
 
 if __name__ == "__main__":
@@ -319,3 +419,5 @@ if __name__ == "__main__":
     test_fortran_frontend_log()
     test_fortran_frontend_mod_float()
     test_fortran_frontend_mod_integer()
+    test_fortran_frontend_modulo_float()
+    test_fortran_frontend_modulo_integer()

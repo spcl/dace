@@ -100,15 +100,10 @@ class LoopBasedReplacementVisitor(NodeVisitor):
         self._func_name = func_name
         self.nodes: List[ast_internal_classes.FNode] = []
         self.calls: List[ast_internal_classes.FNode] = []
-        #self.nodes = set()
 
     #def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
 
-    #    print(node.lval, node.rval)
-    #    if isinstance(node.lval, ast_internal_classes.Array_Subscript_Node):
-    #        print(node.lval)
     #    if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
-    #        print(node.rval.name.name, type(node.rval))
     #        if node.rval.name.name == self._func_name:
     #            self.nodes.append(node)
 
@@ -134,9 +129,6 @@ class LoopBasedReplacementVisitor(NodeVisitor):
         if node.name.name == self._func_name:
             if node not in self.calls:
 
-                #parent = node.parent
-                #if not isinstance(parent, ast_internal_classes.BinOp_Node):
-                #    raise NotImplementedError()
                 self.nodes.append(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -962,6 +954,11 @@ class MathFunctions(IntrinsicTransformation):
             "INTEGER": MathTransformation("Mod", "INTEGER"),
             "REAL": MathTransformation("Mod_float", "REAL"),
             "DOUBLE": MathTransformation("Mod_float", "DOUBLE")
+        },
+        "MODULO": {
+            "INTEGER": MathTransformation("Modulo", "INTEGER"),
+            "REAL": MathTransformation("Modulo_float", "REAL"),
+            "DOUBLE": MathTransformation("Modulo_float", "DOUBLE")
         },
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
