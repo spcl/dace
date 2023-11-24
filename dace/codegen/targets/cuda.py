@@ -1115,11 +1115,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 self._scope_has_collaborative_copy = True
                 accum = ''
                 custom_reduction = []
-                if memlet.wcr is None:
-                    if dims == 1:
-                        # SharedToGlobal1D is a struct that provides functions for copy and reduction
-                        accum = '::Copy'
-                else:
+                if memlet.wcr is not None:
                     redtype = operations.detect_reduction_type(memlet.wcr)
                     reduction_tmpl = ''
                     # Special call for detected reduction types
@@ -1133,7 +1129,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
                     # reduction not yet supported by template for dynamic case
-                    if memlet.wcr is not None:
+                    if accum or custom_reduction:
                         raise NotImplementedError(f'reduction not supported by template {funcname}')
                     callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>({args});').format(
                         func=funcname,
@@ -1142,7 +1138,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
                         args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] +
                                        _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
-                elif dims == 1:
+                elif funcname == 'dace::SharedToGlobal1D':
+                    # special case: use a new template struct that provides functions for copy and reduction
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, {is_async}>{accum}({args});').format(
                              func=funcname,
@@ -1150,12 +1147,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
-                             accum=accum,
+                             accum=accum or '::Copy',
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + _topy(dst_strides) + custom_reduction)), sdfg,
                         state_id, [src_node, dst_node])
                 else:
                     # reduction not yet supported by template for 2D and 3D case
-                    if memlet.wcr is not None:
+                    if accum or custom_reduction:
                         raise NotImplementedError(f'reduction not supported by template {funcname}')
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +

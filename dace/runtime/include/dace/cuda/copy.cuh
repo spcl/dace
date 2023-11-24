@@ -689,6 +689,7 @@ namespace dace
                 ptr, 1, src_ystride, src_xstride, smem, 1, DST_YSTRIDE, DST_XSTRIDE, 1, COPY_YLEN, COPY_XLEN);
     }
 
+
     /*
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int COPY_XLEN, int DST_XSTRIDE,
@@ -744,7 +745,7 @@ namespace dace
         {
            if (!ASYNC)
                 __syncthreads();
-            
+
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
