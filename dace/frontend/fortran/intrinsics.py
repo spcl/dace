@@ -960,6 +960,10 @@ class MathFunctions(IntrinsicTransformation):
             "REAL": MathTransformation("Modulo_float", "REAL"),
             "DOUBLE": MathTransformation("Modulo_float", "DOUBLE")
         },
+        "FLOOR": {
+            "REAL": MathTransformation("floor", "INTEGER"),
+            "DOUBLE": MathTransformation("floor", "INTEGER")
+        },
         "COSH": MathTransformation("cosh", "FIRST_ARG"),
         "TANH": MathTransformation("tanh", "FIRST_ARG"),
         "ATAN2": MathTransformation("atan2", "FIRST_ARG")
