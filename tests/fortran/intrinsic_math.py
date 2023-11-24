@@ -500,16 +500,57 @@ def test_fortran_frontend_scale():
     assert res[3] == 65280.
     assert res[4] == 11141120.
 
+def test_fortran_frontend_exponent():
+    test_string = """
+                    PROGRAM intrinsic_math_test_exponent
+                    implicit none
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: res
+
+                    res(1) = EXPONENT(d(1))
+                    res(2) = EXPONENT(d(2))
+                    res(3) = EXPONENT(d(3))
+                    res(4) = EXPONENT(d(4))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 4
+    d = np.full([size], 42, order="F", dtype=np.float32)
+    d[0] = 0.0
+    d[1] = 1.0
+    d[2] = 13.0
+    d[3] = 390.0
+    res = np.full([5], 42, order="F", dtype=np.int32)
+    sdfg(d=d, res=res)
+
+    assert res[0] == 0
+    assert res[1] == 1
+    assert res[2] == 4
+    assert res[3] == 9
+
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_min_max()
-    test_fortran_frontend_sqrt()
-    test_fortran_frontend_abs()
-    test_fortran_frontend_exp()
-    test_fortran_frontend_log()
-    test_fortran_frontend_mod_float()
-    test_fortran_frontend_mod_integer()
-    test_fortran_frontend_modulo_float()
-    test_fortran_frontend_modulo_integer()
-    test_fortran_frontend_floor()
-    test_fortran_frontend_scale()
+    #test_fortran_frontend_min_max()
+    #test_fortran_frontend_sqrt()
+    #test_fortran_frontend_abs()
+    #test_fortran_frontend_exp()
+    #test_fortran_frontend_log()
+    #test_fortran_frontend_mod_float()
+    #test_fortran_frontend_mod_integer()
+    #test_fortran_frontend_modulo_float()
+    #test_fortran_frontend_modulo_integer()
+    #test_fortran_frontend_floor()
+    #test_fortran_frontend_scale()
+    test_fortran_frontend_exponent()
