@@ -241,7 +241,7 @@ class CallExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "min", "max", "pow", "cbrt", "tanh", "atan2", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt", "tanh", "atan2", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:

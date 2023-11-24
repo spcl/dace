@@ -60,6 +60,12 @@ static DACE_CONSTEXPR DACE_HDFI T Mod(const T& value, const T2& modulus) {
     return value % modulus;
 }
 
+// Fortran implements MOD for floating-point values as well
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T Mod_float(const T& value, const T& modulus) {
+    return value - static_cast<int>(value / modulus) * modulus;
+}
+
 template <typename T, typename T2>
 static DACE_CONSTEXPR DACE_HDFI T int_ceil(const T& numerator, const T2& denominator) {
     return (numerator + denominator - 1) / denominator;
