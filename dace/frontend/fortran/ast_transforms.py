@@ -218,6 +218,8 @@ class CallExtractorNodeLister(NodeVisitor):
             if node.subroutine is True:
                 stop = True
 
+        # FIXME: the order here is wrong for nested function calls - we need first
+        # to expand the operands, then ourselves
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
                 "malloc", "pow", "cbrt", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
@@ -251,6 +253,11 @@ class CallExtractor(NodeTransformer):
         else:
             self.count = self.count + 1
         tmp = self.count
+        # FIXME: the count is wrong for nested function calls
+        # we need to also create counters for operands
+        #
+        # FIXME: we need to recursively process all operands
+        # and keep applying transformation until there are no more changes
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
