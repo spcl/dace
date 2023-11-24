@@ -88,7 +88,7 @@ static DACE_CONSTEXPR DACE_HDFI T Modulo_float(const T& value, const T& modulus)
 // Implement to support a match wtih Fortran's intrinsic EXPONENT
 template<typename T, std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
 static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
-  int exponent;
+  int exponent = 0;
   std::frexp(a, &exponent);
   return exponent;
 }
