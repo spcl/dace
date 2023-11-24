@@ -449,15 +449,67 @@ def test_fortran_frontend_floor():
     assert res[2] == -4
     assert res[3] == -64
 
+def test_fortran_frontend_scale():
+    test_string = """
+                    PROGRAM intrinsic_math_test_scale
+                    implicit none
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: d2
+                    real, dimension(5) :: res
+                    CALL intrinsic_math_test_function(d, d2, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, d2, res)
+                    real, dimension(4) :: d
+                    integer, dimension(4) :: d2
+                    real, dimension(5) :: res
+
+                    res(1) = SCALE(d(1), d2(1))
+                    res(2) = SCALE(d(2), d2(2))
+                    res(3) = SCALE(d(3), d2(3))
+                    ! Verifies that we properly replace call even inside a complex expression
+                    res(4) = (SCALE(d(4), d2(4))) + (SCALE(d(4), d2(4))*2)
+                    res(5) = (SCALE(SCALE(d(4), d2(4)), d2(4)))
+
+                    END SUBROUTINE intrinsic_math_test_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_modulo", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 4
+    d = np.full([size], 42, order="F", dtype=np.float32)
+    d[0] = 178.1387e-4
+    d[1] = 5.5
+    d[2] = 5.5
+    d[3] = 42.5
+    d2 = np.full([size], 42, order="F", dtype=np.int32)
+    d2[0] = 5
+    d2[1] = 5
+    d2[2] = 7
+    d2[3] = 9
+    res = np.full([5], 42, order="F", dtype=np.float32)
+    sdfg(d=d, d2=d2, res=res)
+    print(d)
+    print(res)
+
+    assert abs(res[0] - 0.570043862) < 10**-7
+    assert res[1] == 176.
+    assert res[2] == 704.
+    assert res[3] == 65280.
+    assert res[4] == 11141120.
+
 if __name__ == "__main__":
 
-    #test_fortran_frontend_min_max()
-    #test_fortran_frontend_sqrt()
-    #test_fortran_frontend_abs()
-    #test_fortran_frontend_exp()
-    #test_fortran_frontend_log()
-    #test_fortran_frontend_mod_float()
-    #test_fortran_frontend_mod_integer()
-    #test_fortran_frontend_modulo_float()
-    #test_fortran_frontend_modulo_integer()
+    test_fortran_frontend_min_max()
+    test_fortran_frontend_sqrt()
+    test_fortran_frontend_abs()
+    test_fortran_frontend_exp()
+    test_fortran_frontend_log()
+    test_fortran_frontend_mod_float()
+    test_fortran_frontend_mod_integer()
+    test_fortran_frontend_modulo_float()
+    test_fortran_frontend_modulo_integer()
     test_fortran_frontend_floor()
+    test_fortran_frontend_scale()
