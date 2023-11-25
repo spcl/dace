@@ -207,7 +207,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                                                                                      re.escape(inconn))
                             match = re.match(func_lhs, cstr)
                             if match is None:
-                                inconns = list(self.tasklet.in_connectors)
+                                inconns = list(tasklet.in_connectors)
                                 if len(inconns) != 2:
                                     continue
 
