@@ -1522,14 +1522,15 @@ class MPIResolver(ast.NodeTransformer):
         from mpi4py import MPI
         self.globals = globals
         self.MPI = MPI
+        self.parents = {}
         self.parent = None
     
     def visit(self, node):
-        node.parent = self.parent
+        self.parents[node] = self.parent
         self.parent = node
         node = super().visit(node)
         if isinstance(node, ast.AST):
-            self.parent = node.parent
+            self.parent = self.parents[node]
         return node
     
     def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
@@ -1540,7 +1541,7 @@ class MPIResolver(ast.NodeTransformer):
                 lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
                 if obj is self.MPI.COMM_NULL:
                     newnode = ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
-                    newnode.parent = node.parent
+                    self.parents[newnode] = self.parents[node]
                     return newnode
         return node
     
@@ -1549,10 +1550,10 @@ class MPIResolver(ast.NodeTransformer):
         if isinstance(node.attr, str) and node.attr == 'Request':
             try:
                 val = astutils.evalnode(node, self.globals)
-                if val is self.MPI.Request and not isinstance(node.parent, ast.Attribute):
+                if val is self.MPI.Request and not isinstance(self.parents[node], ast.Attribute):
                     newnode = ast.copy_location(
                         ast.Attribute(value=ast.Name(id='dace', ctx=ast.Load), attr='MPI_Request'), node)
-                    newnode.parent = node.parent
+                    self.parents[newnode] = self.parents[node]
                     return newnode
             except SyntaxError:
                 pass
