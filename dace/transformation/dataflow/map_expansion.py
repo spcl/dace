@@ -79,6 +79,9 @@ class MapExpansion(pm.SingleStateTransformation):
             graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
         else:
             for edge in graph.in_edges(map_entry):
+                if not edge.dst_conn.startswith("IN_"):
+                    continue
+                
                 in_conn = edge.dst_conn
                 out_conn = "OUT_" + in_conn[3:]
                 if in_conn not in entries[-1].in_connectors:
