@@ -74,6 +74,12 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
             outedge = graph.edges_between(tasklet, mx)[0]
 
+            # If in map, only match if the subset is independent of any
+            # map indices (otherwise no conflict)
+            if not permissive and len(outedge.data.subset.free_symbols & set(me.map.params)) == len(
+                    me.map.params):
+                return False
+
         # Get relevant output connector
         outconn = outedge.src_conn
 
@@ -115,16 +121,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 if edge.data.subset != outedge.data.subset:
                     continue
 
-                # If in map, only match if the subset is independent of any
-                # map indices (otherwise no conflict)
-                if (expr_index == 1 and len(outedge.data.subset.free_symbols
-                                            & set(me.map.params)) == len(me.map.params)):
-                    continue
-
                 return True
-        else:
-            # Only Python/C++ tasklets supported
-            return False
 
         return False
 
@@ -192,11 +189,13 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             rhs: ast.BinOp = ast_node.value
             op = AugAssignToWCR._PYOP_MAP[type(rhs.op)]
             inconns = list(edge.dst_conn for edge in inedges)
-            for n in (rhs.left, rhs.right):
-                if isinstance(n, ast.Name) and n.id in inconns:
-                    inedge = inedges[inconns.index(n.id)]
-                else:
-                    new_rhs = n
+            if isinstance(rhs.left, ast.Name) and rhs.left.id in inconns:
+                inedge = inedges[inconns.index(rhs.left.id)]
+                new_rhs = rhs.right
+            else:
+                inedge = inedges[inconns.index(rhs.right.id)]
+                new_rhs = rhs.left
+
             new_node = ast.copy_location(ast.Assign(targets=[lhs], value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
 

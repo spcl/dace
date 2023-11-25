@@ -3,6 +3,7 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.transformation.dataflow import TaskletFusion, MapFusion
+from dace.transformation.optimizer import Optimizer
 import pytest
 
 datatype = dace.float32
@@ -195,6 +196,33 @@ def test_map_with_tasklets(language: str, with_data: bool):
     assert (np.allclose(C, ref))
 
 
+
+def test_intermediate_transients():
+    @dace.program
+    def sdfg_intermediate_transients(A: dace.float32[10], B: dace.float32[10]):
+        tmp = dace.define_local_scalar(dace.float32)
+        
+        # Use tmp twice to test removal of data
+        tmp = A[0] + 1
+        tmp = tmp * 2
+        B[0] = tmp
+
+
+    sdfg = sdfg_intermediate_transients.to_sdfg(simplify=True)
+    assert len([node for node in sdfg.start_state.data_nodes() if node.data == "tmp"]) == 2
+
+    xforms = Optimizer(sdfg=sdfg).get_pattern_matches(patterns=(TaskletFusion,))
+    applied = False
+    for xform in xforms:
+        if xform.data.data == "tmp":
+            xform.apply(sdfg.start_state, sdfg)
+            applied = True
+            break
+
+    assert applied
+    assert len([node for node in sdfg.start_state.data_nodes() if node.data == "tmp"]) == 1
+    assert "tmp" in sdfg.arrays
+
 if __name__ == '__main__':
     test_basic()
     test_same_name()
@@ -204,3 +232,4 @@ if __name__ == '__main__':
     test_map_with_tasklets(language='Python', with_data=True)
     test_map_with_tasklets(language='CPP', with_data=False)
     test_map_with_tasklets(language='CPP', with_data=True)
+    test_intermediate_transients()
