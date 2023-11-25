@@ -1,5 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.transformation.helpers import find_sdfg_control_flow
 
 
 def test_read_write_set():
@@ -42,7 +43,22 @@ def test_read_write_set_y_formation():
 
     assert 'B' not in state.read_and_write_sets()[0]
 
+def test_deepcopy_state():
+    N = dace.symbol('N')
+
+    @dace.program
+    def double_loop(arr: dace.float32[N]):
+        for i in range(N):
+            arr[i] *= 2
+        for i in range(N):
+            arr[i] *= 2
+
+    sdfg = double_loop.to_sdfg()
+    find_sdfg_control_flow(sdfg)
+    sdfg.validate()
+
 
 if __name__ == '__main__':
     test_read_write_set()
     test_read_write_set_y_formation()
+    test_deepcopy_state()
