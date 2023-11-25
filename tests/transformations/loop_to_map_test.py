@@ -757,3 +757,4 @@ if __name__ == "__main__":
     test_thread_local_transient_multi_state()
     test_nested_loops()
     test_internal_write()
+    test_specialize()
