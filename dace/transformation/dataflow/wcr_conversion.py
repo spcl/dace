@@ -205,13 +205,40 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 inconn = edge.dst_conn
                 match = re.match(r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' % (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
-                    # match = re.match(
-                    #     r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
-                    #     (re.escape(outconn), ops, re.escape(inconn)), cstr)
-                    # if match is None:
-                    continue
-                    # op = match.group(2)
-                    # expr = match.group(1)
+                    match = re.match(
+                            r'^\s*%s\s*=\s*\((.*)\)\s*(%s)\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn)), cstr)
+                    if match is None:
+                        func_rhs = r'^\s*%s\s*=\s*(%s)\((.*),\s*%s\s*\)\s*;$' % (re.escape(outconn), funcs,
+                                                                                 re.escape(inconn))
+                        match = re.match(func_rhs, cstr)
+                        if match is None:
+                            func_lhs = r'^\s*%s\s*=\s*(%s)\(\s*%s\s*,(.*)\)\s*;$' % (re.escape(outconn), funcs,
+                                                                                     re.escape(inconn))
+                            match = re.match(func_lhs, cstr)
+                            if match is None:
+                                inconns = list(tasklet.in_connectors)
+                                if len(inconns) != 2:
+                                    continue
+
+                                # Special case: a = <other> op b
+                                other_inconn = inconns[0] if inconns[0] != inconn else inconns[1]
+                                rhs2 = r'^\s*%s\s*=\s*(%s)\s*(%s)\s*%s;$' % (
+                                    re.escape(outconn), re.escape(other_inconn), ops, re.escape(inconn))
+                                match = re.match(rhs2, cstr)
+                                if match is None:
+                                    continue
+                                else:
+                                    op = match.group(2)
+                                    expr = match.group(1)
+                            else:
+                                op = match.group(1)
+                                expr = match.group(2)
+                        else:
+                            op = match.group(1)
+                            expr = match.group(2)
+                    else:
+                        op = match.group(2)
+                        expr = match.group(1)
                 else:
                     op = match.group(1)
                     expr = match.group(2)
