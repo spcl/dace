@@ -733,124 +733,143 @@ class TaskletTransformer(ExtNodeTransformer):
             arr_type: data.Data = None) -> str:
         if access_type not in ('r', 'w'):
             raise ValueError("Access type {} is invalid".format(access_type))
-        if new_name:
-            var_name = new_name
-        elif target:
-            var_name = "__tmp_{l}_{c}".format(l=target.lineno, c=target.col_offset)
-        else:
-            var_name = self.sdfg.temp_data_name()
+        # if new_name:
+        #     var_name = new_name
+        # elif target:
+        #     var_name = "__tmp_{l}_{c}".format(l=target.lineno, c=target.col_offset)
+        # else:
+        #     var_name = self.sdfg.temp_data_name()
 
         parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
-        if _subset_has_indirection(rng):
-            squeezed_rng = list(range(len(rng)))
-            shape = parent_array.shape
-            strides = [parent_array.strides[d] for d in squeezed_rng]
-            # TODO: Why is squeezed_rng an index in the first place?
-            squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
+
+        if parent_name in self.sdfg.arrays:
+            desc = self.sdfg.arrays[parent_name]
         else:
-            ignore_indices = []
-            sym_rng = []
-            offset = []
-            for i, r in enumerate(rng):
-                repl_dict = {}
-                for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).values():
-                        ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
-                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
-                            repl_dict = {}
-                            break
-                        else:
-                            sym_rng.append(sr)
-                            # NOTE: Assume that the i-th index of the range is
-                            # dependent on a local symbol s, i.e, rng[i] = f(s).
-                            # Therefore, the i-th index will not be squeezed
-                            # even if it has length equal to 1. However, it must
-                            # still be offsetted by f(min(sr)), so that the indices
-                            # for the squeezed connector start from 0.
-                            # Example:
-                            # Memlet range: [i+1, j, k+1]
-                            # k: local symbol with range(1, 4)
-                            # i,j: global symbols
-                            # Squeezed range: [f(k)] = [k+1]
-                            # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
-                            #                        [f(k)-f(1)] = [k-1]
-                            # NOTE: The code takes into account the case where an
-                            # index is dependent on multiple symbols. See also
-                            # tests/python_frontend/nested_name_accesses_test.py.
-                            step = sr[0][2]
-                            if (step < 0) == True:
-                                repl_dict[s] = sr[0][1]
-                            else:
-                                repl_dict[s] = sr[0][0]
-                if repl_dict:
-                    offset.append(r[0].subs(repl_dict))
-                else:
-                    offset.append(0)
+            parent_array = self.scope_arrays[parent_name]
+            desc = parent_array.clone()
+            desc.transient = False
+            self.sdfg.add_datadesc(parent_name, desc)
 
-            if ignore_indices:
-                tmp_memlet = Memlet.simple(parent_name, rng)
-                use_dst = True if access_type == 'w' else False
-                for s, r in self.symbols.items():
-                    tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
-
-            to_squeeze_rng = rng
-            if ignore_indices:
-                to_squeeze_rng = rng.offset_new(offset, True)
-            squeezed_rng = copy.deepcopy(to_squeeze_rng)
-            non_squeezed = squeezed_rng.squeeze(ignore_indices)
-            # TODO: Need custom shape computation here
-            shape = squeezed_rng.size()
-            for i, sr in zip(ignore_indices, sym_rng):
-                iMin, iMax, step = sr.ranges[0]
-                if (step < 0) == True:
-                    iMin, iMax, step = iMax, iMin, -step
-                ts = to_squeeze_rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
-                shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                                                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                                    (step.approx if isinstance(step, symbolic.SymExpr) else step))
-            # squeezed_rng = copy.deepcopy(rng)
-            # non_squeezed = squeezed_rng.squeeze()
-            # shape = squeezed_rng.size()
-            if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
-            else:
-                strides = [1]
-        dtype = parent_array.dtype
-
-        if arr_type is None:
-            arr_type = type(parent_array)
-        if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type in (data.Array, data.View):
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
-        elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
-        else:
-            raise NotImplementedError("Data type {} is not implemented".format(arr_type))
-
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
-
-        inner_indices = set()
-        for n, r in reversed(list(enumerate(squeezed_rng))):
-            if r == rng[n]:
-                inner_indices.add(n)
+        self.accesses[(name, rng, access_type)] = (parent_name, rng)
 
         if access_type == 'r':
-            if _subset_has_indirection(rng):
-                self.sdfg_inputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
-            else:
-                self.sdfg_inputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
-        else:
-            if _subset_has_indirection(rng):
-                self.sdfg_outputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
-            else:
-                self.sdfg_outputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
+            self.sdfg_inputs[parent_name] = (Memlet.from_array(parent_name, desc), set())
+        elif access_type == 'w':
+            self.sdfg_outputs[parent_name] = (Memlet.from_array(parent_name, desc), set())
 
-        return (var_name, squeezed_rng)
+        return (parent_name, rng)
+
+        # parent_name = self.scope_vars[name]
+        # parent_array = self.scope_arrays[parent_name]
+        # if _subset_has_indirection(rng):
+        #     squeezed_rng = list(range(len(rng)))
+        #     shape = parent_array.shape
+        #     strides = [parent_array.strides[d] for d in squeezed_rng]
+        #     # TODO: Why is squeezed_rng an index in the first place?
+        #     squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
+        # else:
+        #     ignore_indices = []
+        #     sym_rng = []
+        #     offset = []
+        #     for i, r in enumerate(rng):
+        #         repl_dict = {}
+        #         for s, sr in self.symbols.items():
+        #             if s in symbolic.symlist(r).values():
+        #                 ignore_indices.append(i)
+        #                 if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+        #                        for t in sr.free_symbols):
+        #                     sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
+        #                     repl_dict = {}
+        #                     break
+        #                 else:
+        #                     sym_rng.append(sr)
+        #                     # NOTE: Assume that the i-th index of the range is
+        #                     # dependent on a local symbol s, i.e, rng[i] = f(s).
+        #                     # Therefore, the i-th index will not be squeezed
+        #                     # even if it has length equal to 1. However, it must
+        #                     # still be offsetted by f(min(sr)), so that the indices
+        #                     # for the squeezed connector start from 0.
+        #                     # Example:
+        #                     # Memlet range: [i+1, j, k+1]
+        #                     # k: local symbol with range(1, 4)
+        #                     # i,j: global symbols
+        #                     # Squeezed range: [f(k)] = [k+1]
+        #                     # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+        #                     #                        [f(k)-f(1)] = [k-1]
+        #                     # NOTE: The code takes into account the case where an
+        #                     # index is dependent on multiple symbols. See also
+        #                     # tests/python_frontend/nested_name_accesses_test.py.
+        #                     step = sr[0][2]
+        #                     if (step < 0) == True:
+        #                         repl_dict[s] = sr[0][1]
+        #                     else:
+        #                         repl_dict[s] = sr[0][0]
+        #         if repl_dict:
+        #             offset.append(r[0].subs(repl_dict))
+        #         else:
+        #             offset.append(0)
+
+        #     if ignore_indices:
+        #         tmp_memlet = Memlet.simple(parent_name, rng)
+        #         use_dst = True if access_type == 'w' else False
+        #         for s, r in self.symbols.items():
+        #             tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
+
+        #     to_squeeze_rng = rng
+        #     if ignore_indices:
+        #         to_squeeze_rng = rng.offset_new(offset, True)
+        #     squeezed_rng = copy.deepcopy(to_squeeze_rng)
+        #     non_squeezed = squeezed_rng.squeeze(ignore_indices)
+        #     # TODO: Need custom shape computation here
+        #     shape = squeezed_rng.size()
+        #     for i, sr in zip(ignore_indices, sym_rng):
+        #         iMin, iMax, step = sr.ranges[0]
+        #         if (step < 0) == True:
+        #             iMin, iMax, step = iMax, iMin, -step
+        #         ts = to_squeeze_rng.tile_sizes[i]
+        #         sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
+        #         shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+        #                                              (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+        #                                             (step.approx if isinstance(step, symbolic.SymExpr) else step))
+        #     # squeezed_rng = copy.deepcopy(rng)
+        #     # non_squeezed = squeezed_rng.squeeze()
+        #     # shape = squeezed_rng.size()
+        #     if non_squeezed:
+        #         strides = [parent_array.strides[d] for d in non_squeezed]
+        #     else:
+        #         strides = [1]
+        # dtype = parent_array.dtype
+
+        # if arr_type is None:
+        #     arr_type = type(parent_array)
+        # if arr_type == data.Scalar:
+        #     self.sdfg.add_scalar(var_name, dtype)
+        # elif arr_type in (data.Array, data.View):
+        #     self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+        # elif arr_type == data.Stream:
+        #     self.sdfg.add_stream(var_name, dtype)
+        # else:
+        #     raise NotImplementedError("Data type {} is not implemented".format(arr_type))
+
+        # self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+
+        # inner_indices = set()
+        # for n, r in reversed(list(enumerate(squeezed_rng))):
+        #     if r == rng[n]:
+        #         inner_indices.add(n)
+
+        # if access_type == 'r':
+        #     if _subset_has_indirection(rng):
+        #         self.sdfg_inputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+        #     else:
+        #         self.sdfg_inputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
+        # else:
+        #     if _subset_has_indirection(rng):
+        #         self.sdfg_outputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+        #     else:
+        #         self.sdfg_outputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
+
+        # return (var_name, squeezed_rng)
 
     def _add_read_access(self,
                          name: str,
@@ -859,16 +878,18 @@ class TaskletTransformer(ExtNodeTransformer):
                          new_name: str = None,
                          arr_type: data.Data = None):
 
+        if name in self.variables:
+            return (self.variables[name], None)
         if (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
             return self.accesses[(name, rng, 'r')]
-        elif name in self.variables:
-            return (self.variables[name], None)
         elif name in self.scope_vars:
             # TODO: Does the TaskletTransformer need the double slice fix?
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
             return (new_name, new_rng)
+        elif name in self.sdfg.arrays:
+            return (name, None)
         else:
             raise NotImplementedError
 
@@ -879,12 +900,14 @@ class TaskletTransformer(ExtNodeTransformer):
                           new_name: str = None,
                           arr_type: data.Data = None):
 
-        if (name, rng, 'w') in self.accesses:
+        if name in self.variables:
+            return (self.variables[name], rng)
+        elif (name, rng, 'w') in self.accesses:
             return self.accesses[(name, rng, 'w')]
-        elif name in self.variables:
-            return (self.variables[name], None)
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, rng)
         else:
             raise NotImplementedError
 
@@ -1316,6 +1339,18 @@ class ProgramVisitor(ExtNodeVisitor):
             if state is not None and state.dynamic_executions:
                 memlet.dynamic = True
 
+        from dace.transformation.interstate import RefineNestedAccess
+        def _refine_nested_sdfg(parent: SDFG):
+            for state in parent.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.NestedSDFG):
+                        _refine_nested_sdfg(node.sdfg)
+            if parent.parent_sdfg is not None:
+                try:
+                    RefineNestedAccess.apply_to(parent.parent_sdfg, nsdfg=parent.parent_nsdfg_node)
+                except ValueError:
+                    pass
+        _refine_nested_sdfg(self.sdfg)
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
     @property
@@ -1979,71 +2014,80 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
+                # for s, r in symbols.items():
+                #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
                         read_node = state.add_read(memlet.data, debuginfo=self.current_lineinfo)
                     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
                     continue
+                vname = memlet.data
                 if memlet.data not in self.sdfg.arrays:
-                    if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
-                    else:
-                        scope_memlet = copy.deepcopy(memlet)
-                    irng = memlet.subset
-                    orng = copy.deepcopy(scope_memlet.subset)
-                    outer_indices = []
-                    for n, (i, o) in enumerate(zip(irng, orng)):
-                        if i == o and n not in inner_indices:
-                            outer_indices.append(n)
-                        elif n not in inner_indices:
-                            inner_indices.add(n)
-                    # Avoid the case where all indices are outer,
-                    # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
-                        irng.pop(outer_indices)
-                        orng.pop(outer_indices)
-                        irng.offset(orng, True)
-                    if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        memlet = Memlet.simple(vname, str(irng))
-                    elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
-                        memlet = Memlet.simple(vname, str(irng))
-                    elif memlet.data in self.closure.closure_arrays:
-                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
-                        vname = memlet.data
-                        self.inputs[vname] = (state, memlet, [])
-                    else:
-                        name = memlet.data
-                        vname = "{c}_in_from_{s}{n}".format(c=conn,
-                                                            s=self.sdfg.nodes().index(state),
-                                                            n=('_%s' % state.node_id(entry_node) if entry_node else ''))
-                        self.accesses[(name, scope_memlet.subset, 'r')] = (vname, orng)
-                        orig_shape = orng.size()
-                        shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
-                        strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
-                        strides = [
-                            s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
-                        ]
-                        if not shape:
-                            shape = [1]
-                            strides = [1]
-                        # TODO: Formulate this better
-                        if not strides:
-                            strides = [arr.strides[-1]]
-                        dtype = arr.dtype
-                        if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
-                        else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.inputs[vname] = (state, scope_memlet, inner_indices)
-                        memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # if entry_node:
+                    #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                    # else:
+                    #     scope_memlet = copy.deepcopy(memlet)
+                    # irng = memlet.subset
+                    # orng = copy.deepcopy(scope_memlet.subset)
+                    # outer_indices = []
+                    # for n, (i, o) in enumerate(zip(irng, orng)):
+                    #     if i == o and n not in inner_indices:
+                    #         outer_indices.append(n)
+                    #     elif n not in inner_indices:
+                    #         inner_indices.add(n)
+                    # # Avoid the case where all indices are outer,
+                    # # i.e., the whole array is carried through the nested SDFG levels.
+                    # if len(outer_indices) < len(irng) or irng.num_elements() == 1:
+                    #     irng.pop(outer_indices)
+                    #     orng.pop(outer_indices)
+                    #     irng.offset(orng, True)
+                    # if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
+                    #     memlet = Memlet.simple(vname, str(irng))
+                    # elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
+                    #     memlet = Memlet.simple(vname, str(irng))
+                    # elif memlet.data in self.closure.closure_arrays:
+                    #     self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                    #     vname = memlet.data
+                    #     self.inputs[vname] = (state, memlet, [])
+                    # else:
+                    #     name = memlet.data
+                    #     vname = "{c}_in_from_{s}{n}".format(c=conn,
+                    #                                         s=self.sdfg.nodes().index(state),
+                    #                                         n=('_%s' % state.node_id(entry_node) if entry_node else ''))
+                    #     self.accesses[(name, scope_memlet.subset, 'r')] = (vname, orng)
+                    #     orig_shape = orng.size()
+                    #     shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
+                    #     strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                    #     strides = [
+                    #         s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
+                    #     ]
+                    #     if not shape:
+                    #         shape = [1]
+                    #         strides = [1]
+                    #     # TODO: Formulate this better
+                    #     if not strides:
+                    #         strides = [arr.strides[-1]]
+                    #     dtype = arr.dtype
+                    #     if isinstance(arr, data.Stream):
+                    #         self.sdfg.add_stream(vname, dtype)
+                    #     else:
+                    #         self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    #     self.inputs[vname] = (state, scope_memlet, inner_indices)
+                    #     memlet.data = vname
+                    #     # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    desc = arr.clone()
+                    desc.transient = False
+                    self.sdfg.add_datadesc(vname, desc)
                 else:
-                    vname = memlet.data
+                    desc = self.sdfg.arrays[memlet.data]
+
+                # NOTE: If the descriptor is transient, then the data is declared at the current scope.
+                # NOTE: Therefore, we don't propagate the dependency to the parent scope.
+                if not desc.transient and vname not in self.inputs:
+                    self.inputs[vname] = (state, memlet, inner_indices)
 
                 read_node = state.add_read(vname, debuginfo=self.current_lineinfo)
 
@@ -2051,11 +2095,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     state.add_memlet_path(read_node,
                                           entry_node,
                                           internal_node,
-                                          memlet=memlet,
+                                          memlet=copy.deepcopy(memlet),
                                           src_conn=None,
                                           dst_conn=conn)
                 else:
-                    state.add_edge(read_node, None, internal_node, conn, memlet)
+                    state.add_edge(read_node, None, internal_node, conn, copy.deepcopy(memlet))
         else:
             if entry_node is not None:
                 state.add_nedge(entry_node, internal_node, dace.Memlet())
@@ -2069,82 +2113,90 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 arr = self._get_array_or_closure(memlet.data)
 
-                for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
+                # for s, r in symbols.items():
+                #     memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
                         write_node = state.add_write(memlet.data, debuginfo=self.current_lineinfo)
                     add_indirection_subgraph(self.sdfg, state, internal_node, write_node, memlet, conn, self, True)
                     continue
-                inner_memlet = memlet
+                # inner_memlet = memlet
+                vname = memlet.data
                 if memlet.data not in self.sdfg.arrays:
-                    if entry_node:
-                        scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
-                    else:
-                        scope_memlet = copy.deepcopy(memlet)
-                    irng = memlet.subset
-                    orng = copy.deepcopy(scope_memlet.subset)
-                    outer_indices = []
-                    for n, (i, o) in enumerate(zip(irng, orng)):
-                        if i == o and n not in inner_indices:
-                            outer_indices.append(n)
-                        elif n not in inner_indices:
-                            inner_indices.add(n)
-                    # Avoid the case where all indices are outer,
-                    # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
-                        irng.pop(outer_indices)
-                        orng.pop(outer_indices)
-                        irng.offset(orng, True)
-                    if self._find_access(memlet.data, scope_memlet.subset, 'w'):
-                        vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
-                        inner_memlet = Memlet.simple(vname, str(irng))
-                        inner_memlet.num_accesses = memlet.num_accesses
-                        inner_memlet.dynamic = memlet.dynamic
-                    elif memlet.data in self.closure.closure_arrays:
-                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
-                        vname = memlet.data
-                        self.outputs[vname] = (state, memlet, [])
-                    else:
-                        name = memlet.data
-                        vname = "{c}_out_of_{s}{n}".format(c=conn,
-                                                           s=self.sdfg.nodes().index(state),
-                                                           n=('_%s' % state.node_id(exit_node) if exit_node else ''))
-                        self.accesses[(name, scope_memlet.subset, 'w')] = (vname, orng)
-                        orig_shape = orng.size()
-                        shape = [d for d in orig_shape if d != 1]
-                        shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
-                        strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
-                        strides = [
-                            s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
-                        ]
-                        if not shape:
-                            shape = [1]
-                            strides = [1]
-                        # TODO: Formulate this better
-                        if not strides:
-                            strides = [arr.strides[-1]]
-                        dtype = arr.dtype
-                        if isinstance(arr, data.Stream):
-                            self.sdfg.add_stream(vname, dtype)
-                        else:
-                            self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.outputs[vname] = (state, scope_memlet, inner_indices)
-                        inner_memlet.data = vname
-                        # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    # if entry_node:
+                    #     scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
+                    # else:
+                    #     scope_memlet = copy.deepcopy(memlet)
+                    # irng = memlet.subset
+                    # orng = copy.deepcopy(scope_memlet.subset)
+                    # outer_indices = []
+                    # for n, (i, o) in enumerate(zip(irng, orng)):
+                    #     if i == o and n not in inner_indices:
+                    #         outer_indices.append(n)
+                    #     elif n not in inner_indices:
+                    #         inner_indices.add(n)
+                    # # Avoid the case where all indices are outer,
+                    # # i.e., the whole array is carried through the nested SDFG levels.
+                    # if len(outer_indices) < len(irng) or irng.num_elements() == 1:
+                    #     irng.pop(outer_indices)
+                    #     orng.pop(outer_indices)
+                    #     irng.offset(orng, True)
+                    # if self._find_access(memlet.data, scope_memlet.subset, 'w'):
+                    #     vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
+                    #     inner_memlet = Memlet.simple(vname, str(irng))
+                    #     inner_memlet.num_accesses = memlet.num_accesses
+                    #     inner_memlet.dynamic = memlet.dynamic
+                    # elif memlet.data in self.closure.closure_arrays:
+                    #     self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                    #     vname = memlet.data
+                    #     self.outputs[vname] = (state, memlet, [])
+                    # else:
+                    #     name = memlet.data
+                    #     vname = "{c}_out_of_{s}{n}".format(c=conn,
+                    #                                        s=self.sdfg.nodes().index(state),
+                    #                                        n=('_%s' % state.node_id(exit_node) if exit_node else ''))
+                    #     self.accesses[(name, scope_memlet.subset, 'w')] = (vname, orng)
+                    #     orig_shape = orng.size()
+                    #     shape = [d for d in orig_shape if d != 1]
+                    #     shape = [d for i, d in enumerate(orig_shape) if d != 1 or i in inner_indices]
+                    #     strides = [i for j, i in enumerate(arr.strides) if j not in outer_indices]
+                    #     strides = [
+                    #         s for i, (d, s) in enumerate(zip(orig_shape, strides)) if d != 1 or i in inner_indices
+                    #     ]
+                    #     if not shape:
+                    #         shape = [1]
+                    #         strides = [1]
+                    #     # TODO: Formulate this better
+                    #     if not strides:
+                    #         strides = [arr.strides[-1]]
+                    #     dtype = arr.dtype
+                    #     if isinstance(arr, data.Stream):
+                    #         self.sdfg.add_stream(vname, dtype)
+                    #     else:
+                    #         self.sdfg.add_array(vname, shape, dtype, strides=strides)
+                    #     self.outputs[vname] = (state, scope_memlet, inner_indices)
+                    #     inner_memlet.data = vname
+                    #     # memlet.subset.offset(memlet.subset, True, outer_indices)
+                    desc = arr.clone()
+                    desc.transient = False
+                    self.sdfg.add_datadesc(vname, desc)
                 else:
-                    vname = memlet.data
+                    desc = self.sdfg.arrays[memlet.data]
+
+                if not desc.transient and vname not in self.outputs:
+                    self.outputs[vname] = (state, memlet, inner_indices)
+
                 write_node = state.add_write(vname, debuginfo=self.current_lineinfo)
                 if exit_node is not None:
                     state.add_memlet_path(internal_node,
                                           exit_node,
                                           write_node,
-                                          memlet=inner_memlet,
+                                          memlet=copy.deepcopy(memlet),
                                           src_conn=conn,
                                           dst_conn=None)
                 else:
-                    state.add_edge(internal_node, conn, write_node, None, inner_memlet)
+                    state.add_edge(internal_node, conn, write_node, None, copy.deepcopy(memlet))
         else:
             if exit_node is not None:
                 state.add_nedge(internal_node, exit_node, dace.Memlet())
@@ -2949,6 +3001,17 @@ class ProgramVisitor(ExtNodeVisitor):
                     out_memlet.dynamic = True
                 state.add_edge(op1, None, tasklet, '__in1', in1_memlet)
                 state.add_edge(tasklet, '__out', op3, None, out_memlet)
+    
+    def _add_new_access(self, name: str, desc: data.Data, access_type: str):
+        if name in self.sdfg.arrays:
+            new_desc = self.sdfg.arrays[name]
+        else:
+            new_desc = desc.clone()
+            new_desc.transient = False
+            self.sdfg.add_datadesc(name, new_desc)
+
+        if access_type == 'r':
+            self.inputs[name] = (self.last_state, Memlet.from_array(name, new_desc), set())
 
     def _add_access(
             self,
@@ -2960,135 +3023,151 @@ class ProgramVisitor(ExtNodeVisitor):
             arr_type: data.Data = None) -> str:
         if access_type not in ('r', 'w'):
             raise ValueError("Access type {} is invalid".format(access_type))
-        if new_name:
-            var_name = new_name
-        elif target:
-            var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
-        else:
-            var_name = self.sdfg.temp_data_name()
+        # if new_name:
+        #     var_name = new_name
+        # elif target:
+        #     var_name = "__tmp_{l}_{c}_{a}".format(l=target.lineno, c=target.col_offset, a=access_type)
+        # else:
+        #     var_name = self.sdfg.temp_data_name()
 
         parent_name = self.scope_vars[name]
-        parent_array = self.scope_arrays[parent_name]
 
-        has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
-        if has_indirection:
-            # squeezed_rng = list(range(len(rng)))
-            shape = parent_array.shape
-            # strides = [parent_array.strides[d] for d in squeezed_rng]
-            # # TODO: Why is squeezed_rng an index in the first place?
-            # squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
-            squeezed_rng = subsets.Range.from_array(parent_array)
-            non_squeezed = list(range(len(rng)))
+        if parent_name in self.sdfg.arrays:
+            desc = self.sdfg.arrays[parent_name]
         else:
-            ignore_indices = []
-            sym_rng = []
-            offset = []
-            for i, r in enumerate(rng):
-                repl_dict = {}
-                for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).values():
-                        ignore_indices.append(i)
-                        if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
-                               for t in sr.free_symbols):
-                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
-                            repl_dict = {}
-                            break
-                        else:
-                            sym_rng.append(sr)
-                            # NOTE: Assume that the i-th index of the range is
-                            # dependent on a local symbol s, i.e, rng[i] = f(s).
-                            # Therefore, the i-th index will not be squeezed
-                            # even if it has length equal to 1. However, it must
-                            # still be offsetted by f(min(sr)), so that the indices
-                            # for the squeezed connector start from 0.
-                            # Example:
-                            # Memlet range: [i+1, j, k+1]
-                            # k: local symbol with range(1, 4)
-                            # i,j: global symbols
-                            # Squeezed range: [f(k)] = [k+1]
-                            # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
-                            #                        [f(k)-f(1)] = [k-1]
-                            # NOTE: The code takes into account the case where an
-                            # index is dependent on multiple symbols. See also
-                            # tests/python_frontend/nested_name_accesses_test.py.
-                            step = sr[0][2]
-                            if (step < 0) == True:
-                                repl_dict[s] = sr[0][1]
-                            else:
-                                repl_dict[s] = sr[0][0]
-                if repl_dict:
-                    offset.append(r[0].subs(repl_dict))
-                else:
-                    offset.append(0)
+            parent_array = self.scope_arrays[parent_name]
+            desc = parent_array.clone()
+            desc.transient = False
+            self.sdfg.add_datadesc(parent_name, desc)
 
-            if ignore_indices:
-                tmp_memlet = Memlet.simple(parent_name, rng)
-                use_dst = True if access_type == 'w' else False
-                for s, r in self.symbols.items():
-                    tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
-            to_squeeze_rng = rng
-            if ignore_indices:
-                to_squeeze_rng = rng.offset_new(offset, True)
-            squeezed_rng = copy.deepcopy(to_squeeze_rng)
-            non_squeezed = squeezed_rng.squeeze(ignore_indices)
-            # TODO: Need custom shape computation here
-            shape = squeezed_rng.size()
-            for i, sr in zip(ignore_indices, sym_rng):
-                iMin, iMax, step = sr.ranges[0]
-                if (step < 0) == True:
-                    iMin, iMax, step = iMax, iMin, -step
-                ts = to_squeeze_rng.tile_sizes[i]
-                sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
-                shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
-                                                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                                                    (step.approx if isinstance(step, symbolic.SymExpr) else step))
-        dtype = parent_array.dtype
-
-        if arr_type is None:
-            arr_type = type(parent_array)
-            # Size (1,) slice of NumPy array returns scalar value
-            if arr_type != data.Stream and (shape == [1] or shape == (1, )):
-                arr_type = data.Scalar
-        if arr_type == data.Scalar:
-            self.sdfg.add_scalar(var_name, dtype)
-        elif arr_type in (data.Array, data.View):
-            if non_squeezed:
-                strides = [parent_array.strides[d] for d in non_squeezed]
-            else:
-                strides = [1]
-            self.sdfg.add_array(var_name, shape, dtype, strides=strides)
-        elif arr_type == data.Stream:
-            self.sdfg.add_stream(var_name, dtype)
-        else:
-            raise NotImplementedError("Data type {} is not implemented".format(arr_type))
-
-        self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
-
-        inner_indices = set(non_squeezed)
-
-        state = self.last_state
-
-        new_memlet = None
-        if has_indirection:
-            new_memlet = dace.Memlet.from_array(parent_name, parent_array)
-            volume = rng.num_elements()
-            new_memlet.volume = volume if not symbolic.issymbolic(volume) else -1
-        else:
-            new_memlet = dace.Memlet.simple(parent_name, rng)
+        self.accesses[(name, rng, access_type)] = (parent_name, rng)
 
         if access_type == 'r':
-            if has_indirection:
-                self.inputs[var_name] = (state, new_memlet, inner_indices)
-            else:
-                self.inputs[var_name] = (state, new_memlet, inner_indices)
-        else:
-            if has_indirection:
-                self.outputs[var_name] = (state, new_memlet, inner_indices)
-            else:
-                self.outputs[var_name] = (state, new_memlet, inner_indices)
+            self.inputs[parent_name] = (self.last_state, Memlet.from_array(parent_name, desc), set())
+        elif access_type == 'w':
+            self.outputs[parent_name] = (self.last_state, Memlet.from_array(parent_name, desc), set())
 
-        self.variables[var_name] = var_name
-        return (var_name, squeezed_rng)
+        return (parent_name, rng)
+
+        # has_indirection = (_subset_has_indirection(rng, self) or _subset_is_local_symbol_dependent(rng, self))
+        # if has_indirection:
+        #     # squeezed_rng = list(range(len(rng)))
+        #     shape = parent_array.shape
+        #     # strides = [parent_array.strides[d] for d in squeezed_rng]
+        #     # # TODO: Why is squeezed_rng an index in the first place?
+        #     # squeezed_rng = subsets.Range([(i, i, 1) for i in squeezed_rng])
+        #     squeezed_rng = subsets.Range.from_array(parent_array)
+        #     non_squeezed = list(range(len(rng)))
+        # else:
+        #     ignore_indices = []
+        #     sym_rng = []
+        #     offset = []
+        #     for i, r in enumerate(rng):
+        #         repl_dict = {}
+        #         for s, sr in self.symbols.items():
+        #             if s in symbolic.symlist(r).values():
+        #                 ignore_indices.append(i)
+        #                 if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
+        #                        for t in sr.free_symbols):
+        #                     sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
+        #                     repl_dict = {}
+        #                     break
+        #                 else:
+        #                     sym_rng.append(sr)
+        #                     # NOTE: Assume that the i-th index of the range is
+        #                     # dependent on a local symbol s, i.e, rng[i] = f(s).
+        #                     # Therefore, the i-th index will not be squeezed
+        #                     # even if it has length equal to 1. However, it must
+        #                     # still be offsetted by f(min(sr)), so that the indices
+        #                     # for the squeezed connector start from 0.
+        #                     # Example:
+        #                     # Memlet range: [i+1, j, k+1]
+        #                     # k: local symbol with range(1, 4)
+        #                     # i,j: global symbols
+        #                     # Squeezed range: [f(k)] = [k+1]
+        #                     # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+        #                     #                        [f(k)-f(1)] = [k-1]
+        #                     # NOTE: The code takes into account the case where an
+        #                     # index is dependent on multiple symbols. See also
+        #                     # tests/python_frontend/nested_name_accesses_test.py.
+        #                     step = sr[0][2]
+        #                     if (step < 0) == True:
+        #                         repl_dict[s] = sr[0][1]
+        #                     else:
+        #                         repl_dict[s] = sr[0][0]
+        #         if repl_dict:
+        #             offset.append(r[0].subs(repl_dict))
+        #         else:
+        #             offset.append(0)
+
+        #     if ignore_indices:
+        #         tmp_memlet = Memlet.simple(parent_name, rng)
+        #         use_dst = True if access_type == 'w' else False
+        #         for s, r in self.symbols.items():
+        #             tmp_memlet = propagate_subset([tmp_memlet], parent_array, [s], r, use_dst=use_dst)
+        #     to_squeeze_rng = rng
+        #     if ignore_indices:
+        #         to_squeeze_rng = rng.offset_new(offset, True)
+        #     squeezed_rng = copy.deepcopy(to_squeeze_rng)
+        #     non_squeezed = squeezed_rng.squeeze(ignore_indices)
+        #     # TODO: Need custom shape computation here
+        #     shape = squeezed_rng.size()
+        #     for i, sr in zip(ignore_indices, sym_rng):
+        #         iMin, iMax, step = sr.ranges[0]
+        #         if (step < 0) == True:
+        #             iMin, iMax, step = iMax, iMin, -step
+        #         ts = to_squeeze_rng.tile_sizes[i]
+        #         sqz_idx = squeezed_rng.ranges.index(to_squeeze_rng.ranges[i])
+        #         shape[sqz_idx] = ts * sympy.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+        #                                              (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+        #                                             (step.approx if isinstance(step, symbolic.SymExpr) else step))
+        # dtype = parent_array.dtype
+
+        # if arr_type is None:
+        #     arr_type = type(parent_array)
+        #     # Size (1,) slice of NumPy array returns scalar value
+        #     if arr_type != data.Stream and (shape == [1] or shape == (1, )):
+        #         arr_type = data.Scalar
+        # if arr_type == data.Scalar:
+        #     self.sdfg.add_scalar(var_name, dtype)
+        # elif arr_type in (data.Array, data.View):
+        #     if non_squeezed:
+        #         strides = [parent_array.strides[d] for d in non_squeezed]
+        #     else:
+        #         strides = [1]
+        #     self.sdfg.add_array(var_name, shape, dtype, strides=strides)
+        # elif arr_type == data.Stream:
+        #     self.sdfg.add_stream(var_name, dtype)
+        # else:
+        #     raise NotImplementedError("Data type {} is not implemented".format(arr_type))
+
+        # self.accesses[(name, rng, access_type)] = (var_name, squeezed_rng)
+
+        # inner_indices = set(non_squeezed)
+
+        # state = self.last_state
+
+        # new_memlet = None
+        # if has_indirection:
+        #     new_memlet = dace.Memlet.from_array(parent_name, parent_array)
+        #     volume = rng.num_elements()
+        #     new_memlet.volume = volume if not symbolic.issymbolic(volume) else -1
+        # else:
+        #     new_memlet = dace.Memlet.simple(parent_name, rng)
+
+        # if access_type == 'r':
+        #     if has_indirection:
+        #         self.inputs[var_name] = (state, new_memlet, inner_indices)
+        #     else:
+        #         self.inputs[var_name] = (state, new_memlet, inner_indices)
+        # else:
+        #     if has_indirection:
+        #         self.outputs[var_name] = (state, new_memlet, inner_indices)
+        #     else:
+        #         self.outputs[var_name] = (state, new_memlet, inner_indices)
+
+        # self.variables[var_name] = var_name
+        # return (var_name, squeezed_rng)
 
     def _add_read_access(self,
                          name: str,
@@ -3096,17 +3175,21 @@ class ProgramVisitor(ExtNodeVisitor):
                          target: Union[ast.Name, ast.Subscript],
                          new_name: str = None,
                          arr_type: data.Data = None):
-        if name in self.sdfg.arrays:
-            return (name, None)
-        elif name in self.variables:
-            return (self.variables[name], None)
+        # if name in self.sdfg.arrays:
+        #     return (name, None)
+        # elif name in self.variables:
+        #     return (self.variables[name], None)
 
-        if (name, rng, 'w') in self.accesses:
+        if name in self.variables:
+            return (self.variables[name], None)
+        elif (name, rng, 'w') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses:
             new_name, new_rng = self.accesses[(name, rng, 'r')]
         elif name in self.scope_vars:
             new_name, new_rng = self._add_access(name, rng, 'r', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, None)
         else:
             raise NotImplementedError
 
@@ -3124,14 +3207,14 @@ class ProgramVisitor(ExtNodeVisitor):
                           new_name: str = None,
                           arr_type: data.Data = None):
 
-        if name in self.sdfg.arrays:
-            return (name, rng)
-        if (name, rng, 'w') in self.accesses:
-            return self.accesses[(name, rng, 'w')]
-        elif name in self.variables:
+        if name in self.variables:
             return (self.variables[name], rng)
+        elif (name, rng, 'w') in self.accesses:
+            return self.accesses[(name, rng, 'w')]
         elif (name, rng, 'r') in self.accesses or name in self.scope_vars:
             return self._add_access(name, rng, 'w', target, new_name, arr_type)
+        elif name in self.sdfg.arrays:
+            return (name, rng)
         else:
             raise NotImplementedError
 
@@ -3934,25 +4017,26 @@ class ProgramVisitor(ExtNodeVisitor):
                     break
             if access_key:
                 # Delete read access and create write access and output
-                vname = aname[:-1] + 'w'
+                # TODO: Can be simplified with unrefined nested accesses.
+                vname = aname
                 name, rng, atype = access_key
                 if atype == 'r':
                     if not isinput:
                         del self.accesses[access_key]
                     access_value = self._add_write_access(name, rng, node, new_name=vname)
                     memlet.data = vname
-                # Delete the old read descriptor
-                if not isinput:
-                    conn_used = False
-                    for s in self.sdfg.nodes():
-                        for n in s.data_nodes():
-                            if n.data == aname:
-                                conn_used = True
-                                break
-                        if conn_used:
-                            break
-                    if not conn_used:
-                        del self.sdfg.arrays[aname]
+                # # Delete the old read descriptor
+                # if not isinput:
+                #     conn_used = False
+                #     for s in self.sdfg.nodes():
+                #         for n in s.data_nodes():
+                #             if n.data == aname:
+                #                 conn_used = True
+                #                 break
+                #         if conn_used:
+                #             break
+                #     if not conn_used:
+                #         del self.sdfg.arrays[aname]
             if not isinput and aname in self.inputs:
                 # Delete input
                 del self.inputs[aname]
@@ -4991,6 +5075,9 @@ class ProgramVisitor(ExtNodeVisitor):
             # subset in the edge going to the connector, as well as a local
             # reference to the subset
             if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
+
+                # self._add_new_access(name, defined_arrays[name], 'r')
+
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
 
