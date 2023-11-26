@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 from dace import dtypes, symbolic, data, subsets, Memlet
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import transformation as xf
@@ -49,7 +50,32 @@ class CopyToMap(xf.SingleStateTransformation):
             return subsets.Range([(ind, ind, 1) for ind in indices])
 
         if rng is not None:  # Deal with offsets and strides in range
-            indices = rng.coord_at(indices)
+            # Artificial / unsqueezed dimensions
+            if len(rng) < len(copy_shape):
+                j = 0
+                unsqueeze_dims = []
+                for i in range(len(copy_shape)):
+                    if j >= len(desc.shape):
+                        unsqueeze_dims.append(i)
+                        continue
+
+                    copy_dim = copy_shape[i]
+                    if not ((isinstance(copy_dim, int) or copy_dim.is_Number) and copy_dim == 1):
+                        j += 1
+                        continue
+
+                    desc_dim = desc.shape[j]
+                    if ((isinstance(desc_dim, int) or desc_dim.is_Number) and desc_dim == 1):
+                        j += 1
+                        continue
+
+                    unsqueeze_dims.append(i)
+
+                unsqueezed_rng = copy.deepcopy(rng)
+                unsqueezed_rng.unsqueeze(unsqueeze_dims)
+                indices = unsqueezed_rng.coord_at(indices)
+            else:
+                indices = rng.coord_at(indices)
 
         linear_index = sum(indices[i] * data._prod(copy_shape[i + 1:]) for i in range(len(indices)))
 
@@ -82,11 +108,11 @@ class CopyToMap(xf.SingleStateTransformation):
 
         # Linearize and delinearize to get index expression for other side
         if copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+            a_index = [symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.src_subset.ranges[i][0]}') for i in range(len(copy_shape))]
             b_index = self.delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
         else:
             a_index = self.delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f'__i{i}') for i in range(len(copy_shape))]
+            b_index = [symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.dst_subset.ranges[i][0]}') for i in range(len(copy_shape))]
 
         a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
         b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])

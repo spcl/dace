@@ -102,9 +102,82 @@ def test_preprocess():
     assert np.allclose(out, inp)
 
 
+def test_squeezed_subset_src():
+    @dace.program
+    def squeezed_subset_src(a: dace.float32[10], b: dace.float32[10, 10]):
+        for i in range(10):
+            b[i, 0:i + 1] = a[0:i + 1]
+
+    sdfg = squeezed_subset_src.to_sdfg()
+
+    A = np.random.random(10).astype(np.float32)
+    B = np.random.random((10, 10)).astype(np.float32)
+    A_ = np.copy(A)
+    B_ = np.copy(B)
+
+    sdfg(A, B)
+
+    assert sdfg.apply_transformations(CopyToMap) == 1
+
+    sdfg(A_, B_)
+
+    assert np.allclose(A_, A)
+    assert np.allclose(B_, B)
+
+
+def test_squeezed_subset_src_swapped():
+    @dace.program
+    def squeezed_subset_src_swapped(a: dace.float32[10], b: dace.float32[10, 10]):
+        for i in range(10):
+            b[i+1:10, i] = a[0:10-(i+1)]
+
+    sdfg = squeezed_subset_src_swapped.to_sdfg()
+
+    A = np.random.random(10).astype(np.float32)
+    B = np.random.random((10, 10)).astype(np.float32)
+    A_ = np.copy(A)
+    B_ = np.copy(B)
+
+    sdfg(A, B)
+
+    assert sdfg.apply_transformations(CopyToMap) == 1
+
+    sdfg(A_, B_)
+
+    assert np.allclose(A_, A)
+    assert np.allclose(B_, B)
+
+
+def test_squeezed_subset_dst():
+
+    @dace.program
+    def squeezed_subset_dst(A: dace.float32[10], B: dace.float32[10, 10]):
+        for i in range(10):
+            A[0:10] = B[i, 0:10]
+
+    sdfg = squeezed_subset_dst.to_sdfg()
+
+    A = np.random.random(10).astype(np.float32)
+    B = np.random.random((10, 10)).astype(np.float32)
+    A_ = np.copy(A)
+    B_ = np.copy(B)
+
+    sdfg(A=A, B=B)
+
+    assert sdfg.apply_transformations(CopyToMap) == 1
+
+    sdfg(A_, B_)
+
+    assert np.allclose(A_, A)
+    assert np.allclose(B_, B)
+
+
 if __name__ == '__main__':
     test_copy_to_map()
     test_copy_to_map_gpu()
     test_flatten_to_map()
     test_flatten_to_map_gpu()
     test_preprocess()
+    test_squeezed_subset_src()
+    test_squeezed_subset_src_swapped()
+    test_squeezed_subset_dst()
