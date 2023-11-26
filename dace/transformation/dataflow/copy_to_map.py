@@ -108,11 +108,17 @@ class CopyToMap(xf.SingleStateTransformation):
 
         # Linearize and delinearize to get index expression for other side
         if copy_a:
-            a_index = [symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.src_subset.ranges[i][0]}') for i in range(len(copy_shape))]
+            a_index = [
+                symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.src_subset.ranges[i][0]}')
+                for i in range(len(copy_shape))
+            ]
             b_index = self.delinearize_linearize(bdesc, copy_shape, edge.data.get_dst_subset(edge, state))
         else:
             a_index = self.delinearize_linearize(adesc, copy_shape, edge.data.get_src_subset(edge, state))
-            b_index = [symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.dst_subset.ranges[i][0]}') for i in range(len(copy_shape))]
+            b_index = [
+                symbolic.pystr_to_symbolic(f'__i{i} + {edge.data.dst_subset.ranges[i][0]}')
+                for i in range(len(copy_shape))
+            ]
 
         a_subset = subsets.Range([(ind, ind, 1) for ind in a_index])
         b_subset = subsets.Range([(ind, ind, 1) for ind in b_index])

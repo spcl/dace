@@ -7,6 +7,7 @@ import numpy as np
 
 
 def _copy_to_map(storage: dace.StorageType):
+
     @dace
     def somecopy(a, b):
         b[:] = a
@@ -24,6 +25,7 @@ def _copy_to_map(storage: dace.StorageType):
 
 
 def _flatten_to_map(storage: dace.StorageType):
+
     @dace
     def somecopy(a, b):
         b[:] = a.flatten()
@@ -103,6 +105,7 @@ def test_preprocess():
 
 
 def test_squeezed_subset_src():
+
     @dace.program
     def squeezed_subset_src(a: dace.float32[10], b: dace.float32[10, 10]):
         for i in range(10):
@@ -126,10 +129,11 @@ def test_squeezed_subset_src():
 
 
 def test_squeezed_subset_src_swapped():
+
     @dace.program
     def squeezed_subset_src_swapped(a: dace.float32[10], b: dace.float32[10, 10]):
         for i in range(10):
-            b[i+1:10, i] = a[0:10-(i+1)]
+            b[i + 1:10, i] = a[0:10 - (i + 1)]
 
     sdfg = squeezed_subset_src_swapped.to_sdfg()
 
