@@ -1490,7 +1490,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if state_struct:
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
-            arguments.append(f'{toplevel_sdfg.name}_t *__state')
+            arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
 
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
         restrict_args = []
