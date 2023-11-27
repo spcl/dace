@@ -142,7 +142,7 @@ def test_loop_inlining_do_for():
     assert state3 in states
 
 
-def test_inline_tripple_nested_for():
+def test_inline_triple_nested_for():
     sdfg = dace.SDFG('gemm')
     N = dace.symbol('N')
     M = dace.symbol('M')
