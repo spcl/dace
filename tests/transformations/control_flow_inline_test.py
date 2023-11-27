@@ -227,5 +227,5 @@ if __name__ == '__main__':
     test_loop_inlining_regular_while()
     test_loop_inlining_do_while()
     test_loop_inlining_do_for()
-    test_inline_tripple_nested_for()
+    test_inline_triple_nested_for()
     test_loop_inlining_for_continue_break()
