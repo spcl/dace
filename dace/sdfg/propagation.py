@@ -565,11 +565,14 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
     :param sdfg: The SDFG in which to look.
     :param unannotated_cycle_states: List of lists. Each sub-list contains the states of one unannotated cycle.
+    :return: A dictionary mapping guard states to their condition edges, if applicable
     """
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
     from dace.sdfg import utils as sdutils
+
+    condition_edges = {}
 
     for cycle in sdfg.find_cycles():
         # In each cycle, try to identify a valid loop guard state.
@@ -667,7 +670,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 for v in loop_states:
                     v.ranges[itervar] = subsets.Range([rng])
                 guard.ranges[itervar] = subsets.Range([rng])
-                guard.condition_edge = sdfg.edges_between(guard, begin)[0]
+                condition_edges[guard] = sdfg.edges_between(guard, begin)[0]
                 guard.is_loop_guard = True
                 guard.itvar = itervar
         else:
@@ -675,6 +678,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # dynamically unbounded.
             unannotated_cycle_states.append(cycle)
 
+    return condition_edges
 
 def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     """
@@ -760,7 +764,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     # Find any valid for loop constructs and annotate the loop ranges. Any other
     # cycle should be marked as unannotated.
     unannotated_cycle_states = []
-    _annotate_loop_ranges(sdfg, unannotated_cycle_states)
+    condition_edges = _annotate_loop_ranges(sdfg, unannotated_cycle_states)
     if not concretize_dynamic_unbounded:
         # Flatten the list. This keeps the old behavior of propagate_states.
         unannotated_cycle_states = [state for cycle in unannotated_cycle_states for state in cycle]
@@ -869,7 +873,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
                                               (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()
 
-                    loop_state = state.condition_edge.dst
+                    loop_state = condition_edges[state].dst
                     end_state = (out_edges[0].dst if out_edges[1].dst == loop_state else out_edges[1].dst)
 
                     traversal_q.append((end_state, state.executions, proposed_dynamic, itvar_stack))
@@ -1142,7 +1146,6 @@ def reset_state_annotations(sdfg):
         state.executions = 0
         state.dynamic_executions = True
         state.ranges = {}
-        state.condition_edge = None
         state.is_loop_guard = False
         state.itervar = None
 

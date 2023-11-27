@@ -2156,6 +2156,7 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
+        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2175,6 +2176,10 @@ class SDFG(ControlFlowRegion):
             # Fix the build folder name on the copied SDFG to avoid it changing
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
+
+            # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
+            # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
+            sdutils.inline_loop_blocks(sdfg)
 
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
