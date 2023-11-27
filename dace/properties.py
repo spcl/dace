@@ -1390,6 +1390,8 @@ class TypeClassProperty(Property):
     def from_json(obj, context=None):
         if obj is None:
             return None
+        elif isinstance(obj, typeclass):
+            return obj
         elif isinstance(obj, str):
             return TypeClassProperty.from_string(obj)
         elif isinstance(obj, dict):
