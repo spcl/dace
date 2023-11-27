@@ -1197,7 +1197,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            if k == '_parent':  # Skip derivative attributes
+                continue
             setattr(result, k, copy.deepcopy(v, memo))
+
+        for k in ('_parent',):
+            if id(getattr(self, k)) in memo:
+                setattr(result, k, memo[id(getattr(self, k))])
+            else:
+                setattr(result, k, None)
+
         for node in result.nodes():
             if isinstance(node, nd.NestedSDFG):
                 try:
