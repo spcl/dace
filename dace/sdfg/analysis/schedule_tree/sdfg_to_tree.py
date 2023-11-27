@@ -249,7 +249,10 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                     syms.remove(memlet.data)
         for s in syms:
             if s in input_mapping:
-                repl_dict[s] = str(input_mapping[s])
+                if s in sdfg.arrays:
+                    repl_dict[s] = input_mapping[s].data
+                else:
+                    repl_dict[s] = str(input_mapping[s])
 
         # Manual replacement with strings
         # TODO(later): Would be MUCH better to use MemletReplacer / e.data.replace_dict(repl_dict, replace_keys=False)
