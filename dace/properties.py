@@ -1023,6 +1023,14 @@ class CodeBlock(object):
         else:
             self.code = code
 
+    def __eq__(self, other):
+        if isinstance(other, str) or other is None:
+            return self.as_string == other
+        elif isinstance(other, CodeBlock):
+            return self.as_string == other.as_string and self.language == other.language
+        else:
+            return super().__eq__(other)
+
     def to_json(self):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
