@@ -7,7 +7,7 @@ import dace as dc
 import pytest
 import argparse
 from dace.fpga_testing import fpga_test
-from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG, StateFusion
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
@@ -91,15 +91,23 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
                                                            }])
 
         assert pruned_conns == 1
+        sdfg.apply_transformations_repeated(StateFusion)
 
         fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
-        sdfg.states()[0].location["is_FPGA_kernel"] = False
+        for state in sdfg.states():
+            if any([isinstance(node, dace.nodes.NestedSDFG) for node in state.nodes()]):
+                state.location["is_FPGA_kernel"] = False
+
         # we need to specialize both the top-level SDFG and the nested SDFG
         sdfg.specialize(dict(N=N))
-        sdfg.states()[0].nodes()[0].sdfg.specialize(dict(N=N))
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    node.sdfg.specialize(dict(N=N))
+
         # run program
         sdfg(path=path)
 
