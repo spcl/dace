@@ -169,4 +169,4 @@ if __name__ == '__main__':
     test_loop_regular_while()
     test_loop_do_while()
     test_loop_do_for()
-    test_tripple_nested_for()
+    test_triple_nested_for()
