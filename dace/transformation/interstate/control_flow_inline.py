@@ -27,6 +27,17 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         return [sdutil.node_path_graph(cls.loop)]
 
     def can_be_applied(self, graph: ControlFlowRegion, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        # Check that the loop initialization and update statements each only contain assignments, if the loop has any.
+        if self.loop.init_statement is not None:
+            if isinstance(self.loop.init_statement.code, list):
+                for stmt in self.loop.init_statement.code:
+                    if not isinstance(stmt, astutils.ast.Assign):
+                        return False
+        if self.loop.update_statement is not None:
+            if isinstance(self.loop.update_statement.code, list):
+                for stmt in self.loop.update_statement.code:
+                    if not isinstance(stmt, astutils.ast.Assign):
+                        return False
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Optional[int]:
@@ -71,9 +82,10 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         # Add an initialization edge that initializes the loop variable if applicable.
         init_edge = InterstateEdge()
         if self.loop.init_statement is not None:
-            init_edge.assignments = {
-                self.loop.loop_variable: self.loop.init_statement.as_string.rpartition('=')[2].strip()
-            }
+            init_edge.assignments = {}
+            for stmt in self.loop.init_statement.code:
+                assign: astutils.ast.Assign = stmt
+                init_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
         if self.loop.inverted:
             parent.add_edge(init_state, internal_start, init_edge)
         else:
@@ -82,9 +94,10 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         # Connect the loop tail.
         update_edge = InterstateEdge()
         if self.loop.update_statement is not None:
-            update_edge.assignments = {
-                self.loop.loop_variable: self.loop.update_statement.as_string.rpartition('=')[2].strip()
-            }
+            update_edge.assignments = {}
+            for stmt in self.loop.update_statement.code:
+                assign: astutils.ast.Assign = stmt
+                update_edge.assignments[assign.targets[0].id] = astutils.unparse(assign.value)
         parent.add_edge(loop_tail_state, guard_state, update_edge)
 
         # Add condition checking edges and connect the guard state.

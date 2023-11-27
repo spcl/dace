@@ -222,6 +222,68 @@ def test_loop_inlining_for_continue_break():
     assert len(sdfg.edges_between(state2, tail_state)) == 1
 
 
+def test_loop_inlining_multi_assignments():
+    sdfg = dace.SDFG('inlining')
+    sdfg.add_symbol('j', dace.int32)
+    state0 = sdfg.add_state('state0', is_start_block=True)
+    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0; j = 10 + 200 - 1',
+                       update_expr='i = i + 1; j = j + i', inverted=False)
+    sdfg.add_node(loop1)
+    state1 = loop1.add_state('state1', is_start_block=True)
+    state2 = loop1.add_state('state2')
+    loop1.add_edge(state1, state2, dace.InterstateEdge())
+    state3 = sdfg.add_state('state3')
+    sdfg.add_edge(state0, loop1, dace.InterstateEdge())
+    sdfg.add_edge(loop1, state3, dace.InterstateEdge())
+
+    sdutils.inline_loop_blocks(sdfg)
+
+    states = sdfg.nodes() # Get top-level states only, not all (.states()), in case something went wrong
+    assert len(states) == 8
+    assert state0 in states
+    assert state1 in states
+    assert state2 in states
+    assert state3 in states
+
+    guard_state = None
+    init_state = None
+    tail_state = None
+    for state in sdfg.states():
+        if state.label == 'loop1_guard':
+            guard_state = state
+        elif state.label == 'loop1_init':
+            init_state = state
+        elif state.label == 'loop1_tail':
+            tail_state = state
+    init_edge = sdfg.edges_between(init_state, guard_state)[0]
+    assert 'i' in init_edge.data.assignments
+    assert 'j' in init_edge.data.assignments
+    update_edge = sdfg.edges_between(tail_state, guard_state)[0]
+    assert 'i' in update_edge.data.assignments
+    assert 'j' in update_edge.data.assignments
+
+
+def test_loop_inlining_invalid_update_statement():
+    # Inlining should not be applied here.
+    sdfg = dace.SDFG('inlining')
+    sdfg.add_symbol('j', dace.int32)
+    state0 = sdfg.add_state('state0', is_start_block=True)
+    loop1 = LoopRegion(label='loop1', condition_expr='i < 10', loop_var='i', initialize_expr='i = 0',
+                       update_expr='i = i + 1; j < i', inverted=False)
+    sdfg.add_node(loop1)
+    state1 = loop1.add_state('state1', is_start_block=True)
+    state2 = loop1.add_state('state2')
+    loop1.add_edge(state1, state2, dace.InterstateEdge())
+    state3 = sdfg.add_state('state3')
+    sdfg.add_edge(state0, loop1, dace.InterstateEdge())
+    sdfg.add_edge(loop1, state3, dace.InterstateEdge())
+
+    sdutils.inline_loop_blocks(sdfg)
+
+    nodes = sdfg.nodes()
+    assert len(nodes) == 3
+
+
 if __name__ == '__main__':
     test_loop_inlining_regular_for()
     test_loop_inlining_regular_while()
@@ -229,3 +291,5 @@ if __name__ == '__main__':
     test_loop_inlining_do_for()
     test_inline_triple_nested_for()
     test_loop_inlining_for_continue_break()
+    test_loop_inlining_multi_assignments()
+    test_loop_inlining_invalid_update_statement()

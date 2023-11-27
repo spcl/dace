@@ -27,6 +27,7 @@ from dace.subsets import Range, Subset
 
 if TYPE_CHECKING:
     import dace.sdfg.scope
+    from dace.sdfg import SDFG
 
 
 NodeT = Union[nd.Node, 'ControlFlowBlock']
@@ -100,7 +101,7 @@ class BlockGraphView(object):
         ...
 
     @property
-    def sdfg(self) -> 'dace.sdfg.SDFG':
+    def sdfg(self) -> 'SDFG':
         ...
 
     ###################################################################
@@ -777,7 +778,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
     def unordered_arglist(self,
                           defined_syms=None,
                           shared_transients=None) -> Tuple[Dict[str, dt.Data], Dict[str, dt.Data]]:
-        sdfg: 'dace.sdfg.SDFG' = self.sdfg
+        sdfg: 'SDFG' = self.sdfg
         shared_transients = shared_transients or sdfg.shared_transients()
         sdict = self.scope_dict()
 
@@ -1077,7 +1078,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
     def __init__(self,
                  label: str='',
-                 sdfg: Optional['dace.SDFG'] = None,
+                 sdfg: Optional['SDFG'] = None,
                  parent: Optional['ControlFlowRegion'] = None):
         super(ControlFlowBlock, self).__init__()
         self._label = label
@@ -1121,11 +1122,11 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         return self._label
 
     @property
-    def sdfg(self) -> 'dace.SDFG':
+    def sdfg(self) -> 'SDFG':
         return self._sdfg
 
     @sdfg.setter
-    def sdfg(self, sdfg: 'dace.SDFG'):
+    def sdfg(self, sdfg: 'SDFG'):
         self._sdfg = sdfg
 
     @property
@@ -1512,7 +1513,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
 
     def add_nested_sdfg(
         self,
-        sdfg: 'dace.sdfg.SDFG',
+        sdfg: 'SDFG',
         parent,
         inputs: Union[Set[str], Dict[str, dtypes.typeclass]],
         outputs: Union[Set[str], Dict[str, dtypes.typeclass]],
@@ -2344,7 +2345,7 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
         super().__init__(graph, subgraph_nodes)
 
     @property
-    def sdfg(self) -> 'dace.sdfg.SDFG':
+    def sdfg(self) -> 'SDFG':
         state: SDFGState = self.graph
         return state.sdfg
 
@@ -2353,7 +2354,7 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
 class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,
                         ControlFlowBlock):
 
-    def __init__(self, label: str='', sdfg: Optional['dace.SDFG'] = None):
+    def __init__(self, label: str='', sdfg: Optional['SDFG'] = None):
         OrderedDiGraph.__init__(self)
         ControlGraphView.__init__(self)
         ControlFlowBlock.__init__(self, label, sdfg)
@@ -2523,7 +2524,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             elif isinstance(block, ControlFlowRegion):
                 yield from block.all_control_flow_regions(recursive=recursive)
 
-    def all_sdfgs_recursive(self) -> Iterator['dace.SDFG']:
+    def all_sdfgs_recursive(self) -> Iterator['SDFG']:
         """ Iterate over this and all nested SDFGs. """
         for cfg in self.all_control_flow_regions(recursive=True):
             if isinstance(cfg, dace.SDFG):
@@ -2590,6 +2591,25 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
 @make_properties
 class LoopRegion(ControlFlowRegion):
+    """
+    A control flow region that represents a loop.
+
+    Like in traditional programming languages, a loop has a condition that is checked before each iteration.
+    It may have zero or more initialization statements that are executed before the first loop iteration, and zero or
+    more update statements that are executed after each iteration. For example, a loop with only a condition and neither
+    an initialization nor an update statement is equivalent to a while loop, while a loop with initialization and update
+    statements represents a for loop. Loops may additionally be inverted, meaning that the condition is checked after
+    the first iteration instead of before.
+
+    A loop region, like any other control flow region, has a single distinct entry / start block, and one or more
+    exit blocks. Exit blocks are blocks that have no outgoing edges or only conditional outgoing edges. Whenever an
+    exit block finshes executing, one iteration of the loop is completed.
+
+    Loops may have an arbitrary number of break states. Whenever a break state finishes executing, the loop is exited
+    immediately. A loop may additionally have an arbitrary number of continue states. Whenever a continue state finishes
+    executing, the next iteration of the loop is started immediately (with execution of the update statement(s), if
+    present).
+    """
 
     update_statement = CodeProperty(optional=True, allow_none=True, default=None,
                                     desc='The loop update statement. May be None if the update happens elsewhere.')
@@ -2673,8 +2693,7 @@ class LoopRegion(ControlFlowRegion):
     def to_json(self, parent=None):
         return super().to_json(parent)
 
-    def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
-        super().add_node(node, is_start_block, is_start_state=is_start_state)
+    def _add_node_internal(self, node, is_continue=False, is_break=False):
         if is_continue:
             if is_break:
                 raise ValueError('Cannot set both is_continue and is_break')
@@ -2684,15 +2703,12 @@ class LoopRegion(ControlFlowRegion):
                 raise ValueError('Cannot set both is_continue and is_break')
             self.break_states.add(self.node_id(node))
 
+    def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
+        super().add_node(node, is_start_block, is_start_state=is_start_state)
+        self._add_node_internal(node, is_continue, is_break)
+
     def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
                   is_start_state: bool = None) -> SDFGState:
         state = super().add_state(label, is_start_block, is_start_state=is_start_state)
-        if is_continue:
-            if is_break:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.continue_states.add(self.node_id(state))
-        if is_break:
-            if is_continue:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.break_states.add(self.node_id(state))
+        self._add_node_internal(state, is_continue, is_break)
         return state
