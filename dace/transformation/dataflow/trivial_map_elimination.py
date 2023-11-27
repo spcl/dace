@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the trivial-map-elimination transformation. """
 
+from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -56,7 +57,11 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
                 if not edge.data.is_empty():
                     # Add an edge directly from the previous source connector to the destination
-                    graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+                    src_node = path[index - 1].src
+                    graph.add_edge(src_node, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
+                    if isinstance(src_node, nodes.AccessNode) and isinstance(edge.dst, nodes.Tasklet):
+                        if sdfg.arrays[src_node.data].storage == dtypes.StorageType.GPU_Global:
+                            sdfg.arrays[src_node.data].storage = dtypes.StorageType.Default
                     write_only_map = False
 
             # Redirect map exit's in edges.
@@ -66,7 +71,11 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
 
                 # Add an edge directly from the source to the next destination connector
                 if len(path) > index + 1:
-                    graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
+                    dst_node = path[index + 1].dst
+                    graph.add_edge(edge.src, edge.src_conn, dst_node, path[index + 1].dst_conn, edge.data)
+                    if isinstance(dst_node, nodes.AccessNode) and isinstance(edge.src, nodes.Tasklet):
+                        if sdfg.arrays[dst_node.data].storage == dtypes.StorageType.GPU_Global:
+                            sdfg.arrays[dst_node.data].storage = dtypes.StorageType.Default
                     if write_only_map:
                         outer_exit = path[index+1].dst
                         outer_entry = graph.entry_node(outer_exit)

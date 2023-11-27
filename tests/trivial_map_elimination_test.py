@@ -117,6 +117,20 @@ class TrivialMapEliminationTest(unittest.TestCase):
         out_memlet = state.in_edges(B)[0]
         self.assertEqual(out_memlet.data.subset, dace.subsets.Range([(0, 0, 1)]))
 
+    def test_updates_array_storage(self):
+        graph = trivial_map_sdfg()
+        graph.arrays['A'].storage = dace.dtypes.StorageType.GPU_Global
+        graph.arrays['B'].storage = dace.dtypes.StorageType.GPU_Global
+
+        graph.apply_transformations(TrivialMapElimination)
+
+        state = graph.nodes()[0]
+        map_entries = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+        self.assertEqual(len(map_entries), 0)
+
+        # for trivial maps, which are converted to a tasklet, the data containers do not need GPU storage
+        self.assertEqual(graph.arrays['A'].storage, dace.dtypes.StorageType.Default)
+        self.assertEqual(graph.arrays['B'].storage, dace.dtypes.StorageType.Default)
 
 class TrivialMapInitEliminationTest(unittest.TestCase):
     def test_can_be_applied(self):
@@ -160,7 +174,6 @@ class TrivialMapPseudoInitEliminationTest(unittest.TestCase):
 
         count = graph.apply_transformations(TrivialMapElimination, validate=False, validate_all=False)
         graph.validate()
-        graph.view()
 
         self.assertGreater(count, 0)
 
