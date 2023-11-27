@@ -111,7 +111,7 @@ def test_loop_do_for():
     assert np.allclose(a_validation, a_test)
 
 
-def test_tripple_nested_for():
+def test_triple_nested_for():
     sdfg = dace.SDFG('gemm')
     sdfg.add_symbol('i', dace.int32)
     sdfg.add_symbol('j', dace.int32)
