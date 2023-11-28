@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import itertools
-
 from typing import List, Tuple, Dict
+import warnings
 
 from dace import dtypes, config, registry, symbolic, nodes, sdfg, data
 from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
@@ -102,6 +102,21 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 elif isinstance(arr, data.Scalar):
                     line: str = "{} {} = {};".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                      edge.src.data)
+                elif isinstance(arr, data.Stream):
+                    # TODO Streams are currently unsupported, as the proper
+                    # behaviour has to be implemented to avoid deadlocking. It
+                    # is only a warning, as the RTL backend is partially used
+                    # by the Xilinx backend, which may hit this case, but will
+                    # discard the errorneous code.
+                    warnings.warn(
+                        'Streams are currently unsupported by the RTL backend.' \
+                        'This may produce errors or deadlocks in the generated code.'
+                    )
+                    line: str = "// WARNING: Unsupported read from ({}) variable '{}' from stream '{}'." \
+                        " This may lead to a deadlock if used in code.\n".format(
+                            dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src_conn)
+                    line += "{} {} = {}.pop();".format(
+                            dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn, edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
             rtl_name = self.unique_name(edge.dst, sdfg.nodes()[state_id], sdfg)
             self.n_unrolled[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)

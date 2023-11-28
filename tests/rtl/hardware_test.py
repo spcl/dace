@@ -1,4 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+    Test suite for testing RTL integration with DaCe targeting Xilinx FPGAs.
+"""
 import dace
 from dace.fpga_testing import rtl_test
 import numpy as np
@@ -13,7 +16,7 @@ from dace.transformation.subgraph import TemporalVectorization
 def make_vadd_sdfg(N: dace.symbol, veclen: int = 8):
     '''
     Function for generating a simple vector addition SDFG that adds a vector `A` of `N` elements to a scalar `B` into a vector `C` of `N` elements, all using SystemVerilog.
-    The tasklet creates `veclen` instances of a floating point adder that operates on `N` elements. 
+    The tasklet creates `veclen` instances of a floating point adder that operates on `N` elements.
 
     :param N: The number of elements the SDFG takes as input and output.
     :param veclen: The number of floating point adders to instantiate.
@@ -197,7 +200,7 @@ def make_vadd_multi_sdfg(N, M):
 
     :param N: The number of elements to compute on.
     :param M: The number of compute PEs to initialize.
-    :return: An SDFG that has arguments `A` and `B`. 
+    :return: An SDFG that has arguments `A` and `B`.
     '''
     # add sdfg
     sdfg = dace.SDFG(f'integer_vector_plus_42_multiple_kernels_{N.get() // M.get()}')
@@ -321,7 +324,7 @@ def make_vadd_multi_sdfg(N, M):
 @rtl_test()
 def test_hardware_vadd():
     '''
-    Test for the simple vector addition. 
+    Test for the simple vector addition.
     '''
 
     # add symbol
@@ -346,7 +349,7 @@ def test_hardware_vadd():
 @rtl_test()
 def test_hardware_add42_single():
     '''
-    Test for adding a constant using a single PE. 
+    Test for adding a constant using a single PE.
     '''
     N = dace.symbol('N')
     M = dace.symbol('M')
@@ -428,10 +431,11 @@ def test_hardware_vadd_temporal_vectorization():
     '''
     Tests whether the multi-pumping optimization can be applied automatically by applying the temporal vectorization transformation. It starts from a numpy vector addition for generating the SDFG. This SDFG is then optimized by applying the vectorization, streaming memory, fpga and temporal vectorization transformations in that order.
     '''
-    # TODO !!!!! THIS TEST STALLS IN HARDWARE EMULATION WITH VITIS 2021.2 !!!!!
-    # But it works fine for 2020.2 and 2022.2. It seems like everything but the
-    # last transaction correctly goes through just fine. The last transaction
-    # is never output by the floating point adder, but the inputs are consumed. 
+    # TODO !!!!! THIS TEST STALLS IN HARDWARE EMULATION WITH VITIS 2021.2 and 2022.1 !!!!!
+    # But it works fine for 2020.2, 2022.2, and 2023.1. It seems like
+    # everything but the last transaction correctly goes through just fine. The
+    # last transaction is never output by the floating point adder, but the
+    # inputs are consumed.
     with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
         # Generate the test data and expected results
         size_n = 1024
