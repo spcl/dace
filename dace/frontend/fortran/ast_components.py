@@ -114,7 +114,10 @@ class InternalFortranAst:
         self.ast = ast
         self.tables = tables
         self.functions_and_subroutines = []
+        self.unsupported_fortran_syntax = []
         self.symbols = {}
+        self.rename_list = {}
+        self.name_list = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -124,6 +127,7 @@ class InternalFortranAst:
             "REAL8": "DOUBLE",
             "DOUBLE PRECISION": "DOUBLE",
             "REAL": "REAL",
+            "CLASS": "CLASS",
         }
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.intrinsic_handler = FortranIntrinsics()
@@ -140,6 +144,7 @@ class InternalFortranAst:
             "Function_Stmt": self.function_stmt,
             "End_Subroutine_Stmt": self.end_subroutine_stmt,
             "End_Function_Stmt": self.end_function_stmt,
+            "Rename": self.rename,
             "Module": self.module,
             "Module_Stmt": self.module_stmt,
             "End_Module_Stmt": self.end_module_stmt,
@@ -241,6 +246,7 @@ class InternalFortranAst:
             "Equiv_Operand": self.level_2_expr,
             "Level_3_Expr": self.level_2_expr,
             "Level_4_Expr": self.level_2_expr,
+            "Level_5_Expr": self.level_2_expr,
             "Add_Operand": self.level_2_expr,
             "Or_Operand": self.level_2_expr,
             "And_Operand": self.level_2_expr,
@@ -267,6 +273,9 @@ class InternalFortranAst:
     def list_tables(self):
         for i in self.tables._symbol_tables:
             print(i)
+
+    def add_name_list_for_module(self, module: str, name_list: List[str]):
+        self.name_list[module] = name_list        
 
     def create_children(self, node: FASTNode):
         return [self.create_ast(child)

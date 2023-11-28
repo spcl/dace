@@ -23,12 +23,14 @@ from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
+from os import path
+import networkx as nx
 
 class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str):
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -36,6 +38,7 @@ class AST_translator:
         self.tables = ast.tables
         self.top_level = None
         self.globalsdfg = None
+        self.multiple_sdfgs = multiple_sdfgs
         self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = ast_utils.NameMap()
         self.contexts = {}
@@ -663,22 +666,30 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
-
-        internal_sdfg = substate.add_nested_sdfg(new_sdfg,
+        if self.multiple_sdfgs==False:
+            internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                  sdfg,
                                                  ins_in_new_sdfg,
                                                  outs_in_new_sdfg,
                                                  symbol_mapping=sym_dict)
+        else:
+            internal_sdfg = substate.add_nested_sdfg(None,
+                                                 sdfg,
+                                                 ins_in_new_sdfg,
+                                                 outs_in_new_sdfg,
+                                                 symbol_mapping=sym_dict,
+                                                 name="External_nested_" + new_sdfg.name)    
+        #if self.multiple_sdfgs==False:
+            # Now adding memlets
 
-        # Now adding memlets
         for i in self.libstates:
             memlet = "0"
             if i in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if i in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
 
         for i in variables_in_call:
 
@@ -711,42 +722,42 @@ class AST_translator:
                     if local_name.name in write_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
                         substate.add_memlet_path(internal_sdfg,
-                                                 elem[2],
-                                                 src_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[2].label, subset=memlet))
+                                                elem[2],
+                                                src_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                memlet=Memlet(expr=elem[2].label, subset=memlet))
                     if local_name.name in read_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
                         substate.add_memlet_path(elem[1],
-                                                 internal_sdfg,
-                                                 dst_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[1].label, subset=memlet))
+                                                internal_sdfg,
+                                                dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                memlet=Memlet(expr=elem[1].label, subset=memlet))
 
             if not found:
                 if local_name.name in write_names:
                     ast_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                               self.name_mapping[new_sdfg][local_name.name], memlet)
+                                            self.name_mapping[new_sdfg][local_name.name], memlet)
                 if local_name.name in read_names:
                     ast_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                              self.name_mapping[new_sdfg][local_name.name], memlet)
+                                            self.name_mapping[new_sdfg][local_name.name], memlet)
 
         for i in addedmemlets:
 
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if local_name.name in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
         for i in globalmemlets:
 
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if local_name.name in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
 
@@ -767,6 +778,11 @@ class AST_translator:
             for i in assigns:
                 self.translate(i, new_sdfg)
             self.translate(node.execution_part, new_sdfg)
+
+        if self.multiple_sdfgs==True:
+            internal_sdfg.path="/home/alex/fcdc/test_msdfg/"+ new_sdfg.name + ".sdfg"
+            new_sdfg.save(path.join("/home/alex/fcdc/test_msdfg/", new_sdfg.name + ".sdfg"))        
+
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG):
         """
@@ -1025,7 +1041,8 @@ def create_ast_from_string(
     source_string: str,
     sdfg_name: str,
     transform: bool = False,
-    normalize_offsets: bool = False
+    normalize_offsets: bool = False,
+    multiple_sdfgs: bool = False
 ):
     """
     Creates an AST from a Fortran file in a string
@@ -1063,7 +1080,8 @@ def create_ast_from_string(
 def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
-    normalize_offsets: bool = False
+    normalize_offsets: bool = False,
+    multiple_sdfgs: bool = False
 ):
     """
     Creates an SDFG from a fortran file in a string
@@ -1092,7 +1110,7 @@ def create_sdfg_from_string(
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__)
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1100,9 +1118,10 @@ def create_sdfg_from_string(
 
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
-            if 'test_function' in node.sdfg.name:
-                sdfg = node.sdfg
-                break
+            if node.sdfg is not None:
+                if 'test_function' in node.sdfg.name:
+                    sdfg = node.sdfg
+                    break
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
@@ -1137,6 +1156,198 @@ def create_sdfg_from_fortran_file(source_string: str):
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
+    ast2sdfg = AST_translator(own_ast, __file__)
+    sdfg = SDFG(source_string)
+    ast2sdfg.top_level = program
+    ast2sdfg.globalsdfg = sdfg
+    ast2sdfg.translate(program, sdfg)
+
+    return sdfg
+
+
+
+def recursive_ast_improver(ast,
+                           source_list,
+                           include_list,
+                           parser,
+                           exclude_list=[],
+                           missing_modules=[],
+                           dep_graph=nx.DiGraph(),
+                           asts={}):
+    dfl = ast_utils.DefModuleLister()
+    dfl.get_defined_modules(ast)
+    defined_modules = dfl.list_of_modules
+    main_program_mode=False
+    if len(defined_modules) != 1:
+        print("Defined modules: ", defined_modules)
+        print("Assumption failed: Only one module per file")
+        if len(defined_modules)==0 and ast.__class__.__name__ == "Program":
+            main_program_mode=True
+    ufl = ast_utils.UseModuleLister()
+    ufl.get_used_modules(ast)
+    objects_in_modules = ufl.objects_in_use
+    used_modules = ufl.list_of_modules
+    if not main_program_mode:
+        parent_module = defined_modules[0]
+    else:
+        parent_module = ast.children[0].children[0].children[1].string
+    for i in defined_modules:
+        if i not in exclude_list:
+            exclude_list.append(i)
+        if i not in dep_graph.nodes:
+            dep_graph.add_node(i)
+    for i in used_modules:
+        if i not in dep_graph.nodes:
+            dep_graph.add_node(i)
+        weight = None
+        if i in objects_in_modules:
+            weight = objects_in_modules[i]
+        dep_graph.add_edge(parent_module, i, obj_list=weight)
+
+    print("It's turtles all the way down: ", len(exclude_list))
+    modules_to_parse = []
+    for i in used_modules:
+        if i not in defined_modules and i not in exclude_list:
+            print("Module " + i + " not defined")
+            modules_to_parse.append(i)
+    added_modules = []
+    for i in modules_to_parse:
+        found = False
+        name=i
+        if i=="mo_restart_nml_and_att": 
+            name="mo_restart_nmls_and_atts"
+        if i=="yomhook":
+            name="yomhook_dummy"    
+        for j in source_list:
+            if name in j:
+                fname = j.split("/")
+                fname = fname[len(fname) - 1]
+                if fname == name + ".f90" or fname == name + ".F90":
+                    found = True
+                    next_file = j
+                    break
+
+        if not found:
+            print("Module " + i + " not found in source list! This is bad!")
+            if i not in missing_modules:
+                missing_modules.append(i)
+            #raise Exception("Module " + i + " not found in source list")
+            continue
+        next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+        next_ast = parser(next_reader)
+        next_ast = recursive_ast_improver(next_ast,
+                                          source_list,
+                                          include_list,
+                                          parser,
+                                          exclude_list=exclude_list,
+                                          missing_modules=missing_modules,
+                                          dep_graph=dep_graph,
+                                          asts=asts)
+        for mod in next_ast.children:
+            added_modules.append(mod)
+            if mod.children[0].children[1].string not in exclude_list:
+                exclude_list.append(mod.children[0].children[1].string)
+
+    for i in added_modules:
+        ast.children.append(i)
+        asts[i.children[0].children[1].string] = i
+    return ast
+
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list):
+    """
+    Creates an SDFG from a fortran file
+    :param source_string: The fortran file name
+    :return: The resulting SDFG
+
+    """
+    parser = pf().create(std="f2008")
+    reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
+    ast = parser(reader)
+    exclude_list = []
+    missing_modules = []
+    dep_graph = nx.DiGraph()
+    asts = {}
+    ast = recursive_ast_improver(ast,
+                                 source_list,
+                                 include_list,
+                                 parser,
+                                 exclude_list=exclude_list,
+                                 missing_modules=missing_modules,
+                                 dep_graph=dep_graph,
+                                 asts=asts)
+    
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    top_level_ast = parse_order.pop()
+    name_dict = {}
+    rename_dict = {}
+    for i in parse_order:
+        local_rename_dict = {}
+        edges = list(dep_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = dep_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list'].children:
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
+        name_dict[i] = names
+    tables = SymbolTable
+    partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
+    partial_modules = []
+    partial_ast.symbols["c_int"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_int8_t"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_int64_t"]=ast_internal_classes.Int_Literal_Node(value=8)
+    partial_ast.symbols["c_int32_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_size_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_long"]=ast_internal_classes.Int_Literal_Node(value=8)
+    partial_ast.symbols["c_signed_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    functions_to_rename={}
+    
+    #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
+    #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
+
+    for i in parse_order:
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
+            continue
+       
+        partial_ast.add_name_list_for_module(i, name_dict[i])
+        partial_modules.append(partial_ast.create_ast(asts[i]))
+        tmp_rename=rename_dict[i]
+        for j in tmp_rename:
+            #print(j)
+            if partial_ast.symbols.get(j) is None:
+                #raise NameError("Symbol " + j + " not found in partial ast")
+                if functions_to_rename.get(i) is None:
+                    functions_to_rename[i]=[j]
+                else:
+                    functions_to_rename[i].append(j)    
+            else:
+                partial_ast.symbols[tmp_rename[j]]=partial_ast.symbols[j]
+
+        print("Parsing module: ", i)
+
+    program = partial_ast.create_ast(ast)
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ArrayToLoop().visit(program)
+    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ForDeclarer().visit(program)
+    program = ast_transforms.IndexExtractor().visit(program)
     ast2sdfg = AST_translator(own_ast, __file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program

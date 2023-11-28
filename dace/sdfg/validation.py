@@ -360,6 +360,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         # Node validation
         try:
             if isinstance(node, nd.NestedSDFG):
+                if node.sdfg is None:
+                    continue
                 node.validate(sdfg, state, references, **context)
             else:
                 node.validate(sdfg, state)

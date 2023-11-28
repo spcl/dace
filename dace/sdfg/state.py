@@ -336,7 +336,8 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         for node in self.nodes():
             yield node, self
             if isinstance(node, nd.NestedSDFG):
-                yield from node.sdfg.all_nodes_recursive()
+                if node.sdfg is not None:
+                    yield from node.sdfg.all_nodes_recursive()
 
     def all_edges_recursive(self) -> Iterator[Tuple[EdgeT, GraphT]]:
         for e in self.edges():

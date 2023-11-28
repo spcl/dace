@@ -444,6 +444,7 @@ class SDFG(ControlFlowRegion):
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+    
 
     _pgrids = DictProperty(str,
                            ProcessGrid,
