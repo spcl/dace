@@ -54,10 +54,7 @@ def test_omp_props():
             break
 
     mapnode.schedule = dtypes.ScheduleType.CPU_Multicore
-    json = sdfg.to_json()
-    assert (key_exists(json, 'omp_num_threads'))
-    assert (key_exists(json, 'omp_schedule'))
-    assert (key_exists(json, 'omp_chunk_size'))
+
     code = sdfg.generate_code()[0].clean_code
     assert ("#pragma omp parallel for" in code)
 
@@ -72,6 +69,11 @@ def test_omp_props():
     mapnode.omp_chunk_size = 5
     code = sdfg.generate_code()[0].clean_code
     assert ("#pragma omp parallel for schedule(guided, 5) num_threads(10)" in code)
+
+    json = sdfg.to_json()
+    assert (key_exists(json, 'omp_num_threads'))
+    assert (key_exists(json, 'omp_schedule'))
+    assert (key_exists(json, 'omp_chunk_size'))
 
 
 def test_omp_parallel():
