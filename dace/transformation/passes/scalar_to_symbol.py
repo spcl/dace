@@ -467,6 +467,7 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
     :param sdfg: The SDFG to run the pass on.
     :note: Operates in-place.
     """
+    nodes_to_remove: List[Tuple[sd.SDFGState, nodes.Tasklet]] = []
     for state, node, defined_syms in sdutils.traverse_sdfg_with_defined_symbols(sdfg):
         if not isinstance(node, nodes.Tasklet):
             continue
@@ -500,6 +501,27 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             # Handle input/output connectors
             _handle_connectors(state, node, in_mapping, do_not_remove, True)
             _handle_connectors(state, node, out_mapping, do_not_remove, False)
+
+            # If we are left with a tasklet that contains one assignment (i.e., trivial),
+            # and has one access node output - remove it
+            if node.code.language == dtypes.Language.Python and len(node.code.code) == 1:
+                if isinstance(node.code.code[0], ast.Assign) and isinstance(node.code.code[0].value, ast.Name):
+                    if [type(n) for n in state.successors(node)] == [nodes.AccessNode] and state.in_degree(node) == 1:
+                        ie, = state.in_edges(node)
+                        oe, = state.out_edges(node)
+                        if len(in_mapping) == 1 and len(out_mapping) == 0:
+                            new_memlet = ie.data
+                        elif len(in_mapping) == 0 and len(out_mapping) == 1:
+                            new_memlet = oe.data
+                        else:
+                            new_memlet = None
+
+                        if new_memlet is not None:
+                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, new_memlet)
+                            nodes_to_remove.append((state, node))
+
+    for s, n in nodes_to_remove:
+        s.remove_node(n)
 
 
 def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
