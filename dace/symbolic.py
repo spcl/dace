@@ -316,20 +316,6 @@ def symtype(expr):
                         (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in expr.free_symbols])))
 
 
-def symlist(values):
-    """ Finds symbol dependencies of expressions. """
-    result = {}
-    try:
-        values = iter(values)
-    except TypeError:
-        values = [values]
-
-    for expr in values:
-        if issymbolic(expr):
-            result.update({str(k): k for k in expr.free_symbols})
-    return result
-
-
 def evaluate(expr: Union[sympy.Basic, int, float],
              symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
         Union[int, float, numpy.number]:
