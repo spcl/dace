@@ -177,6 +177,10 @@ class SymExpr(object):
         return super(SymExpr, cls).__new__(cls)
 
     @property
+    def free_symbols(self):
+        return self._main_expr.free_symbols | self._approx_expr.free_symbols
+    
+    @property
     def expr(self):
         return self._main_expr
 
@@ -301,7 +305,7 @@ def _checkEqualIvo(lst):
 
 def symtype(expr):
     """ Returns the inferred symbol type from a symbolic expression. """
-    stypes = [s.dtype for s in symlist(expr).values()]
+    stypes = [s.dtype for s in expr.free_symbols]
     if len(stypes) == 0:
         return DEFAULT_SYMBOL_TYPE
     elif _checkEqualIvo(stypes):
@@ -309,28 +313,7 @@ def symtype(expr):
     else:
         raise TypeError('Cannot infer symbolic type from expression "%s"'
                         ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
-
-
-def symlist(values):
-    """ Finds symbol dependencies of expressions. """
-    result = {}
-    try:
-        values = iter(values)
-    except TypeError:
-        values = [values]
-
-    for expr in values:
-        if isinstance(expr, SymExpr):
-            true_expr = expr.expr
-        elif isinstance(expr, sympy.Basic):
-            true_expr = expr
-        else:
-            continue
-        for atom in sympy.preorder_traversal(true_expr):
-            if isinstance(atom, symbol):
-                result[atom.name] = atom
-    return result
+                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in expr.free_symbols])))
 
 
 def evaluate(expr: Union[sympy.Basic, int, float],
@@ -456,20 +439,6 @@ def resolve_symbol_to_constant(symb, start_sdfg):
                 sdfg = sdfg.parent_sdfg
         # can not be resolved
         return None
-
-
-def symbols_in_ast(tree: ast.AST):
-    """ Walks an AST and finds all names, excluding function names. """
-    symbols = []
-    skip = set()
-    for node in ast.walk(tree):
-        if node in skip:
-            continue
-        if isinstance(node, ast.Call):
-            skip.add(node.func)
-        if isinstance(node, ast.Name):
-            symbols.append(node.id)
-    return dtypes.deduplicate(symbols)
 
 
 def symbol_name_or_value(val):

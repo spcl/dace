@@ -425,7 +425,8 @@ class Range(Subset):
         result = set()
         for dim in self.ranges:
             for d in dim:
-                result |= symbolic.symlist(d).keys()
+                if symbolic.issymbolic(d):
+                    result.update(map(str, d.free_symbols))
         return result
 
     def get_free_symbols_by_indices(self, indices: List[int]) -> Set[str]:
@@ -441,7 +442,8 @@ class Range(Subset):
         for i, dim in enumerate(self.ranges):
             if i in indices:
                 for d in dim:
-                    result |= symbolic.symlist(d).keys()
+                    if symbolic.issymbolic(d):
+                        result.update(map(str, d.free_symbols))
         return result
 
     def reorder(self, order):
@@ -938,7 +940,8 @@ class Indices(Subset):
     def free_symbols(self) -> Set[str]:
         result = set()
         for dim in self.indices:
-            result |= symbolic.symlist(dim).keys()
+            if symbolic.issymbolic(dim):
+                result.update(map(str, dim.free_symbols))
         return result
 
     @staticmethod

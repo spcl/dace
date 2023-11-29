@@ -493,32 +493,30 @@ class PAPIUtils(object):
         # should happen
 
         if isinstance(begin, int):
-            start_syms = []
+            start_syms = set()
         else:
-            start_syms = symbolic.symlist(begin).keys()
+            start_syms = set(map(str, begin.free_symbols))
 
         if isinstance(end, int):
-            end_syms = []
+            end_syms = set()
         else:
-            end_syms = symbolic.symlist(end).keys()
+            end_syms = set(map(str, end.free_symbols))
 
         if isinstance(step, int):
-            step_syms = []
+            step_syms = set()
         else:
-            step_syms = symbolic.symlist(step).keys()
+            step_syms = set(map(str, step.free_symbols))
 
-        def intersection(lista, listb):
-            return [x for x in lista if x in listb]
-
-        start_dyn_syms = intersection(start_syms, rparams.keys())
-        end_dyn_syms = intersection(end_syms, rparams.keys())
-        step_dyn_syms = intersection(step_syms, rparams.keys())
+        start_dyn_syms = start_syms & rparams.keys()
+        end_dyn_syms = end_syms & rparams.keys()
+        step_dyn_syms = step_syms & rparams.keys()
 
         def replace_func(element, dyn_syms, retparams):
             # Resolve all symbols using the retparams-dict
 
             for x in dyn_syms:
                 target = sp.functions.Min(retparams[x] * (retparams[x] - 1) / 2, 0)
+                tarsyms = set(map(str, target.free_symbols))
                 bstr = str(element)
                 element = symbolic.pystr_to_symbolic(bstr)
                 element = element.subs(x, target)  # Add the classic sum formula; going upwards
@@ -528,7 +526,6 @@ class PAPIUtils(object):
                 for k, v in retparams.items():
                     newv = symbolic.pystr_to_symbolic(str(v))
 
-                    tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:
                         continue
 

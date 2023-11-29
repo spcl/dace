@@ -2082,7 +2082,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             # it could be an unsigned (uint32) variable: we need
                             # to check to the type of 'end',
                             # if we are able to determine it
-                            symbols = list(dace.symbolic.symlist(end).values())
+                            symbols = list(end.free_symbols) if symbolic.issymbolic(end) else []
                             if len(symbols) > 0:
                                 sym = symbols[0]
                                 if str(sym) in sdfg.symbols:

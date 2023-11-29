@@ -97,7 +97,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
-                for sym in symbolic.symlist(sym_dim).values():
+                for sym in (sym_dim.free_symbols if symbolic.issymbolic(sym_dim) else ()):
                     newsym = symbolic.symbol('__SOLVE_' + str(sym))
                     if str(sym) in args:
                         exclude.add(newsym)

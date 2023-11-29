@@ -3,7 +3,6 @@
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
-from dace.symbolic import symlist
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -32,10 +31,8 @@ class MapCollapse(transformation.SingleStateTransformation):
         inner_map_entry: nodes.MapEntry = self.inner_map_entry
 
         # Check that inner map range is independent of outer range
-        map_deps = set()
-        for s in inner_map_entry.map.range:
-            map_deps |= set(map(str, symlist(s)))
-        if any(dep in outer_map_entry.map.params for dep in map_deps):
+        map_deps = inner_map_entry.map.range.free_symbols
+        if any(param in map_deps for param in outer_map_entry.map.params):
             return False
 
         # Check that the destination of all the outgoing edges
@@ -53,10 +50,8 @@ class MapCollapse(transformation.SingleStateTransformation):
             # Check that dynamic input range memlets are independent of
             # first map range
             if dst_conn is not None and not dst_conn.startswith('IN_'):
-                memlet_deps = set()
-                for s in memlet.subset:
-                    memlet_deps |= set(map(str, symlist(s)))
-                if any(dep in outer_map_entry.map.params for dep in memlet_deps):
+                memlet_deps = memlet.subset.free_symbols
+                if any(param in memlet_deps for param in outer_map_entry.map.params):
                     return False
 
         # Check the edges between the exits of the two maps.
