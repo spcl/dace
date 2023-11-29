@@ -626,7 +626,7 @@ class InternalFortranAst:
             #fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
             #fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
             fortran_size=ast_internal_classes.BinOp_Node(lval=self.create_ast(dim_expr[1]),rval=self.create_ast(dim_expr[0]),op="-",type="INTEGER")
-            size.append(ast_internal_classes.BinOp_Node(lval=fortran_size,rval=ast_internal_classes.Int_Literal_Node(str(1)),op="+",type="INTEGER"))
+            size.append(ast_internal_classes.BinOp_Node(lval=fortran_size,rval=ast_internal_classes.Int_Literal_Node(value=str(1)),op="+",type="INTEGER"))
         else:
             raise TypeError("Array dimension must be at most two expressions")
 

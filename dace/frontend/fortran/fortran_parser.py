@@ -183,8 +183,14 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
-                self.startpoint=node.modules[0]
-                self.translate(self.startpoint, sdfg)   
+                #self.startpoint=node.modules[0].subroutine_definitions[0].execution_part.execution
+                for i in self.startpoint.specification_part.typedecls:
+                    self.translate(i, sdfg)
+                for i in self.startpoint.specification_part.symbols:
+                    self.translate(i, sdfg)
+                for i in self.startpoint.specification_part.specifications:
+                    self.translate(i, sdfg)
+                self.translate(self.startpoint.execution_part.execution, sdfg)   
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
         """
@@ -1616,10 +1622,19 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.IndexExtractor(program).visit(program)
     program.tables=partial_ast.symbols
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
-    ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint="start point")
-    sdfg = SDFG("source_string")
-    ast2sdfg.top_level = program
-    ast2sdfg.globalsdfg = sdfg
-    ast2sdfg.translate(program, sdfg)
+
+    for i in program.modules:
+        for j in i.subroutine_definitions:
+            if j.execution_part is None:
+                continue
+            startpoint = j
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint=startpoint)
+            sdfg = SDFG(j.name.name)
+            ast2sdfg.top_level = program
+            ast2sdfg.globalsdfg = sdfg
+            ast2sdfg.translate(program, sdfg)
+            sdfg.validate()
+            #sdfg.simplify(verbose=True)
+            sdfg.save("/home/alex/fcdc/icon_msdfg/"+ sdfg.name + ".sdfg")
 
     return sdfg
