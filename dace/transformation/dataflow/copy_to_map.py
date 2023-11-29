@@ -35,6 +35,11 @@ class CopyToMap(xf.SingleStateTransformation):
         if self.a.desc(sdfg).strides == self.b.desc(sdfg).strides:
             return False
 
+        # Happens-before edges
+        for edge in graph.edges_between(self.a, self.b):
+            if edge.data.data is None:
+                return False
+
         return True
 
     def delinearize_linearize(self, desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType],
