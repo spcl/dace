@@ -26,10 +26,20 @@ import dace.symbolic as symbolic
 
 import itertools
 import warnings
+from typing import Set
 
 from collections import defaultdict
 
 from dace.transformation.subgraph import helpers
+
+
+def _get_free_symbols(dim) -> Set[str]:
+    """Gets the free symbols of the dimension of a ``subset.Subset`` object."""
+    if isinstance(dim, tuple):
+        return set().union(*(map(str, part.free_symbols) for part in dim if symbolic.issymbolic(part)))
+    if symbolic.issymbolic(dim):
+        return set(map(str, dim.free_symbols))
+    return set()
 
 
 @make_properties
@@ -268,8 +278,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                         c_subset = subsets.Range((c_subset, ))
 
                         # get associated parameter in memlet
-                        params1 = symbolic.symlist(memlets[map_entry][1][data_name][i]).keys()
-                        params2 = symbolic.symlist(memlets[child_entry][0][data_name][i]).keys()
+                        params1 = _get_free_symbols(memlets[map_entry][1][data_name][i])
+                        params2 = _get_free_symbols(memlets[child_entry][0][data_name][i])
                         if params1 != params2:
                             return False
                         params = params1
@@ -285,7 +295,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                             # current dim has no symbol associated.
                             # ignore and continue
                             warnings.warn(f"StencilTiling::In map {map_entry}, there is a "
-                                          "dimension belonging to {data_name} "
+                                          f"dimension belonging to {data_name} "
                                           "that has no map parameter associated.")
                             pass
 
@@ -355,9 +365,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                 mapping = []
                 for dim in e.data.subset:
-                    syms = set()
-                    for d in dim:
-                        syms |= symbolic.symlist(d).keys()
+                    syms = set(str(sym) for part in dim for sym in part.free_symbols)
                     if len(syms) > 1:
                         raise NotImplementedError("One incoming or outgoing stencil subset is indexed "
                                                   "by multiple map parameters. "
