@@ -540,10 +540,11 @@ class InternalFortranAst:
     def module(self, node: FASTNode):
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Module_Stmt_Node)
+        module_subprogram_part=get_child(children, ast_internal_classes.Module_Subprogram_Part_Node)
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
 
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
-
+        
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
         return ast_internal_classes.Module_Node(
             name=name.name,
@@ -605,15 +606,15 @@ class InternalFortranAst:
         # Here we support arrays that have size declaration - with initial offset.
         elif len(dim_expr) == 2:
             # extract offets
-            for expr in dim_expr:
-                if not isinstance(expr, f03.Int_Literal_Constant):
+            #for expr in dim_expr:
+            if not isinstance(dim_expr[0], f03.Int_Literal_Constant):
                     raise TypeError("Array offsets must be constant expressions!")
             offset.append(int(dim_expr[0].tostr()))
 
-            fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
-            fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
-
-            size.append(self.create_ast(fortran_ast_size))
+            #fortran_size = int(dim_expr[1].tostr()) - int(dim_expr[0].tostr()) + 1
+            #fortran_ast_size = f03.Int_Literal_Constant(str(fortran_size))
+            fortran_size=ast_internal_classes.BinOp_Node(lval=self.create_ast(dim_expr[1]),rval=self.create_ast(dim_expr[0]),op="-",type="INTEGER")
+            size.append(ast_internal_classes.BinOp_Node(lval=fortran_size,rval=ast_internal_classes.Int_Literal_Node(str(1)),op="+",type="INTEGER"))
         else:
             raise TypeError("Array dimension must be at most two expressions")
 

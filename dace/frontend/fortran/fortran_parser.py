@@ -30,13 +30,14 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False):
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
         """
         self.registered_types = {}
         self.tables = ast.tables
+        self.startpoint = startpoint
         self.top_level = None
         self.globalsdfg = None
         self.multiple_sdfgs = multiple_sdfgs
@@ -170,14 +171,20 @@ class AST_translator:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
-
-        for i in node.main_program.specification_part.typedecls:
-            self.translate(i, sdfg)
-        for i in node.main_program.specification_part.symbols:
-            self.translate(i, sdfg)
-        for i in node.main_program.specification_part.specifications:
-            self.translate(i, sdfg)
-        self.translate(node.main_program.execution_part.execution, sdfg)
+        if node.main_program is not None:
+            for i in node.main_program.specification_part.typedecls:
+                self.translate(i, sdfg)
+            for i in node.main_program.specification_part.symbols:
+                self.translate(i, sdfg)
+            for i in node.main_program.specification_part.specifications:
+                self.translate(i, sdfg)
+            self.translate(node.main_program.execution_part.execution, sdfg)
+        else: 
+            if self.startpoint is None:
+                raise ValueError("No main program or start point found")
+            else:
+                self.startpoint=node.modules[0]
+                self.translate(self.startpoint, sdfg)   
 
     def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
         """
@@ -1407,12 +1414,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
-    for transformation in own_ast.fortran_intrinsics():
+    for transformation in partial_ast.fortran_intrinsics():
         program = transformation(program).visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__)
+    ast2sdfg = AST_translator(program, __file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1596,16 +1603,21 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
-    program = ast_transforms.functionStatementEliminator(program)
+    #program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop().visit(program)
-    program = ast_transforms.SumToLoop().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+
+    for transformation in partial_ast.fortran_intrinsics().transformations():
+        program = transformation(program).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor().visit(program)
-    ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True)
-    sdfg = SDFG(source_string)
+    program = ast_transforms.IndexExtractor(program).visit(program)
+    program.tables=partial_ast.symbols
+    program.functions_and_subroutines=partial_ast.functions_and_subroutines
+    ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint="start point")
+    sdfg = SDFG("source_string")
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)

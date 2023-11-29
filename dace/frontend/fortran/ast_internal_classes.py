@@ -83,6 +83,12 @@ class Module_Node(FNode):
         'function_definitions',
     )
 
+class Module_Subprogram_Part_Node(FNode):
+    _attributes = ()
+    _fields = (
+        'subroutine_definitions',
+        'function_definitions',
+    )
 
 class Function_Subprogram_Node(FNode):
     _attributes = ('name', 'type', 'ret_name')

@@ -26,6 +26,7 @@ fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
     "REAL": dtypes.float32,
     "INTEGER": dtypes.int32,
+    "CHAR": dtypes.int8,
     "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
 }
 
@@ -113,6 +114,7 @@ class TaskletWriter:
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
+            ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,
             ast_internal_classes.Array_Subscript_Node: self.arraysub2string,
             ast_internal_classes.Parenthesis_Expr_Node: self.parenthesis2string,
@@ -192,6 +194,9 @@ class TaskletWriter:
 
     def floatlit2string(self, node: ast_internal_classes.Real_Literal_Node):
 
+        return "".join(map(str, node.value))
+    
+    def charlit2string(self, node: ast_internal_classes.Char_Literal_Node):
         return "".join(map(str, node.value))
 
     def boollit2string(self, node: ast_internal_classes.Bool_Literal_Node):
