@@ -500,6 +500,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
