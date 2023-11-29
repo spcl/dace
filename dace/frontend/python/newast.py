@@ -2986,7 +2986,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for i, r in enumerate(rng):
                 repl_dict = {}
                 for s, sr in self.symbols.items():
-                    if s in symbolic.symlist(r).values():
+                    if any(s in part.free_symbols for part in r):
                         ignore_indices.append(i)
                         if any(t in self.sdfg.arrays or t in (str(sym) for sym in self.symbols)
                                for t in sr.free_symbols):
