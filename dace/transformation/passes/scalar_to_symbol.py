@@ -5,7 +5,7 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Set, Tuple
 
 import dace
 from dace import data as dt
@@ -315,21 +315,24 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
+        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items()}
+        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items()})
         self.sdfg = sdfg
         self.defined = defined_syms
+        self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
         self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.do_not_remove: Set[str] = set()
-        self.latest: DefaultDict[str, int] = collections.defaultdict(int)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -337,10 +340,11 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
