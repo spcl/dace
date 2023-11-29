@@ -142,6 +142,7 @@ class InternalFortranAst:
             "End_Program_Stmt": self.end_program_stmt,
             "Subroutine_Subprogram": self.subroutine_subprogram,
             "Function_Subprogram": self.function_subprogram,
+            "Module_Subprogram_Part": self.module_subprogram_part,
             "Subroutine_Stmt": self.subroutine_stmt,
             "Function_Stmt": self.function_stmt,
             "End_Subroutine_Stmt": self.end_subroutine_stmt,
@@ -537,6 +538,12 @@ class InternalFortranAst:
         children = self.create_children(node)
         return ast_internal_classes.Parenthesis_Expr_Node(expr=children[1])
 
+    def module_subprogram_part(self, node: FASTNode):
+        children = self.create_children(node)
+        function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
+        subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
+        return ast_internal_classes.Module_Subprogram_Part_Node(function_definitions=function_definitions,
+                                                                 subroutine_definitions=subroutine_definitions)
     def module(self, node: FASTNode):
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Module_Stmt_Node)
@@ -546,6 +553,11 @@ class InternalFortranAst:
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
         
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
+        if module_subprogram_part is not None:
+            for i in module_subprogram_part.function_definitions:
+                function_definitions.append(i)
+            for i in module_subprogram_part.subroutine_definitions:
+                subroutine_definitions.append(i)
         return ast_internal_classes.Module_Node(
             name=name.name,
             specification_part=specification_part,
