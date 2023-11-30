@@ -315,8 +315,8 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
-        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items()}
-        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items()})
+        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items() if k is not None}
+        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items() if k is not None})
         self.sdfg = sdfg
         self.defined = defined_syms
         self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
