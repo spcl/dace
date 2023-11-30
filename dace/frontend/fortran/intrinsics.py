@@ -20,7 +20,7 @@ class IntrinsicTransformation:
 
     @staticmethod
     @abstractmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
+    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line ,symbols:list) -> ast_internal_classes.FNode:
         pass
 
     @staticmethod
@@ -57,15 +57,45 @@ class DirectReplacement(IntrinsicTransformation):
         if len(args.args) != 1:
             raise RuntimeError()
 
-    def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line):
+    def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
+        if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
+            arg0 = args.args[0].value
+        elif isinstance(args.args[0], ast_internal_classes.Name_Node):
+            if args.args[0].name in symbols:
+                arg0 = symbols[args.args[0].name].value
+            else:
+                raise ValueError("Only symbols can be names in selector")
+        else:
+            raise ValueError("Only literals or symbols can be arguments in selector")
         return ast_internal_classes.Int_Literal_Node(value=str(
-            math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
+            math.ceil((math.log2(math.pow(10, int(arg0))) + 1) / 8)),
                                                         line_number=line)
 
-    def replace_real_kind(args: ast_internal_classes.Arg_List_Node, line):
-        if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
+    def replace_real_kind(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
+        if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
+            arg0 = args.args[0].value
+        elif isinstance(args.args[0], ast_internal_classes.Name_Node):
+            if args.args[0].name in symbols:
+                arg0 = symbols[args.args[0].name].value
+            else:
+                raise ValueError("Only symbols can be names in selector")
+        else:
+            raise ValueError("Only literals or symbols can be arguments in selector")
+        if len(args.args) == 2:
+            if isinstance(args.args[1], ast_internal_classes.Int_Literal_Node):
+                arg1 = args.args[1].value
+            elif isinstance(args.args[1], ast_internal_classes.Name_Node):
+                if args.args[1].name in symbols:
+                    arg1 = symbols[args.args[1].name].value
+                else:
+                    raise ValueError("Only symbols can be names in selector")
+            else:
+                raise ValueError("Only literals or symbols can be arguments in selector")
+        else:
+            arg1 = 0
+        if int(arg0) >= 9 or int(arg1) > 126:
             return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-        elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
+        elif int(arg0) >= 3 or int(arg1) > 14:
             return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
         else:
             return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
@@ -94,11 +124,11 @@ class DirectReplacement(IntrinsicTransformation):
         return False
 
     @staticmethod
-    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
+    def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line, symbols:list) -> ast_internal_classes.FNode:
 
         # Here we already have __dace_func
         fname = func_name.split('__dace_')[1]
-        return DirectReplacement.FUNCTIONS[fname].function(args, line)
+        return DirectReplacement.FUNCTIONS[fname].function(args, line, symbols)
 
     def has_transformation() -> bool:
         return isinstance(DirectReplacement.FUNCTIONS[fname], DirectReplacement.Transformation)
@@ -1246,7 +1276,7 @@ class FortranIntrinsics:
 
         return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
 
-    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line):
+    def replace_function_reference(self, name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line,symbols: dict):
 
         func_types = {
             "__dace_sign": "DOUBLE",
@@ -1256,7 +1286,7 @@ class FortranIntrinsics:
             call_type = func_types[name.name]
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
         elif DirectReplacement.replacable(name.name):
-            return DirectReplacement.replace(name.name, args, line)
+            return DirectReplacement.replace(name.name, args, line, symbols)
         else:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.

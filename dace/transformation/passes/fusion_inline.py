@@ -106,6 +106,8 @@ class FixNestedSDFGReferences(ppl.Pass):
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             was_modified = False
+            if node.sdfg is None:
+                continue
             if node.sdfg.parent_nsdfg_node is not node:
                 was_modified = True
                 node.sdfg.parent_nsdfg_node = node

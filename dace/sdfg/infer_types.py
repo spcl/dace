@@ -61,6 +61,7 @@ def infer_connector_types(sdfg: SDFG):
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes
+
     for state in sdfg.nodes():
         for node in dfs_topological_sort(state):
             # Try to infer input connector type from node type or previous edges

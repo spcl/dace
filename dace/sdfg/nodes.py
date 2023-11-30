@@ -540,6 +540,7 @@ class NestedSDFG(CodeNode):
                          default=False)
 
     unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")
+    path = Property(dtype=str, default = "",desc="Path to the SDFG file (if any)")
 
     def __init__(self,
                  label,
@@ -577,15 +578,16 @@ class NestedSDFG(CodeNode):
         ret = NestedSDFG("nolabel", SDFG('nosdfg'), {}, {})
 
         dace.serialize.set_properties_from_json(ret, json_obj, context)
+        
+        if ret.sdfg is not None:
+            if context and 'sdfg_state' in context:
+                ret.sdfg.parent = context['sdfg_state']
+            if context and 'sdfg' in context:
+                ret.sdfg.parent_sdfg = context['sdfg']
 
-        if context and 'sdfg_state' in context:
-            ret.sdfg.parent = context['sdfg_state']
-        if context and 'sdfg' in context:
-            ret.sdfg.parent_sdfg = context['sdfg']
+            ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.parent_nsdfg_node = ret
-
-        ret.sdfg.update_sdfg_list([])
+            ret.sdfg.update_sdfg_list([])
 
         return ret
 
