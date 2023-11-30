@@ -20,6 +20,7 @@ from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
+from dace.sdfg.state import StateSubgraphView
 
 
 @make_properties
@@ -85,56 +86,48 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
             return False
 
-        # Ensure the state only contains a nested SDFG and input/output access
-        # nodes
-        for node in state.nodes():
-            if isinstance(node, nodes.NestedSDFG):
-                if node is not nested_sdfg:
-                    return False
-            elif isinstance(node, nodes.AccessNode):
-                # Must be connected to nested SDFG
-                # if nested_sdfg in state.predecessors(nested_sdfg):
-                #     if state.in_degree(node) > 0:
-                #         return False
-                found = False
-                for e in state.out_edges(node):
-                    if e.dst is not nested_sdfg:
-                        return False
-                    if state.in_degree(node) > 0:
-                        return False
-                    # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
-                        return False
-                    if e.dst_conn in nested_sdfg.sdfg.arrays:
-                        # Do not accept views. TODO(later): Improve
-                        outer_desc = sdfg.arrays[node.data]
-                        inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
-                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                            return False
-                    found = True
+        # Not nested in scope
+        if state.entry_node(nested_sdfg) is not None:
+            return False
 
-                for e in state.in_edges(node):
-                    if e.src is not nested_sdfg:
-                        return False
-                    if state.out_degree(node) > 0:
-                        return False
-                    # Only accept full ranges for now. TODO(later): Improve
-                    if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
-                        return False
-                    if e.src_conn in nested_sdfg.sdfg.arrays:
-                        # Do not accept views. TODO(later): Improve
-                        outer_desc = sdfg.arrays[node.data]
-                        inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
-                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                            return False
-                    found = True
+        # Must be
+        # - connected to access nodes only
+        # - read full subsets
+        # - not use views inside
+        for edge in state.in_edges(nested_sdfg):
+            if edge.data.data is None:
+                return False
 
-                # elif nested_sdfg in state.successors(nested_sdfg):
-                #     if state.out_degree(node) > 0:
-                #         return False
-                if not found:
-                    return False
-            else:
+            if not isinstance(edge.src, nodes.AccessNode):
+                return False
+
+            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
+                return False
+
+            outer_desc = sdfg.arrays[edge.data.data]
+            if isinstance(outer_desc, data.View):
+                return False
+
+            inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn]
+            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+                return False
+
+        for edge in state.out_edges(nested_sdfg):
+            if edge.data.data is None:
+                return False
+
+            if not isinstance(edge.dst, nodes.AccessNode):
+                return False
+
+            if edge.data.subset != subsets.Range.from_array(sdfg.arrays[edge.data.data]):
+                return False
+
+            outer_desc = sdfg.arrays[edge.data.data]
+            if isinstance(outer_desc, data.View):
+                return False
+
+            inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn]
+            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
                 return False
 
         return True
@@ -168,16 +161,52 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for ise in sdfg.edges():
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
+        # Split outer SDFG into state before and after nested SDFG
+        all_nodes = None
+        for cc in nx.weakly_connected_components(outer_state._nx):
+            if nsdfg_node in cc:
+                all_nodes = set(cc)
+
+        input_nodes = set()
+        nsdfg_nodes = set()
+        nsdfg_nodes.add(nsdfg_node)
+        for inedge in outer_state.in_edges(nsdfg_node):
+            if inedge.data is None:
+                continue
+            path = outer_state.memlet_path(inedge)
+            for edge in path:
+                nsdfg_nodes.add(edge.src)
+
+            if outer_state.in_degree(path[0].src) > 0:
+                input_nodes.add(path[0].src)
+
+        for oedge in outer_state.out_edges(nsdfg_node):
+            if oedge.data is None:
+                continue
+            path = outer_state.memlet_path(oedge)
+            for edge in path:
+                nsdfg_nodes.add(edge.dst)
+
+        successors = set([edge.dst for edge in outer_state.bfs_edges(nsdfg_node)])
+        predecessors = (all_nodes - successors - nsdfg_nodes) | input_nodes
+
+        subgraph = StateSubgraphView(outer_state, predecessors)
+        _ = helpers.state_fission(sdfg, subgraph)
+
+        nsdfg_nodes = set([nsdfg_node]) | set(outer_state.predecessors(nsdfg_node)) | set(outer_state.successors(nsdfg_node))
+        subgraph = StateSubgraphView(outer_state, nsdfg_nodes)
+        nsdfg_state = helpers.state_fission(sdfg, subgraph)
+
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
         inputs: Dict[str, MultiConnectorEdge] = {}
         outputs: Dict[str, MultiConnectorEdge] = {}
         input_set: Dict[str, str] = {}
         output_set: Dict[str, str] = {}
-        for e in outer_state.in_edges(nsdfg_node):
+        for e in nsdfg_state.in_edges(nsdfg_node):
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
-        for e in outer_state.out_edges(nsdfg_node):
+        for e in nsdfg_state.out_edges(nsdfg_node):
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
 
@@ -260,7 +289,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                             transients[edge.data.data] = name
 
-
         # All constants (and associated transients) become constants of the parent
         for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
             if cstname in sdfg.constants:
@@ -272,7 +300,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                 sdfg.constants_prop[newname] = (csttype, cstval)
             else:
                 sdfg.constants_prop[cstname] = (csttype, cstval)
-
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
@@ -352,9 +379,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         sinks = nsdfg.sink_nodes()
 
         # Reconnect state machine
-        for e in sdfg.in_edges(outer_state):
+        for e in sdfg.in_edges(nsdfg_state):
             sdfg.add_edge(e.src, source, e.data)
-        for e in sdfg.out_edges(outer_state):
+        for e in sdfg.out_edges(nsdfg_state):
             for sink in sinks:
                 sdfg.add_edge(sink, e.dst, dc(e.data))
                 # Redirect sink incoming edges with a `False` condition to e.dst (return statements)
@@ -363,7 +390,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                         sdfg.add_edge(e2.src, e.dst, InterstateEdge())
 
         # Modify start state as necessary
-        if outer_start_state is outer_state:
+        if outer_start_state is nsdfg_state:
             sdfg.start_state = sdfg.node_id(source)
 
         # TODO: Modify memlets by offsetting
@@ -418,7 +445,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         #######################################################
         # Remove nested SDFG and state
-        sdfg.remove_node(outer_state)
+        sdfg.remove_node(nsdfg_state)
 
         sdfg._sdfg_list = sdfg.reset_sdfg_list()
 
