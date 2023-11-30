@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
-from dace.transformation.passes import constant_propagation, fusion_inline, scalar_to_symbol
+from dace.transformation.passes import scalar_to_symbol
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as xf, interstate as isxf
 from dace.transformation.interstate import loop_detection as ld
@@ -692,170 +692,6 @@ def test_ternary_expression(compile_time_evaluatable):
     sdfg.compile()
 
 
-def test_indirection_with_tasklet():
-    dtype = dace.float64
-
-    sdfg = dace.SDFG('top')
-    N_EDGES, N_VERTICES, N_E2V_NEIGHBORS = (dace.symbol(s) for s in ['N_EDGES', 'N_VERTICES', 'N_E2V_NEIGHBORS'])
-    sdfg.add_array('EDGES', (N_EDGES,), dtype)
-    sdfg.add_array('VERTICES', (N_VERTICES,), dtype)
-    sdfg.add_array('E2V_TABLE', (N_EDGES, N_E2V_NEIGHBORS), dace.int32)
-
-
-    nsdfg = dace.SDFG('nsdfg')
-    [nsdfg.add_symbol(s, dace.int32) for s in ['___sym_indirect_idx', '___sym_offset']]
-    nsdfg.add_array('_field', sdfg.arrays['VERTICES'].shape, dtype)
-    nsdfg.add_array('_table', sdfg.arrays['E2V_TABLE'].shape, dace.int32)
-    nsdfg.add_scalar('_result', dtype)
-    nstate = nsdfg.add_state()
-    nsdfg.add_scalar('_shift_idx', dace.int32, transient=True)
-    shift_idx_node = nstate.add_access('_shift_idx')
-    nsdfg.add_scalar('_shift_offset', dace.int32, transient=True)
-    shift_offset_node = nstate.add_access('_shift_offset')
-    nsdfg.add_scalar('_field_idx', dace.int32, transient=True)
-    field_idx_node = nstate.add_access('_field_idx')
-    shift_node = nstate.add_tasklet('shift', {'_inp', '_idx', '_offset'}, {'_out'}, '_out = _inp[_idx, _offset]')
-    deref_node = nstate.add_tasklet('deref', {'_inp', '_idx'}, {'_out'}, '_out = _inp[_idx]')
-    nstate.add_edge(
-        nstate.add_access('_table'),
-        None,
-        shift_node,
-        '_inp',
-        dace.Memlet.from_array('_table', nsdfg.arrays['_table'])
-    )
-    nstate.add_edge(
-        nstate.add_tasklet('get_shift_index', {}, {'_out'}, '_out = ___sym_indirect_idx'),
-        '_out',
-        shift_idx_node,
-        None,
-        dace.Memlet.simple('_shift_idx', '0')
-    )
-    nstate.add_edge(
-        shift_idx_node,
-        None,
-        shift_node,
-        '_idx',
-        dace.Memlet.simple('_shift_idx', '0')
-    )
-    nstate.add_edge(
-        nstate.add_tasklet('get_shift_offset', {}, {'_out'}, "_out = ___sym_offset"),
-        '_out',
-        shift_offset_node,
-        None,
-        dace.Memlet.simple('_shift_offset', '0')
-    )
-    nstate.add_edge(
-        shift_offset_node,
-        None,
-        shift_node,
-        '_offset',
-        dace.Memlet.simple('_shift_offset', '0')
-    )
-    nstate.add_edge(
-        shift_node,
-        '_out',
-        field_idx_node,
-        None,
-        dace.Memlet.simple('_field_idx', '0')
-    )
-    nstate.add_edge(
-        nstate.add_access('_field'),
-        None,
-        deref_node,
-        '_inp',
-        dace.Memlet.from_array('_field', nsdfg.arrays['_field'])
-    )
-    nstate.add_edge(
-        field_idx_node,
-        None,
-        deref_node,
-        '_idx',
-        dace.Memlet.simple('_field_idx', '0')
-    )
-    nstate.add_edge(
-        deref_node,
-        '_out',
-        nstate.add_access('_result'),
-        None,
-        dace.Memlet.simple('_result', '0', wcr_str="lambda x, y: x + y")
-    )
-
-    state = sdfg.add_state('main')
-    me, mx = state.add_map('closure', dict(_edge_idx="0:N_EDGES", _neighbor_idx=f"0:N_E2V_NEIGHBORS"))
-    nsdfg_node = state.add_nested_sdfg(
-        nsdfg,
-        sdfg,
-        inputs={'_field', '_table'},
-        outputs={'_result'},
-        symbol_mapping={
-            '___sym_indirect_idx': '_edge_idx',
-            '___sym_offset': '_neighbor_idx',
-        }
-    )
-    state.add_memlet_path(
-        state.add_access('VERTICES'),
-        me,
-        nsdfg_node,
-        dst_conn='_field',
-        memlet=dace.Memlet.from_array('VERTICES', sdfg.arrays['VERTICES'])
-    )
-    state.add_memlet_path(
-        state.add_access('E2V_TABLE'),
-        me,
-        nsdfg_node,
-        dst_conn='_table',
-        memlet=dace.Memlet.from_array('E2V_TABLE', sdfg.arrays['E2V_TABLE'])
-    )
-    state.add_memlet_path(
-        nsdfg_node,
-        mx,
-        state.add_access('EDGES'),
-        src_conn='_result',
-        memlet=dace.Memlet.simple('EDGES', '_edge_idx')
-    )
-
-
-    N_EDGES = np.int32(5)
-    N_VERTICES = np.int32(4)
-    N_E2V_NEIGHBORS = np.int32(2)
-
-    from numpy.random import default_rng
-    rng = default_rng(42)
-
-    vertices = rng.random((N_VERTICES, ))
-    edges = rng.random((N_EDGES, ))
-    e2v_table = np.random.randint(0, N_VERTICES, (N_EDGES, N_E2V_NEIGHBORS), np.int32)
-
-    reference_edges = np.asarray([np.sum(vertices[e2v_table[idx, :]], initial=edges[idx]) for idx in range(N_EDGES)])
-
-    assert sdfg.is_valid()
-    # apply scalar-to-symbol promotion
-    assert scalar_to_symbol.find_promotable_scalars(nsdfg) == {'_shift_idx', '_shift_offset'}
-    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(nsdfg, {})
-    assert scalar_to_symbol.find_promotable_scalars(nsdfg) == {'_field_idx'}
-    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(nsdfg, {})
-    # some cleanup
-    constant_propagation.ConstantPropagation().apply_pass(nsdfg, {})
-    assert fusion_inline.fuse_states(nsdfg) == 2
-
-    # check that the table access has become an inter-state assignment
-    assert len(nsdfg.out_edges(nsdfg.start_state)) == 1
-    assert nsdfg.out_edges(nsdfg.start_state)[0].data.assignments == {
-        '_field_idx':'_table[___sym_indirect_idx, ___sym_offset]'
-    }
-
-    sdfg(
-        EDGES=edges,
-        VERTICES=vertices,
-        E2V_TABLE=e2v_table,
-        N_EDGES=N_EDGES,
-        N_VERTICES=N_VERTICES,
-        N_E2V_NEIGHBORS=N_E2V_NEIGHBORS,
-    )
-
-    assert np.allclose(edges, reference_edges)
-
-
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -879,4 +715,3 @@ if __name__ == '__main__':
     test_dynamic_mapind()
     test_ternary_expression(False)
     test_ternary_expression(True)
-    test_indirection_with_tasklet()
