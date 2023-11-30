@@ -500,6 +500,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -2150,6 +2151,7 @@ class SDFG(ControlFlowRegion):
 
         # Importing these outside creates an import loop
         from dace.codegen import codegen, compiler
+        from dace.sdfg import utils as sdutils
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
@@ -2170,6 +2172,10 @@ class SDFG(ControlFlowRegion):
             # if the codegen modifies the SDFG (thereby changing its hash)
             sdfg.build_folder = build_folder
 
+            # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
+            # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
+            sdutils.inline_loop_blocks(sdfg)
+
             # Rename SDFG to avoid runtime issues with clashing names
             index = 0
             while sdfg.is_loaded():
@@ -2186,8 +2192,8 @@ class SDFG(ControlFlowRegion):
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
-                fpath = os.path.join('_dacegraphs', 'failing.sdfg')
-                self.save(fpath)
+                fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
+                self.save(fpath, compress=True)
                 print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
 
