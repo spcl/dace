@@ -38,11 +38,9 @@ def test_inout_connector_validation_success_2():
 
     sdfg = dace.SDFG("test_inout_connector_validation_success_2")
     sdfg.add_array("A", [1], dace.int32)
-    # sdfg.add_array("B", [1], dace.int32)
 
     nsdfg_0 = dace.SDFG("nested_sdfg_0")
     nsdfg_0.add_array("B", [1], dace.int32)
-    # nsdfg.add_array("C", [1], dace.int32)
 
     nsdfg_1 = dace.SDFG("nested_sdfg_1")
     nsdfg_1.add_array("C", [1], dace.int32)
@@ -124,7 +122,6 @@ def test_nested_sdfg_with_transient_connector():
         # output path (tasklet[b]->dst)
         state.add_memlet_path(tasklet, dst_node, src_conn='b', memlet=dace.Memlet(data=dst, subset='0'))
 
-
     sub_sdfg = dace.SDFG('nested_sub')
     sub_sdfg.add_scalar('sA', dace.float32)
     sub_sdfg.add_scalar('sB', dace.float32, transient=True)
@@ -137,7 +134,6 @@ def test_nested_sdfg_with_transient_connector():
 
     sub_sdfg.add_edge(state0, state1, dace.InterstateEdge())
 
-
     state = sdfg.add_state('s0')
     me, mx = state.add_map('mymap', dict(k='0:2'))
     nsdfg = state.add_nested_sdfg(sub_sdfg, sdfg, {'sA'}, {'sC'})
@@ -146,7 +142,7 @@ def test_nested_sdfg_with_transient_connector():
 
     state.add_memlet_path(Ain, me, nsdfg, memlet=dace.Memlet(data='A', subset='k'), dst_conn='sA')
     state.add_memlet_path(nsdfg, mx, Aout, memlet=dace.Memlet(data='A', subset='k'), src_conn='sC')
- 
+
     try:
         sdfg.validate()
     except dace.sdfg.InvalidSDFGError:
