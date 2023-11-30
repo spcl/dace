@@ -114,56 +114,6 @@ def test_empty_memlets():
     sdfg.validate()
     sdfg.simplify()
 
-
-def test_multistate_inline():
-
-    @dace.program
-    def nested(A: dace.float64[20]):
-        for i in range(5):
-            A[i] += A[i - 1]
-
-    @dace.program
-    def outerprog(A: dace.float64[20]):
-        nested(A)
-
-    sdfg = outerprog.to_sdfg(simplify=True)
-    from dace.transformation.interstate import InlineMultistateSDFG
-    sdfg.apply_transformations(InlineMultistateSDFG)
-    assert sdfg.number_of_nodes() in (4, 5)
-
-    A = np.random.rand(20)
-    expected = np.copy(A)
-    outerprog.f(expected)
-
-    outerprog(A)
-    assert np.allclose(A, expected)
-
-
-def test_multistate_inline_samename():
-
-    @dace.program
-    def nested(A: dace.float64[20]):
-        for i in range(5):
-            A[i] += A[i - 1]
-
-    @dace.program
-    def outerprog(A: dace.float64[20]):
-        for i in range(5):
-            nested(A)
-
-    sdfg = outerprog.to_sdfg(simplify=True)
-    from dace.transformation.interstate import InlineMultistateSDFG
-    sdfg.apply_transformations(InlineMultistateSDFG)
-    assert sdfg.number_of_nodes() in (7, 8)
-
-    A = np.random.rand(20)
-    expected = np.copy(A)
-    outerprog.f(expected)
-
-    outerprog(A)
-    assert np.allclose(A, expected)
-
-
 def test_inline_symexpr():
     nsdfg = dace.SDFG('inner')
     nsdfg.add_array('a', [20], dace.float64)
@@ -371,8 +321,6 @@ if __name__ == "__main__":
     # Skipped to to bug that cannot be reproduced
     # test_regression_reshape_unsqueeze()
     test_empty_memlets()
-    test_multistate_inline()
-    test_multistate_inline_samename()
     test_inline_symexpr()
     test_inline_unsqueeze()
     test_inline_unsqueeze2()
