@@ -161,41 +161,16 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for ise in sdfg.edges():
             outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
-        # Split outer SDFG into state before and after nested SDFG
-        all_nodes = None
-        for cc in nx.weakly_connected_components(outer_state._nx):
-            if nsdfg_node in cc:
-                all_nodes = set(cc)
-
-        input_nodes = set()
-        nsdfg_nodes = set()
-        nsdfg_nodes.add(nsdfg_node)
-        for inedge in outer_state.in_edges(nsdfg_node):
-            if inedge.data is None:
-                continue
-            path = outer_state.memlet_path(inedge)
-            for edge in path:
-                nsdfg_nodes.add(edge.src)
-
-            if outer_state.in_degree(path[0].src) > 0:
-                input_nodes.add(path[0].src)
-
-        for oedge in outer_state.out_edges(nsdfg_node):
-            if oedge.data is None:
-                continue
-            path = outer_state.memlet_path(oedge)
-            for edge in path:
-                nsdfg_nodes.add(edge.dst)
-
-        successors = set([edge.dst for edge in outer_state.bfs_edges(nsdfg_node)])
-        predecessors = (all_nodes - successors - nsdfg_nodes) | input_nodes
-
-        subgraph = StateSubgraphView(outer_state, predecessors)
-        _ = helpers.state_fission(sdfg, subgraph)
-
-        nsdfg_nodes = set([nsdfg_node]) | set(outer_state.predecessors(nsdfg_node)) | set(outer_state.successors(nsdfg_node))
-        subgraph = StateSubgraphView(outer_state, nsdfg_nodes)
-        nsdfg_state = helpers.state_fission(sdfg, subgraph)
+        # Isolate nsdfg in a separate state
+        # 1. Push nsdfg node plus dependencies down into new state
+        nsdfg_state = helpers.state_fission_after(sdfg, outer_state, nsdfg_node)
+        # 2. Push successors of nsdfg node into a later state
+        direct_subgraph = set()
+        direct_subgraph.add(nsdfg_node)
+        direct_subgraph.update(nsdfg_state.predecessors(nsdfg_node))
+        direct_subgraph.update(nsdfg_state.successors(nsdfg_node))
+        direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
+        nsdfg_state = helpers.state_fission(sdfg, direct_subgraph)
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)

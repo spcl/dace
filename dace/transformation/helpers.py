@@ -687,6 +687,85 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     return newstate
 
 
+def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: Optional[str] = None) -> SDFGState:
+    """
+    """
+    newstate = sdfg.add_state_after(state, label=label)
+
+    # Bookkeeping
+    successors = set([node])
+    boundary_nodes = set()
+    orig_edges = set()
+
+    # Collect predecessors
+    if not isinstance(node, nodes.AccessNode):
+        for edge in state.in_edges(node):
+            for e in state.memlet_path(edge):
+                successors.add(e.src)
+                orig_edges.add(e)
+
+    # Collect successors
+    for edge in state.bfs_edges(node):
+        successors.add(edge.dst)
+        orig_edges.add(edge)
+
+        if not isinstance(edge.dst, nodes.AccessNode):
+            for iedge in state.in_edges(edge.dst):
+                if iedge == edge:
+                    continue
+
+                for e in state.memlet_path(iedge):
+                    successors.add(e.src)
+                    orig_edges.add(e)
+
+    # Define boundary nodes
+    for node in set(successors):
+        if isinstance(node, nodes.AccessNode):
+            for iedge in state.in_edges(node):
+                if iedge.src not in successors:
+                    boundary_nodes.add(node)
+                    break
+
+            if node in boundary_nodes:
+                continue
+
+            for oedge in state.out_edges(node):
+                if oedge.dst not in successors:
+                    boundary_nodes.add(node)
+                    break
+
+    # Duplicate boundary nodes
+    new_nodes = {}
+    for node in boundary_nodes:
+        node_ = copy.deepcopy(node)
+        state.add_node(node_)
+        new_nodes[node] = node_
+
+    for edge in state.edges():
+        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
+            state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
+                           copy.deepcopy(edge.data))
+        elif edge.src in boundary_nodes:
+            state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+        elif edge.dst in boundary_nodes:
+            state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
+
+    # Move nodes
+    state.remove_nodes_from(successors)
+
+    for n in successors:
+        if isinstance(n, nodes.NestedSDFG):
+            # Set the new parent state
+            n.sdfg.parent = newstate
+
+    newstate.add_nodes_from(successors)
+
+    for e in orig_edges:
+        newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+
+    return newstate
+
+
 def _get_internal_subset(internal_memlet: Memlet,
                          external_memlet: Memlet,
                          use_src_subset: bool = False,
