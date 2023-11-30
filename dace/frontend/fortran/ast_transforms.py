@@ -218,11 +218,9 @@ class CallExtractorNodeLister(NodeVisitor):
             if node.subroutine is True:
                 stop = True
 
-        # FIXME: the order here is wrong for nested function calls - we need first
-        # to expand the operands, then ourselves
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             self.nodes.append(node)
         return self.generic_visit(node)
@@ -243,7 +241,7 @@ class CallExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt", "tanh", "atan2", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -253,11 +251,11 @@ class CallExtractor(NodeTransformer):
         else:
             self.count = self.count + 1
         tmp = self.count
-        # FIXME: the count is wrong for nested function calls
-        # we need to also create counters for operands
-        #
-        # FIXME: we need to recursively process all operands
-        # and keep applying transformation until there are no more changes
+
+        for i, arg in enumerate(node.args):
+            # Ensure we allow to extract function calls from arguments
+            node.args[i] = self.visit(arg)
+
         return ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp - 1))
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -270,9 +268,13 @@ class CallExtractor(NodeTransformer):
             for i in res:
                 if i == child:
                     res.pop(res.index(i))
-            temp = self.count
             if res is not None:
-                for i in range(0, len(res)):
+                # Variables are counted from 0...end, starting from main node, to all calls nested
+                # in main node arguments.
+                # However, we need to define nested ones first.
+                # We go in reverse order, counting from end-1 to 0.
+                temp = self.count + len(res) - 1
+                for i in reversed(range(0, len(res))):
 
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
@@ -289,7 +291,7 @@ class CallExtractor(NodeTransformer):
                                                                                             type=res[i].type),
                                                         rval=res[i],
                                                         line_number=child.line_number))
-                    temp = temp + 1
+                    temp = temp - 1
             if isinstance(child, ast_internal_classes.Call_Expr_Node):
                 new_args = []
                 if hasattr(child, "args"):
