@@ -6,7 +6,7 @@ from typing import List, Set
 import dace
 from dace import dtypes
 from dace import data
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, utils as sdutils
 from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
@@ -178,6 +178,9 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
                 shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
                 raise RuntimeError('SDFG serialization failed - files do not match')
 
+    # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
+    # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
+    sdutils.inline_loop_blocks(sdfg)
 
     # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
