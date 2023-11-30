@@ -41,34 +41,71 @@ class IntrinsicNodeTransformer(NodeTransformer):
     def func_name(self) -> str:
         pass
 
-class SelectedKind(IntrinsicTransformation):
+class DirectReplacement(IntrinsicTransformation):
+
+    Replacement = namedtuple("Replacement", "function")
+    Transformation = namedtuple("Transformation", "function")
+
+    class ASTTransformation(IntrinsicNodeTransformer):
+        pass
+
+
+            #self.scope_vars.get_var(node.parent, arg.name).
+
+    def replace_bit_size(args: ast_internal_classes.Arg_List_Node, line):
+
+        if len(args.args) != 1:
+            raise RuntimeError()
+
+    def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line):
+        return ast_internal_classes.Int_Literal_Node(value=str(
+            math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
+                                                        line_number=line)
+
+    def replace_real_kind(args: ast_internal_classes.Arg_List_Node, line):
+        if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
+            return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
+        elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
+            return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
+        else:
+            return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
+
 
     FUNCTIONS = {
-        "SELECTED_INT_KIND": "__dace_selected_int_kind",
-        "SELECTED_REAL_KIND": "__dace_selected_real_kind",
+        "SELECTED_INT_KIND": Replacement(replace_int_kind),
+        "SELECTED_REAL_KIND": Replacement(replace_real_kind),
+        "BIT_SIZE": Transformation(replace_bit_size)
     }
 
     @staticmethod
-    def replaced_name(func_name: str) -> str:
-        return SelectedKind.FUNCTIONS[func_name]
+    def replacable_name(func_name: str) -> bool:
+        return func_name in DirectReplacement.FUNCTIONS
+
+    @staticmethod
+    def replace_name(func_name: str) -> str:
+        #return ast_internal_classes.Name_Node(name=DirectReplacement.FUNCTIONS[func_name][0])
+        return ast_internal_classes.Name_Node(name=f'__dace_{func_name}')
+
+    @staticmethod
+    def replacable(func_name: str) -> bool:
+        orig_name = func_name.split('__dace_')
+        if len(orig_name) > 1 and orig_name[1] in DirectReplacement.FUNCTIONS:
+            return isinstance(DirectReplacement.FUNCTIONS[orig_name[1]], DirectReplacement.Replacement)
+        return False
 
     @staticmethod
     def replace(func_name: ast_internal_classes.Name_Node, args: ast_internal_classes.Arg_List_Node, line) -> ast_internal_classes.FNode:
 
-        if func_name.name == "__dace_selected_int_kind":
-            return ast_internal_classes.Int_Literal_Node(value=str(
-                math.ceil((math.log2(math.pow(10, int(args.args[0].value))) + 1) / 8)),
-                                                         line_number=line)
-        # This selects the smallest kind that can hold the given number of digits (fp64,fp32 or fp16)
-        elif func_name.name == "__dace_selected_real_kind":
-            if int(args.args[0].value) >= 9 or int(args.args[1].value) > 126:
-                return ast_internal_classes.Int_Literal_Node(value="8", line_number=line)
-            elif int(args.args[0].value) >= 3 or int(args.args[1].value) > 14:
-                return ast_internal_classes.Int_Literal_Node(value="4", line_number=line)
-            else:
-                return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
+        # Here we already have __dace_func
+        fname = func_name.split('__dace_')[1]
+        return DirectReplacement.FUNCTIONS[fname].function(args, line)
 
-        raise NotImplemented()
+    def has_transformation() -> bool:
+        return isinstance(DirectReplacement.FUNCTIONS[fname], DirectReplacement.Transformation)
+
+    @staticmethod
+    def get_transformation(func_name: str) -> IntrinsicNodeTransformer:
+        return DirectReplacement.ASTTransformation(func_name)
 
 class LoopBasedReplacement:
 
@@ -101,21 +138,6 @@ class LoopBasedReplacementVisitor(NodeVisitor):
         self.nodes: List[ast_internal_classes.FNode] = []
         self.calls: List[ast_internal_classes.FNode] = []
 
-    #def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
-
-    #    if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
-    #        if node.rval.name.name == self._func_name:
-    #            self.nodes.append(node)
-
-    #    self.visit(node.lval)
-    #    self.visit(node.rval)
-
-    #def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.BinOp_Node):
-
-    #    print('unop', node, dir(node), node.expr)
-    #    if isinstance(node.expr, ast_internal_classes.Call_Expr_Node):
-    #    self.visit(node.expr)
-
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
             if node.rval.name.name == self._func_name:
@@ -128,7 +150,6 @@ class LoopBasedReplacementVisitor(NodeVisitor):
 
         if node.name.name == self._func_name:
             if node not in self.calls:
-
                 self.nodes.append(node)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
@@ -1033,12 +1054,6 @@ class MathFunctions(IntrinsicTransformation):
 
     class TypeTransformer(IntrinsicNodeTransformer):
 
-        def __init__(self, func_name: str):
-            self._func_name = func_name
-
-        def func_name(self) -> str:
-            return self._func_name
-
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
 
             # take the first arg
@@ -1049,6 +1064,9 @@ class MathFunctions(IntrinsicTransformation):
                 return 'INTEGER'
             elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
                 return arg.type
+            elif isinstance(arg, ast_internal_classes.Name_Node):
+                input_type = self.scope_vars.get_var(node.parent, arg.name)
+                return input_type.type
             else:
                 input_type = self.scope_vars.get_var(node.parent, arg.name.name)
                 return input_type.type
@@ -1076,27 +1094,28 @@ class MathFunctions(IntrinsicTransformation):
             else:
                 raise NotImplementedError()
 
-        def visit_Call_Expr_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
 
-            if node.name.name != f'__dace_{self.func_name()}':
-                return node
+            if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
+                return binop_node
+
+            node = binop_node.rval
+
+            name = node.name.name.split('__dace_')
+            if len(name) != 2 or name[1] not in MathFunctions.INTRINSIC_TO_DACE:
+                return binop_node
+            func_name = name[1]
 
             # Visit all children before we expand this call.
             # We need that to properly get the type.
             for arg in node.args:
                 self.visit(arg)
 
-            call = node
-
             return_type = None
             input_type = None
-            if isinstance(call, ast_internal_classes.BinOp_Node):
-                input_type = self.func_type(call.rval)
-            else:
-                input_type = self.func_type(call)
+            input_type = self.func_type(node)
 
-
-            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
+            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[func_name]
             if isinstance(replacement_rule, dict):
                 replacement_rule = replacement_rule[input_type]
             if replacement_rule.return_type == "FIRST_ARG":
@@ -1105,122 +1124,24 @@ class MathFunctions(IntrinsicTransformation):
                 return_type = replacement_rule.return_type
 
             if isinstance(replacement_rule, MathFunctions.MathTransformation):
-                call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-                call.type = return_type
+                node.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
+                node.type = return_type
 
-                return call
             else:
-                new_call = replacement_rule.replacement_function(call)
-                return new_call
+                binop_node.rval = replacement_rule.replacement_function(node)
 
-        #def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        #    newbody = []
+            # replace types of return variable - LHS of the binary operator
+            var = binop_node.lval
+            name = None
+            if isinstance(var.name, ast_internal_classes.Name_Node):
+                name = var.name.name
+            else:
+                name = var.name
+            var_decl = self.scope_vars.get_var(var.parent, name)
+            var.type = input_type
+            var_decl.type = input_type
 
-        #    for child in node.execution:
-        #        lister = LoopBasedReplacementVisitor(f'__dace_{self.func_name()}')
-        #        lister.visit(child)
-        #        res = lister.nodes
-
-        #        #newbody.append(self.visit(child))
-        #        if res is None or len(res) == 0:
-        #            newbody.append(self.visit(child))
-        #            continue
-
-        #        for call in res:
-
-        #            return_type = None
-        #            input_type = None
-        #            if isinstance(call, ast_internal_classes.BinOp_Node):
-        #                input_type = self.func_type(call.rval)
-        #            else:
-        #                input_type = self.func_type(call)
-
-
-        #            replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
-        #            if isinstance(replacement_rule, dict):
-        #                replacement_rule = replacement_rule[input_type]
-        #            if replacement_rule.return_type == "FIRST_ARG":
-        #                return_type = input_type
-        #            else:
-        #                return_type = replacement_rule.return_type
-
-
-        #            if isinstance(call, ast_internal_classes.BinOp_Node):
-
-        #                if isinstance(replacement_rule.function, str):
-        #                    call.rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-        #                else:
-        #                    call.rval = replacement_rule.function(call.rval)
-        #                call.rval.type = return_type
-
-        #                # replace types of return variable
-        #                var = call.lval
-        #                name = None
-        #                if isinstance(var.name, ast_internal_classes.Name_Node):
-        #                    name = var.name.name
-        #                else:
-        #                    name = var.name
-        #                var_decl = self.scope_vars.get_var(var.parent, name)
-        #                var.type = input_type
-        #                var_decl.type = input_type
-        #            else:
-
-        #                if isinstance(replacement_rule.function, str):
-        #                    call.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-        #                else:
-        #                    new_call = replacement_rule.function(call)
-        #                    self.replace_call(call, new_call)
-        #                call.type = return_type
-
-        #        newbody.append(child)
-
-        #        #print(res)
-        #        #if len(res) > 1:
-        #        #    raise NotImplementedError()
-
-        #        #print('VISIT')
-        #        ## check the type of the function
-        #        #input_type = self.func_type(res[0].rval)
-        #        #new_args = []
-        #        #for i in res[0].rval.args:
-        #        #    print('child', i)
-        #        #    new_args.append(self.visit(i))
-
-        #        #return_type = None
-
-        #        #replacement_rule = MathFunctions.INTRINSIC_TO_DACE[self.func_name()]
-        #        #if isinstance(replacement_rule, dict):
-        #        #    replacement_rule = replacement_rule[input_type]
-
-        #        #if replacement_rule.return_type == "FIRST_ARG":
-        #        #    return_type = input_type
-        #        #else:
-        #        #    return_type = replacement_rule.return_type
-
-        #        #new_call = ast_internal_classes.Call_Expr_Node(type=return_type,
-        #        #                                                name=ast_internal_classes.Name_Node(name=replacement_rule.function),
-        #        #                                                args=new_args,
-        #        #                                                line_number=res[0].rval.line_number)
-
-        #        ## replace function name
-        #        ##res[0].rval.name = ast_internal_classes.Name_Node(name=replacement_rule.function)
-
-        #        #var = res[0].lval
-        #        #print('type', input_type)
-        #        #name = None
-        #        #if isinstance(var.name, ast_internal_classes.Name_Node):
-        #        #    name = var.name.name
-        #        #else:
-        #        #    name = var.name
-        #        #var_decl = self.scope_vars.get_var(var.parent, name)
-        #        #var.type = input_type
-        #        #var_decl.type = input_type
-
-        #        #res[0].rval = new_call
-
-        #        #newbody.append(child)
-
-        #    return ast_internal_classes.Execution_Part_Node(execution=newbody)
+            return binop_node
 
     @staticmethod
     def dace_functions():
@@ -1258,14 +1179,12 @@ class MathFunctions(IntrinsicTransformation):
         return True
 
     @staticmethod
-    def get_transformation(func_name: str) -> TypeTransformer:
-        return MathFunctions.TypeTransformer(func_name)
+    def get_transformation() -> TypeTransformer:
+        return MathFunctions.TypeTransformer()
 
 class FortranIntrinsics:
 
     IMPLEMENTATIONS_AST = {
-        "SELECTED_INT_KIND": SelectedKind,
-        "SELECTED_REAL_KIND": SelectedKind,
         "SUM": Sum,
         "PRODUCT": Product,
         "ANY": Any,
@@ -1274,11 +1193,6 @@ class FortranIntrinsics:
         "MINVAL": MinVal,
         "MAXVAL": MaxVal,
         "MERGE": Merge
-    }
-
-    DIRECT_REPLACEMENTS = {
-        "__dace_selected_int_kind": SelectedKind,
-        "__dace_selected_real_kind": SelectedKind
     }
 
     EXEMPTED_FROM_CALL_EXTRACTION = [
@@ -1305,8 +1219,8 @@ class FortranIntrinsics:
     @staticmethod
     def call_extraction_exemptions() -> List[str]:
         return [
-            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION],
-            *MathFunctions.temporary_functions()
+            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+            #*MathFunctions.temporary_functions()
         ]
 
     def replace_function_name(self, node: FASTNode) -> ast_internal_classes.Name_Node:
@@ -1317,9 +1231,10 @@ class FortranIntrinsics:
         }
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
+        elif DirectReplacement.replacable_name(func_name):
+            return DirectReplacement.replace_name(func_name)
         elif MathFunctions.replacable(func_name):
-            
-            self._transformations_to_run.add(MathFunctions.get_transformation(func_name))
+            self._transformations_to_run.add(MathFunctions.get_transformation())
             return MathFunctions.replace(func_name)
 
         if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
@@ -1340,8 +1255,8 @@ class FortranIntrinsics:
             # FIXME: this will be progressively removed
             call_type = func_types[name.name]
             return ast_internal_classes.Call_Expr_Node(name=name, type=call_type, args=args.args, line_number=line)
-        elif name.name in self.DIRECT_REPLACEMENTS:
-            return self.DIRECT_REPLACEMENTS[name.name].replace(name, args, line)
+        elif DirectReplacement.replacable(name.name):
+            return DirectReplacement.replace(name.name, args, line)
         else:
             # We will do the actual type replacement later
             # To that end, we need to know the input types - but these we do not know at the moment.
