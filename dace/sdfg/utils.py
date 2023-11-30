@@ -1847,6 +1847,11 @@ def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
         if len(pedges) > 0:
             pedge = pedges[0]
             return get_global_memlet_path_src(psdfg, pstate, pedge)
+        else:
+            pedges = list(pstate.out_edges_by_connector(pnode, src.data))
+            if len(pedges) > 0:
+                pedge = pedges[0]
+                return get_global_memlet_path_dst(psdfg, pstate, pedge)
     return src
 
 
