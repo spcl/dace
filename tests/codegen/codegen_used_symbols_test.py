@@ -117,7 +117,12 @@ def test_codegen_edge_assignment_with_indirection():
     TEST_INDIRECT_IDX = numpy.random.randint(0, N)
     TEST_NEIGHBOR_IDX = numpy.random.randint(0, K)
 
-    reference = numpy.asarray([out[i] + field[table[i, TEST_NEIGHBOR_IDX]] if i == TEST_INDIRECT_IDX else out[i] for i in range(N)])
+    reference = numpy.asarray(
+        [
+            out[i] + field[table[i, TEST_NEIGHBOR_IDX]] if i == TEST_INDIRECT_IDX else out[i]
+            for i in range(N)
+        ]
+    )
 
     sdfg(
         _field=field, _table=table, _out=out, M=M, N=N, K=K,
