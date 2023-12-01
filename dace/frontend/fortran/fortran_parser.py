@@ -1363,6 +1363,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     for i in simplify_order:
         
         res=dep_graph.nodes.get(i).get("info_list")
+        if simple_graph.has_node(i)==True:
+            simple_graph.add_node(i,info_list=res)
         out_edges=dep_graph.out_edges(i)
         in_edges=dep_graph.in_edges(i)
         in_names=[]
@@ -1448,17 +1450,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     simple_graph.add_node(j[1])
                 simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
     print(simple_graph)
-    dep_graph=simple_graph
-    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
     
     parse_list={}
     for i in parse_order:
-        edges=dep_graph.in_edges(i)
+        edges=simple_graph.in_edges(i)
         parse_list[i]=[]
         fands_list=[]
-        res=dep_graph.nodes.get(i).get("info_list")
+        res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
-            deps=dep_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
             if deps is None:   
                 continue
             for k in deps:
@@ -1469,21 +1471,23 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if res is not None:
                 for jj in parse_list[i]:
                     if jj in res.list_of_functions:
-                        fands_list.append(jj)
+                        if jj not in fands_list:
+                            fands_list.append(jj)
                     if jj in res.list_of_subroutines:
-                        fands_list.append(jj)
+                        if jj not in fands_list:
+                            fands_list.append(jj)
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
-            print("Module " + i + " used fands: " + str(fands_list[i])) 
+            print("Module " + i + " used fands: " + str(fands_list)) 
     top_level_ast = parse_order.pop()
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
         local_rename_dict = {}
-        edges = list(dep_graph.in_edges(i))
+        edges = list(simple_graph.in_edges(i))
         names = []
         for j in edges:
-            list_dict = dep_graph.get_edge_data(j[0], j[1])
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
             if (list_dict['obj_list'] is not None):
                 for k in list_dict['obj_list']:
                     if not k.__class__.__name__ == "Name":
