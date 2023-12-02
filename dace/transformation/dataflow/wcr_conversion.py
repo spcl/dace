@@ -2,6 +2,7 @@
 """ Transformations to convert subgraphs to write-conflict resolutions. """
 import ast
 import re
+import networkx as nx
 import copy
 from dace import registry, nodes, dtypes, Memlet
 from dace.transformation import transformation, helpers as xfh
@@ -74,6 +75,9 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                 return False
 
             outedge = graph.edges_between(tasklet, mx)[0]
+
+            if any([edge.data.data is None for edge in graph.in_edges(me)]) or any([edge.data.data is None for edge in graph.out_edges(mx)]):
+                return False
 
             # If in map, only match if the subset is independent of any
             # map indices (otherwise no conflict)
@@ -151,12 +155,37 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            subgraph_nodes = set([e.src for e in state.bfs_edges(input, reverse=True)])
-            subgraph_nodes.add(input)
+            all_nodes = set()
+            for cc in nx.weakly_connected_components(state._nx):
+                if input in cc:
+                    all_nodes = set(cc)
 
-            subgraph = StateSubgraphView(state, subgraph_nodes)
-            helpers.state_fission(sdfg, subgraph)
+            successors = set()
+            for edge in state.bfs_edges(input):
+                successors.add(edge.dst)
+                for iedge in state.in_edges(edge.dst):
+                    if iedge == edge:
+                        continue
 
+                    in_path = state.memlet_path(iedge)
+                    source = in_path.pop(0).src
+                    if state.in_degree(source) == 0:
+                        successors.add(source)
+                    
+                    for e in in_path:
+                        successors.add(e.src)
+
+            for node in list(successors):
+                if isinstance(node, nodes.AccessNode):
+                    for oedge in state.out_edges(node):
+                        if oedge.dst not in successors:
+                            successors.remove(node)
+                            break
+
+            predecessors = all_nodes - successors
+            if len(predecessors) > 1:
+                subgraph = StateSubgraphView(state, predecessors)
+                _ = helpers.state_fission(sdfg, subgraph)
         if self.expr_index == 0:
             inedges = state.edges_between(input, tasklet)
             outedge = state.edges_between(tasklet, output)[0]
