@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from dace.codegen.instrumentation.report import InstrumentationReport
     from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
     from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.sdfg.analysis.schedule_tree.treenodes import ScheduleTreeRoot
 
 
 class NestedDict(dict):
@@ -1049,6 +1050,25 @@ class SDFG(ControlFlowRegion):
 
     ##########################################
 
+    def as_schedule_tree(self, in_place: bool = False) -> 'ScheduleTreeRoot':
+        """
+        Creates a schedule tree from this SDFG and all nested SDFGs. The schedule tree is a tree of nodes that represent
+        the execution order of the SDFG.
+        Each node in the tree can either represent a single statement (symbol assignment, tasklet, copy, library node,
+        etc.) or a ``ScheduleTreeScope`` block (map, for-loop, pipeline, etc.) that contains other nodes.
+    
+        It can be used to generate code from an SDFG, or to perform schedule transformations on the SDFG. For example,
+        erasing an empty if branch, or merging two consecutive for-loops. The SDFG can then be reconstructed via the 
+        ``as_sdfg`` method or the ``from_schedule_tree`` function in ``dace.sdfg.analysis.schedule_tree.tree_to_sdfg``.
+
+        :param in_place: If True, the SDFG is modified in-place. Otherwise, a copy is made. Note that the SDFG might
+                         not be usable after the conversion if ``in_place`` is True!
+        :return: A schedule tree representing the given SDFG.
+        """
+        # Avoid import loop
+        from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
+        return s2t.as_schedule_tree(self, in_place=in_place)
+
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
@@ -1233,10 +1253,10 @@ class SDFG(ControlFlowRegion):
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
-                               defined_syms: Optional[Set]=None,
-                               free_syms: Optional[Set]=None,
-                               used_before_assignment: Optional[Set]=None,
-                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1253,10 +1273,11 @@ class SDFG(ControlFlowRegion):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super()._used_symbols_internal(
-            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
-            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
-        )
+        return super()._used_symbols_internal(all_symbols=all_symbols,
+                                              keep_defined_in_mapping=keep_defined_in_mapping,
+                                              defined_syms=defined_syms,
+                                              free_syms=free_syms,
+                                              used_before_assignment=used_before_assignment)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """

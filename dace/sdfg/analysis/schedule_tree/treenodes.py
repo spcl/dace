@@ -3,11 +3,11 @@ from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
-from dace.sdfg import InterstateEdge
+from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import Dict, Iterator, List, Optional, Set, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Union
 
 INDENTATION = '  '
 
@@ -33,11 +33,8 @@ class ScheduleTreeNode:
 @dataclass
 class ScheduleTreeScope(ScheduleTreeNode):
     children: List['ScheduleTreeNode']
-    containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
-    symbols: Optional[Dict[str, symbol]] = field(default_factory=dict, init=False)
 
-    def __init__(self,
-                 children: Optional[List['ScheduleTreeNode']] = None):
+    def __init__(self, children: Optional[List['ScheduleTreeNode']] = None):
         self.children = children or []
         if self.children:
             for child in children:
@@ -57,6 +54,24 @@ class ScheduleTreeScope(ScheduleTreeNode):
             yield from child.preorder_traversal()
 
     # TODO: Helper function that gets input/output memlets of the scope
+
+
+@dataclass
+class ScheduleTreeRoot(ScheduleTreeScope):
+    """
+    A root of an SDFG schedule tree. This is a schedule tree scope with additional information on
+    the available descriptors, symbol types, and constants of the tree, aka the descriptor repository.
+    """
+    name: str
+    containers: Dict[str, data.Data] = field(default_factory=dict)
+    symbols: Dict[str, symbol] = field(default_factory=dict)
+    constants: Dict[str, Any] = field(default_factory=dict)
+    callback_mapping: Dict[str, str] = field(default_factory=dict)
+    arg_names: List[str] = field(default_factory=list)
+
+    def as_sdfg(self) -> SDFG:
+        from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
+        return t2s.from_schedule_tree(self)
 
 
 @dataclass
