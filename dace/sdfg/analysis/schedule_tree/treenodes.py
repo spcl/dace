@@ -7,7 +7,7 @@ from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-from typing import Any, Dict, Iterator, List, Optional, Set, Union
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 INDENTATION = '  '
 
@@ -65,7 +65,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     name: str
     containers: Dict[str, data.Data] = field(default_factory=dict)
     symbols: Dict[str, symbol] = field(default_factory=dict)
-    constants: Dict[str, Any] = field(default_factory=dict)
+    constants: Dict[str, Tuple[data.Data, Any]] = field(default_factory=dict)
     callback_mapping: Dict[str, str] = field(default_factory=dict)
     arg_names: List[str] = field(default_factory=list)
 

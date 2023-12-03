@@ -325,6 +325,29 @@ def remove_name_collisions(sdfg: SDFG):
             nsdfg.replace_dict(replacements)
 
 
+def create_unified_descriptor_repository(sdfg: SDFG, stree: tn.ScheduleTreeRoot):
+    """
+    Creates a single descriptor repository from an SDFG and all nested SDFGs. This includes
+    data containers, symbols, constants, etc.
+
+    :param sdfg: The top-level SDFG to create the repository from.
+    :param stree: The tree root in which to make the unified descriptor repository.
+    """
+    stree.containers = sdfg.arrays
+    stree.symbols = sdfg.symbols
+    stree.constants = sdfg.constants_prop
+
+    # Since the SDFG is assumed to be de-aliased and contain unique names, we union the contents of
+    # the nested SDFGs' descriptor repositories
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        transients = {k: v for k, v in nsdfg.arrays.items() if v.transient}
+        symbols = {k: v for k, v in nsdfg.symbols.items() if k not in stree.symbols}
+        constants = {k: v for k, v in nsdfg.constants_prop.items() if k not in stree.constants}
+        stree.containers.update(transients)
+        stree.symbols.update(symbols)
+        stree.constants.update(constants)
+
+
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
                     viewed_name: str) -> tn.ViewNode:
     """
@@ -608,7 +631,7 @@ def _generate_views_in_scope(edges: List[gr.MultiConnectorEdge[Memlet]],
     return result
 
 
-def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeScope:
+def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) -> tn.ScheduleTreeRoot:
     """
     Converts an SDFG into a schedule tree. The schedule tree is a tree of nodes that represent the execution order of
     the SDFG.
@@ -642,7 +665,6 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
         dealias_sdfg(sdfg)
         # Handle name collisions (in arrays, state labels, symbols)
         remove_name_collisions(sdfg)
-
     #############################
 
     # Create initial tree from CFG
@@ -726,7 +748,18 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
         return result
 
     # Recursive traversal of the control flow tree
-    result = tn.ScheduleTreeScope(children=totree(cfg))
+    children = totree(cfg)
+
+    # Create the scope object
+    if toplevel:
+        # Create the root with the elements of the descriptor repository
+        result = tn.ScheduleTreeRoot(name=sdfg.name,
+                                     children=children,
+                                     arg_names=sdfg.arg_names,
+                                     callback_mapping=sdfg.callback_mapping)
+        create_unified_descriptor_repository(sdfg, result)
+    else:
+        result = tn.ScheduleTreeScope(children=children)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)
