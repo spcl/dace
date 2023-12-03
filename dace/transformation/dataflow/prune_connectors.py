@@ -53,64 +53,7 @@ class PruneConnectors(pm.SingleStateTransformation):
         nsdfg = self.nsdfg
 
         # Fission subgraph around nsdfg into its own state to avoid data races
-        all_nodes = set()
-        for cc in nx.weakly_connected_components(state._nx):
-            if nsdfg in cc:
-                all_nodes = set(cc)
-
-        inputs = set()
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-
-            pred = state.memlet_path(inedge)[0].src
-            inputs.add(pred)
-
-        successors = set()
-        for access_node in inputs:
-            for edge in state.bfs_edges(access_node):
-                successors.add(edge.dst)
-                for iedge in state.in_edges(edge.dst):
-                    if iedge == edge:
-                        continue
-
-                    in_path = state.memlet_path(iedge)
-                    source = in_path.pop(0).src
-                    if state.in_degree(source) == 0:
-                        successors.add(source)
-
-                    for e in in_path:
-                        successors.add(e.src)
-
-            for node in list(successors):
-                if isinstance(node, nodes.AccessNode):
-                    for oedge in state.out_edges(node):
-                        if oedge.dst not in successors:
-                            successors.remove(node)
-                            break
-
-        predecessors = all_nodes - successors
-        subgraph = StateSubgraphView(state, predecessors)
-        pred_state = helpers.state_fission(sdfg, subgraph)
-
-        subgraph_nodes = set()
-        subgraph_nodes.add(nsdfg)
-        for inedge in state.in_edges(nsdfg):
-            if inedge.data is None:
-                continue
-            path = state.memlet_path(inedge)
-            for edge in path:
-                subgraph_nodes.add(edge.src)
-
-        for oedge in state.out_edges(nsdfg):
-            if oedge.data is None:
-                continue
-            path = state.memlet_path(oedge)
-            for edge in path:
-                subgraph_nodes.add(edge.dst)
-
-        subgraph = StateSubgraphView(state, subgraph_nodes)
-        nsdfg_state = helpers.state_fission(sdfg, subgraph)
+        nsdfg_state = helpers.state_fission_after(sdfg, state, nsdfg)
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set

@@ -155,43 +155,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         # If state fission is necessary to keep semantics, do it first
         if state.in_degree(input) > 0:
-            all_nodes = set()
-            for cc in nx.weakly_connected_components(state._nx):
-                if input in cc:
-                    all_nodes = set(cc)
-
-            successors = set()
-            for edge in state.bfs_edges(input):
-                successors.add(edge.dst)
-                for iedge in state.in_edges(edge.dst):
-                    if iedge == edge:
-                        continue
-
-                    in_path = state.memlet_path(iedge)
-                    source = in_path.pop(0).src
-                    if state.in_degree(source) == 0:
-                        successors.add(source)
-                    
-                    for e in in_path:
-                        successors.add(e.src)
-
-            for node in list(successors):
-                if isinstance(node, nodes.AccessNode):
-                    for oedge in state.out_edges(node):
-                        if oedge.dst not in successors:
-                            successors.remove(node)
-                            break
-
-            predecessors = all_nodes - successors
-            if len(predecessors) > 1:
-                subgraph = StateSubgraphView(state, predecessors)
-                _ = helpers.state_fission(sdfg, subgraph)
-        if self.expr_index == 0:
-            inedges = state.edges_between(input, tasklet)
-            outedge = state.edges_between(tasklet, output)[0]
+            new_state = helpers.state_fission_after(sdfg, state, tasklet)
         else:
-            inedges = state.edges_between(me, tasklet)
-            outedge = state.edges_between(tasklet, mx)[0]
+            new_state = state
+        
+        if self.expr_index == 0:
+            inedges = new_state.edges_between(input, tasklet)
+            outedge = new_state.edges_between(tasklet, output)[0]
+        else:
+            inedges = new_state.edges_between(me, tasklet)
+            outedge = new_state.edges_between(tasklet, mx)[0]
 
         # Get relevant output connector
         outconn = outedge.src_conn
@@ -282,8 +255,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             outedge.data.wcr = f'lambda a,b: a {op} b'
 
         # Remove input node and connector
-        state.remove_memlet_path(inedge)
-        propagate_memlets_state(sdfg, state)
+        new_state.remove_memlet_path(inedge)
+        propagate_memlets_state(sdfg, new_state)
 
         # If outedge leads to non-transient, and this is a nested SDFG,
         # propagate outwards
@@ -300,3 +273,10 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
                     outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can
             # traverse further up
+
+        if sdfg.parent_nsdfg_node is not None:
+            from dace.transformation.dataflow import PruneConnectors
+            xform = PruneConnectors()
+            xform.nsdfg = sdfg.parent_nsdfg_node
+            if xform.can_be_applied(sdfg.parent, expr_index=0, sdfg=sdfg.parent_sdfg, permissive=False):
+                xform.apply(sdfg.parent, sdfg.parent_sdfg)
