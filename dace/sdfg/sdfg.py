@@ -500,6 +500,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -2197,8 +2198,8 @@ class SDFG(ControlFlowRegion):
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
-                fpath = os.path.join('_dacegraphs', 'failing.sdfg')
-                self.save(fpath)
+                fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
+                self.save(fpath, compress=True)
                 print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
 
