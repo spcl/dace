@@ -478,7 +478,7 @@ class CompiledSDFG(object):
         self._construct_args_type_checking(argnames, arglist, argtypes)
 
         # Explicit casting
-        arg_ctypes = self._construct_args_explicit_casting(arglist, argtypes)
+        arg_ctypes = self._construct_args_explicit_casting(arglist, argtypes, kwargs)
 
         # Creates the call parameters
         callparams = self._construct_args_callparams(arglist, arg_ctypes, argtypes, argnames)
@@ -574,7 +574,7 @@ class CompiledSDFG(object):
         return True
 
 
-    def _construct_args_explicit_casting(self, arglist, argtypes):
+    def _construct_args_explicit_casting(self, arglist, argtypes, kwargs):
         """Explicitly performs the type casting for `_construct_args()`.
         """
         arg_ctypes = []
