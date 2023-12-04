@@ -593,26 +593,22 @@ class CompiledSDFG(object):
             # Retain only the element datatype for upcoming checks and casts
             arg_ctypes.append( argtypes[index].dtype.as_ctypes() )
         #
-
         return arg_ctypes
-    # end def:
 
 
     def _construct_args_callparams(self, arglist, arg_ctypes, argtypes, argnames):
         """Construct the call parameters.
         """
+        constants  = self.sdfg.constants
         callparams = []
+
         for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames):
-            if(not (not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants)) ):
-                pass
-            elif isinstance(arg, symbolic.symbol):
-                callparams.append( actype(arg.get()) )
-            else:
-                callparams.append( (arg, actype, atype, aname) )
-            #
-        #
-        return callparams
-    # end def:
+            if symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants):
+                continue    # Ignore symbolic constants with a compiletime value.
+            callparams.append(  # If the argument is a symbol replace it with its actual value.
+                (actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+            )
+        return tuple(callparams)
 
 
     def _construct_args_initarg(self, callparams):
@@ -620,11 +616,14 @@ class CompiledSDFG(object):
         """
         # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
-        initargs = tuple(
-            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
-            for arg, actype, atype, aname in callparams if aname in symbols)
-        return initargs
-    #
+        initargs = []
+
+        # Construct init args, which only consist of the symbols
+        for arg, actype, atype, aname in filter(lambda X: X[-1] in symbols, callparams):
+            initargs.append(
+                actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
+            )
+        return tuple(initargs)
 
 
     def clear_return_values(self):
