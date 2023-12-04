@@ -1332,7 +1332,7 @@ def recursive_ast_improver(ast,
 
     for i in added_modules:
         ast.children.append(i)
-        asts[i.children[0].children[1].string] = i
+        asts[i.children[0].children[1].string.lower()] = i
     return ast
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list):
