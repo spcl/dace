@@ -372,6 +372,17 @@ class RefSetNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{self.target} = refset to {self.memlet}'
 
 
+@dataclass
+class StateBoundaryNode(ScheduleTreeNode):
+    """
+    A node that represents a state boundary (e.g., when a write-after-write is encountered). This node
+    is used only during conversion from a schedule tree to an SDFG.
+    """
+
+    def as_string(self, indent: int = 0):
+        return indent * INDENTATION + 'state boundary'
+
+
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
 class ScheduleNodeVisitor:
 
