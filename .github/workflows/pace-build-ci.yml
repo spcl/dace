@@ -18,7 +18,7 @@ jobs:
         - uses: actions/checkout@v2
           with:
                 repository: 'git@github.com:GEOS-ESM/pace.git'
-                ref: 911368
+                ref: 'ci/DaCe'
                 submodules: 'recursive'
         - name: Set up Python ${{ matrix.python-version }}
           uses: actions/setup-python@v2
@@ -27,13 +27,13 @@ jobs:
         - name: Install dependencies & pull correct DaCe
           run: |
             cd pace
-            python -m pip install --upgrade pip
-            pip install -e external/gt4py
-            pip install -e external/dace
-            pip install -r requirements_dev.txt
+            python -m pip install --upgrade pip wheel setuptools
             cd external/dace
             git checkout ${{ github.sha }}
             cd ../..
+            pip install -e external/gt4py
+            pip install -e external/dace
+            pip install -r requirements_dev.txt
         - name: Download data
           run: |
             cd pace
