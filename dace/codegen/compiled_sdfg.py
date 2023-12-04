@@ -366,12 +366,29 @@ class CompiledSDFG(object):
             return result
 
     def __call__(self, *args, **kwargs):
-        # Update arguments from ordered list
-        if len(args) > 0 and self.argnames is not None:
-                kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
-        argtuple, initargtuple = self._construct_args(kwargs)
+        """This function forwards the Python call to the complied `C` code.
 
+        The positional arguments (`args`) are expected to be in the same order as
+        `argnames` (which comes from `arg_names` in the source `SDFG`).
+        This function will roughly do the following steps:
+        - bringing the arguments in the order dictated by the C callable.
+        - perfrom some basic checks on the arguments.
+        - transfroms `ndarray`s to their `C` equivalent.
+
+        If you are know what you are doing you can also use `_fast_call()` which
+        allows to bypass these operations and call the extension directly.
+        """
+        if self.argnames is None and len(args) != 0:
+            raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
+        elif len(args) > 0 and self.argnames is not None:
+            kwargs.update(
+                # `_construct_args` will handle all of its argument as kwargs.
+                {aname: arg for aname, arg in zip(self.argnames, args)}
+            )
+        argtuple, initargtuple = self._construct_args(kwargs)   # Missing arguments will be detected here.
+                                                                #  Return values cached in `self._lastargs`.
         return self._fast_call(argtuple, initargtuple)
+
 
     def _fast_call(
             self,
@@ -456,9 +473,54 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
             sig = []
+
         # Type checking
+        self._construct_args_type_checking(argnames, arglist, argtypes)
+
+        # Explicit casting
+        arg_ctypes = self._construct_args_explicit_casting(arglist, argtypes)
+
+        # Creates the call parameters
+        callparams = self._construct_args_callparams(arglist, arg_ctypes, argtypes, argnames)
+
+        initargs = self._construct_args_initarg(callparams)
+
+        try:
+            # Replace arrays with their base host/device pointers
+            newargs = []
+            for arg, actype, atype, _ in callparams:
+                if dtypes.is_array(arg):
+                    newargs.append( ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)) )     # c_void_p` is subclass of `ctypes._SimpleCData`.
+                elif not isinstance(arg, (ctypes._SimpleCData)):
+                    newargs.append( actype(arg) )
+                else:
+                    newargs.append( arg )
+            #
+        except TypeError:
+            # Pinpoint bad argument
+            for i, (arg, actype, _) in enumerate(newargs):
+                try:
+                    if not isinstance(arg, ctypes._SimpleCData):
+                        actype(arg)
+                except TypeError as ex:
+                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
+
+        # Store the arguments.
+        self._lastargs = newargs, initargs
+        return self._lastargs
+
+
+    def _construct_args_type_checking(self, argnames, arglist, argtypes):
+        """This function performs the type checking for `_construct_args()`
+
+        Will modify `arglist`.
+        It either succeed or throws.
+        """
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
-            if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
+            arg_is_array = dtypes.is_array(arg)
+            atype_is_dtArray = isinstance(atype, dt.Array)
+            expr1 = atype_is_dtArray and isinstance(arg, np.ndarray)
+            if not arg_is_array and atype_is_dtArray:
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
                 elif arg is None:
@@ -466,23 +528,38 @@ class CompiledSDFG(object):
                         raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
                     # Otherwise, None values are passed as null pointers below
                 else:
-                    raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
-                                    (type(arg).__name__, a))
-            elif dtypes.is_array(arg) and not isinstance(atype, dt.Array):
+                    raise TypeError('Passing an object (type %s) to an array in argument "%s"' % (type(arg).__name__, a))
+            elif arg_is_array and not atype_is_dtArray:
                 # GPU scalars and return values are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
+            elif (expr1 and not isinstance(atype, dt.StructArray)
+                  and atype.dtype.as_numpy_dtype() != arg.dtype):
+                # Make exception for vector types
+                if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
+                    pass
+                else:
+                    print('WARNING: Passing %s array argument "%s" to a %s array' %
+                          (arg.dtype, a, atype.dtype.type.__name__))
+            elif (expr1 and arg.base is not None and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
+                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
+                                'programs is not allowed in order to retain analyzability. '
+                                'Please make a copy with "numpy.copy(...)". If you know what '
+                                'you are doing, you can override this error in the '
+                                'configuration by setting compiler.allow_view_arguments '
+                                'to True.')
             elif (not isinstance(atype, (dt.Array, dt.Structure)) and
                   not isinstance(atype.dtype, dtypes.callback) and
                   not isinstance(arg, (atype.dtype.type, sp.Basic)) and
                   not (isinstance(arg, symbolic.symbol) and arg.dtype == atype.dtype)):
-                if isinstance(arg, int) and atype.dtype.type == np.int64:
+                arg_is_int = isinstance(arg, int)
+                if arg_is_int and atype.dtype.type == np.int64:
+                    pass
+                elif (arg_is_int and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
+                    pass
+                elif (arg_is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
-                    pass
-                elif (isinstance(arg, int) and atype.dtype.type == np.int32 and abs(arg) <= (1 << 31) - 1):
-                    pass
-                elif (isinstance(arg, int) and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
                     if arg is None:
@@ -493,24 +570,14 @@ class CompiledSDFG(object):
                 else:
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and not isinstance(atype, dt.StructArray)
-                  and atype.dtype.as_numpy_dtype() != arg.dtype):
-                # Make exception for vector types
-                if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
-                    pass
-                else:
-                    print('WARNING: Passing %s array argument "%s" to a %s array' %
-                          (arg.dtype, a, atype.dtype.type.__name__))
-            elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and arg.base is not None
-                  and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
-                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
-                                'programs is not allowed in order to retain analyzability. '
-                                'Please make a copy with "numpy.copy(...)". If you know what '
-                                'you are doing, you can override this error in the '
-                                'configuration by setting compiler.allow_view_arguments '
-                                'to True.')
 
-        # Explicit casting
+        return True
+
+
+    def _construct_args_explicit_casting(self, arglist, argtypes):
+        """Explicitly performs the type casting for `_construct_args()`.
+        """
+        arg_ctypes = []
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
@@ -521,50 +588,44 @@ class CompiledSDFG(object):
             # Null pointer
             elif arg is None and isinstance(argtype, dt.Array):
                 arglist[index] = ctypes.c_void_p(0)
+            #
 
-        # Retain only the element datatype for upcoming checks and casts
-        arg_ctypes = [t.dtype.as_ctypes() for t in argtypes]
+            # Retain only the element datatype for upcoming checks and casts
+            arg_ctypes.append( argtypes[index].dtype.as_ctypes() )
+        #
 
-        sdfg = self._sdfg
+        return arg_ctypes
+    # end def:
 
-        # Obtain SDFG constants
-        constants = sdfg.constants
 
-        # Remove symbolic constants from arguments
-        callparams = tuple((arg, actype, atype, aname)
-                           for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
-                           if not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants))
+    def _construct_args_callparams(self, arglist, arg_ctypes, argtypes, argnames):
+        """Construct the call parameters.
+        """
+        callparams = []
+        for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames):
+            if(not (not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants)) ):
+                pass
+            elif isinstance(arg, symbolic.symbol):
+                callparams.append( actype(arg.get()) )
+            else:
+                callparams.append( (arg, actype, atype, aname) )
+            #
+        #
+        return callparams
+    # end def:
 
-        # Replace symbols with their values
-        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
-                           for arg, actype, atype, aname in callparams)
 
+    def _construct_args_initarg(self, callparams):
+        """Constructs the initialarguments.
+        """
         # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = tuple(
             actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
             for arg, actype, atype, aname in callparams if aname in symbols)
+        return initargs
+    #
 
-        # Replace arrays with their base host/device pointers
-        newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)), actype,
-                         atype) if dtypes.is_array(arg) else (arg, actype, atype)
-                        for arg, actype, atype, _ in callparams)
-
-        try:
-            newargs = tuple(
-                actype(arg) if not isinstance(arg, (ctypes._SimpleCData)) else arg
-                for arg, actype, atype in newargs)
-        except TypeError:
-            # Pinpoint bad argument
-            for i, (arg, actype, _) in enumerate(newargs):
-                try:
-                    if not isinstance(arg, ctypes._SimpleCData):
-                        actype(arg)
-                except TypeError as ex:
-                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
-
-        self._lastargs = newargs, initargs
-        return self._lastargs
 
     def clear_return_values(self):
         self._create_new_arrays = True
@@ -596,7 +657,8 @@ class CompiledSDFG(object):
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
         syms = dict()
-        syms.update({k: v for k, v in kwargs.items() if k not in self.sdfg.arrays})
+        sdfg_arrays = self.sdfg.arrays
+        syms.update({k: v for k, v in kwargs.items() if k not in sdfg_arrays})
         syms.update(self.sdfg.constants)
 
         # Clear references from last call (allow garbage collection)
