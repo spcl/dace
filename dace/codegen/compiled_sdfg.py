@@ -368,19 +368,37 @@ class CompiledSDFG(object):
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
         if len(args) > 0 and self.argnames is not None:
-            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+                kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+        argtuple, initargtuple = self._construct_args(kwargs)
 
+        return self._fast_call(argtuple, initargtuple)
+
+    def _fast_call(
+            self,
+            callargs: Tuple[Any, ...],
+            initargs: Tuple[Any, ...],
+    ) -> Any:
+        """This function allows to bypass the construction of arguments.
+
+        By default `self.__call__()` will reorder its argument, whose order is given by `argnames`,
+        to the one that is given by `_sig`, i.e. the one of the C callback,
+        which is done by `_construct_args()`, and transforms the arguments.
+        This function excepts that this reordering and transformation has already been done.
+
+        :param callargs:        Tuples containing the arguments for the call to the C function.
+        :param initargs:        Tupels containing the arguments for the initialization.
+
+        This is an internal function that is used for benchmarking.
+        """
         try:
-            argtuple, initargtuple = self._construct_args(kwargs)
-
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
-                self._initialize(initargtuple)
+                self._initialize(initargs)
 
-            with hooks.invoke_compiled_sdfg_call_hooks(self, argtuple):
+            with hooks.invoke_compiled_sdfg_call_hooks(self, callargs):
                 if self.do_not_execute is False:
-                    self._cfunc(self._libhandle, *argtuple)
+                    self._cfunc(self._libhandle, *callargs)
 
             if self.has_gpu_code:
                 # Optionally get errors from call
