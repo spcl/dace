@@ -31,7 +31,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     result.symbols = copy.deepcopy(stree.symbols)
 
     # TODO: Fill SDFG contents
-    insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
+    stree = insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
 
     # TODO: create_state_boundary
     # TODO: create_loop_block
@@ -41,7 +41,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     return result
 
 
-def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> None:
+def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:
     """
     Inserts StateBoundaryNode objects into a schedule tree where more than one SDFG state would be necessary.
     Operates in-place on the given schedule tree.
@@ -54,7 +54,25 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> None:
 
     :param stree: The schedule tree to operate on.
     """
-    pass
+
+    # Simple boundary node inserter for control flow blocks and state labels
+    class SimpleStateBoundaryInserter(tn.ScheduleNodeTransformer):
+
+        def visit_scope(self, scope: tn.ScheduleTreeScope):
+            if isinstance(scope, tn.ControlFlowScope):
+                return [tn.StateBoundaryNode(), self.generic_visit(scope)]
+            return self.generic_visit(scope)
+
+        def visit_StateLabel(self, node: tn.StateLabel):
+            return [tn.StateBoundaryNode(), self.generic_visit(node)]
+
+    # First, insert boundaries around labels and control flow
+    stree = SimpleStateBoundaryInserter().visit(stree)
+
+    # TODO: Insert boundaries after unmet memory dependencies
+    # TODO: Implement generic methods that get input/output memlets for stree scopes and nodes
+
+    return stree
 
 
 #############################################################################

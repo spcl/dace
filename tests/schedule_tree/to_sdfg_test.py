@@ -23,7 +23,7 @@ def test_state_boundaries_none():
         ],
     )
 
-    t2s.insert_state_boundaries_to_tree(stree)
+    stree = t2s.insert_state_boundaries_to_tree(stree)
     assert tn.StateBoundaryNode not in [type(n) for n in stree.children]
 
 
@@ -40,7 +40,7 @@ def test_state_boundaries_waw():
         ],
     )
 
-    t2s.insert_state_boundaries_to_tree(stree)
+    stree = t2s.insert_state_boundaries_to_tree(stree)
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
@@ -59,7 +59,7 @@ def test_state_boundaries_war():
         ],
     )
 
-    t2s.insert_state_boundaries_to_tree(stree)
+    stree = t2s.insert_state_boundaries_to_tree(stree)
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
@@ -78,7 +78,7 @@ def test_state_boundaries_cfg():
         ],
     )
 
-    t2s.insert_state_boundaries_to_tree(stree)
+    stree = t2s.insert_state_boundaries_to_tree(stree)
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.ForScope] == [type(n) for n in stree.children]
 
 
