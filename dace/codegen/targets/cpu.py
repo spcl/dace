@@ -1460,6 +1460,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('}', sdfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
+        self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
