@@ -1197,7 +1197,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         result = cls.__new__(cls)
         memo[id(self)] = result
         for k, v in self.__dict__.items():
+            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+                continue
             setattr(result, k, copy.deepcopy(v, memo))
+
+        for k in ('_parent_graph', '_sdfg'):
+            if id(getattr(self, k)) in memo:
+                setattr(result, k, memo[id(getattr(self, k))])
+            else:
+                setattr(result, k, None)
+
         for node in result.nodes():
             if isinstance(node, nd.NestedSDFG):
                 try:
@@ -1635,7 +1644,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        consume = nd.Consume(name, pe_tuple, CodeBlock(condition, language), schedule, chunksize, debuginfo=debuginfo)
+        if condition is not None:
+            condition = CodeBlock(condition, language)
+        consume = nd.Consume(name, pe_tuple, condition, schedule, chunksize, debuginfo=debuginfo)
         entry = nd.ConsumeEntry(consume)
         exit = nd.ConsumeExit(consume)
 

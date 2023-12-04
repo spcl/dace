@@ -205,6 +205,7 @@ def _copy_state(sdfg: SDFG,
 
     state_copy = copy.deepcopy(state)
     state_copy._label += '_copy'
+    state_copy.parent = sdfg
     sdfg.add_node(state_copy)
 
     in_conditions = []

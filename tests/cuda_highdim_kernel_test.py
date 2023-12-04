@@ -22,7 +22,7 @@ def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K, L
     @dace.mapscope
     def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
         @dace.map
-        def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2:W - 2], e: _[0:U]):
+        def block(a: _[0:X], b: _[0:Y], c: _[1:Z], d: _[2:W - 1], e: _[0:U]):
             input << A[i, j, k, l, a, b, c, d, e]
             output >> B(1, lambda a, b: a + b)[i, j, k, l]
             output = input
@@ -31,7 +31,7 @@ def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K, L
 def makendrange(*args):
     result = []
     for i in range(0, len(args), 2):
-        result.append(slice(args[i], args[i + 1] - 1, 1))
+        result.append(slice(args[i], args[i + 1], 1))
     return result
 
 
@@ -58,7 +58,7 @@ def _test(sdfg):
 
     # Equivalent python code
     for i, j, k, l in dace.ndrange(makendrange(5, N - 5, 0, M, 7, K - 1, 0, L)):
-        for a, b, c, d, e in dace.ndrange(makendrange(0, X, 0, Y, 1, Z, 2, W - 2, 0, U)):
+        for a, b, c, d, e in dace.ndrange(makendrange(0, X, 0, Y, 1, Z, 2, W - 1, 0, U)):
             B_regression[i, j, k, l] += A[i, j, k, l, a, b, c, d, e]
 
     sdfg(A=A, B=B, N=N, M=M, K=K, L=L, X=X, Y=Y, Z=Z, W=W, U=U)

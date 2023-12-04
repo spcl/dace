@@ -500,6 +500,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
+        self.arg_names = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -578,7 +579,8 @@ class SDFG(ControlFlowRegion):
         tmp = super().to_json()
 
         # Ensure properties are serialized correctly
-        tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
+        if 'constants_prop' in tmp['attributes']:
+            tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_block
@@ -603,8 +605,13 @@ class SDFG(ControlFlowRegion):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
+        if 'constants_prop' in attrs:
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+        else:
+            constants_prop = None
+
         ret = SDFG(name=attrs['name'],
-                   constants=dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop'])),
+                   constants=constants_prop,
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
@@ -2191,8 +2198,8 @@ class SDFG(ControlFlowRegion):
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
             except Exception:
-                fpath = os.path.join('_dacegraphs', 'failing.sdfg')
-                self.save(fpath)
+                fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
+                self.save(fpath, compress=True)
                 print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
 
