@@ -2,9 +2,12 @@
 import argparse
 import numpy as np
 import os
+import copy
 import pytest
 import dace
 from dace.transformation.dataflow import PruneConnectors
+from dace.transformation.helpers import nest_state_subgraph
+from dace.sdfg.state import StateSubgraphView
 
 
 def make_sdfg():
@@ -237,6 +240,84 @@ def test_unused_retval_2():
     assert np.allclose(a, 1)
 
 
+def test_prune_connectors_with_dependencies():
+    sdfg = dace.SDFG('tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.float64)
+    B, B_desc = sdfg.add_array('B', [4], dace.float64)
+    C, C_desc = sdfg.add_array('C', [4], dace.float64)
+    D, D_desc = sdfg.add_array('D', [4], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_access("A")
+    b1 = state.add_access("B")
+    b2 = state.add_access("B")
+    c1 = state.add_access("C")
+    c2 = state.add_access("C")
+    d = state.add_access("D")
+
+    _, map_entry_a, map_exit_a = state.add_mapped_tasklet("a",
+                                                          map_ranges={"i": "0:4"},
+                                                          inputs={"_in": dace.Memlet(data="A", subset='i')},
+                                                          outputs={"_out": dace.Memlet(data="B", subset='i')},
+                                                          code="_out = _in + 1")
+    state.add_edge(a, None, map_entry_a, None, dace.Memlet(data="A", subset="0:4"))
+    state.add_edge(map_exit_a, None, b1, None, dace.Memlet(data="B", subset="0:4"))
+
+    tasklet_c, map_entry_c, map_exit_c = state.add_mapped_tasklet("c",
+                                                                  map_ranges={"i": "0:4"},
+                                                                  inputs={"_in": dace.Memlet(data="C", subset='i')},
+                                                                  outputs={"_out": dace.Memlet(data="C", subset='i')},
+                                                                  code="_out = _in + 1")
+    state.add_edge(c1, None, map_entry_c, None, dace.Memlet(data="C", subset="0:4"))
+    state.add_edge(map_exit_c, None, c2, None, dace.Memlet(data="C", subset="0:4"))
+
+    _, map_entry_d, map_exit_d = state.add_mapped_tasklet("d",
+                                                          map_ranges={"i": "0:4"},
+                                                          inputs={"_in": dace.Memlet(data="B", subset='i')},
+                                                          outputs={"_out": dace.Memlet(data="D", subset='i')},
+                                                          code="_out = _in + 1")
+    state.add_edge(b2, None, map_entry_d, None, dace.Memlet(data="B", subset="0:4"))
+    state.add_edge(map_exit_d, None, d, None, dace.Memlet(data="D", subset="0:4"))
+
+    sdfg.fill_scope_connectors()
+
+    subgraph = StateSubgraphView(state, subgraph_nodes=[map_entry_c, map_exit_c, tasklet_c])
+    nsdfg_node = nest_state_subgraph(sdfg, state, subgraph=subgraph)
+
+    nsdfg_node.sdfg.add_datadesc("B1", datadesc=copy.deepcopy(B_desc))
+    nsdfg_node.sdfg.arrays["B1"].transient = False
+    nsdfg_node.sdfg.add_datadesc("B2", datadesc=copy.deepcopy(B_desc))
+    nsdfg_node.sdfg.arrays["B2"].transient = False
+
+    nsdfg_node.add_in_connector("B1")
+    state.add_edge(b1, None, nsdfg_node, "B1", dace.Memlet.from_array(dataname="B", datadesc=B_desc))
+    nsdfg_node.add_out_connector("B2")
+    state.add_edge(nsdfg_node, "B2", b2, None, dace.Memlet.from_array(dataname="B", datadesc=B_desc))
+
+    np_a = np.random.random(4)
+    np_a_ = np.copy(np_a)
+    np_b = np.random.random(4)
+    np_b_ = np.copy(np_b)
+    np_c = np.random.random(4)
+    np_c_ = np.copy(np_c)
+    np_d = np.random.random(4)
+    np_d_ = np.copy(np_d)
+
+    sdfg(A=np_a, B=np_b, C=np_c, D=np_d)
+
+    applied = sdfg.apply_transformations_repeated(PruneConnectors)
+    assert applied == 1
+    assert len(sdfg.states()) == 3
+    assert "B1" not in nsdfg_node.in_connectors
+    assert "B2" not in nsdfg_node.out_connectors
+
+    sdfg(A=np_a_, B=np_b_, C=np_c_, D=np_d_)
+    assert np.allclose(np_a, np_a_)
+    assert np.allclose(np_b, np_b_)
+    assert np.allclose(np_c, np_c_)
+    assert np.allclose(np_d, np_d_)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -248,3 +329,4 @@ if __name__ == "__main__":
     test_prune_connectors(True, n=n)
     test_unused_retval()
     test_unused_retval_2()
+    test_prune_connectors_with_dependencies()
