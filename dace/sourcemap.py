@@ -295,7 +295,7 @@ class MapPython:
         for nested_sdfg in sdfg.all_sdfgs_recursive():
             # NOTE: SDFGs created with the API may not have debuginfo
             debuginfo: Optional[dtypes.DebugInfo] = nested_sdfg.debuginfo
-            if debuginfo:
+            if debuginfo and debuginfo.filename:
                 range_dict[debuginfo.filename].append((debuginfo.start_line, debuginfo.end_line))
 
         self.create_mapping(range_dict)
