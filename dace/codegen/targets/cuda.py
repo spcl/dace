@@ -1130,12 +1130,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
                     # reduction not yet supported by template for dynamic case
                     if accum or custom_reduction:
-                        raise NotImplementedError(f'reduction not supported by template {funcname}')
+                        raise NotImplementedError(f'reduce function is missing in template {funcname}')
                     callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>({args});').format(
                         func=funcname,
                         type=dst_node.desc(sdfg).dtype.ctype,
                         bdims=', '.join(_topy(self._block_dims)),
-                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
                         args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] +
                                        _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
                 elif funcname == 'dace::SharedToGlobal1D':
@@ -1146,14 +1146,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              type=dst_node.desc(sdfg).dtype.ctype,
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
-                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
                              accum=accum or '::Copy',
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + _topy(dst_strides) + custom_reduction)), sdfg,
                         state_id, [src_node, dst_node])
                 else:
                     # reduction not yet supported by template for 2D and 3D case
                     if accum or custom_reduction:
-                        raise NotImplementedError(f'reduction not supported by template {funcname}')
+                        raise NotImplementedError(f'reduce function is missing in template {funcname}')
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +
                          '{dststrides}, {is_async}>({args});').format(
@@ -1162,7 +1162,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr])), sdfg,
                         state_id, [src_node, dst_node])
             # Per-thread load (same as CPU copies)
