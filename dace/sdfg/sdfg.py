@@ -579,7 +579,8 @@ class SDFG(ControlFlowRegion):
         tmp = super().to_json()
 
         # Ensure properties are serialized correctly
-        tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
+        if 'constants_prop' in tmp['attributes']:
+            tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_block
@@ -604,8 +605,13 @@ class SDFG(ControlFlowRegion):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
+        if 'constants_prop' in attrs:
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+        else:
+            constants_prop = None
+
         ret = SDFG(name=attrs['name'],
-                   constants=dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop'])),
+                   constants=constants_prop,
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
