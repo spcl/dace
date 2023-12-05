@@ -165,6 +165,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     if Config.get_bool('testing', 'serialization'):
         from dace.sdfg import SDFG
+        import difflib
         import filecmp
         import shutil
         import tempfile
@@ -174,9 +175,16 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
             sdfg2.save(f'{tmp_dir}/test2.sdfg', hash=False)
             print('Testing SDFG serialization...')
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
-                shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
-                shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
-                raise RuntimeError('SDFG serialization failed - files do not match')
+                with open(f'{tmp_dir}/test.sdfg', 'r') as f1:
+                    with open(f'{tmp_dir}/test2.sdfg', 'r') as f2:
+                        diff = difflib.unified_diff(f1.readlines(),
+                                                    f2.readlines(),
+                                                    fromfile='test.sdfg  (first save)',
+                                                    tofile='test2.sdfg (after roundtrip)')
+                diff = ''.join(diff)
+                shutil.move(f'{tmp_dir}/test.sdfg', 'test.sdfg')
+                shutil.move(f'{tmp_dir}/test2.sdfg', 'test2.sdfg')
+                raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
 
     # Convert any loop constructs with hierarchical loop regions into simple 1-level state machine loops.
     # TODO (later): Adapt codegen to deal with hierarchical CFGs instead.
