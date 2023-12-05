@@ -945,10 +945,10 @@ required:
 
             serialize_all_fields:
                 type: bool
-                default: false
+                default: true
                 title: Serialize all unmodified fields in SDFG files
                 description: >
-                    If False (default), saving an SDFG keeps only the modified non-default properties. If True,
+                    If False, saving an SDFG keeps only the modified non-default properties. If True,
                     saves all fields.
 
     #############################################
