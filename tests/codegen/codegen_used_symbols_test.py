@@ -88,8 +88,55 @@ def test_codegen_used_symbols_gpu():
         pass
 
 
+def test_codegen_edge_assignment_with_indirection():
+    rng = numpy.random.default_rng(42)
+    (M, N, K) = (dace.symbol(x, dace.int32) for x in ['M', 'N', 'K'])
+
+    sdfg = dace.SDFG('edge_assignment_with_indirection')
+    [sdfg.add_symbol(x, dace.int32) for x in {'__indirect_idx', '__neighbor_idx'}]
+    sdfg.add_array('_field', (M,), dace.float64)
+    sdfg.add_array('_table', (N,K), dace.int32)
+    sdfg.add_array('_out', (N,), dace.float64)
+
+    state0 = sdfg.add_state(is_start_block=True)
+    state1 = sdfg.add_state()
+    sdfg.add_edge(state0, state1, dace.InterstateEdge(
+        assignments={'_field_idx': '_table[__indirect_idx, __neighbor_idx]'}
+    ))
+    state1.add_memlet_path(
+        state1.add_access('_field'),
+        state1.add_access('_out'),
+        memlet=dace.Memlet(data='_out', subset='__indirect_idx', other_subset='_field_idx', wcr='lambda x, y: x + y')
+    )
+
+    M, N, K = (5, 4, 2)
+    field = rng.random((M,))
+    out = rng.random((N,))
+    table = numpy.random.randint(0, M, (N, K), numpy.int32)
+
+    TEST_INDIRECT_IDX = numpy.random.randint(0, N)
+    TEST_NEIGHBOR_IDX = numpy.random.randint(0, K)
+
+    reference = numpy.asarray(
+        [
+            out[i] + field[table[i, TEST_NEIGHBOR_IDX]] if i == TEST_INDIRECT_IDX else out[i]
+            for i in range(N)
+        ]
+    )
+
+    sdfg(
+        _field=field, _table=table, _out=out, M=M, N=N, K=K,
+        __indirect_idx=TEST_INDIRECT_IDX,
+        __neighbor_idx=TEST_NEIGHBOR_IDX
+    )
+
+    assert numpy.allclose(out, reference)
+
+
 if __name__ == "__main__":
 
     test_codegen_used_symbols_cpu()
     test_codegen_used_symbols_cpu_2()
     test_codegen_used_symbols_gpu()
+    test_codegen_edge_assignment_with_indirection()
+
