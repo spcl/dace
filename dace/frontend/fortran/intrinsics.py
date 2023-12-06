@@ -47,10 +47,49 @@ class DirectReplacement(IntrinsicTransformation):
     Transformation = namedtuple("Transformation", "function")
 
     class ASTTransformation(IntrinsicNodeTransformer):
-        pass
+
+        def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
+
+            if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
+                return binop_node
+
+            node = binop_node.rval
+
+            name = node.name.name.split('__dace_')
+            if len(name) != 2 or name[1] not in DirectReplacement.FUNCTIONS:
+                return binop_node
+            func_name = name[1]
+
+            replacement_rule = DirectReplacement.FUNCTIONS[func_name]
+            if isinstance(replacement_rule, DirectReplacement.Transformation):
+
+                # FIXME: we do not have line number in binop?
+                binop_node.rval, input_type = replacement_rule.function(node, self.scope_vars, 0) #binop_node.line)
+
+                # replace types of return variable - LHS of the binary operator
+                var = binop_node.lval
+                if isinstance(var.name, ast_internal_classes.Name_Node):
+                    name = var.name.name
+                else:
+                    name = var.name
+                var_decl = self.scope_vars.get_var(var.parent, name)
+                var.type = input_type
+                var_decl.type = input_type
+
+            return binop_node
 
 
             #self.scope_vars.get_var(node.parent, arg.name).
+
+    def replace_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
+
+        if len(var.args) != 1:
+            raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = scope_vars.get_var(var.parent, var.args[0].name)
+        return (var_decl.sizes[0], "INTEGER")
+
 
     def replace_bit_size(args: ast_internal_classes.Arg_List_Node, line):
 
@@ -74,8 +113,18 @@ class DirectReplacement(IntrinsicTransformation):
     FUNCTIONS = {
         "SELECTED_INT_KIND": Replacement(replace_int_kind),
         "SELECTED_REAL_KIND": Replacement(replace_real_kind),
-        "BIT_SIZE": Transformation(replace_bit_size)
+        "BIT_SIZE": Transformation(replace_bit_size),
+        "SIZE": Transformation(replace_size)
     }
+
+    @staticmethod
+    def temporary_functions():
+
+        # temporary functions created by us -> f becomes __dace_f
+        # We provide this to tell Fortran parser that these are function calls,
+        # not array accesses
+        funcs = list(DirectReplacement.FUNCTIONS.keys())
+        return [f'__dace_{f}' for f in funcs]
 
     @staticmethod
     def replacable_name(func_name: str) -> bool:
@@ -100,12 +149,12 @@ class DirectReplacement(IntrinsicTransformation):
         fname = func_name.split('__dace_')[1]
         return DirectReplacement.FUNCTIONS[fname].function(args, line)
 
-    def has_transformation() -> bool:
+    def has_transformation(fname: str) -> bool:
         return isinstance(DirectReplacement.FUNCTIONS[fname], DirectReplacement.Transformation)
 
     @staticmethod
-    def get_transformation(func_name: str) -> IntrinsicNodeTransformer:
-        return DirectReplacement.ASTTransformation(func_name)
+    def get_transformation() -> IntrinsicNodeTransformer:
+        return DirectReplacement.ASTTransformation()
 
 class LoopBasedReplacement:
 
@@ -1209,7 +1258,7 @@ class FortranIntrinsics:
     def function_names() -> List[str]:
         # list of all functions that are created by initial transformation, before doing full replacement
         # this prevents other parser components from replacing our function calls with array subscription nodes
-        return [*list(LoopBasedReplacement.INTRINSIC_TO_DACE.values()), *MathFunctions.temporary_functions()]
+        return [*list(LoopBasedReplacement.INTRINSIC_TO_DACE.values()), *MathFunctions.temporary_functions(), *DirectReplacement.temporary_functions()]
 
     @staticmethod
     def retained_function_names() -> List[str]:
@@ -1232,6 +1281,8 @@ class FortranIntrinsics:
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
+            if DirectReplacement.has_transformation(func_name):
+                self._transformations_to_run.add(DirectReplacement.get_transformation())
             return DirectReplacement.replace_name(func_name)
         elif MathFunctions.replacable(func_name):
             self._transformations_to_run.add(MathFunctions.get_transformation())
