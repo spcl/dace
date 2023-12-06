@@ -33,14 +33,13 @@ def build_sdfg_neighbor_reduction(sdfg_name: str):
     nsdfg.add_scalar('_input_field_idx', dace.int32)
     nsdfg.add_scalar('_input_weight_idx', dace.int32)
     nsdfg.add_scalar('_acc', dtype, transient=True)
-    nsdfg.add_scalar('_result', dtype)
-    istate = nsdfg.add_state('init', is_start_block=True)
-    istate.add_nedge(
-        istate.add_access('_result'),
-        istate.add_access('_acc'),
-        dace.Memlet.simple('_result', '0')
+    nsdfg.add_array('_result', (1,), dtype)
+    istate = nsdfg.add_state(is_start_block=True)
+    nstate = nsdfg.add_state()
+    nsdfg.add_edge(
+        istate, nstate,
+        dace.sdfg.InterstateEdge(assignments={'_acc': '_result[0]'})
     )
-    nstate = nsdfg.add_state_after(istate, 'compute')
     me_red, mx_red = nstate.add_map('neighbors', dict(_neighbor_idx=f"0:{N_E2V_NEIGHBORS}"))
     nsdfg.add_scalar('_field_idx', dace.int32, transient=True)
     field_idx_node = nstate.add_access('_field_idx')
