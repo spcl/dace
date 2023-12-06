@@ -114,12 +114,11 @@ class InternalFortranAst:
 
         """
         self.name_list = {}
-        self.unsupported_fortran_syntax = []
+        self.unsupported_fortran_syntax = {}
+        self.current_ast=None
         self.functions_and_subroutines = []
-        self.unsupported_fortran_syntax = []
         self.symbols = {}
         self.rename_list = {}
-        self.name_list = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -175,6 +174,7 @@ class InternalFortranAst:
             "Attr_Spec": self.attr_spec,
             "Intent_Spec": self.intent_spec,
             "Access_Spec": self.access_spec,
+            "Access_Stmt": self.access_stmt,
             "Allocatable_Stmt": self.allocatable_stmt,
             "Asynchronous_Stmt": self.asynchronous_stmt,
             "Bind_Stmt": self.bind_stmt,
@@ -310,11 +310,13 @@ class InternalFortranAst:
             try:
                 return self.supported_fortran_syntax[type(node).__name__](node)
             except KeyError:
-                if type(node).__name__ not in self.unsupported_fortran_syntax:
-                    self.unsupported_fortran_syntax.append(type(node).__name__)
+                if self.unsupported_fortran_syntax.get(self.current_ast) is None:
+                    self.unsupported_fortran_syntax[self.current_ast] = []
+                if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
+                    self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
                 for i in node.children:
                     self.create_ast(i)
-                print("Unsupported syntax: ", type(node).__name__, node.string)
+                #print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
 
         return None
@@ -331,6 +333,9 @@ class InternalFortranAst:
         return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref)
 
     def end_type_stmt(self, node: FASTNode):
+        return None
+    
+    def access_stmt(self, node: FASTNode):
         return None
 
     def derived_type_def(self, node: FASTNode):

@@ -1392,34 +1392,36 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if k not in out_names:
                         out_names.append(k)
         actually_used=[]
-        for j in out_names:
-            if i==simplify_order[0]:
-                for fname in res.list_of_functions:
-                    if j in res.names_in_functions[fname]:
-                        if j not in actually_used:
-                            actually_used.append(j)
-                for sname in res.list_of_subroutines:
-                    if j in res.names_in_subroutines[sname]:
-                        if j not in actually_used:
-                            actually_used.append(j)
-            else:
-                for fname in res.list_of_functions:
-                    if fname in in_names:
+        not_used=[]
+        if res is not None:
+            for j in out_names:
+                if i==simplify_order[0]:
+                    for fname in res.list_of_functions:
                         if j in res.names_in_functions[fname]:
                             if j not in actually_used:
                                 actually_used.append(j)
-                for sname in res.list_of_subroutines:
-                    if sname in in_names:
+                    for sname in res.list_of_subroutines:
                         if j in res.names_in_subroutines[sname]:
                             if j not in actually_used:
                                 actually_used.append(j)
+                else:
+                    for fname in res.list_of_functions:
+                        if fname in in_names:
+                            if j in res.names_in_functions[fname]:
+                                if j not in actually_used:
+                                    actually_used.append(j)
+                    for sname in res.list_of_subroutines:
+                        if sname in in_names:
+                            if j in res.names_in_subroutines[sname]:
+                                if j not in actually_used:
+                                    actually_used.append(j)
 
 
-        not_used=[]
-        for j in out_names:
-            if j not in actually_used:
-                not_used.append(j)
-        #if not_used!=[]:
+            
+            for j in out_names:
+                if j not in actually_used:
+                    not_used.append(j)
+            #if not_used!=[]:
             #print(i)                
             #print("NOT USED: "+ str(not_used))  
        
@@ -1452,7 +1454,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     print(simple_graph)
     
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
-    
+      
     parse_list={}
     for i in parse_order:
         edges=simple_graph.in_edges(i)
@@ -1480,6 +1482,14 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list)) 
     top_level_ast = parse_order.pop()
+    changes=True
+    while changes:
+        changes=False
+        for i in ast.children:
+            if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+                ast.children.remove(i)
+                changes=True
+    #ast.children=new_children  
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
@@ -1501,6 +1511,31 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
+    for i in parse_order:
+        edges = list(simple_graph.in_edges(i))
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1]) 
+            names_in_edge = []
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                        names_in_edge.append(k.string)
+
+            changes=True
+            while changes:
+                changes=False
+                for k in asts[i].children[2].children:
+                    if k.__class__.__name__ == "Contains_Stmt":
+                        asts[i].children[2].children.remove(k)
+                        changes=True
+                    elif k.__class__.__name__ == "Subroutine_Subprogram":
+                        if k.children[0].children[1].string not in names_in_edge:
+                            asts[i].children[2].children.remove(k)
+                            changes=True
+                    elif k.__class__.__name__ == "Function_Subprogram":
+                        if k.children[0].children[1].string not in names_in_edge :
+                            asts[i].children[2].children.remove(k)
+                            changes=True
+                    
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
     partial_modules = []
@@ -1519,11 +1554,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
 
     for i in parse_order:
+        partial_ast.current_ast=i
+        partial_ast.unsupported_fortran_syntax[i]=[]
         if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
             continue
        
         partial_ast.add_name_list_for_module(i, name_dict[i])
-        partial_modules.append(partial_ast.create_ast(asts[i]))
+        try:
+            partial_modules.append(partial_ast.create_ast(asts[i]))
+        except:
+            print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
+            #print(partial_ast.unsupported_fortran_syntax[i])
+            continue
         tmp_rename=rename_dict[i]
         for j in tmp_rename:
             #print(j)
@@ -1536,9 +1578,16 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             else:
                 partial_ast.symbols[tmp_rename[j]]=partial_ast.symbols[j]
 
-        print("Parsing module: ", i)
-
+        print("Parsed successfully module: ", i," ",partial_ast.unsupported_fortran_syntax[i])
+        #print(partial_ast.unsupported_fortran_syntax[i])
+    #try:
+    partial_ast.current_ast="top level"
     program = partial_ast.create_ast(ast)
+    #except:
+        
+    #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
+            #print(partial_ast.unsupported_fortran_syntax["top level"])
+    #        return
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
