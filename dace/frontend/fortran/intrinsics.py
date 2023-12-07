@@ -65,6 +65,7 @@ class DirectReplacement(IntrinsicTransformation):
 
                 # FIXME: we do not have line number in binop?
                 binop_node.rval, input_type = replacement_rule.function(node, self.scope_vars, 0) #binop_node.line)
+                print(binop_node, binop_node.lval, binop_node.rval)
 
                 # replace types of return variable - LHS of the binary operator
                 var = binop_node.lval
@@ -89,7 +90,7 @@ class DirectReplacement(IntrinsicTransformation):
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
 
-        # one arg? compute the total number of elements
+        # one arg to SIZE? compute the total number of elements
         if len(var.args) == 1:
 
             if len(var_decl.sizes) == 1:
@@ -113,18 +114,28 @@ class DirectReplacement(IntrinsicTransformation):
             cur_node.rval = var_decl.sizes[-1]
             return (ret, "INTEGER")
 
-        # we return number of elements in a given rank
+        # two arguments? We return number of elements in a given rank
         rank = var.args[1]
+        # we do not support symbolic argument to DIM - it must be a literal
         if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
             raise NotImplementedError()
         value = int(rank.value)
         return (var_decl.sizes[value-1], "INTEGER")
 
 
-    def replace_bit_size(args: ast_internal_classes.Arg_List_Node, line):
+    def replace_bit_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
-        if len(args.args) != 1:
+        if len(var.args) != 1:
             raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = scope_vars.get_var(var.parent, var.args[0].name)
+
+        dace_type = fortrantypes2dacetypes[var_decl.type]
+        type_size = dace_type().itemsize * 8
+
+        return (ast_internal_classes.Int_Literal_Node(value=str(type_size)), "INTEGER")
+
 
     def replace_int_kind(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
         if isinstance(args.args[0], ast_internal_classes.Int_Literal_Node):
