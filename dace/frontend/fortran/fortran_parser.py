@@ -1259,7 +1259,7 @@ def recursive_ast_improver(ast,
     defined_modules = dfl.list_of_modules
     main_program_mode=False
     if len(defined_modules) != 1:
-        print("Defined modules: ", defined_modules)
+        #print("Defined modules: ", defined_modules)
         print("Assumption failed: Only one module per file")
         if len(defined_modules)==0 and ast.__class__.__name__ == "Program":
             main_program_mode=True
@@ -1267,6 +1267,10 @@ def recursive_ast_improver(ast,
     ufl.get_used_modules(ast)
     objects_in_modules = ufl.objects_in_use
     used_modules = ufl.list_of_modules
+    fandsl=ast_utils.FunctionSubroutineLister()
+    fandsl.get_functions_and_subroutines(ast)
+    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
+    #print("Functions and subroutines: ", functions_and_subroutines)
     if not main_program_mode:
         parent_module = defined_modules[0]
     else:
@@ -1274,21 +1278,24 @@ def recursive_ast_improver(ast,
     for i in defined_modules:
         if i not in exclude_list:
             exclude_list.append(i)
-        if i not in dep_graph.nodes:
-            dep_graph.add_node(i)
+        #if i not in dep_graph.nodes:
+        dep_graph.add_node(i,info_list=fandsl)
     for i in used_modules:
         if i not in dep_graph.nodes:
             dep_graph.add_node(i)
         weight = None
         if i in objects_in_modules:
-            weight = objects_in_modules[i]
+            weight=[]
+
+            for j in objects_in_modules[i].children:
+                weight.append(j)
         dep_graph.add_edge(parent_module, i, obj_list=weight)
 
-    print("It's turtles all the way down: ", len(exclude_list))
+    #print("It's turtles all the way down: ", len(exclude_list))
     modules_to_parse = []
     for i in used_modules:
         if i not in defined_modules and i not in exclude_list:
-            print("Module " + i + " not defined")
+            #print("Module " + i + " not defined")
             modules_to_parse.append(i)
     added_modules = []
     for i in modules_to_parse:
@@ -1330,7 +1337,7 @@ def recursive_ast_improver(ast,
 
     for i in added_modules:
         ast.children.append(i)
-        asts[i.children[0].children[1].string] = i
+        asts[i.children[0].children[1].string.lower()] = i
     return ast
 
 def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list):
@@ -1355,19 +1362,149 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+    simplify_order=(list(nx.topological_sort(dep_graph)))
+    print(dep_graph)
+    simple_graph = nx.DiGraph()
+    for i in simplify_order:
+        
+        res=dep_graph.nodes.get(i).get("info_list")
+        if simple_graph.has_node(i)==True:
+            simple_graph.add_node(i,info_list=res)
+        out_edges=dep_graph.out_edges(i)
+        in_edges=dep_graph.in_edges(i)
+        in_names=[]
+        out_names=[]
+        
+        for j in in_edges:
+            in_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            in_names_local=[]
+            if in_names_local_obj is not None:
+                for k in in_names_local_obj:
+                    in_names_local.append(k.string)
+            if in_names_local is not None:
+                for k in in_names_local:
+                    if k not in in_names:
+                        in_names.append(k)
+        for j in out_edges:
+            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            out_names_local=[]
+            if out_names_local_obj is not None:
+                for k in out_names_local_obj:
+                    out_names_local.append(k.string)
+            
+            if out_names_local is not None:
+                for k in out_names_local:
+                    if k not in out_names:
+                        out_names.append(k)
+        actually_used=[]
+        not_used=[]
+        if res is not None:
+            for j in out_names:
+                if i==simplify_order[0]:
+                    for fname in res.list_of_functions:
+                        if j in res.names_in_functions[fname]:
+                            if j not in actually_used:
+                                actually_used.append(j)
+                    for sname in res.list_of_subroutines:
+                        if j in res.names_in_subroutines[sname]:
+                            if j not in actually_used:
+                                actually_used.append(j)
+                else:
+                    for fname in res.list_of_functions:
+                        if fname in in_names:
+                            if j in res.names_in_functions[fname]:
+                                if j not in actually_used:
+                                    actually_used.append(j)
+                    for sname in res.list_of_subroutines:
+                        if sname in in_names:
+                            if j in res.names_in_subroutines[sname]:
+                                if j not in actually_used:
+                                    actually_used.append(j)
+
+
+            
+            for j in out_names:
+                if j not in actually_used:
+                    not_used.append(j)
+            #if not_used!=[]:
+            #print(i)                
+            #print("NOT USED: "+ str(not_used))  
+       
+        out_edges=dep_graph.out_edges(i)
+        out_names=[]
+        for j in out_edges:
+            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            out_names_local=[]
+            if out_names_local_obj is not None:
+                for k in out_names_local_obj:
+                    out_names_local.append(k.string)
+            new_out_names_local=[]
+            if len(out_names_local)==0:
+                continue
+            for k in out_names_local:
+                if k not in not_used:
+                    for kk in out_names_local_obj:
+                        if kk.string==k:
+                            new_out_names_local.append(kk)
+                            break
+            if len(new_out_names_local)>0:
+                if simple_graph.has_node(i)==False:
+                    if i!=simplify_order[0]:              
+                        continue
+                    else:
+                        simple_graph.add_node(i,info_list=res)
+                if simple_graph.has_node(j[1])==False:
+                    simple_graph.add_node(j[1])
+                simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
+    print(simple_graph)
     
-    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
+      
+    parse_list={}
+    for i in parse_order:
+        edges=simple_graph.in_edges(i)
+        parse_list[i]=[]
+        fands_list=[]
+        res=simple_graph.nodes.get(i).get("info_list")
+        for j in edges:
+            deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            if deps is None:   
+                continue
+            for k in deps:
+                if k.string not in parse_list[i]:
+                    parse_list[i].append(k.string)
+            
+            
+            if res is not None:
+                for jj in parse_list[i]:
+                    if jj in res.list_of_functions:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_subroutines:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+        print("Module " + i + " used names: " + str(parse_list[i]))
+        if len(fands_list)>0:
+            print("Module " + i + " used fands: " + str(fands_list)) 
     top_level_ast = parse_order.pop()
+    changes=True
+    while changes:
+        changes=False
+        for i in ast.children:
+            if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+                ast.children.remove(i)
+                changes=True
+    #ast.children=new_children  
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
         local_rename_dict = {}
-        edges = list(dep_graph.in_edges(i))
+        edges = list(simple_graph.in_edges(i))
         names = []
         for j in edges:
-            list_dict = dep_graph.get_edge_data(j[0], j[1])
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
             if (list_dict['obj_list'] is not None):
-                for k in list_dict['obj_list'].children:
+                for k in list_dict['obj_list']:
                     if not k.__class__.__name__ == "Name":
                         if k.__class__.__name__ == "Rename":
                             if k.children[2].string not in names:
@@ -1379,6 +1516,31 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
+    for i in parse_order:
+        edges = list(simple_graph.in_edges(i))
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1]) 
+            names_in_edge = []
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                        names_in_edge.append(k.string)
+
+            changes=True
+            while changes:
+                changes=False
+                for k in asts[i].children[2].children:
+                    if k.__class__.__name__ == "Contains_Stmt":
+                        asts[i].children[2].children.remove(k)
+                        changes=True
+                    elif k.__class__.__name__ == "Subroutine_Subprogram":
+                        if k.children[0].children[1].string not in names_in_edge:
+                            asts[i].children[2].children.remove(k)
+                            changes=True
+                    elif k.__class__.__name__ == "Function_Subprogram":
+                        if k.children[0].children[1].string not in names_in_edge :
+                            asts[i].children[2].children.remove(k)
+                            changes=True
+                    
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
     partial_modules = []
@@ -1397,11 +1559,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
 
     for i in parse_order:
+        partial_ast.current_ast=i
+        partial_ast.unsupported_fortran_syntax[i]=[]
         if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
             continue
        
         partial_ast.add_name_list_for_module(i, name_dict[i])
-        partial_modules.append(partial_ast.create_ast(asts[i]))
+        try:
+            partial_modules.append(partial_ast.create_ast(asts[i]))
+        except:
+            print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
+            #print(partial_ast.unsupported_fortran_syntax[i])
+            continue
         tmp_rename=rename_dict[i]
         for j in tmp_rename:
             #print(j)
@@ -1414,9 +1583,16 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             else:
                 partial_ast.symbols[tmp_rename[j]]=partial_ast.symbols[j]
 
-        print("Parsing module: ", i)
-
+        print("Parsed successfully module: ", i," ",partial_ast.unsupported_fortran_syntax[i])
+        #print(partial_ast.unsupported_fortran_syntax[i])
+    #try:
+    partial_ast.current_ast="top level"
     program = partial_ast.create_ast(ast)
+    #except:
+        
+    #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
+            #print(partial_ast.unsupported_fortran_syntax["top level"])
+    #        return
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes

@@ -114,12 +114,11 @@ class InternalFortranAst:
 
         """
         self.name_list = {}
-        self.unsupported_fortran_syntax = []
+        self.unsupported_fortran_syntax = {}
+        self.current_ast=None
         self.functions_and_subroutines = []
-        self.unsupported_fortran_syntax = []
         self.symbols = {}
         self.rename_list = {}
-        self.name_list = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -175,6 +174,7 @@ class InternalFortranAst:
             "Attr_Spec": self.attr_spec,
             "Intent_Spec": self.intent_spec,
             "Access_Spec": self.access_spec,
+            "Access_Stmt": self.access_stmt,
             "Allocatable_Stmt": self.allocatable_stmt,
             "Asynchronous_Stmt": self.asynchronous_stmt,
             "Bind_Stmt": self.bind_stmt,
@@ -237,6 +237,7 @@ class InternalFortranAst:
             "Int_Literal_Constant": self.int_literal_constant,
             "Logical_Literal_Constant": self.logical_literal_constant,
             "Actual_Arg_Spec_List": self.actual_arg_spec_list,
+            "Actual_Arg_Spec": self.actual_arg_spec,
             "Attr_Spec_List": self.attr_spec_list,
             "Initialization": self.initialization,
             "Procedure_Declaration_Stmt": self.procedure_declaration_stmt,
@@ -309,11 +310,13 @@ class InternalFortranAst:
             try:
                 return self.supported_fortran_syntax[type(node).__name__](node)
             except KeyError:
-                if type(node).__name__ not in self.unsupported_fortran_syntax:
-                    self.unsupported_fortran_syntax.append(type(node).__name__)
+                if self.unsupported_fortran_syntax.get(self.current_ast) is None:
+                    self.unsupported_fortran_syntax[self.current_ast] = []
+                if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
+                    self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
                 for i in node.children:
                     self.create_ast(i)
-                print("Unsupported syntax: ", type(node).__name__, node.string)
+                #print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
 
         return None
@@ -330,6 +333,9 @@ class InternalFortranAst:
         return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref)
 
     def end_type_stmt(self, node: FASTNode):
+        return None
+    
+    def access_stmt(self, node: FASTNode):
         return None
 
     def derived_type_def(self, node: FASTNode):
@@ -455,7 +461,7 @@ class InternalFortranAst:
         return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args,return_type=ret, line_number=node.item.span)
 
     def subroutine_stmt(self, node: FASTNode):
-        print(self.name_list)
+        #print(self.name_list)
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
@@ -524,7 +530,7 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         if name is None:
-            return None
+            return Name_Node(name="Error!")
         return self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
 
 
@@ -1024,13 +1030,13 @@ class InternalFortranAst:
         return node
 
     def case_construct(self, node: FASTNode):
-        return node
+        return Name_Node(name="Error!")
 
     def select_case_stmt(self, node: FASTNode):
-        return node
+        return Name_Node(name="Error!")
 
     def case_stmt(self, node: FASTNode):
-        return node
+        return Name_Node(name="Error!")
 
     def end_select_stmt(self, node: FASTNode):
         return node
@@ -1242,6 +1248,12 @@ class InternalFortranAst:
     def char_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Char_Literal_Node(value=node.string)
 
+    def actual_arg_spec(self, node: FASTNode):
+        children = self.create_children(node)
+        if len(children) != 2:
+            raise ValueError("Actual arg spec must have two children")
+        return ast_internal_classes.Actual_Arg_Spec_Node(arg_name=children[0], arg=children[1])
+    
     def actual_arg_spec_list(self, node: FASTNode):
         children = self.create_children(node)
         return ast_internal_classes.Arg_List_Node(args=children)

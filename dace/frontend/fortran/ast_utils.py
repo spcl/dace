@@ -441,6 +441,58 @@ class UseModuleLister:
             else:
                 self.get_used_modules(i)
 
+
+class FunctionSubroutineLister:
+    def __init__(self):
+        self.list_of_functions = []
+        self.names_in_functions = {}
+        self.list_of_subroutines=[]
+        self.names_in_subroutines={}
+        
+
+    def get_functions_and_subroutines(self, node):
+        if node is None:
+            return
+        if not hasattr(node, "children"):
+            return
+        for i in node.children:
+            if i.__class__.__name__ == "Subroutine_Stmt":
+                for j in i.children:
+                    if j.__class__.__name__ == "Name":
+                        nl = NameLister()
+                        nl.get_names(node)
+                        self.names_in_subroutines[j.string] = nl.list_of_names
+                        self.list_of_subroutines.append(j.string)
+            elif i.__class__.__name__ == "Function_Stmt":
+                for j in i.children:
+                    if j.__class__.__name__ == "Name":
+                        nl = NameLister()
+                        nl.get_names(node)
+                        self.names_in_functions[j.string] = nl.list_of_names
+                        self.list_of_functions.append(j.string)
+                
+            else:
+                self.get_functions_and_subroutines(i)
+
+
+class NameLister:
+    def __init__(self):
+        self.list_of_names = []
+        
+        
+
+    def get_names(self, node):
+        if node is None:
+            return
+        if not hasattr(node, "children"):
+            return
+        for i in node.children:
+            if i.__class__.__name__ == "Name":
+                if i.string not in self.list_of_names:
+                    self.list_of_names.append(i.string)    
+            else:
+                self.get_names(i)
+
 class DefModuleLister:
     def __init__(self):
         self.list_of_modules = []

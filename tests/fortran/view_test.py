@@ -222,5 +222,5 @@ END SUBROUTINE viewlens
 if __name__ == "__main__":
 
     test_fortran_frontend_view_test()
-    test_fortran_frontend_view_test_2()
-    test_fortran_frontend_view_test_3()
+    #test_fortran_frontend_view_test_2()
+    #test_fortran_frontend_view_test_3()

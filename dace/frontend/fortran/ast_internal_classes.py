@@ -90,6 +90,12 @@ class Module_Subprogram_Part_Node(FNode):
         'function_definitions',
     )
 
+class Actual_Arg_Spec_Node(FNode):
+    _fields = (
+        'arg_name'
+        'arg',
+    )
+
 class Function_Subprogram_Node(FNode):
     _attributes = ('name', 'type', 'ret_name')
     _fields = (
