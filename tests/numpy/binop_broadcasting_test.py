@@ -2,7 +2,7 @@
 import numpy as np
 
 import dace
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 ### Left, match first pos ######################################################
 
@@ -219,8 +219,8 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 #
 # this test can be reenabled when this is fixed
 
-#@compare_numpy_output()
-#def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
+# @compare_numpy_output()
+# def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
 #    return A != B
 
 
@@ -235,7 +235,6 @@ def test_both_match(A: dace.float64[5, 1], B: dace.float64[1, 3]):
 
 
 def test_symbolic_bcast_same():
-
     N = dace.symbol("N")
     I = dace.symbol("I")
 
@@ -251,7 +250,7 @@ def test_symbolic_bcast_same():
     np.testing.assert_allclose(result, expected)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_broadcasting_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_subl1()

@@ -2,21 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from common import compare_numpy_output
-
-
-@pytest.fixture(
-    params=[
-        dace.dtypes.DeviceType.CPU,
-        pytest.param(dace.dtypes.DeviceType.GPU, marks=pytest.mark.gpu),
-    ],
-    ids=[
-        'cpu',
-        'gpu',
-    ]
-)
-def target_device(request):
-   yield request.param
+from common import compare_numpy_output, multi_device as target_device
 
 
 ### Left #####################################################################
@@ -209,7 +195,7 @@ def test_gter(A: dace.int64, B: dace.int64[5, 5]):
     return A >= B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_with_scalars_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_addl()

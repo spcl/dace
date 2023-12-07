@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from copy import deepcopy as dc
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 
 @compare_numpy_output()
@@ -93,7 +93,9 @@ def test_return_both():
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(None, sdfg, state, "IN", 1, "min", return_both=True)
+    _, (outval, outidx) = _argminmax(
+        None, sdfg, state, "IN", 1, "min", return_both=True
+    )
 
     IN = np.random.rand(10, 5, 3)
     OUT_IDX = np.zeros((10, 3), dtype=np.int32)
@@ -109,7 +111,6 @@ def test_return_both():
 
 
 def test_argmin_result_type():
-
     @dace.program
     def test_argmin_result(A: dace.float64[10, 5, 3]):
         return np.argmin(A, axis=1, result_type=dace.int64)
@@ -151,7 +152,7 @@ def test_mean_multiple_axes(A: dace.float64[10, 5, 3]):
 
 
 def test_mean_reduce_symbolic_shape():
-    N = dace.symbol('N')
+    N = dace.symbol("N")
 
     @dace.program
     def mean_reduce_symbolic_shape(A: dace.float64[10, N, 3]):
@@ -180,7 +181,6 @@ def test_reduce_global_None(A: dace.float64[10, 5, 3]):
 
 
 def test_scalar_reduction():
-
     gamma = 1.4
 
     @dace.program
@@ -200,7 +200,7 @@ def test_scalar_reduction():
     @dace.program
     def flux_min1(ul: dace.float64[3], ur: dace.float64[3]):
         fl = np.array([0.0442802, 0.13597403, 0.12488015])
-        fr = np.array([0., 0.1, 0.])
+        fr = np.array([0.0, 0.1, 0.0])
         eigvalsl = eigenvalues(ul)
         eigvalsr = eigenvalues(ur)
         sl = np.min(eigvalsl)
@@ -213,8 +213,8 @@ def test_scalar_reduction():
             return (sl * sr * (ur - ul) + fl * sr - fr * sl) / (sr - sl)
 
     ul = np.array([0.15532005, 0.0442802, 0.31468739])
-    ur = np.array([0.125, 0., 0.25])
-    assert (np.allclose(flux_min1(ul, ur), flux_min1.f(ul, ur)))
+    ur = np.array([0.125, 0.0, 0.25])
+    assert np.allclose(flux_min1(ul, ur), flux_min1.f(ul, ur))
 
 
 @compare_numpy_output()
@@ -227,8 +227,7 @@ def test_degenerate_reduction_implicit(A: dace.float64[1, 20]):
     return np.sum(A, axis=0)
 
 
-if __name__ == '__main__':
-
+if __name__ == "__main__":
     # generated with cat tests/numpy/reductions_test.py | grep -oP '(?<=^def ).*(?=\()' | awk '{print $0 "()"}'
     test_sum()
     test_sum_1()
@@ -251,7 +250,8 @@ if __name__ == '__main__':
 
     # Test supported reduction with OpenMP library node implementation
     from dace.libraries.standard import Reduce
-    Reduce.default_implementation = 'OpenMP'
+
+    Reduce.default_implementation = "OpenMP"
     test_sum()
     test_sum_1()
     test_max()

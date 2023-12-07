@@ -2,7 +2,7 @@
 import numpy as np
 from sympy.core.numbers import comp
 import dace
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 
 @compare_numpy_output()
@@ -25,7 +25,7 @@ def test_rot90_2d_k3(A: dace.int32[10, 10]):
     return np.rot90(A, k=3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_rot90_2d_k0()
     test_rot90_2d_k1()
     test_rot90_2d_k2()

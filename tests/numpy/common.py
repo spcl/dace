@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import inspect
+import pytest
 from copy import deepcopy as dc
 from collections import OrderedDict
 
@@ -11,36 +12,56 @@ from numpy.random import default_rng
 rng = default_rng(42)
 
 
-def compare_numpy_output(non_zero=False,
-                         positive=False,
-                         check_dtype=False,
-                         validation_func=None,
-                         casting=None,
-                         max_value=10):
-    """ Check that the `dace.program` func works identically to python
-        (including errors).
+@pytest.fixture
+def default_device():
+    yield dace.dtypes.DeviceType.CPU
 
-        `func` will be run once as a dace program, and once using python.
-        The inputs to the function will be randomly intialized arrays with
-        shapes and dtypes according to the argument annotations.
 
-        Note that this should be used *instead* of the `@dace.program`
-        annotation, not along with it!
-        Also note that this annotation requires a text fixture `target_device`
-        to generate the target `DeviceType` for test execution.
+@pytest.fixture(
+    params=[
+        dace.dtypes.DeviceType.CPU,
+        pytest.param(dace.dtypes.DeviceType.GPU, marks=pytest.mark.gpu),
+    ],
+    ids=[
+        "cpu",
+        "gpu",
+    ],
+)
+def multi_device(request):
+    yield request.param
 
-        :param non_zero: if `True`, replace `0` inputs with `1`.
-        :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
-                         sample from [-3, 3). Else, floats sample from
-                         [0, 10.0], and ints sample from [0, 3).
-        :param check_dtype: if `True`, asserts that the dtype of the result is
-                            consistent between NumPy and DaCe.
-        :param validation_func: If set, then it is used to validates the
-                                results per element
-        :param casting: If set, then the reference output is computed on the
-                        cast inputs.
-        :param max_value: The maximum value allowed in the inputs.
+
+def compare_numpy_output(
+    non_zero=False,
+    positive=False,
+    check_dtype=False,
+    validation_func=None,
+    casting=None,
+    max_value=10,
+):
+    """Check that the `dace.program` func works identically to python
+    (including errors).
+
+    `func` will be run once as a dace program, and once using python.
+    The inputs to the function will be randomly intialized arrays with
+    shapes and dtypes according to the argument annotations.
+
+    Note that this should be used *instead* of the `@dace.program`
+    annotation, not along with it!
+
+    :param non_zero: if `True`, replace `0` inputs with `1`.
+    :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
+                     sample from [-3, 3). Else, floats sample from
+                     [0, 10.0], and ints sample from [0, 3).
+    :param check_dtype: if `True`, asserts that the dtype of the result is
+                        consistent between NumPy and DaCe.
+    :param validation_func: If set, then it is used to validates the
+                            results per element
+    :param casting: If set, then the reference output is computed on the
+                    cast inputs.
+    :param max_value: The maximum value allowed in the inputs.
     """
+
     def decorator(func):
         def test(target_device):
             dp = dace.program(device=target_device)(func)
@@ -51,22 +72,35 @@ def compare_numpy_output(non_zero=False,
                     ddesc = dace.data.Scalar(ddesc)
 
                 if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
-                    res = rng.random(ddesc.shape, dtype=getattr(np, ddesc.dtype.to_string()))
+                    res = rng.random(
+                        ddesc.shape, dtype=getattr(np, ddesc.dtype.to_string())
+                    )
                     b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = (rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())) +
-                           1j * rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())))
+                    res = rng.random(ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    ) + 1j * rng.random(ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    )
                     b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
-                elif ddesc.dtype in [dace.int8, dace.int16, dace.int32, dace.int64, dace.bool]:
-                    res = rng.integers(0 if positive else -max_value, max_value, size=ddesc.shape)
+                elif ddesc.dtype in [
+                    dace.int8,
+                    dace.int16,
+                    dace.int32,
+                    dace.int64,
+                    dace.bool,
+                ]:
+                    res = rng.integers(
+                        0 if positive else -max_value, max_value, size=ddesc.shape
+                    )
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
@@ -76,8 +110,11 @@ def compare_numpy_output(non_zero=False,
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = (rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())) +
-                           1j * rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())))
+                    res = rng.random(ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    ) + 1j * rng.random(ddesc.shape).astype(
+                        getattr(np, ddesc.dtype.to_string())
+                    )
                     b = 0 if positive else -10 - 10j
                     a = 10 + 10j
                     res = (b - a) * res + a
@@ -93,11 +130,26 @@ def compare_numpy_output(non_zero=False,
 
             signature = inspect.signature(func)
 
-            inputs = OrderedDict((name, get_rand_arr(param.annotation)) for name, param in signature.parameters.items())
+            inputs = OrderedDict(
+                (name, get_rand_arr(param.annotation))
+                for name, param in signature.parameters.items()
+            )
 
-            dace_input = dc(inputs)
+            if target_device == dace.dtypes.DeviceType.GPU:
+                import cupy as cp
+
+                dace_input = {
+                    k: cp.asarray(v) if isinstance(v, np.ndarray) else v
+                    for k, v in inputs.items()
+                }
+            else:
+                assert target_device == dace.dtypes.DeviceType.CPU
+                dace_input = dc(inputs)
+
             if casting:
-                reference_input = OrderedDict((name, casting(desc)) for name, desc in inputs.items())
+                reference_input = OrderedDict(
+                    (name, casting(desc)) for name, desc in inputs.items()
+                )
             else:
                 reference_input = dc(inputs)
 
@@ -129,19 +181,26 @@ def compare_numpy_output(non_zero=False,
                 dace_thrown = e
 
             if dace_thrown is not None or numpy_thrown is not None:
-                assert dace_thrown is not None and numpy_thrown is not None, "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
-                    type(dace_thrown), dace_thrown, type(numpy_thrown), numpy_thrown)
+                assert (
+                    dace_thrown is not None and numpy_thrown is not None
+                ), "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
+                    type(dace_thrown), dace_thrown, type(numpy_thrown), numpy_thrown
+                )
             else:
                 if not isinstance(reference_result, (tuple, list)):
                     reference_result = [reference_result]
                     dace_result = [dace_result]
                     for ref, val in zip(reference_result, dace_result):
+                        if target_device == dace.dtypes.DeviceType.GPU:
+                            val = val.get()
                         if ref.dtype == np.float32:
-                            assert np.allclose(ref, val, equal_nan=True, rtol=1e-3, atol=1e-5)
+                            assert np.allclose(
+                                ref, val, equal_nan=True, rtol=1e-3, atol=1e-5
+                            )
                         else:
                             assert np.allclose(ref, val, equal_nan=True)
                         if check_dtype and not validation_func:
-                            assert (ref.dtype == val.dtype)
+                            assert ref.dtype == val.dtype
 
         return test
 

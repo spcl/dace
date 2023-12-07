@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from copy import deepcopy as dc
-from common import compare_numpy_output
+from common import compare_numpy_output, multi_device as target_device
 
 
 @compare_numpy_output()
@@ -109,7 +109,7 @@ def test_gte(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return A >= B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # generate this with
     # cat binop_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_add()

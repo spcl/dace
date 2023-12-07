@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 
 @compare_numpy_output()
@@ -76,7 +76,7 @@ def test_augbitand(A: dace.int64[5, 5], B: dace.int64[5, 5]):
     return B
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Generate with cat augassign_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
     test_augadd()
     test_augsub()

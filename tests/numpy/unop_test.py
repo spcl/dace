@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 
 @compare_numpy_output(non_zero=True, positive=True)
@@ -32,7 +32,7 @@ def test_not():
     assert np.alltrue(B == regression)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_uadd()
     test_usub()
     test_not()

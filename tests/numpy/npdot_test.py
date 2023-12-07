@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from common import compare_numpy_output
+from common import compare_numpy_output, default_device as target_device
 
 
 @compare_numpy_output(check_dtype=True)
