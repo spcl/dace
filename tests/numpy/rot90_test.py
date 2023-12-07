@@ -25,7 +25,7 @@ def test_rot90_2d_k3(A: dace.int32[10, 10]):
     return np.rot90(A, k=3)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_rot90_2d_k0()
     test_rot90_2d_k1()
     test_rot90_2d_k2()

@@ -32,7 +32,7 @@ def test_not():
     assert np.alltrue(B == regression)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_uadd()
     test_usub()
     test_not()

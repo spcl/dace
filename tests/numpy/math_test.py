@@ -63,9 +63,7 @@ def exponent_m(A: dace.complex64[M, N]):
 
 
 def test_exponent_m():
-    A = np.random.rand(M, N).astype(np.float32) + 1j * np.random.rand(M, N).astype(
-        np.float32
-    )
+    A = np.random.rand(M, N).astype(np.float32) + 1j * np.random.rand(M, N).astype(np.float32)
     B = exponent_m(A)
     assert np.allclose(B, np.exp(A))
 
@@ -79,9 +77,7 @@ def exponent_t(A: dace.complex64[M, N]):
 
 
 def test_exponent_t():
-    A = np.random.rand(M, N).astype(np.float32) + 1j * np.random.rand(M, N).astype(
-        np.float32
-    )
+    A = np.random.rand(M, N).astype(np.float32) + 1j * np.random.rand(M, N).astype(np.float32)
     B = exponent_t(A)
     assert np.allclose(B, np.exp(A))
 
@@ -162,7 +158,7 @@ def test_scalarret_cond_3():
     assert res == 0.0
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_exponent()
     test_sine()
     test_cosine()

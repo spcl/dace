@@ -5,6 +5,7 @@ from common import compare_numpy_output, default_device as target_device
 
 
 def test_multiassign():
+
     @dace.program
     def multiassign(A: dace.float64[20], B: dace.float64[1], C: dace.float64[2]):
         tmp = C[0] = A[5]
@@ -18,6 +19,7 @@ def test_multiassign():
 
 
 def test_multiassign_mutable():
+
     @dace.program
     def mutable(D: dace.float64[2]):
         D[0] += 1
@@ -90,13 +92,12 @@ def test_assign_wild(A: dace.float32[3, 5, 10, 13], B: dace.float32[2, 1, 4]):
 
 
 def test_assign_wild_symbolic():
+
     N = dace.symbol("N")
     I = dace.symbol("I")
 
     @dace.program
-    def test_assign_wile_symbolic(
-        A: dace.float32[3, N, 10, 13], B: dace.float32[N * (I + 1) - N * I, 1, 4]
-    ):
+    def test_assign_wile_symbolic(A: dace.float32[3, N, 10, 13], B: dace.float32[N * (I + 1) - N * I, 1, 4]):
         A[2, :, :, 8:12] = B
         return A
 
@@ -118,6 +119,7 @@ def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13], B: dace.float32[2, 1
 
 
 def test_annotated_assign_type():
+
     @dace.program
     def annassign(a: dace.float64[20], t: dace.int64):
         b: dace.float64
@@ -127,8 +129,8 @@ def test_annotated_assign_type():
 
     # Test types
     sdfg = annassign.to_sdfg()
-    assert "t" not in sdfg.symbols or sdfg.symbols["t"] == dace.int64
-    b = next(arr for _, name, arr in sdfg.arrays_recursive() if name == "b")
+    assert 't' not in sdfg.symbols or sdfg.symbols['t'] == dace.int64
+    b = next(arr for _, name, arr in sdfg.arrays_recursive() if name == 'b')
     assert b.dtype == dace.float64
 
     # Test program correctness
@@ -157,7 +159,7 @@ def test_annotated_assign_with_value():
     assert np.allclose(b, np.sum(a, axis=1))
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test_multiassign()
     test_multiassign_mutable()
     test_assign()
