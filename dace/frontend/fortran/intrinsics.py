@@ -83,12 +83,42 @@ class DirectReplacement(IntrinsicTransformation):
 
     def replace_size(var: ast_internal_classes.Call_Expr_Node, scope_vars: ScopeVarsDeclarations, line):
 
-        if len(var.args) != 1:
+        if len(var.args) not in [1, 2]:
             raise RuntimeError()
 
         # get variable declaration for the first argument
         var_decl = scope_vars.get_var(var.parent, var.args[0].name)
-        return (var_decl.sizes[0], "INTEGER")
+
+        # one arg? compute the total number of elements
+        if len(var.args) == 1:
+
+            if len(var_decl.sizes) == 1:
+                return (var_decl.sizes[0], "INTEGER")
+
+            ret = ast_internal_classes.BinOp_Node(
+                lval=var_decl.sizes[0],
+                rval=None,
+                op="*"
+            )
+            cur_node = ret
+            for i in range(1, len(var_decl.sizes) - 1):
+
+                cur_node.rval = ast_internal_classes.BinOp_Node(
+                    lval=var_decl.sizes[i],
+                    rval=None,
+                    op="*"
+                )
+                cur_node = cur_node.rval
+
+            cur_node.rval = var_decl.sizes[-1]
+            return (ret, "INTEGER")
+
+        # we return number of elements in a given rank
+        rank = var.args[1]
+        if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
+            raise NotImplementedError()
+        value = int(rank.value)
+        return (var_decl.sizes[value-1], "INTEGER")
 
 
     def replace_bit_size(args: ast_internal_classes.Arg_List_Node, line):
