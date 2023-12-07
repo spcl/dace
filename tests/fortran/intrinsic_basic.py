@@ -33,9 +33,10 @@ def test_fortran_frontend_bit_size():
     sdfg.compile()
 
     size = 4
-    res1 = np.full([2], 42, order="F", dtype=np.int32)
-    sdfg(arg1=arg1, arg2=arg2, res1=res1, res2=res2)
-    print(res)
+    res = np.full([size], 42, order="F", dtype=np.int32)
+    sdfg(res=res)
+
+    assert np.allclose(res, [32, 32, 32, 64])
 
 def test_fortran_frontend_bit_size_symbolic():
     test_string = """
@@ -94,5 +95,5 @@ def test_fortran_frontend_bit_size_symbolic():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_bit_size()
-    test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_bit_size()
+    #test_fortran_frontend_bit_size_symbolic()
