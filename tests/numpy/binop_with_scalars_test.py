@@ -4,6 +4,21 @@ import numpy as np
 import pytest
 from common import compare_numpy_output
 
+
+@pytest.fixture(
+    params=[
+        dace.dtypes.DeviceType.CPU,
+        pytest.param(dace.dtypes.DeviceType.GPU, marks=pytest.mark.gpu),
+    ],
+    ids=[
+        'cpu',
+        'gpu',
+    ]
+)
+def target_device(request):
+   yield request.param
+
+
 ### Left #####################################################################
 
 

@@ -26,6 +26,8 @@ def compare_numpy_output(non_zero=False,
 
         Note that this should be used *instead* of the `@dace.program`
         annotation, not along with it!
+        Also note that this annotation requires a text fixture `target_device`
+        to generate the target `DeviceType` for test execution.
 
         :param non_zero: if `True`, replace `0` inputs with `1`.
         :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
@@ -40,8 +42,8 @@ def compare_numpy_output(non_zero=False,
         :param max_value: The maximum value allowed in the inputs.
     """
     def decorator(func):
-        def test():
-            dp = dace.program(func)
+        def test(target_device):
+            dp = dace.program(device=target_device)(func)
 
             def get_rand_arr(ddesc):
                 if type(ddesc) is dace.dtypes.typeclass:
@@ -116,6 +118,13 @@ def compare_numpy_output(non_zero=False,
 
             try:
                 dace_result = dp(**dace_input)
+                if target_device == dace.dtypes.DeviceType.GPU:
+                    sdfg = dp.to_sdfg()
+                    sdfg.apply_gpu_transformations()
+                    dace_result = sdfg(**dace_input)
+                else:
+                    assert target_device == dace.dtypes.DeviceType.CPU
+                    dace_result = dp(**dace_input)
             except Exception as e:
                 dace_thrown = e
 
