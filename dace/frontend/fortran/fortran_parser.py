@@ -1151,7 +1151,8 @@ def create_ast_from_string(
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
         for transformation in own_ast.fortran_intrinsics().transformations():
-            program = transformation(program).visit(program)
+            transformation.initialize(program)
+            program = transformation.visit(program)
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
@@ -1603,7 +1604,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in partial_ast.fortran_intrinsics().transformations():
-        program = transformation(program).visit(program)
+        transformation.initialize(program)
+        program = transformation.visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
@@ -1622,6 +1624,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.translate(program, sdfg)
             sdfg.validate()
             sdfg.simplify(verbose=True)
-            sdfg.save("/home/alex/fcdc/icon_msdfg/"+ sdfg.name + ".sdfg")
+            sdfg.save(sdfg.name + ".sdfg")
+            sdfg.compile()
 
     return sdfg
