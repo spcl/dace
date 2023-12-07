@@ -943,6 +943,14 @@ required:
                     When an exception is raised in a deserialization process (e.g., due to missing library node),
                     by default a warning is issued. If this setting is True, the exception will be raised as-is.
 
+            serialize_all_fields:
+                type: bool
+                default: true
+                title: Serialize all unmodified fields in SDFG files
+                description: >
+                    If False, saving an SDFG keeps only the modified non-default properties. If True,
+                    saves all fields.
+
     #############################################
     # DaCe library settings
 

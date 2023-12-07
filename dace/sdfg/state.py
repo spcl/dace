@@ -1644,7 +1644,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        consume = nd.Consume(name, pe_tuple, CodeBlock(condition, language), schedule, chunksize, debuginfo=debuginfo)
+        if condition is not None:
+            condition = CodeBlock(condition, language)
+        consume = nd.Consume(name, pe_tuple, condition, schedule, chunksize, debuginfo=debuginfo)
         entry = nd.ConsumeEntry(consume)
         exit = nd.ConsumeExit(consume)
 
@@ -2491,6 +2493,10 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
+                # collect symbols representing data containers
+                dsyms = {sym for sym in efsyms if sym in self.arrays}
+                for d in dsyms:
+                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
