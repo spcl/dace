@@ -1295,32 +1295,43 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 
     counter = 0
-    nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
+    nsdfgs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
 
-    for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
-        id = node.sdfg.sdfg_id
-        sd = state.parent
-
+    for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
-        state_id = sd.node_id(state)
+        # e.g., InlineMultistateSDFG may fission states
+        parent_state = nsdfg_node.sdfg.parent
+        parent_sdfg = parent_state.parent
+        parent_state_id = parent_sdfg.node_id(parent_state)
+
         if multistate:
             candidate = {
-                InlineMultistateSDFG.nested_sdfg: node,
+                InlineMultistateSDFG.nested_sdfg: nsdfg_node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                inliner.apply(state, sd)
+            inliner.setup_match(sdfg=parent_sdfg,
+                                sdfg_id=parent_sdfg.sdfg_id,
+                                state_id=parent_state_id,
+                                subgraph=candidate,
+                                expr_index=0,
+                                override=True)
+            if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
+                inliner.apply(parent_state, parent_sdfg)
                 counter += 1
                 continue
 
         candidate = {
-            InlineSDFG.nested_sdfg: node,
+            InlineSDFG.nested_sdfg: nsdfg_node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
-        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-            inliner.apply(state, sd)
+        inliner.setup_match(sdfg=parent_sdfg,
+                            sdfg_id=parent_sdfg.sdfg_id,
+                            state_id=parent_state_id,
+                            subgraph=candidate,
+                            expr_index=0,
+                            override=True)
+        if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
+            inliner.apply(parent_state, parent_sdfg)
             counter += 1
 
     return counter
