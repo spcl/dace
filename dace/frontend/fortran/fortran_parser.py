@@ -24,6 +24,7 @@ from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
 from os import path
+from shutil import copyfile
 import networkx as nx
 
 class AST_translator:
@@ -88,7 +89,10 @@ class AST_translator:
             elif type in self.registered_types:
                 return self.registered_types[type]
             else:
-                raise ValueError("Unknown type " + type)
+                #TODO: This is bandaid.
+                if type=="VOID":
+                    return ast_utils.fortrantypes2dacetypes["DOUBLE"]
+                    raise ValueError("Unknown type " + type)
 
     def get_name_mapping_in_context(self, sdfg: SDFG):
         """
@@ -1484,7 +1488,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj in res.list_of_subroutines:
                         if jj not in fands_list:
                             fands_list.append(jj)
-        print("Module " + i + " used names: " + str(parse_list[i]))
+        #print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list)) 
     top_level_ast = parse_order.pop()
@@ -1529,6 +1533,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             changes=True
             while changes:
                 changes=False
+                if asts.get(i) is None:
+                    continue
                 for k in asts[i].children[2].children:
                     if k.__class__.__name__ == "Contains_Stmt":
                         asts[i].children[2].children.remove(k)
@@ -1598,8 +1604,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
     #program = ast_transforms.functionStatementEliminator(program)
+
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.ArgumentExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
@@ -1613,6 +1621,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
 
     for i in program.modules:
+        for path in source_list:
+            
+            if path.lower().find(i.name.name.lower())!=-1:
+                mypath=path
+                break
+        copyfile(mypath, "icon-artifact/sources/"+i.name.name.lower()+".f90")
         for j in i.subroutine_definitions:
             if j.execution_part is None:
                 continue
@@ -1624,7 +1638,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.translate(program, sdfg)
             sdfg.validate()
             sdfg.simplify(verbose=True)
-            sdfg.save(sdfg.name + ".sdfg")
-            sdfg.compile()
+            sdfg.save("icon-artifact/sdfgs/"+sdfg.name + ".sdfg")
+            try:
+                sdfg.compile()
+            except:
+                print("Compilation failed for ", sdfg.name)
+                continue
 
     return sdfg

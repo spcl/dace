@@ -129,6 +129,7 @@ class InternalFortranAst:
             "DOUBLE PRECISION": "DOUBLE",
             "REAL": "REAL",
             "CLASS": "CLASS",
+            "Unknown": "REAL",
         }
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
         self.intrinsic_handler = FortranIntrinsics()
@@ -330,7 +331,7 @@ class InternalFortranAst:
         children = self.create_children(node)
         parent = children[0]
         part_ref = children[1]
-        return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref)
+        return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref,type="VOID")
 
     def end_type_stmt(self, node: FASTNode):
         return None
@@ -482,7 +483,7 @@ class InternalFortranAst:
         #child 1 is "**"
         return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name="pow"),
                                                    args=[children[0], children[2]],
-                                                   line_number=line)
+                                                   line_number=line,type="REAL")
 
     def array_constructor(self, node: FASTNode):
         children = self.create_children(node)
@@ -530,7 +531,7 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         if name is None:
-            return Name_Node(name="Error!")
+            return Name_Node(name="Error!",type='VOID')
         return self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
 
 
@@ -542,7 +543,7 @@ class InternalFortranAst:
 
     def parenthesis_expr(self, node: FASTNode):
         children = self.create_children(node)
-        return ast_internal_classes.Parenthesis_Expr_Node(expr=children[1])
+        return ast_internal_classes.Parenthesis_Expr_Node(expr=children[1],type=children[1].type)
 
     def module_subprogram_part(self, node: FASTNode):
         children = self.create_children(node)
@@ -912,18 +913,18 @@ class InternalFortranAst:
         children = self.create_children(node)
         line = get_line(node)
         if len(children) == 3:
-            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line)
+            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line, type=children[0].type)
         else:
-            return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line)
+            return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line,type=children[1].type)
 
     def assignment_stmt(self, node: FASTNode):
         children = self.create_children(node)
         line = get_line(node)
 
         if len(children) == 3:
-            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line)
+            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line,type=children[0].type)
         else:
-            return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line)
+            return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line,type=children[1].type)
 
     def pointer_assignment_stmt(self, node: FASTNode):
         children = self.create_children(node)
@@ -1097,7 +1098,7 @@ class InternalFortranAst:
             line_number = -1
         else:
             line_number = node.item.span     
-        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type=None, line_number=line_number)
+        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="Unknown", line_number=line_number)
 
     def return_stmt(self, node: FASTNode):
         return node
@@ -1125,6 +1126,7 @@ class InternalFortranAst:
             name=name,
             args=args.list,
             line=line,
+            type="Unknown",
         )
 
     def loop_control(self, node: FASTNode):
@@ -1142,17 +1144,17 @@ class InternalFortranAst:
             loop_step = children[1][1][2]
         else:
             loop_step = ast_internal_classes.Int_Literal_Node(value="1")
-        init_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op="=", rval=loop_start)
+        init_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op="=", rval=loop_start,type="INTEGER")
         if isinstance(loop_step, ast_internal_classes.UnOp_Node):
             if loop_step.op == "-":
-                cond_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op=">=", rval=loop_end)
+                cond_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op=">=", rval=loop_end,type="INTEGER")
         else:
-            cond_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op="<=", rval=loop_end)
+            cond_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable, op="<=", rval=loop_end,type="INTEGER")
         iter_expr = ast_internal_classes.BinOp_Node(lval=iteration_variable,
                                                     op="=",
                                                     rval=ast_internal_classes.BinOp_Node(lval=iteration_variable,
                                                                                          op="+",
-                                                                                         rval=loop_step))
+                                                                                         rval=loop_step,type="INTEGER"),type="INTEGER")
         return ast_internal_classes.Loop_Control_Node(init=init_expr, cond=cond_expr, iter=iter_expr)
 
     def block_nonlabel_do_construct(self, node: FASTNode):
@@ -1233,7 +1235,7 @@ class InternalFortranAst:
         return node
 
     def int_literal_constant(self, node: FASTNode):
-        return ast_internal_classes.Int_Literal_Node(value=node.string)
+        return ast_internal_classes.Int_Literal_Node(value=node.string,type="INTEGER")
 
     def logical_literal_constant(self, node: FASTNode):
         if node.string in [".TRUE.", ".true.", ".True."]:
@@ -1243,7 +1245,7 @@ class InternalFortranAst:
         raise ValueError("Unknown logical literal constant")
 
     def real_literal_constant(self, node: FASTNode):
-        return ast_internal_classes.Real_Literal_Node(value=node.children[0].lower())
+        return ast_internal_classes.Real_Literal_Node(value=node.children[0].lower(),type="REAL")
     
     def char_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Char_Literal_Node(value=node.string)
@@ -1262,7 +1264,7 @@ class InternalFortranAst:
         return node
 
     def name(self, node: FASTNode):
-        return ast_internal_classes.Name_Node(name=node.string.lower())
+        return ast_internal_classes.Name_Node(name=node.string.lower(),type="Unknown")
     
     
     def rename(self, node: FASTNode):

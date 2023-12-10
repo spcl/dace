@@ -229,6 +229,112 @@ class CallExtractorNodeLister(NodeVisitor):
         return
 
 
+
+class ArgumentExtractorNodeLister(NodeVisitor):
+    """
+    Finds all arguments in function calls in the AST node and its children that have to be extracted into independent expressions
+    """
+    def __init__(self):
+        self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
+
+    def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
+        return
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        stop = False
+        if hasattr(node, "subroutine"):
+            if node.subroutine is True:
+                stop = True
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if not stop and node.name.name not in [
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+        ]:
+            for i in node.args:
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):
+                    continue
+                else:
+                    self.nodes.append(i)
+        return self.generic_visit(node)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        return
+
+
+class ArgumentExtractor(NodeTransformer):
+    """
+    Uses the CallExtractorNodeLister to find all function calls
+    in the AST node and its children that have to be extracted into independent expressions
+    It then creates a new temporary variable for each of them and replaces the call with the variable.
+    """
+    def __init__(self, count=0):
+        self.count = count
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+            return self.generic_visit(node)
+        if hasattr(node, "subroutine"):
+            if node.subroutine is True:
+                return self.generic_visit(node)
+        if not hasattr(self, "count"):
+            self.count = 0
+        tmp = self.count
+        result=ast_internal_classes.Call_Expr_Node(type=node.type,
+                                                   name=node.name,
+                                                   args=[],
+                                                   line_number=node.line_number)
+        for i, arg in enumerate(node.args):
+            # Ensure we allow to extract function calls from arguments
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):
+                result.args.append(arg)
+            else:
+                result.args.append(ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp)))
+                tmp = tmp + 1    
+        self.count = tmp
+        return result
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+
+        for child in node.execution:
+            lister = ArgumentExtractorNodeLister()
+            lister.visit(child)
+            res = lister.nodes
+            for i in res:
+                if i == child:
+                    res.pop(res.index(i))
+            if res is not None:
+                # Variables are counted from 0...end, starting from main node, to all calls nested
+                # in main node arguments.
+                # However, we need to define nested ones first.
+                # We go in reverse order, counting from end-1 to 0.
+                temp = self.count + len(res) - 1
+                for i in reversed(range(0, len(res))):
+
+                    newbody.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Var_Decl_Node(
+                                name="tmp_call_" + str(temp),
+                                type=res[i].type,
+                                sizes=None
+                            )
+                        ]))
+                    newbody.append(
+                        ast_internal_classes.BinOp_Node(op="=",
+                                                        lval=ast_internal_classes.Name_Node(name="tmp_call_" +
+                                                                                            str(temp),
+                                                                                            type=res[i].type),
+                                                        rval=res[i],
+                                                        line_number=child.line_number))
+                    temp = temp - 1
+                    
+            
+            newbody.append(self.visit(child))
+            
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
 class CallExtractor(NodeTransformer):
     """
     Uses the CallExtractorNodeLister to find all function calls
