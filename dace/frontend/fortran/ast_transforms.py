@@ -284,7 +284,7 @@ class ArgumentExtractor(NodeTransformer):
         result=ast_internal_classes.Call_Expr_Node(type=node.type,
                                                    name=node.name,
                                                    args=[],
-                                                   line_number=node.line_number)
+                                                   line_number="42")
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
             if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):

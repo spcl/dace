@@ -1621,6 +1621,27 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor().visit(program)
+    program = ast_transforms.FunctionCallTransformer().visit(program)
+    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    count=0
+    for i in program.function_definitions:
+        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+            program.subroutine_definitions.append(i)
+            partial_ast.functions_and_subroutines.append(i.name)
+            count+=1
+    if count!=len(program.function_definitions):
+        raise NameError("Not all functions were transformed to subroutines")
+    for i in program.modules:
+        count=0
+        for j in i.function_definitions:
+            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
+                i.subroutine_definitions.append(j)
+                partial_ast.functions_and_subroutines.append(j.name)
+                count+=1
+        if count!=len(i.function_definitions):
+            raise NameError("Not all functions were transformed to subroutines")
+        i.function_definitions=[]
+    program.function_definitions=[]
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
