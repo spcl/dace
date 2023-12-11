@@ -467,6 +467,10 @@ class IndexExtractor(NodeTransformer):
                                 variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]
 
+                                # it can be a symbol - Name_Node - or a value
+                                if not isinstance(offset, ast_internal_classes.Name_Node):
+                                    offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
+
                                 newbody.append(
                                     ast_internal_classes.BinOp_Node(
                                         op="=",
@@ -474,7 +478,7 @@ class IndexExtractor(NodeTransformer):
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
                                             lval=i,
-                                            rval=ast_internal_classes.Int_Literal_Node(value=str(offset)),
+                                            rval=offset,
                                             line_number=child.line_number),
                                         line_number=child.line_number))
                             else:
@@ -752,7 +756,11 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
                 lower_boundary = None
                 if offsets[idx] != 1:
-                    lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                    # support symbols and integer literals
+                    if isinstance(offsets[idx], ast_internal_classes.Name_Node):
+                        lower_boundary = offsets[idx]
+                    else:
+                        lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
                 else:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
 
@@ -765,10 +773,17 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                     But since the generated loop has `<=` condition, we need to subtract 1.
                 """
                 if offsets[idx] != 1:
+
+                    # support symbols and integer literals
+                    if isinstance(offsets[idx], ast_internal_classes.Name_Node):
+                        offset = offsets[idx]
+                    else:
+                        offset = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+
                     upper_boundary = ast_internal_classes.BinOp_Node(
                         lval=upper_boundary,
                         op="+",
-                        rval=ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
+                        rval=offset
                     )
                     upper_boundary = ast_internal_classes.BinOp_Node(
                         lval=upper_boundary,
