@@ -950,22 +950,24 @@ class AST_translator:
         match_found = False
         rettype = "INTEGER"
         hasret = False
-        if node.name in self.functions_and_subroutines:
+        for fsname in self.functions_and_subroutines:
+          if fsname.name == node.name.name:
+        
             for i in self.top_level.function_definitions:
-                if i.name == node.name:
+                if i.name.name == node.name.name:
                     self.function2sdfg(i, sdfg)
                     return
             for i in self.top_level.subroutine_definitions:
-                if i.name == node.name:
+                if i.name.name == node.name.name:
                     self.subroutine2sdfg(i, sdfg)
                     return
             for j in self.top_level.modules:
                 for i in j.function_definitions:
-                    if i.name == node.name:
+                    if i.name.name == node.name.name:
                         self.function2sdfg(i, sdfg)
                         return
                 for i in j.subroutine_definitions:
-                    if i.name == node.name:
+                    if i.name.name == node.name.name:
                         self.subroutine2sdfg(i, sdfg)
                         return
         else:
@@ -1189,6 +1191,17 @@ def create_sdfg_from_string(
     program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.FunctionCallTransformer().visit(program)
+    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    count=0
+    for i in program.function_definitions:
+        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+            program.subroutine_definitions.append(i)
+            own_ast.functions_and_subroutines.append(i.name)
+            count+=1
+    if count!=len(program.function_definitions):
+        raise NameError("Not all functions were transformed to subroutines")
+    program.function_definitions=[]
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 

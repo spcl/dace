@@ -335,6 +335,63 @@ class ArgumentExtractor(NodeTransformer):
             
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
+class FunctionCallTransformer(NodeTransformer):
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+        if isinstance(node.rval, ast_internal_classes.Call_Expr_Node):
+            if hasattr(node.rval, "subroutine"):
+                if node.rval.subroutine is True:
+                    return self.generic_visit(node)
+            if node.op != "=":
+                return self.generic_visit(node)
+            args = node.rval.args
+            lval = node.lval
+            args.append(lval)
+            return (ast_internal_classes.Call_Expr_Node(type=node.rval.type,
+                                                        name=ast_internal_classes.Name_Node(name=node.rval.name.name+"_srt",type=node.rval.type),
+                                                        args=args,
+                                                        subroutine=True,
+                                                        line_number=node.line_number))
+
+        else:
+            return self.generic_visit(node)
+        
+class NameReplacer(NodeTransformer):
+    """
+    Replaces all occurences of a name with another name
+    """
+    def __init__(self, old_name: str, new_name: str):
+        self.old_name = old_name
+        self.new_name = new_name
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+        if node.name == self.old_name:
+            return ast_internal_classes.Name_Node(name=self.new_name,type=node.type)
+        else:
+            return self.generic_visit(node)        
+        
+class FunctionToSubroutineDefiner(NodeTransformer):
+    """
+    Transforms all function definitions into subroutine definitions
+    """
+    def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
+        for j in node.specification_part.specifications:
+            
+            for k in j.vardecl:
+                if k.name == node.name.name:
+                    j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret"
+                    
+                    break
+        execution_part=NameReplacer(node.name.name,node.name.name+"__ret").visit(node.execution_part)
+        args=node.args
+        args.append(ast_internal_classes.Name_Node(name=node.name.name+"__ret",type=node.type))
+        return ast_internal_classes.Subroutine_Subprogram_Node(name=ast_internal_classes.Name_Node(name=node.name.name+"_srt",type=node.type),
+                                                                args=args,
+                                                                specification_part=node.specification_part,
+                                                                execution_part=execution_part,
+                                                                subroutine=True,
+                                                                line_number=node.line_number)
+    
+
 class CallExtractor(NodeTransformer):
     """
     Uses the CallExtractorNodeLister to find all function calls
