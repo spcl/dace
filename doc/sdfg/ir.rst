@@ -481,8 +481,8 @@ current entry node, use the :func:`~dace.sdfg.state.StateGraphView.exit_node` me
 
 **Dynamic Map Ranges**: Such ranges can use memlets to define the map ranges directly from data containers, while 
 still retaining the dataflow of a single state. As they are fed into a view connector on the map entry node, their value
-(described by the connector name) can be used in the symbolic expressions of the map range. Only scalar connectors are
-allowed.
+(described by the connector name) can be used in the symbolic expressions of the map range, and anywhere inside the map
+scope as a symbol (same as the iteration variables). Only scalar connectors are allowed.
 
 In the following example, we use dynamic map ranges to compute a sparse matrix-vector multiplication,
 where the vector is dense. Every output row has a defined range (standard, symbolic map), whereas the corresponding rows
