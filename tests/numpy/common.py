@@ -34,6 +34,7 @@ def multi_device(request):
 def compare_numpy_output(non_zero=False,
                          positive=False,
                          check_dtype=False,
+                         disable_fast_math=False,
                          validation_func=None,
                          casting=None,
                          max_value=10):
@@ -137,14 +138,20 @@ def compare_numpy_output(non_zero=False,
                 numpy_thrown = e
 
             try:
-                dace_result = dp(**dace_input)
                 if target_device == dace.dtypes.DeviceType.GPU:
                     sdfg = dp.to_sdfg()
                     sdfg.apply_gpu_transformations()
                     dace_result = sdfg(**dace_input)
                 else:
                     assert target_device == dace.dtypes.DeviceType.CPU
-                    dace_result = dp(**dace_input)
+                    args = dace.Config.get('compiler', 'cpu', 'args')
+                    if disable_fast_math and args.find('-ffast-math') >= 0:
+                        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+                        with dace.config.set_temporary('compiler', 'cpu', 'args', value=new_args):
+                            dace_result = dp(**dace_input)
+                    else:
+                        dace_result = dp(**dace_input)
+
             except Exception as e:
                 dace_thrown = e
 
