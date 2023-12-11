@@ -13,7 +13,7 @@ import warnings
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
 try:
@@ -145,7 +145,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                  recreate_sdfg: bool = True,
                  regenerate_code: bool = True,
                  recompile: bool = True,
-                 method: bool = False):
+                 method: bool = False,
+                 use_experimental_cfg_blocks: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -165,6 +166,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.recreate_sdfg = recreate_sdfg
         self.regenerate_code = regenerate_code
         self.recompile = recompile
+        self.use_experimental_cfg_blocks = use_experimental_cfg_blocks
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -479,6 +481,9 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Obtain DaCe program as SDFG
         sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
+
+        if not self.use_experimental_cfg_blocks:
+            sdutils.inline_loop_blocks(sdfg)
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
