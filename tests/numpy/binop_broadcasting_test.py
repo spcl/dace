@@ -2,7 +2,7 @@
 import numpy as np
 
 import dace
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 
 ### Left, match first pos ######################################################
 

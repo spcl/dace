@@ -3,7 +3,7 @@ import dace
 import math
 import numpy as np
 import pytest
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 
 
 @compare_numpy_output(check_dtype=True)
@@ -997,18 +997,40 @@ def test_ufunc_fmin_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmin(C, B)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isfinite_c(A: dace.complex64[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isfinite(A)
+def test_ufunc_isfinite_c():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isfinite_c(A: dace.complex64[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isfinite(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isfinite_c()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isfinite_f(A: dace.float32[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isfinite(A)
+def test_ufunc_isfinite_f():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isfinite_f(A: dace.float32[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isfinite(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isfinite_f()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
 # NumPy accepts integer arrays in np.isfinite.
@@ -1022,18 +1044,40 @@ def test_ufunc_isfinite_u(A: dace.uint32[10]):
     return np.isfinite(A)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isinf_c(A: dace.complex64[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isinf(A)
+def test_ufunc_isinf_c():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isinf_c(A: dace.complex64[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isinf(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isinf_c()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isinf_f(A: dace.float32[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isinf(A)
+def test_ufunc_isinf_f():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isinf_f(A: dace.float32[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isinf(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isinf_f()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
 # NumPy accepts integer arrays in np.isinf.
@@ -1047,18 +1091,40 @@ def test_ufunc_isinf_u(A: dace.uint32[10]):
     return np.isinf(A)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isnan_c(A: dace.complex64[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isnan(A)
+def test_ufunc_isnan_c():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isnan_c(A: dace.complex64[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isnan(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isnan_c()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
-@compare_numpy_output(check_dtype=True, disable_fast_math=True)
-def test_ufunc_isnan_f(A: dace.float32[10]):
-    A[0] = np.inf
-    A[1] = np.NaN
-    return np.isnan(A)
+def test_ufunc_isnan_f():
+    @compare_numpy_output(check_dtype=True)
+    def ufunc_isnan_f(A: dace.float32[10]):
+        A[0] = np.inf
+        A[1] = np.NaN
+        return np.isnan(A)
+
+    args = dace.Config.get('compiler', 'cpu', 'args')
+    print(args)
+    if args.find('-ffast-math') >= 0:
+        new_args = args.replace('-ffast-math', '-fno-finite-math-only')
+        print(new_args)
+        dace.Config.set('compiler', 'cpu', 'args', value=new_args)
+        print(dace.Config.get('compiler', 'cpu', 'args'))
+    ufunc_isnan_f()
+    dace.Config.set('compiler', 'cpu', 'args', value=args)
 
 
 # NumPy accepts integer arrays in np.isnan.

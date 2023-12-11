@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 import math
 from numpy import exp, sin, cos, sqrt, log, log10, conj, real, imag
 import pytest

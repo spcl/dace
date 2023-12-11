@@ -2,7 +2,7 @@
 import numpy as np
 from sympy.core.numbers import comp
 import dace
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 
 
 @compare_numpy_output()

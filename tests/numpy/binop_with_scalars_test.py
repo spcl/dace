@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from common import compare_numpy_output, multi_device as target_device
+from common import compare_numpy_output
 
 ### Left #####################################################################
 

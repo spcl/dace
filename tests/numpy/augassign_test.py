@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 
 
 @compare_numpy_output()

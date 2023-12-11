@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 from copy import deepcopy as dc
-from common import compare_numpy_output, default_device as target_device
+from common import compare_numpy_output
 
 
 @compare_numpy_output()
