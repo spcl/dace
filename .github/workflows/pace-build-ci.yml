@@ -20,6 +20,7 @@ jobs:
               repository: 'GEOS-ESM/pace'
               ref: 'ci/DaCe'
               submodules: 'recursive'
+              path: 'pace'
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:
