@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v2
         with: 
             path: 'dace'
+            submodules: 'recursive'
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v2
         with:
@@ -31,7 +32,10 @@ jobs:
       - name: Install library dependencies
         run: |
           apt-get install libopenmpi-dev
-      - name: Install Python packages
+      # Because Github doesn't allow us to do a git checkout in code
+      # we use a trick to checkout DaCe first (not using the external submodule)    
+      # install the full suite via requirements_dev, then re-install the correct DaCe
+      - name: Install Python packages 
         run: |
           python -m pip install --upgrade pip wheel setuptools
           cd pace
