@@ -30,6 +30,8 @@ jobs:
           cd pace
           python -m pip install --upgrade pip wheel setuptools
           cd external/dace
+          git remote current ${{ github.repositoryUrl }}
+          git fetch
           git checkout ${{ github.sha }}
           cd ../..
           pip install -e external/gt4py
