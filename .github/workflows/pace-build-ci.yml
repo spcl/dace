@@ -31,7 +31,7 @@ jobs:
               python-version: ${{ matrix.python-version }}
       - name: Install library dependencies
         run: |
-          apt-get install libopenmpi-dev
+          sudo apt-get install libopenmpi-dev
       # Because Github doesn't allow us to do a git checkout in code
       # we use a trick to checkout DaCe first (not using the external submodule)    
       # install the full suite via requirements_dev, then re-install the correct DaCe
