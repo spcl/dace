@@ -1258,7 +1258,7 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                                n=len(blocks), progress=progress):
         block: ControlFlowBlock = _block
-        graph: SomeGraphT = _graph
+        graph: GraphT = _graph
         id = block.sdfg.sdfg_id
 
         # We have to reevaluate every time due to changing IDs

@@ -2356,11 +2356,11 @@ class ProgramVisitor(ExtNodeVisitor):
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
             loop_cond_expr = '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1]))
-            incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
+            incr = {indices[0]: '%s = %s + %s' % (indices[0], indices[0], astutils.unparse(ast_ranges[0][2]))}
             loop_region = self._add_loop_region(loop_cond_expr,
                                                 label=f'for_{node.lineno}',
                                                 loop_var=indices[0],
-                                                init_expr=astutils.unparse(ast_ranges[0][0]),
+                                                init_expr='%s = %s' % (indices[0], astutils.unparse(ast_ranges[0][0])),
                                                 update_expr=incr[indices[0]],
                                                 inverted=False)
             _, first_subblock, _, _ = self._recursive_visit(node.body, f'for_{node.lineno}', node.lineno,
