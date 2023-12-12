@@ -743,9 +743,6 @@ namespace dace
 
         static DACE_DFI void Copy(const T *smem, int src_xstride, T *ptr, int dst_xstride)
         {
-           if (!ASYNC)
-                __syncthreads();
-
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
@@ -759,14 +756,14 @@ namespace dace
                 *(ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride) =
                     *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride);
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
 
         template <typename WCR>
         static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride, WCR wcr)
         {
-            if (!ASYNC)
-                __syncthreads();
-
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
@@ -783,14 +780,14 @@ namespace dace
                         ptr + (ltid + WRITES * BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
 
         template <ReductionType REDTYPE>
         static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride)
         {
-            if (!ASYNC)
-                __syncthreads();
-            
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
@@ -807,6 +804,9 @@ namespace dace
                         ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
     };
     
