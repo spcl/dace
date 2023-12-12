@@ -28,13 +28,15 @@ jobs:
         uses: actions/setup-python@v2
         with:
               python-version: ${{ matrix.python-version }}
-      - name: Install dependencies & pull correct DaCe
+      - name: Install library dependencies
+        run: |
+          apt-get install libopenmpi-dev
+      - name: Install Python packages
         run: |
           python -m pip install --upgrade pip wheel setuptools
           cd pace
-          pip install -e ./external/gt4py
-          pip install -e ../dace
           pip install -r requirements_dev.txt
+          pip install -e ../dace
       - name: Download data
         run: |
           cd pace
