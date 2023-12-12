@@ -17,7 +17,7 @@ jobs:
       steps:
       - uses: actions/checkout@v2
         with:
-              repository: 'git@github.com:GEOS-ESM/pace.git'
+              repository: 'GEOS-ESM/pace'
               ref: 'ci/DaCe'
               submodules: 'recursive'
       - name: Set up Python ${{ matrix.python-version }}
