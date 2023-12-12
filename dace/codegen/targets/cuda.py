@@ -1132,7 +1132,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         func=funcname,
                         type=dst_node.desc(sdfg).dtype.ctype,
                         bdims=', '.join(_topy(self._block_dims)),
-                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
+                        is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
                         accum=accum,
                         args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
                                        _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
@@ -1144,7 +1144,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              type=dst_node.desc(sdfg).dtype.ctype,
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
-                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
+                             is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
                              accum=accum or '::Copy',
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + _topy(dst_strides) + custom_reduction)), sdfg,
                         state_id, [src_node, dst_node])
@@ -1157,7 +1157,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'false',
+                             is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction)), sdfg,
                         state_id, [src_node, dst_node])
