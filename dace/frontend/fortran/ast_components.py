@@ -440,10 +440,12 @@ class InternalFortranAst:
         name = get_child(children, ast_internal_classes.Function_Stmt_Node)
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
+        
         return_type = name.return_type
         return ast_internal_classes.Function_Subprogram_Node(
             name=name.name,
             args=name.args,
+            ret=name.ret,
             specification_part=specification_part,
             execution_part=execution_part,
             type=return_type,
@@ -459,7 +461,7 @@ class InternalFortranAst:
             ret_args = []
         else:
             ret_args = args.args    
-        return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args,return_type=ret, line_number=node.item.span)
+        return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args,return_type=ret, line_number=node.item.span,ret=ret)
 
     def subroutine_stmt(self, node: FASTNode):
         #print(self.name_list)

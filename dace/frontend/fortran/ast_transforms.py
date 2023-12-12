@@ -341,6 +341,8 @@ class FunctionCallTransformer(NodeTransformer):
             if hasattr(node.rval, "subroutine"):
                 if node.rval.subroutine is True:
                     return self.generic_visit(node)
+            if node.rval.name.name.find("__dace_") != -1:
+                return self.generic_visit(node)
             if node.op != "=":
                 return self.generic_visit(node)
             args = node.rval.args
@@ -374,14 +376,22 @@ class FunctionToSubroutineDefiner(NodeTransformer):
     Transforms all function definitions into subroutine definitions
     """
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
+        if node.ret!=None:
+            ret=node.ret
         for j in node.specification_part.specifications:
             
             for k in j.vardecl:
+                if node.ret!=None:
+                    if k.name == ret.name:
+                        j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret"
                 if k.name == node.name.name:
                     j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret"
                     
                     break
         execution_part=NameReplacer(node.name.name,node.name.name+"__ret").visit(node.execution_part)
+        if node.ret!=None:
+            
+            execution_part=NameReplacer(ret.name.name,node.name.name+"__ret").visit(node.execution_part)
         args=node.args
         args.append(ast_internal_classes.Name_Node(name=node.name.name+"__ret",type=node.type))
         return ast_internal_classes.Subroutine_Subprogram_Node(name=ast_internal_classes.Name_Node(name=node.name.name+"_srt",type=node.type),

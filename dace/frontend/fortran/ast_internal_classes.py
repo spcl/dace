@@ -131,7 +131,7 @@ class Subroutine_Stmt_Node(FNode):
 
 class Function_Stmt_Node(FNode):
     _attributes = ('name', )
-    _fields = ('args', 'return')
+    _fields = ('args', 'ret')
 
 
 class Name_Node(FNode):
