@@ -164,6 +164,15 @@ required:
                     of the code generator that generated it. Used for debugging
                     code generation.
 
+            codegen_state_struct_suffix:
+                type: str
+                default: "_state_t"
+                title: Suffix used by the code generator to mangle the state struct.
+                description: >
+                    For every SDFG the code generator is is processing a state struct is generated.
+                    The typename of this struct is derived by appending this value to the SDFG's name.
+                    Note that the suffix may only contains letters, digits and underscores.
+
             default_data_types:
                 type : str
                 default: Python
@@ -933,6 +942,14 @@ required:
                 description: >
                     When an exception is raised in a deserialization process (e.g., due to missing library node),
                     by default a warning is issued. If this setting is True, the exception will be raised as-is.
+
+            serialize_all_fields:
+                type: bool
+                default: true
+                title: Serialize all unmodified fields in SDFG files
+                description: >
+                    If False, saving an SDFG keeps only the modified non-default properties. If True,
+                    saves all fields.
 
     #############################################
     # DaCe library settings

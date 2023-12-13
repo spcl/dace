@@ -1460,6 +1460,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('}', sdfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
+        self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
@@ -1490,7 +1491,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if state_struct:
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
-            arguments.append(f'{toplevel_sdfg.name}_t *__state')
+            arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
 
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
         restrict_args = []
@@ -1511,9 +1512,10 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments += [
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{'
@@ -1522,9 +1524,10 @@ class CPUCodeGen(TargetCodeGenerator):
         prepend = []
         if state_struct:
             prepend = ['__state']
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
-            cpp.sym2cpp(symval)
-            for symname, symval in sorted(node.symbol_mapping.items()) if symname not in sdfg.constants
+            cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
+            if symname in fsyms and symname not in sdfg.constants
         ])
         return f'{sdfg_label}({args});'
 
@@ -1808,11 +1811,11 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # Find if bounds are used within the scope
             scope = state_dfg.scope_subgraph(node, False, False)
-            fsyms = scope.free_symbols
+            fsyms = self._frame.free_symbols(scope)
             # Include external edges
             for n in scope.nodes():
                 for e in state_dfg.all_edges(n):
-                    fsyms |= e.data.free_symbols
+                    fsyms |= e.data.used_symbols(False, e)
             fsyms = set(map(str, fsyms))
 
             ntid_is_used = '__omp_num_threads' in fsyms
@@ -1911,7 +1914,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               'size_t')
 
         # Take quiescence condition into account
-        if node.consume.condition.code is not None:
+        if node.consume.condition is not None:
             condition_string = "[&]() { return %s; }, " % cppunparse.cppunparse(node.consume.condition.code, False)
         else:
             condition_string = ""
@@ -1930,7 +1933,7 @@ class CPUCodeGen(TargetCodeGenerator):
             "{num_pes}, {condition}"
             "[&](int {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
-                cond="" if node.consume.condition.code is None else "_cond",
+                cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,

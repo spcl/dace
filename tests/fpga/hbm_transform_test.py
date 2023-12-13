@@ -1,7 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
  
 from dace.fpga_testing import xilinx_test 
-from numpy.lib import math
 from dace.sdfg.state import SDFGState
 import numpy as np
 from dace import dtypes

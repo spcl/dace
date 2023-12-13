@@ -262,9 +262,8 @@ class AccessNode(Node):
     def __label__(self, sdfg, state):
         return self.data
 
-    def desc(self, sdfg):
-        from dace.sdfg import SDFGState, ScopeSubgraphView
-        if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
+    def desc(self, sdfg: Union['dace.sdfg.SDFG', 'dace.sdfg.SDFGState', 'dace.sdfg.ScopeSubgraphView']):
+        if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
 
@@ -1006,8 +1005,10 @@ class ConsumeEntry(EntryNode):
     @property
     def free_symbols(self) -> Set[str]:
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
-        return ((set(self._consume.num_pes.free_symbols)
-                 | set(self._consume.condition.get_free_symbols())) - dyn_inputs)
+        result = set(self._consume.num_pes.free_symbols)
+        if self._consume.condition is not None:
+            result |= set(self._consume.condition.get_free_symbols())
+        return result - dyn_inputs
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
@@ -1095,7 +1096,7 @@ class Consume(object):
     label = Property(dtype=str, desc="Name of the consume node")
     pe_index = Property(dtype=str, desc="Processing element identifier")
     num_pes = SymbolicProperty(desc="Number of processing elements", default=1)
-    condition = CodeProperty(desc="Quiescence condition", allow_none=True)
+    condition = CodeProperty(desc="Quiescence condition", allow_none=True, default=None)
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Consume schedule", default=dtypes.ScheduleType.Default)
     chunksize = Property(dtype=int, desc="Maximal size of elements to consume at a time", default=1)
     debuginfo = DebugInfoProperty()

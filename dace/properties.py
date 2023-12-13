@@ -1023,6 +1023,14 @@ class CodeBlock(object):
         else:
             self.code = code
 
+    def __eq__(self, other):
+        if isinstance(other, str) or other is None:
+            return self.as_string == other
+        elif isinstance(other, CodeBlock):
+            return self.as_string == other.as_string and self.language == other.language
+        else:
+            return super().__eq__(other)
+
     def to_json(self):
         # Two roundtrips to avoid issues in AST parsing/unparsing of negative
         # numbers, i.e., "(-1)" becomes "(- 1)"
@@ -1153,7 +1161,7 @@ class SubsetProperty(Property):
     def __set__(self, obj, val):
         if isinstance(val, str):
             val = self.from_string(val)
-        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices)):
+        if (val is not None and not isinstance(val, sbs.Range) and not isinstance(val, sbs.Indices) and not isinstance(val, sbs.SubsetUnion)):
             raise TypeError("Subset property must be either Range or Indices: got {}".format(type(val).__name__))
         super(SubsetProperty, self).__set__(obj, val)
 
@@ -1382,6 +1390,8 @@ class TypeClassProperty(Property):
     def from_json(obj, context=None):
         if obj is None:
             return None
+        elif isinstance(obj, typeclass):
+            return obj
         elif isinstance(obj, str):
             return TypeClassProperty.from_string(obj)
         elif isinstance(obj, dict):

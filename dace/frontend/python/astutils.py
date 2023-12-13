@@ -15,6 +15,12 @@ from typing import Any, Dict, List, Optional, Set, Union
 from dace import dtypes, symbolic
 
 
+if sys.version_info >= (3, 8):
+    NumConstant = ast.Constant
+else:
+    NumConstant = ast.Num
+
+
 def _remove_outer_indentation(src: str):
     """ Removes extra indentation from a source Python function.
 
@@ -66,8 +72,9 @@ def is_constant(node: ast.AST) -> bool:
     if sys.version_info >= (3, 8):
         if isinstance(node, ast.Constant):
             return True
-    if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
-        return True
+    else:
+        if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
+            return True
     return False
 
 
@@ -82,13 +89,14 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
-    if isinstance(node, ast.Index):  # For compatibility
+    if sys.version_info < (3, 9) and isinstance(node, ast.Index):  # For compatibility
         node = node.value
-    if isinstance(node, ast.Num):  # For compatibility
-        return node.n
     if sys.version_info >= (3, 8):
         if isinstance(node, ast.Constant):
             return node.value
+    else:
+        if isinstance(node, ast.Num):  # For compatibility
+            return node.n
 
     # Replace internal constants with their values
     node = copy_tree(node)
@@ -112,7 +120,7 @@ def rname(node):
 
     if isinstance(node, str):
         return node
-    if isinstance(node, ast.Num):
+    if sys.version_info < (3, 8) and isinstance(node, ast.Num):
         return str(node.n)
     if isinstance(node, ast.Name):  # form x
         return node.id
@@ -174,11 +182,11 @@ def subscript_to_ast_slice(node, without_array=False):
 
     # Python <3.9 compatibility
     result_slice = None
-    if isinstance(node.slice, ast.Index):
+    if sys.version_info < (3, 9) and isinstance(node.slice, ast.Index):
         slc = node.slice.value
         if not isinstance(slc, ast.Tuple):
             result_slice = [slc]
-    elif isinstance(node.slice, ast.ExtSlice):
+    elif sys.version_info < (3, 9) and isinstance(node.slice, ast.ExtSlice):
         slc = tuple(node.slice.dims)
     else:
         slc = node.slice
@@ -196,7 +204,7 @@ def subscript_to_ast_slice(node, without_array=False):
             # Slice
             if isinstance(s, ast.Slice):
                 result_slice.append((s.lower, s.upper, s.step))
-            elif isinstance(s, ast.Index):  # Index (Python <3.9)
+            elif sys.version_info < (3, 9) and isinstance(s, ast.Index):  # Index (Python <3.9)
                 result_slice.append(s.value)
             else:  # Index
                 result_slice.append(s)
@@ -226,7 +234,7 @@ class ExtUnparser(astunparse.Unparser):
         self.dispatch(t.value)
         self.write('[')
         # Compatibility
-        if isinstance(t.slice, ast.Index):
+        if sys.version_info < (3, 9) and isinstance(t.slice, ast.Index):
             slc = t.slice.value
         else:
             slc = t.slice
@@ -434,9 +442,10 @@ class ExtNodeTransformer(ast.NodeTransformer):
         bodies in order to discern DaCe statements from others.
     """
     def visit_TopLevel(self, node):
-        clsname = type(node).__name__
-        if getattr(self, "visit_TopLevel" + clsname, False):
-            return getattr(self, "visit_TopLevel" + clsname)(node)
+        visitor_name = "visit_TopLevel" + type(node).__name__
+        if hasattr(self, visitor_name):
+            visitor = getattr(self, visitor_name)
+            return visitor(node)
         else:
             return self.visit(node)
 
@@ -472,21 +481,23 @@ class ExtNodeVisitor(ast.NodeVisitor):
         top-level expressions in bodies in order to discern DaCe statements 
         from others. """
     def visit_TopLevel(self, node):
-        clsname = type(node).__name__
-        if getattr(self, "visit_TopLevel" + clsname, False):
-            getattr(self, "visit_TopLevel" + clsname)(node)
+        visitor_name = "visit_TopLevel" + type(node).__name__
+        if hasattr(self, visitor_name):
+            visitor = getattr(self, visitor_name)
+            return visitor(node)
         else:
-            self.visit(node)
+            return self.visit(node)
 
     def generic_visit(self, node):
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body' or field == 'orelse'):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                getattr(self, "visit_TopLevel" + clsname)(value)
+                        if field == 'body' or field == 'orelse':
+                            visitor_name = "visit_TopLevel" + type(value).__name__
+                            if hasattr(self, visitor_name):
+                                visitor = getattr(self, visitor_name)
+                                visitor(value)
                             else:
                                 self.visit(value)
                         else:
@@ -600,9 +611,9 @@ class ConstantExtractor(ast.NodeTransformer):
     def visit_Constant(self, node):
         return self.visit_Num(node)
 
-    def visit_Num(self, node: ast.Num):
+    def visit_Num(self, node: NumConstant):
         newname = f'__uu{self.id}'
-        self.gvars[newname] = node.n
+        self.gvars[newname] = node.value if sys.version_info >= (3, 8) else node.n
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
 

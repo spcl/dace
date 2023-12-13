@@ -50,6 +50,36 @@ Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
 
+if sys.version_info < (3, 8):
+    _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
+    BytesConstant = ast.Bytes
+    EllipsisConstant = ast.Ellipsis
+    NameConstant = ast.NameConstant
+    NumConstant = ast.Num
+    StrConstant = ast.Str
+else:
+    _simple_ast_nodes = (ast.Constant, ast.Name)
+    BytesConstant = ast.Constant
+    EllipsisConstant = ast.Constant
+    NameConstant = ast.Constant
+    NumConstant = ast.Constant
+    StrConstant = ast.Constant
+
+
+if sys.version_info < (3, 9):
+    Index = ast.Index
+    ExtSlice = ast.ExtSlice
+else:
+    Index = type(None)
+    ExtSlice = type(None)
+
+
+if sys.version_info < (3, 12):
+    TypeAlias = type(None)
+else:
+    TypeAlias = ast.TypeAlias
+
+
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
@@ -279,7 +309,7 @@ DISALLOWED_STMTS = [
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
     'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp', 'SetComp',
-    'DictComp', 'comprehension'
+    'DictComp', 'comprehension', 'TypeAlias', 'TypeVar', 'ParamSpec', 'TypeVarTuple'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -981,16 +1011,16 @@ class TaskletTransformer(ExtNodeTransformer):
                         raise DaceSyntaxError(self, node, 'Local variable is already a tasklet input or output')
                     self.outputs[connector] = memlet
                     return None  # Remove from final tasklet code
-        elif isinstance(node.value, ast.Str):
+        elif isinstance(node.value, StrConstant):
             return self.visit_TopLevelStr(node.value)
 
         return self.generic_visit(node)
 
     # Detect external tasklet code
-    def visit_TopLevelStr(self, node: ast.Str):
+    def visit_TopLevelStr(self, node: StrConstant):
         if self.extcode != None:
             raise DaceSyntaxError(self, node, 'Cannot provide more than one intrinsic implementation ' + 'for tasklet')
-        self.extcode = node.s
+        self.extcode = node.value if sys.version_info >= (3, 8) else node.s
 
         # TODO: Should get detected by _parse_Tasklet()
         if self.lang is None:
@@ -1611,7 +1641,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return indices
 
-    def _parse_value(self, node: Union[ast.Name, ast.Num, ast.Constant]):
+    def _parse_value(self, node: Union[ast.Name, NumConstant, ast.Constant]):
         """Parses a value
 
         Arguments:
@@ -1626,7 +1656,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if isinstance(node, ast.Name):
             return node.id
-        elif isinstance(node, ast.Num):
+        elif sys.version_info < (3, 8) and isinstance(node, ast.Num):
             return str(node.n)
         elif isinstance(node, ast.Constant):
             return str(node.value)
@@ -1646,14 +1676,14 @@ class ProgramVisitor(ExtNodeVisitor):
         return (self._parse_value(node.lower), self._parse_value(node.upper),
                 self._parse_value(node.step) if node.step is not None else "1")
 
-    def _parse_index_as_range(self, node: Union[ast.Index, ast.Tuple]):
+    def _parse_index_as_range(self, node: Union[Index, ast.Tuple]):
         """
         Parses an index as range
 
         :param node: Index node
         :return: Range in (from, to, step) format
         """
-        if isinstance(node, ast.Index):
+        if sys.version_info < (3, 9) and isinstance(node, ast.Index):
             val = self._parse_value(node.value)
         elif isinstance(node, ast.Tuple):
             val = self._parse_value(node.elts)
@@ -1760,7 +1790,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 iterator = 'dace.map'
         else:
             ranges = []
-            if isinstance(node.slice, (ast.Tuple, ast.ExtSlice)):
+            if isinstance(node.slice, (ast.Tuple, ExtSlice)):
                 for s in node.slice.dims:
                     ranges.append(self._parse_slice(s))
             elif isinstance(node.slice, ast.Slice):
@@ -2344,12 +2374,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Fix for scalar promotion tests
         # TODO: Maybe those tests should use the SDFG API instead of the
         # Python frontend which can change how it handles conditions.
-        simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
-        is_test_simple = isinstance(node, simple_ast_nodes)
+        is_test_simple = isinstance(node, _simple_ast_nodes)
         if not is_test_simple:
             if isinstance(node, ast.Compare):
-                is_left_simple = isinstance(node.left, simple_ast_nodes)
-                is_right_simple = (len(node.comparators) == 1 and isinstance(node.comparators[0], simple_ast_nodes))
+                is_left_simple = isinstance(node.left, _simple_ast_nodes)
+                is_right_simple = (len(node.comparators) == 1 and isinstance(node.comparators[0], _simple_ast_nodes))
                 if is_left_simple and is_right_simple:
                     return True
             elif isinstance(node, ast.BoolOp):
@@ -4293,7 +4322,7 @@ class ProgramVisitor(ExtNodeVisitor):
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
-        if isinstance(node.func, ast.Num):
+        if sys.version_info < (3, 8) and isinstance(node.func, ast.Num):
             if self._has_sdfg(node.func.n):
                 func = node.func.n
         elif isinstance(node.func, ast.Constant):
@@ -4612,15 +4641,15 @@ class ProgramVisitor(ExtNodeVisitor):
         return rname
 
     #### Visitors that return arrays
-    def visit_Str(self, node: ast.Str):
+    def visit_Str(self, node: StrConstant):
         # A string constant returns a string literal
         return StringLiteral(node.s)
 
-    def visit_Bytes(self, node: ast.Bytes):
+    def visit_Bytes(self, node: BytesConstant):
         # A bytes constant returns a string literal
         return StringLiteral(node.s)
 
-    def visit_Num(self, node: ast.Num):
+    def visit_Num(self, node: NumConstant):
         if isinstance(node.n, bool):
             return dace.bool_(node.n)
         if isinstance(node.n, (int, float, complex)):
@@ -4640,7 +4669,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # If visiting a name, check if it is a defined variable or a global
         return self._visitname(node.id, node)
 
-    def visit_NameConstant(self, node: ast.NameConstant):
+    def visit_NameConstant(self, node: NameConstant):
         return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
@@ -4689,6 +4718,9 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
+    
+    def visit_TypeAlias(self, node: TypeAlias):
+        raise NotImplementedError('Type aliases are not supported in DaCe')
 
     ############################################################
 
@@ -4915,7 +4947,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self.visit(s)
             else:
                 res = self._visit_ast_or_value(s)
-        elif isinstance(s, ast.Index):
+        elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
             res = self._parse_subscript_slice(s.value)
         elif isinstance(s, ast.Slice):
             lower = s.lower
@@ -4933,7 +4965,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = ((lower, upper, step), )
         elif isinstance(s, ast.Tuple):
             res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
-        elif isinstance(s, ast.ExtSlice):
+        elif sys.version_info < (3, 9) and isinstance(s, ast.ExtSlice):
             res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
             res = _promote(s)
@@ -4995,8 +5027,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # If the value is a tuple of constants (e.g., array.shape) and the
             # slice is constant, return the value itself
             nslice = self.visit(node.slice)
-            if isinstance(nslice, (ast.Index, Number)):
-                if isinstance(nslice, ast.Index):
+            if isinstance(nslice, (Index, Number)):
+                if sys.version_info < (3, 9) and isinstance(nslice, ast.Index):
                     v = self._parse_value(nslice.value)
                 else:
                     v = nslice
@@ -5060,7 +5092,7 @@ class ProgramVisitor(ExtNodeVisitor):
             out = out[0]
         return out
 
-    def visit_Index(self, node: ast.Index) -> Any:
+    def visit_Index(self, node: Index) -> Any:
         if isinstance(node.value, ast.Tuple):
             for i, elt in enumerate(node.value.elts):
                 node.value.elts[i] = self._visit_ast_or_value(elt)
@@ -5068,7 +5100,7 @@ class ProgramVisitor(ExtNodeVisitor):
         node.value = self._visit_ast_or_value(node.value)
         return node
 
-    def visit_ExtSlice(self, node: ast.ExtSlice) -> Any:
+    def visit_ExtSlice(self, node: ExtSlice) -> Any:
         for i, dim in enumerate(node.dims):
             node.dims[i] = self._visit_ast_or_value(dim)
 

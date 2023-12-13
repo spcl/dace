@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Helper functions for C++ code generation.
 NOTE: The C++ code generator is currently located in cpu.py.
@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import sys
 import warnings
 
 import sympy as sp
@@ -31,6 +32,22 @@ from dace.codegen.targets import fpga
 
 if TYPE_CHECKING:
     from dace.codegen.dispatcher import TargetDispatcher
+
+
+def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
+    """This function creates a unique type name for the `SDFG`'s state `struct`.
+
+    The function uses the `compiler.codegen_state_struct_suffix`
+    configuration entry for deriving the type name of the state `struct`.
+
+    :param sdfg:    The SDFG for which the name should be generated.
+    """
+    name = sdfg if isinstance(sdfg, str) else sdfg.name
+    state_suffix = Config.get("compiler", "codegen_state_struct_suffix")
+    type_name = f"{name}{state_suffix}"
+    if not dtypes.validate_name(type_name):
+        raise ValueError(f"The mangled type name `{type_name}` of the state struct of SDFG '{name}' is invalid.")
+    return type_name
 
 
 def copy_expr(
@@ -1275,7 +1292,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != value.n:
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
+                        value.value if sys.version_info >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):

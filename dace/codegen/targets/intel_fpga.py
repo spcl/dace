@@ -3,8 +3,6 @@ import ast
 import functools
 import copy
 import itertools
-import os
-import re
 from six import StringIO
 import numpy as np
 
@@ -143,19 +141,20 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
             params_comma = ', ' + params_comma
 
         host_code.write("""
-DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
+DACE_EXPORTED int __dace_init_intel_fpga({sdfg_state_name} *__state{signature}) {{{emulation_flag}
     __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
 
-DACE_EXPORTED int __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
+DACE_EXPORTED int __dace_exit_intel_fpga({sdfg_state_name} *__state) {{
     delete __state->fpga_context;
     return 0;
 }}
 
 {host_code}""".format(signature=params_comma,
                       sdfg=self._global_sdfg,
+                      sdfg_state_name=cpp.mangle_dace_state_struct_name(self._global_sdfg),
                       emulation_flag=emulation_flag,
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
@@ -729,9 +728,10 @@ __kernel void \\
     def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         # Intel FPGA needs to deal with streams
         arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
+        fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
-            if aname not in sdfg.constants
+            if aname in fsyms and aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         function_header = f'void {sdfg_label}({arguments}) {{'

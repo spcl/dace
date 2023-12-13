@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, GraphT
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -668,7 +668,7 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     from dace.sdfg.propagation import propagate_memlets_scope
 
     total_consolidated = 0
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
             continue
@@ -1206,8 +1206,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     counter = 0
     if progress is True or progress is None:
         fusible_states = 0
-        for sd in sdfg.all_sdfgs_recursive():
-            fusible_states += sd.number_of_edges()
+        for cfg in sdfg.all_control_flow_regions():
+            fusible_states += cfg.number_of_edges()
 
     if progress is True:
         pbar = tqdm(total=fusible_states, desc='Fusing states')
@@ -1217,32 +1217,62 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
 
-        while True:
-            edges = list(sd.nx.edges)
-            applied = 0
-            skip_nodes = set()
-            for u, v in edges:
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
+        for cfg in sd.all_control_flow_regions():
+            while True:
+                edges = list(cfg.nx.edges)
+                applied = 0
+                skip_nodes = set()
+                for u, v in edges:
+                    if (progress is None and tqdm is not None and (time.time() - start) > 5):
+                        progress = True
+                        pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
-                if u in skip_nodes or v in skip_nodes:
-                    continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion()
-                sf.setup_match(sd, id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
-                    sf.apply(sd, sd)
-                    applied += 1
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
-                    skip_nodes.add(u)
-                    skip_nodes.add(v)
-            if applied == 0:
-                break
+                    if (u in skip_nodes or v in skip_nodes or not isinstance(v, SDFGState) or
+                        not isinstance(u, SDFGState)):
+                        continue
+                    candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                    sf = StateFusion()
+                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
+                        sf.apply(cfg, sd)
+                        applied += 1
+                        counter += 1
+                        if progress:
+                            pbar.update(1)
+                        skip_nodes.add(u)
+                        skip_nodes.add(v)
+                if applied == 0:
+                    break
     if progress:
         pbar.close()
+    return counter
+
+
+def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    # Avoid import loops
+    from dace.transformation.interstate import LoopRegionInline
+
+    counter = 0
+    blocks = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion)]
+
+    for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
+                                               n=len(blocks), progress=progress):
+        block: ControlFlowBlock = _block
+        graph: SomeGraphT = _graph
+        id = block.sdfg.sdfg_id
+
+        # We have to reevaluate every time due to changing IDs
+        block_id = graph.node_id(block)
+
+        candidate = {
+            LoopRegionInline.loop: block,
+        }
+        inliner = LoopRegionInline()
+        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
+            inliner.apply(graph, block.sdfg)
+            counter += 1
+
     return counter
 
 
@@ -1817,6 +1847,11 @@ def get_global_memlet_path_src(sdfg: SDFG, state: SDFGState, edge: MultiConnecto
         if len(pedges) > 0:
             pedge = pedges[0]
             return get_global_memlet_path_src(psdfg, pstate, pedge)
+        else:
+            pedges = list(pstate.out_edges_by_connector(pnode, src.data))
+            if len(pedges) > 0:
+                pedge = pedges[0]
+                return get_global_memlet_path_dst(psdfg, pstate, pedge)
     return src
 
 

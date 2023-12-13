@@ -88,6 +88,8 @@ def dealias_sdfg(sdfg: SDFG):
                     nsdfg.arrays[name] = child_arr
                 for state in nsdfg.states():
                     for e in state.edges():
+                        if e.data.is_empty():
+                            continue
                         if not state.is_leaf_memlet(e):
                             continue
 
@@ -129,7 +131,10 @@ def dealias_sdfg(sdfg: SDFG):
                                 syms.remove(memlet.data)
                     for s in syms:
                         if s in parent_edges:
-                            repl_dict[s] = str(parent_edges[s].data)
+                            if s in nsdfg.arrays:
+                                repl_dict[s] = parent_edges[s].data.data
+                            else:
+                                repl_dict[s] = str(parent_edges[s].data)
                     e.data.replace_dict(repl_dict)
                 for name in child_names:
                     edge = parent_edges[name]
@@ -249,7 +254,10 @@ def replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mapping
                     syms.remove(memlet.data)
         for s in syms:
             if s in input_mapping:
-                repl_dict[s] = str(input_mapping[s])
+                if s in sdfg.arrays:
+                    repl_dict[s] = input_mapping[s].data
+                else:
+                    repl_dict[s] = str(input_mapping[s])
 
         # Manual replacement with strings
         # TODO(later): Would be MUCH better to use MemletReplacer / e.data.replace_dict(repl_dict, replace_keys=False)
@@ -275,7 +283,7 @@ def remove_name_collisions(sdfg: SDFG):
         # Rename duplicate states
         for state in nsdfg.nodes():
             if state.label in state_names_seen:
-                state.set_label(data.find_new_name(state.label, state_names_seen))
+                state.label = data.find_new_name(state.label, state_names_seen)
             state_names_seen.add(state.label)
 
         replacements: Dict[str, str] = {}
