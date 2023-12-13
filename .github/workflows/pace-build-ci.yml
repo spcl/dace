@@ -12,7 +12,8 @@ defaults:
       shell: bash
 
 jobs:
-    build_pace:
+    build_and_validate_pace:
+      if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
       runs-on: ubuntu-latest
       strategy:
           matrix:
