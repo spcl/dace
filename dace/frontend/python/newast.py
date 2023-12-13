@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 from collections import OrderedDict
 import copy
@@ -4487,7 +4487,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_block.set_default_lineinfo(None)
 
         if isinstance(result, tuple) and type(result[0]) is nested_call.NestedCall:
-            self.last_block = result[0].last_block
+            self.last_block = result[0].last_state
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
@@ -4933,7 +4933,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             # `not sym` returns True. This exception is benign.
                             pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-                    edge = state.parent.in_edges(state)[0]
+                    edge = state.parent_graph.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}
                     return sym
             return scalar
