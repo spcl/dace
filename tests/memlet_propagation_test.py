@@ -104,8 +104,85 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
             str(outer_out.subset))
 
 
+def test_nsdfg_memlet_propagation_with_slicing():
+    
+    dim_X, dim_Y = (dace.symbol(s) for s in ('dim_X', 'dim_Y'))
+
+    def build_nsdfg():
+        sdfg = dace.SDFG('mat_to_vec')
+        sdfg.add_array('_inp', (dim_X, dim_Y), dace.float64)
+        sdfg.add_array('_out', (dim_X,), dace.float64)
+        sdfg.add_scalar('_inp_idx', dace.int32)
+        state1 = sdfg.add_state()
+        state2 = sdfg.add_state()
+        sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments={'y':'_inp_idx'}))
+        state2.add_edge(
+            state2.add_access('_inp'), None,
+            state2.add_access('_out'), None,
+            dace.Memlet(data='_out', subset='0:dim_X', other_subset='0:dim_X, y')
+        )
+        return sdfg
+
+    sdfg = dace.SDFG('memlet_propagation_with_slicing')
+    sdfg.add_array('mat', (dim_X, dim_Y), dace.float64)
+    sdfg.add_array('vec', (dim_X,), dace.float64)
+    sdfg.add_symbol('idx_Y', dace.int32)
+    sdfg.add_scalar('idx', dace.int32, transient=True)
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(
+        build_nsdfg(),
+        sdfg,
+        inputs={'_inp', '_inp_idx'},
+        outputs={'_out'},
+    )
+    idx_node = state.add_access('idx')
+    state.add_edge(
+        state.add_tasklet('get_idx_Y', {}, {'x'}, 'x = idx_Y'),
+        'x',
+        idx_node,
+        None,
+        dace.Memlet.simple('idx', '0')
+    )
+    state.add_edge(
+        idx_node,
+        None,
+        nsdfg_node,
+        '_inp_idx',
+        dace.Memlet.simple('idx', '0')
+    )
+    state.add_edge(
+        state.add_access('mat'),
+        None,
+        nsdfg_node,
+        '_inp',
+        dace.Memlet.from_array('mat', sdfg.arrays['mat'])
+    )
+    state.add_edge(
+        nsdfg_node,
+        '_out',
+        state.add_access('vec'),
+        None,
+        dace.Memlet.from_array('vec', sdfg.arrays['vec'])
+    )
+
+    propagate_memlets_sdfg(sdfg)
+
+    dim_X.set(10)
+    dim_Y.set(20)
+    idx_Y = 3
+    
+    A = np.random.rand(dim_X.get(), dim_Y.get())
+    B = np.random.rand(dim_X.get())
+    ref = A[:, idx_Y]
+
+    sdfg(mat=A, vec=B, idx_Y=idx_Y, dim_X=dim_X, dim_Y=dim_Y)
+    np.allclose(ref, B)
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
+    test_nsdfg_memlet_propagation_with_slicing()
