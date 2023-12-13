@@ -1113,14 +1113,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             if target not in self.constants:
                 desc = self.sdfg.arrays[dname]
                 if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
-                    elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
-            else:
-                elts = visited_slice.elts
-            if len(strides) != len(elts):
+                    assert len(desc.shape) - desc.shape.count(1) == len(visited_slice.elts)
+            if len(strides) != len(visited_slice.elts):
                 raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
-                                  'got %d)' % (len(strides), len(elts)))
+                                  'got %d)' % (len(strides), len(visited_slice.elts)))
 
-            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
 
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
