@@ -1,6 +1,10 @@
 name: NASA/NOAA Pace repository build test
 
 on:
+  push:
+    branches: [ master, ci-fix ]
+  pull_request:
+    branches: [ master, ci-fix ]
   workflow_dispatch:
 
 defaults:
