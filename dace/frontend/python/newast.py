@@ -2400,35 +2400,65 @@ class ProgramVisitor(ExtNodeVisitor):
                 return all(self._is_test_simple(value) for value in node.values)
         return is_test_simple
 
-    def _visit_test(self, node: ast.Expr):
+    def _visit_complex_test(self, node: ast.Expr):
+        test_region = ControlFlowRegion('%s_%s' % ('cond_prep', node.lineno), self.sdfg)
+        inner_start = test_region.add_state('%s_start_%s' % ('cond_prep', node.lineno))
+
+        p_last_cfg_target, p_last_block, p_target = self.last_cfg_target, self.last_block, self.cfg_target
+        self.cfg_target, self.last_block, self.last_cfg_target = test_region, inner_start, test_region
+
+        parsed_node = self.visit(node)
+        if isinstance(parsed_node, (list, tuple)) and len(parsed_node) == 1:
+            parsed_node = parsed_node[0]
+        if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
+            datadesc = self.sdfg.arrays[parsed_node]
+            if isinstance(datadesc, data.Array):
+                parsed_node += '[0]'
+
+        self.last_cfg_target, self.last_block, self.cfg_target = p_last_cfg_target, p_last_block, p_target
+
+        return parsed_node, test_region
+
+    def _visit_test(self, node: ast.Expr) -> Tuple[str, str, bool]:
         is_test_simple = self._is_test_simple(node)
 
         # Visit test-condition
         if not is_test_simple:
-            parsed_node = self.visit(node)
-            if isinstance(parsed_node, (list, tuple)) and len(parsed_node) == 1:
-                parsed_node = parsed_node[0]
-            if isinstance(parsed_node, str) and parsed_node in self.sdfg.arrays:
-                datadesc = self.sdfg.arrays[parsed_node]
-                if isinstance(datadesc, data.Array):
-                    parsed_node += '[0]'
+            parsed_node, test_region = self._visit_complex_test(node)
+            self.cfg_target.add_node(test_region)
+            self._on_block_added(test_region)
         else:
             parsed_node = astutils.unparse(node)
+            test_region = None
 
         # Generate conditions
         cond = astutils.unparse(parsed_node)
         cond_else = astutils.unparse(astutils.negate_expr(parsed_node))
 
-        return cond, cond_else
+        return cond, cond_else, test_region
 
     def visit_While(self, node: ast.While):
-        # Get loop condition expression
-        loop_cond, _ = self._visit_test(node.test)
+        # Get loop condition expression and create the necessary states for it.
+        loop_cond, _, test_region = self._visit_test(node.test)
         loop_region = self._add_loop_region(loop_cond, label=f'while_{node.lineno}', inverted=False)
 
         # Parse body
         self._recursive_visit(node.body, f'while_{node.lineno}', node.lineno, parent=loop_region,
                               unconnected_last_block=False)
+
+        if test_region is not None:
+            iter_end_blocks = set()
+            iter_end_blocks.update(loop_region.continue_states)
+            for inner_node in loop_region.nodes():
+                if loop_region.out_degree(inner_node) == 0:
+                    iter_end_blocks.add(inner_node)
+            loop_region.continue_states = set()
+
+            test_region_copy = copy.deepcopy(test_region)
+            loop_region.add_node(test_region_copy)
+
+            for block in iter_end_blocks:
+                loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
 
         # Add symbols from test as necessary
         symcond = pystr_to_symbolic(loop_cond)
@@ -2455,24 +2485,24 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_block = loop_region
 
     def visit_Break(self, node: ast.Break):
-        if not isinstance(self.cfg_target, LoopRegion):
-            error_msg = "'break' is only supported inside for and while loops "
+        if isinstance(self.cfg_target, LoopRegion):
+            self.cfg_target.break_states.append(self.last_block)
+        else:
+            error_msg = "'break' is only supported inside loops "
             if self.nested:
-                error_msg += ("('break' is not supported in Maps and cannot be "
-                              " used in nested DaCe program calls to break out "
-                              " of loops of outer scopes)")
+                error_msg += ("('break' is not supported in Maps and cannot be used in nested DaCe program calls to "
+                              " break out of loops of outer scopes)")
             raise DaceSyntaxError(self, node, error_msg)
-        self.cfg_target.break_states.append(self.last_block)
 
     def visit_Continue(self, node: ast.Continue):
-        if not isinstance(self.cfg_target, LoopRegion):
-            error_msg = ("'continue' is only supported inside for and while loops ")
+        if isinstance(self.cfg_target, LoopRegion):
+            self.cfg_target.continue_states.append(self.last_block)
+        else:
+            error_msg = ("'continue' is only supported inside loops ")
             if self.nested:
-                error_msg += ("('continue' is not supported in Maps and cannot "
-                              " be used in nested DaCe program calls to "
+                error_msg += ("('continue' is not supported in Maps and cannot be used in nested DaCe program calls to "
                               " continue loops of outer scopes)")
             raise DaceSyntaxError(self, node, error_msg)
-        self.cfg_target.continue_states.append(self.last_block)
 
     def visit_If(self, node: ast.If):
         # Add a guard state
@@ -2480,7 +2510,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_block.debuginfo = self.current_lineinfo
 
         # Generate conditions
-        cond, cond_else = self._visit_test(node.test)
+        cond, cond_else, _ = self._visit_test(node.test)
 
         # Visit recursively
         laststate, first_if_state, last_if_state, return_stmt = \

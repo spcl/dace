@@ -11,9 +11,63 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import transformation
 
 
+class ControlFlowRegionInline(transformation.MultiStateTransformation):
+    """
+    Inlines a control flow region into a single state machine.
+    """
+
+    region = transformation.PatternNode(ControlFlowRegion)
+
+    @staticmethod
+    def annotates_memlets():
+        return False
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.region)]
+
+    def can_be_applied(self, graph: ControlFlowRegion, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        if isinstance(self.region, LoopRegion):
+            return False
+        return True
+
+    def apply(self, graph: ControlFlowRegion, sdfg: SDFG) -> Optional[int]:
+        parent: ControlFlowRegion = graph
+
+        internal_start = self.region.start_block
+
+        end_state = parent.add_state(self.region.label + '_end')
+
+        # Add all region states and make sure to keep track of all the ones that need to be connected in the end.
+        to_connect: Set[SDFGState] = set()
+        for node in self.region.nodes():
+            parent.add_node(node)
+            if self.region.out_degree(node) == 0:
+                to_connect.add(node)
+
+        # Add all region edges.
+        for edge in self.region.edges():
+            parent.add_edge(edge.src, edge.dst, edge.data)
+
+        # Redirect all edges to the region to the internal start state.
+        for b_edge in parent.in_edges(self.region):
+            parent.add_edge(b_edge.src, internal_start, b_edge.data)
+            parent.remove_edge(b_edge)
+        # Redirect all edges exiting the region to instead exit the end state.
+        for a_edge in parent.out_edges(self.region):
+            parent.add_edge(end_state, a_edge.dst, a_edge.data)
+            parent.remove_edge(a_edge)
+
+        for node in to_connect:
+            parent.add_edge(node, end_state, InterstateEdge())
+
+        # Remove the original loop.
+        parent.remove_node(self.region)
+
+
 class LoopRegionInline(transformation.MultiStateTransformation):
     """
-    Inlines a loop regions into a single state machine.
+    Inlines a loop region into a single state machine.
     """
 
     loop = transformation.PatternNode(LoopRegion)

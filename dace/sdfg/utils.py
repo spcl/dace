@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, GraphT
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, ControlFlowRegion, GraphT
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -1268,6 +1268,35 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
             LoopRegionInline.loop: block,
         }
         inliner = LoopRegionInline()
+        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
+            inliner.apply(graph, block.sdfg)
+            counter += 1
+
+    return counter
+
+
+def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    # Avoid import loops
+    from dace.transformation.interstate import ControlFlowRegionInline
+
+    counter = 0
+    blocks = [(n, p) for n, p in sdfg.all_nodes_recursive()
+              if isinstance(n, ControlFlowRegion) and not isinstance(n, LoopRegion)]
+
+    for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
+                                               n=len(blocks), progress=progress):
+        block: ControlFlowBlock = _block
+        graph: GraphT = _graph
+        id = block.sdfg.sdfg_id
+
+        # We have to reevaluate every time due to changing IDs
+        block_id = graph.node_id(block)
+
+        candidate = {
+            ControlFlowRegionInline.region: block,
+        }
+        inliner = ControlFlowRegionInline()
         inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
         if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
             inliner.apply(graph, block.sdfg)

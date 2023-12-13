@@ -1109,6 +1109,31 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def __repr__(self) -> str:
         return f'ControlFlowBlock ({self.label})'
 
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
+                continue
+            setattr(result, k, copy.deepcopy(v, memo))
+
+        for k in ('_parent_graph', '_sdfg'):
+            if id(getattr(self, k)) in memo:
+                setattr(result, k, memo[id(getattr(self, k))])
+            else:
+                setattr(result, k, None)
+
+        for node in result.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                try:
+                    node.sdfg.parent = result
+                except AttributeError:
+                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
+                    # TODO: Investigate why this happens.
+                    pass
+        return result
+
     @property
     def label(self) -> str:
         return self._label
@@ -1191,31 +1216,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         self.nosync = False
         self.location = location if location is not None else {}
         self._default_lineinfo = None
-
-    def __deepcopy__(self, memo):
-        cls = self.__class__
-        result = cls.__new__(cls)
-        memo[id(self)] = result
-        for k, v in self.__dict__.items():
-            if k in ('_parent_graph', '_sdfg'):  # Skip derivative attributes
-                continue
-            setattr(result, k, copy.deepcopy(v, memo))
-
-        for k in ('_parent_graph', '_sdfg'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
-
-        for node in result.nodes():
-            if isinstance(node, nd.NestedSDFG):
-                try:
-                    node.sdfg.parent = result
-                except AttributeError:
-                    # NOTE: There are cases where a NestedSDFG does not have `sdfg` attribute.
-                    # TODO: Investigate why this happens.
-                    pass
-        return result
 
     @property
     def parent(self):
@@ -2459,7 +2459,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_edge(state, new_state, dace.sdfg.InterstateEdge())
         return new_state
 
-    @abc.abstractmethod
     def _used_symbols_internal(self,
                                all_symbols: bool,
                                defined_syms: Optional[Set] = None,
