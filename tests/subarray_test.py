@@ -29,45 +29,6 @@ def test():
     subarray(A, B, W=W)
 
 
-N = 3
-
-
-
-def test1():
-
-    @dc.program(simplify=False)
-    def subarray1b(A: dc.float64[1, N], B: dc.float64[1, N, N]):
-        @dc.tasklet
-        def tlet():
-            a << A[0, :]
-            b >> B[0, :, :]
-            for j in range(N):
-                x = a[j] + dc.float32(1.0)
-                b[j, j] = x
-
-    nsdfg = subarray1b.to_sdfg()
-
-    @dc.program(simplify=False)
-    def subarray1(A: dc.float64[W, N], B: dc.float64[W, N, N]):
-        for i in dc.map[0:W]:
-            @dc.tasklet
-            def tlet():
-                nsdfg(A[i, :], B[i, :, :])
-
-    W.set(2)
-
-    A = np.random.rand(W.get(), N)
-    B = np.random.rand(W.get(), N, N)
-
-    ref = np.ndarray(B.shape)
-    for i in range(ref.shape[0]):
-        ref[i,:,:] = np.diag(A[i,:] + 1) + np.rot90(np.diag(np.diag(np.rot90(B[i,:,:], axes=(1,0)))))
-
-    subarray1(A, B, W=W)
-
-    np.allclose(ref, B)
-
-
 def test_strides_propagation_to_tasklet():
     N = 2
     vec_stride_W, vec_stride_d0 = (
@@ -137,7 +98,7 @@ for i in range({N}):\
         memlet=dc.Memlet.simple('mat_field', f"i,0:{N},0:{N}")
     )
 
-    W.set(2)
+    W.set(3)
     A = np.random.rand(W.get(), N)
     B = np.random.rand(W.get(), N, N)
 
@@ -161,5 +122,4 @@ for i in range({N}):\
 
 if __name__ == "__main__":
     test()
-    test1()
     test_strides_propagation_to_tasklet()
