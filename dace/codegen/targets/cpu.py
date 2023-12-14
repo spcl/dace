@@ -1487,6 +1487,7 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream.write('}', sdfg, state_id, node)
         callsite_stream.write(outer_stream_end.getvalue(), sdfg, state_id, node)
 
+        self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
@@ -1944,7 +1945,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               'size_t')
 
         # Take quiescence condition into account
-        if node.consume.condition.code is not None:
+        if node.consume.condition is not None:
             condition_string = "[&]() { return %s; }, " % cppunparse.cppunparse(node.consume.condition.code, False)
         else:
             condition_string = ""
@@ -1963,7 +1964,7 @@ class CPUCodeGen(TargetCodeGenerator):
             "{num_pes}, {condition}"
             "[&](int {pe_index}, {element_or_chunk}) {{".format(
                 chunksz=node.consume.chunksize,
-                cond="" if node.consume.condition.code is None else "_cond",
+                cond="" if node.consume.condition is None else "_cond",
                 condition=condition_string,
                 stream_in=input_stream.data,  # TODO: stream arrays
                 element_or_chunk=chunk,

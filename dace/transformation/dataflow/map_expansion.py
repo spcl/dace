@@ -3,6 +3,7 @@
 
 from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
+import copy
 import dace
 from dace import dtypes, subsets, symbolic
 from dace.properties import EnumProperty, make_properties
@@ -10,6 +11,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
+from dace.sdfg.propagation import propagate_memlets_scope
 
 
 @make_properties
@@ -66,14 +68,28 @@ class MapExpansion(pm.SingleStateTransformation):
         # 1. If there are no edges coming from the outside, use empty memlets
         # 2. Edges with IN_* connectors replicate along the maps
         # 3. Edges for dynamic map ranges replicate until reaching range(s)
-        for edge in graph.out_edges(map_entry):
+        for edge in list(graph.out_edges(map_entry)):
+            if edge.src_conn is not None and edge.src_conn not in entries[-1].out_connectors:
+                entries[-1].add_out_connector(edge.src_conn)
+
+            graph.add_edge(entries[-1], edge.src_conn, edge.dst, edge.dst_conn, memlet=copy.deepcopy(edge.data))
             graph.remove_edge(edge)
-            graph.add_memlet_path(map_entry,
-                                  *entries,
-                                  edge.dst,
-                                  src_conn=edge.src_conn,
-                                  memlet=edge.data,
-                                  dst_conn=edge.dst_conn)
+
+        if graph.in_degree(map_entry) == 0:
+            graph.add_memlet_path(map_entry, *entries, memlet=dace.Memlet())
+        else:
+            for edge in graph.in_edges(map_entry):
+                if not edge.dst_conn.startswith("IN_"):
+                    continue
+                
+                in_conn = edge.dst_conn
+                out_conn = "OUT_" + in_conn[3:]
+                if in_conn not in entries[-1].in_connectors:
+                    graph.add_memlet_path(map_entry,
+                                          *entries,
+                                          memlet=copy.deepcopy(edge.data),
+                                          src_conn=out_conn,
+                                          dst_conn=in_conn)
 
         # Modify dynamic map ranges
         dynamic_edges = dace.sdfg.dynamic_map_inputs(graph, map_entry)
@@ -116,6 +132,7 @@ class MapExpansion(pm.SingleStateTransformation):
         else:
             raise ValueError('Cannot find scope in state')
 
+        propagate_memlets_scope(sdfg, state=graph, scopes=scope)
         consolidate_edges(sdfg, scope)
 
         return [map_entry] + entries
