@@ -18,7 +18,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, SetProperty)
+                             CodeProperty, make_properties, ListProperty)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -2493,9 +2493,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
                 # collect symbols representing data containers
-                dsyms = {sym for sym in efsyms if sym in self.arrays}
+                dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
                 for d in dsyms:
-                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
+                    efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
@@ -2633,8 +2633,9 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool, default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
-    break_states = SetProperty(element_type=int, desc='States that when reached break out of the loop')
-    continue_states = SetProperty(element_type=int, desc='States that when reached directly execute the next iteration')
+    break_states = ListProperty(element_type=int, desc='States that when reached break out of the loop')
+    continue_states = ListProperty(element_type=int,
+                                   desc='States that when reached directly execute the next iteration')
 
     def __init__(self,
                  label: str,
@@ -2711,11 +2712,11 @@ class LoopRegion(ControlFlowRegion):
         if is_continue:
             if is_break:
                 raise ValueError('Cannot set both is_continue and is_break')
-            self.continue_states.add(self.node_id(node))
+            self.continue_states.append(self.node_id(node))
         if is_break:
             if is_continue:
                 raise ValueError('Cannot set both is_continue and is_break')
-            self.break_states.add(self.node_id(node))
+            self.break_states.append(self.node_id(node))
 
     def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
         super().add_node(node, is_start_block, is_start_state=is_start_state)

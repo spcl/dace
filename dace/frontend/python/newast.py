@@ -2218,7 +2218,7 @@ class ProgramVisitor(ExtNodeVisitor):
         return_stmt = False
         for stmt in body:
             self.visit_TopLevel(stmt)
-            if isinstance(stmt, ast.Return):
+            if isinstance(stmt, ast.Return) or isinstance(stmt, ast.Break) or isinstance(stmt, ast.Continue):
                 return_stmt = True
 
         # Create the next state
@@ -2452,7 +2452,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for inner_node in loop_region.nodes():
                 if loop_region.out_degree(inner_node) == 0:
                     iter_end_blocks.add(inner_node)
-            loop_region.continue_states = set()
+            loop_region.continue_states = []
 
             test_region_copy = copy.deepcopy(test_region)
             loop_region.add_node(test_region_copy)
@@ -2486,7 +2486,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Break(self, node: ast.Break):
         if isinstance(self.cfg_target, LoopRegion):
-            self.cfg_target.break_states.append(self.last_block)
+            break_state = self._add_state('break_%s' % node.lineno)
+            self.cfg_target.break_states.append(self.cfg_target.node_id(break_state))
         else:
             error_msg = "'break' is only supported inside loops "
             if self.nested:
@@ -2496,7 +2497,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Continue(self, node: ast.Continue):
         if isinstance(self.cfg_target, LoopRegion):
-            self.cfg_target.continue_states.append(self.last_block)
+            continue_state = self._add_state('continue_%s' % node.lineno)
+            self.cfg_target.continue_states.append(self.cfg_target.node_id(continue_state))
         else:
             error_msg = ("'continue' is only supported inside loops ")
             if self.nested:
@@ -4487,7 +4489,8 @@ class ProgramVisitor(ExtNodeVisitor):
         self.last_block.set_default_lineinfo(None)
 
         if isinstance(result, tuple) and type(result[0]) is nested_call.NestedCall:
-            self.last_block = result[0].last_state
+            nc: nested_call.NestedCall = result[0]
+            self.last_block = nc.last_state
             result = result[1]
 
         if not isinstance(result, (tuple, list)):
