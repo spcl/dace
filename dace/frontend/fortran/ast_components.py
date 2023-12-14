@@ -331,7 +331,7 @@ class InternalFortranAst:
         children = self.create_children(node)
         parent = children[0]
         part_ref = children[1]
-        return ast_internal_classes.Data_Ref_Node(parent=parent, part_ref=part_ref,type="VOID")
+        return ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=part_ref,type="VOID")
 
     def end_type_stmt(self, node: FASTNode):
         return None
@@ -913,7 +913,7 @@ class InternalFortranAst:
         return node
 
     def execution_part(self, node: FASTNode):
-        children = self.create_children(node)
+        children =[child for child in self.create_children(node) if child is not None]
         return ast_internal_classes.Execution_Part_Node(execution=children)
 
     def execution_part_construct(self, node: FASTNode):
@@ -1114,7 +1114,7 @@ class InternalFortranAst:
         return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="Unknown", line_number=line_number)
 
     def return_stmt(self, node: FASTNode):
-        return node
+        return None
 
     def stop_stmt(self, node: FASTNode):
         return node
@@ -1203,6 +1203,7 @@ class InternalFortranAst:
         return ast_internal_classes.Section_Subscript_List_Node(list=children)
 
     def specification_part(self, node: FASTNode):
+    
         #TODO this can be refactored to consider more fortran declaration options. Currently limited to what is encountered in code.
         others = [self.create_ast(i) for i in node.children if not isinstance(i, f08.Type_Declaration_Stmt)]
 
@@ -1261,7 +1262,7 @@ class InternalFortranAst:
         return ast_internal_classes.Real_Literal_Node(value=node.children[0].lower(),type="REAL")
     
     def char_literal_constant(self, node: FASTNode):
-        return ast_internal_classes.Char_Literal_Node(value=node.string)
+        return ast_internal_classes.Char_Literal_Node(value=node.string,type="CHAR")
 
     def actual_arg_spec(self, node: FASTNode):
         children = self.create_children(node)

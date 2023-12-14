@@ -324,7 +324,7 @@ class Data_Component_Def_Stmt_Node(FNode):
 
 class Data_Ref_Node(FNode):
     _attributes = ()
-    _fields = ('parent', 'part_ref')
+    _fields = ('parent_ref', 'part_ref')
 
 
 class Array_Constructor_Node(FNode):

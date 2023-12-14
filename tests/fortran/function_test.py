@@ -192,7 +192,7 @@ v%x(1)=1.0
 v%x(2)=2.0
 v%x(3)=3.0
 
-z=function3_test_function(x)
+z=function3_test_function(v)
 
 end
 
@@ -202,8 +202,8 @@ end
      TYPE(t_cartesian_coordinates), INTENT(in) :: v
      REAL :: length
 
-     length = SQRT(DOT_PRODUCT(v%x,v%x))
-
+     !length = SQRT(DOT_PRODUCT(v%x,v%x))
+     length = v%x(1) *v%x(2)*v%x(3)
 
   END FUNCTION function3_test_function
 
@@ -222,6 +222,7 @@ end
     sdfg.reset_sdfg_list()                
     sdfg.simplify(verbose=True)
     sdfg.view()
+    sdfg.compile()
 
 
 if __name__ == "__main__":

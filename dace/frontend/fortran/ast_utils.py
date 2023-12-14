@@ -151,7 +151,7 @@ class TaskletWriter:
             raise NameError("Error in code generation" + node.__class__.__name__)
 
     def dataref2string(self, node: ast_internal_classes.Data_Ref_Node):
-        return self.write_code(node.parent) + "." + self.write_code(node.part_ref)
+        return self.write_code(node.parent_ref) + "." + self.write_code(node.part_ref)
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
         str_to_return = self.write_code(node.name) + "[" + self.write_code(node.indices[0])

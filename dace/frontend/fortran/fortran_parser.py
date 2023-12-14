@@ -228,8 +228,11 @@ class AST_translator:
         for i in components:
             j = i.vars
             for k in j.vardecl:
-
+                complex_datatype=False
                 datatype = self.get_dace_type(k.type)
+                if hasattr(datatype,"name"):
+                    if datatype.name == "Structure":
+                        complex_datatype=True
                 if k.sizes is not None:
                     sizes = []
                     offset = []
@@ -240,15 +243,21 @@ class AST_translator:
                         sizes.append(sym.pystr_to_symbolic(text))
                         offset.append(offset_value)
                     strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
-                    dict_setup[k.name] = dat.Array(
+                    if not complex_datatype:
+                        dict_setup[k.name] = dat.Array(
                         datatype,
                         sizes,
                         strides=strides,
                         offset=offset,
-                    )
+                        )
+                    else:
+                        dict_setup[k.name] = dat.create_datadescriptor(datatype, shape=sizes, strides=strides, offset=offset)    
 
                 else:
-                    dict_setup[k.name] = dat.Scalar(datatype)
+                    if not complex_datatype:
+                        dict_setup[k.name] = dat.Scalar(datatype)
+                    else:
+                        dict_setup[k.name] = dat.create_datadescriptor(datatype)
 
         structure_obj = Structure(dict_setup)
         self.registered_types[name] = structure_obj
