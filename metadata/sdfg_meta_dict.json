@@ -124,7 +124,8 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
       ]
     },
     "dict": {
@@ -148,9 +149,28 @@
         "filename": null
       }
     },
+    "OrderedDictProperty": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "str": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "list": {
+      "metatype": "list",
+      "desc": "",
+      "category": "General",
+      "default": [],
+      "element_type": "TensorIndex"
+    },
     "SymbolicProperty": {
       "metatype": "SymbolicProperty",
-      "desc": "The total allocated size of the array. Can be used for padding.",
+      "desc": "",
       "category": "General",
       "default": 0
     },
@@ -160,12 +180,11 @@
       "category": "General",
       "default": 0
     },
-    "list": {
-      "metatype": "list",
+    "Data": {
+      "metatype": "Data",
       "desc": "",
       "category": "General",
-      "default": [],
-      "element_type": "pystr_to_symbolic"
+      "default": null
     },
     "SubsetProperty": {
       "metatype": "SubsetProperty",
@@ -205,12 +224,6 @@
         "language": "CPP"
       }
     },
-    "str": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
     "set": {
       "metatype": "set",
       "desc": "Environments required by CMake to build and run this code node.",
@@ -248,6 +261,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -290,6 +304,12 @@
       "category": "General",
       "default": null
     },
+    "NestedDict": {
+      "metatype": "NestedDict",
+      "desc": "Data descriptors for this SDFG",
+      "category": "General",
+      "default": {}
+    },
     "OptionalSDFGReferenceProperty": {
       "metatype": "OptionalSDFGReferenceProperty",
       "desc": "",
@@ -298,7 +318,13 @@
     },
     "Property": {
       "metatype": "Property",
-      "desc": "A scalar which will be multiplied with A @ B before adding C",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
+    "Number": {
+      "metatype": "Number",
+      "desc": "Input tensor scaling factor",
       "category": "General",
       "default": 1
     },
@@ -385,23 +411,28 @@
     }
   },
   "__libs__": {
+    "CodeLibraryNode": "dace.libraries.standard.nodes.code.CodeLibraryNode",
+    "Gearbox": "dace.libraries.standard.nodes.gearbox.Gearbox",
+    "Reduce": "dace.libraries.standard.nodes.reduce.Reduce",
     "MatMul": "dace.libraries.blas.nodes.matmul.MatMul",
     "Dot": "dace.libraries.blas.nodes.dot.Dot",
     "Gemv": "dace.libraries.blas.nodes.gemv.Gemv",
     "Gemm": "dace.libraries.blas.nodes.gemm.Gemm",
     "Ger": "dace.libraries.blas.nodes.ger.Ger",
     "BatchedMatMul": "dace.libraries.blas.nodes.batched_matmul.BatchedMatMul",
-    "Transpose": "dace.libraries.blas.nodes.transpose.Transpose",
     "Axpy": "dace.libraries.blas.nodes.axpy.Axpy",
     "Einsum": "dace.libraries.blas.nodes.einsum.Einsum",
-    "CodeLibraryNode": "dace.libraries.standard.nodes.code.CodeLibraryNode",
-    "Gearbox": "dace.libraries.standard.nodes.gearbox.Gearbox",
-    "Reduce": "dace.libraries.standard.nodes.reduce.Reduce"
+    "Transpose": "dace.libraries.standard.nodes.transpose.Transpose",
+    "TensorTranspose": "dace.libraries.standard.nodes.ttranspose.TensorTranspose"
   },
   "__data_container_types__": {
+    "Structure": "Structure",
+    "Tensor": "Tensor",
+    "StructureView": "StructureView",
     "Scalar": "Scalar",
     "Array": "Array",
     "Stream": "Stream",
+    "StructArray": "StructArray",
     "View": "View",
     "Reference": "Reference"
   },
@@ -530,7 +561,684 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "Structure": {
+    "members": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "TensorIndexDense": {
+    "_ordered": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_unique": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    }
+  },
+  "TensorIndexCompressed": {
+    "_full": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_ordered": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_unique": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    }
+  },
+  "TensorIndexSingleton": {
+    "_full": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_ordered": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_unique": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    }
+  },
+  "TensorIndexRange": {
+    "_ordered": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_unique": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    }
+  },
+  "TensorIndexOffset": {
+    "_ordered": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "_unique": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    }
+  },
+  "Tensor": {
+    "value_dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "tensor_shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "indices": {
+      "metatype": "list",
+      "desc": "",
+      "category": "General",
+      "default": [],
+      "element_type": "TensorIndex"
+    },
+    "index_ordering": {
+      "metatype": "list",
+      "desc": "",
+      "category": "General",
+      "default": [],
+      "element_type": "SymExpr"
+    },
+    "value_count": {
+      "metatype": "SymbolicProperty",
+      "desc": "",
+      "category": "General",
+      "default": 0
+    },
+    "members": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "StructureView": {
+    "members": {
+      "metatype": "OrderedDictProperty",
+      "desc": "Dictionary of structure members",
+      "category": "General",
+      "default": []
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Structure type name",
+      "category": "General",
+      "default": ""
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -686,7 +1394,8 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -890,7 +1599,8 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -1053,7 +1763,219 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
+      ]
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "str"
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    }
+  },
+  "StructArray": {
+    "stype": {
+      "metatype": "Data",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
+    "allow_conflicts": {
+      "metatype": "bool",
+      "desc": "If enabled, allows more than one memlet to write to the same memory location without conflict resolution.",
+      "category": "General",
+      "default": false
+    },
+    "strides": {
+      "metatype": "tuple",
+      "desc": "For each dimension, the number of elements to skip in order to obtain the next element in that dimension.",
+      "category": "General",
+      "default": []
+    },
+    "total_size": {
+      "metatype": "SymbolicProperty",
+      "desc": "The total allocated size of the array. Can be used for padding.",
+      "category": "General",
+      "default": 0
+    },
+    "offset": {
+      "metatype": "tuple",
+      "desc": "Initial offset to translate all indices by.",
+      "category": "General",
+      "default": []
+    },
+    "may_alias": {
+      "metatype": "bool",
+      "desc": "This pointer may alias with other pointers in the same function",
+      "category": "General",
+      "default": false
+    },
+    "alignment": {
+      "metatype": "int",
+      "desc": "Allocation alignment in bytes (0 uses compiler-default)",
+      "category": "General",
+      "default": 0
+    },
+    "start_offset": {
+      "metatype": "int",
+      "desc": "Allocation offset elements for manual alignment (pre-padding)",
+      "category": "General",
+      "default": 0
+    },
+    "optional": {
+      "metatype": "bool",
+      "desc": "Specifies whether this array may have a value of None. If False, the array must not be None. If option is not set, it is inferred by other properties and the OptionalArrayInference pass.",
+      "category": "General",
+      "default": null
+    },
+    "pool": {
+      "metatype": "bool",
+      "desc": "Hint to the allocator that using a memory pool is preferred",
+      "category": "General",
+      "default": false
+    },
+    "dtype": {
+      "metatype": "typeclass",
+      "desc": "",
+      "category": "General",
+      "default": "int32",
+      "base_types": [
+        "bool",
+        "bool_",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float16",
+        "float32",
+        "float64",
+        "complex64",
+        "complex128"
+      ],
+      "compound_types": {
+        "vector": {
+          "elements": {
+            "type": "str",
+            "default": "0"
+          },
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "pointer": {
+          "dtype": {
+            "type": "typeclass",
+            "default": "bool"
+          }
+        },
+        "opaque": {
+          "ctype": {
+            "type": "str",
+            "default": ""
+          }
+        },
+        "struct": {
+          "name": {
+            "type": "str",
+            "default": ""
+          },
+          "data": {
+            "type": "dict",
+            "default": {},
+            "value_type": "typeclass"
+          },
+          "length": {
+            "type": "dict",
+            "default": {},
+            "value_type": "int"
+          },
+          "bytes": {
+            "type": "int",
+            "default": 0
+          }
+        },
+        "callback": {
+          "arguments": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          },
+          "returntypes": {
+            "type": "list",
+            "element_type": "typeclass",
+            "default": []
+          }
+        }
+      }
+    },
+    "shape": {
+      "metatype": "tuple",
+      "desc": "",
+      "category": "General",
+      "default": []
+    },
+    "transient": {
+      "metatype": "bool",
+      "desc": "",
+      "category": "General",
+      "default": false
+    },
+    "storage": {
+      "metatype": "StorageType",
+      "desc": "Storage location",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Register",
+        "CPU_Pinned",
+        "CPU_Heap",
+        "CPU_ThreadLocal",
+        "GPU_Global",
+        "GPU_Shared",
+        "FPGA_Global",
+        "FPGA_Local",
+        "FPGA_Registers",
+        "FPGA_ShiftRegister",
+        "SVE_Register",
+        "Snitch_TCDM",
+        "Snitch_L2",
+        "Snitch_SSR"
+      ]
+    },
+    "lifetime": {
+      "metatype": "AllocationLifetime",
+      "desc": "Data allocation span",
+      "category": "General",
+      "default": "Scope",
+      "choices": [
+        "Scope",
+        "State",
+        "SDFG",
+        "Global",
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -1257,7 +2179,8 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -1461,7 +2384,8 @@
         "State",
         "SDFG",
         "Global",
-        "Persistent"
+        "Persistent",
+        "External"
       ]
     },
     "location": {
@@ -1746,6 +2670,12 @@
       "category": "General",
       "default": null
     },
+    "ignored_symbols": {
+      "metatype": "set",
+      "desc": "A set of symbols to ignore when computing the symbols used by this tasklet. Used to skip certain symbols in non-Python tasklets, where only string analysis is possible; and to skip globals in Python tasklets that should not be given as parameters to the SDFG.",
+      "category": "General",
+      "default": []
+    },
     "label": {
       "metatype": "str",
       "desc": "Name of the CodeNode",
@@ -1869,6 +2799,12 @@
       "category": "General",
       "default": null
     },
+    "ignored_symbols": {
+      "metatype": "set",
+      "desc": "A set of symbols to ignore when computing the symbols used by this tasklet. Used to skip certain symbols in non-Python tasklets, where only string analysis is possible; and to skip globals in Python tasklets that should not be given as parameters to the SDFG.",
+      "category": "General",
+      "default": []
+    },
     "label": {
       "metatype": "str",
       "desc": "Name of the CodeNode",
@@ -1923,6 +2859,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2064,6 +3001,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2163,6 +3101,13 @@
       "indirected": true,
       "element_type": "int"
     },
+    "gpu_launch_bounds": {
+      "metatype": "str",
+      "desc": "GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) enables the statement if block size is not symbolic, and any other value (including tuples) sets it explicitly.",
+      "category": "General",
+      "default": "0",
+      "indirected": true
+    },
     "in_connectors": {
       "metatype": "dict",
       "desc": "A set of input connectors for this node.",
@@ -2231,6 +3176,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2320,6 +3266,12 @@
       "category": "General",
       "default": null,
       "element_type": "int"
+    },
+    "gpu_launch_bounds": {
+      "metatype": "str",
+      "desc": "GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) enables the statement if block size is not symbolic, and any other value (including tuples) sets it explicitly.",
+      "category": "General",
+      "default": "0"
     }
   },
   "ConsumeEntry": {
@@ -2362,6 +3314,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2489,6 +3442,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2615,6 +3569,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2714,6 +3669,13 @@
       "indirected": true,
       "element_type": "int"
     },
+    "gpu_launch_bounds": {
+      "metatype": "str",
+      "desc": "GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) enables the statement if block size is not symbolic, and any other value (including tuples) sets it explicitly.",
+      "category": "General",
+      "default": "0",
+      "indirected": true
+    },
     "in_connectors": {
       "metatype": "dict",
       "desc": "A set of input connectors for this node.",
@@ -2812,6 +3774,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2901,6 +3864,12 @@
       "category": "General",
       "default": null,
       "element_type": "int"
+    },
+    "gpu_launch_bounds": {
+      "metatype": "str",
+      "desc": "GPU kernel launch bounds. A value of -1 disables the statement, 0 (default) enables the statement if block size is not symbolic, and any other value (including tuples) sets it explicitly.",
+      "category": "General",
+      "default": "0"
     }
   },
   "LibraryNode": {
@@ -2926,6 +3895,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -2989,13 +3959,17 @@
       "value_type": "typeclass"
     }
   },
-  "SDFGState": {
+  "DataflowGraphView": {},
+  "ControlGraphView": {},
+  "ControlFlowBlock": {
     "is_collapsed": {
       "metatype": "bool",
-      "desc": "Show this node/scope/state as collapsed",
+      "desc": "Show this block as collapsed",
       "category": "General",
       "default": false
-    },
+    }
+  },
+  "SDFGState": {
     "nosync": {
       "metatype": "bool",
       "desc": "Do not synchronize at the end of the state",
@@ -3064,6 +4038,70 @@
       "default": {},
       "key_type": "str",
       "value_type": "pystr_to_symbolic"
+    },
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
+    }
+  },
+  "ControlFlowRegion": {
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
+    }
+  },
+  "LoopRegion": {
+    "update_statement": {
+      "metatype": "CodeBlock",
+      "desc": "The loop update statement. May be None if the update happens elsewhere.",
+      "category": "General",
+      "default": null
+    },
+    "init_statement": {
+      "metatype": "CodeBlock",
+      "desc": "The loop init statement. May be None if the initialization happens elsewhere.",
+      "category": "General",
+      "default": null
+    },
+    "loop_condition": {
+      "metatype": "CodeBlock",
+      "desc": "The loop condition",
+      "category": "General",
+      "default": null
+    },
+    "inverted": {
+      "metatype": "bool",
+      "desc": "If True, the loop condition is checked after the first iteration.",
+      "category": "General",
+      "default": false
+    },
+    "loop_variable": {
+      "metatype": "str",
+      "desc": "The loop variable, if given",
+      "category": "General",
+      "default": ""
+    },
+    "break_states": {
+      "metatype": "set",
+      "desc": "States that when reached break out of the loop",
+      "category": "General",
+      "default": []
+    },
+    "continue_states": {
+      "metatype": "set",
+      "desc": "States that when reached directly execute the next iteration",
+      "category": "General",
+      "default": []
+    },
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
     }
   },
   "ProcessGrid": {
@@ -3289,6 +4327,12 @@
     }
   },
   "SDFG": {
+    "name": {
+      "metatype": "str",
+      "desc": "Name of the SDFG",
+      "category": "General",
+      "default": ""
+    },
     "arg_names": {
       "metatype": "list",
       "desc": "Ordered argument names (used for calling conventions).",
@@ -3303,7 +4347,7 @@
       "default": {}
     },
     "_arrays": {
-      "metatype": "dict",
+      "metatype": "NestedDict",
       "desc": "Data descriptors for this SDFG",
       "category": "General",
       "default": {}
@@ -3378,7 +4422,7 @@
       "metatype": "bool",
       "desc": "Whether to generate OpenMP sections in code",
       "category": "General",
-      "default": true
+      "default": false
     },
     "debuginfo": {
       "metatype": "DebugInfo",
@@ -3424,6 +4468,12 @@
       "default": {},
       "key_type": "str",
       "value_type": "str"
+    },
+    "is_collapsed": {
+      "metatype": "bool",
+      "desc": "Show this block as collapsed",
+      "category": "General",
+      "default": false
     }
   },
   "Pass": {},
@@ -3580,6 +4630,637 @@
       "default": []
     }
   },
+  "StateReachability": {},
+  "SymbolAccessSets": {},
+  "AccessSets": {},
+  "FindAccessStates": {},
+  "FindAccessNodes": {},
+  "SymbolWriteScopes": {},
+  "ScalarWriteShadowScopes": {},
+  "MapCollapse": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.code.CodeLibraryNode": {
+    "inputdict": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "General",
+      "default": {}
+    },
+    "outputdict": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "General",
+      "default": {}
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "default"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
+  "Expansion": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandGearbox": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.gearbox.Gearbox": {
+    "size": {
+      "metatype": "SymbolicProperty",
+      "desc": "Number of wide vectors to convert to/from narrow vectors.",
+      "category": "General",
+      "default": 0
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "pure"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
+  "CUDA": {},
+  "HPTT": {},
+  "ExpandReducePure": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReducePureSequentialDim": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceOpenMP": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDADevice": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDABlock": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceCUDABlockAll": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceFPGAPartialReduction": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "ExpandReduceGPUAuto": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.reduce.Reduce": {
+    "axes": {
+      "metatype": "list",
+      "desc": "",
+      "category": "General",
+      "default": null,
+      "element_type": "int"
+    },
+    "wcr": {
+      "metatype": "LambdaProperty",
+      "desc": "",
+      "category": "General",
+      "default": "(lambda a, b: a)"
+    },
+    "identity": {
+      "metatype": "Property",
+      "desc": "",
+      "category": "General",
+      "default": null
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "pure",
+        "pure-seq",
+        "OpenMP",
+        "CUDA (device)",
+        "CUDA (block)",
+        "CUDA (block allreduce)",
+        "FPGAPartialReduction",
+        "GPUAuto"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
   "SpecializeMatMul": {
     "sdfg_id": {
       "metatype": "int",
@@ -3646,6 +5327,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -3998,6 +5680,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -4319,6 +6002,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -4731,6 +6415,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -4907,6 +6592,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -5226,216 +6912,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
-  "ExpandTransposePure": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandTransposeMKL": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandTransposeOpenBLAS": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandTransposeCuBLAS": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "dace.libraries.blas.nodes.transpose.Transpose": {
-    "dtype": {
-      "metatype": "typeclass",
-      "desc": "",
-      "category": "General",
-      "default": null
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "pure",
-        "MKL",
-        "OpenBLAS",
-        "cuBLAS"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -5594,6 +7071,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -5701,6 +7179,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -5792,108 +7271,7 @@
       "default": 0
     }
   },
-  "dace.libraries.standard.nodes.code.CodeLibraryNode": {
-    "inputdict": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "General",
-      "default": {}
-    },
-    "outputdict": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "General",
-      "default": {}
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "default"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
-  "Expansion": {
+  "ExpandTransposePure": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -5921,7 +7299,7 @@
       "default": 0
     }
   },
-  "ExpandGearbox": {
+  "ExpandTransposeMKL": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -5949,103 +7327,7 @@
       "default": 0
     }
   },
-  "dace.libraries.standard.nodes.gearbox.Gearbox": {
-    "size": {
-      "metatype": "SymbolicProperty",
-      "desc": "Number of wide vectors to convert to/from narrow vectors.",
-      "category": "General",
-      "default": 0
-    },
-    "name": {
-      "metatype": "str",
-      "desc": "Name of node",
-      "category": "General",
-      "default": ""
-    },
-    "implementation": {
-      "metatype": "LibraryImplementationProperty",
-      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
-      "category": "General",
-      "default": null,
-      "choices": [
-        "pure"
-      ]
-    },
-    "schedule": {
-      "metatype": "ScheduleType",
-      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
-      "category": "General",
-      "default": "Default",
-      "choices": [
-        "Default",
-        "Sequential",
-        "MPI",
-        "CPU_Multicore",
-        "Unrolled",
-        "SVE_Map",
-        "GPU_Default",
-        "GPU_Device",
-        "GPU_ThreadBlock",
-        "GPU_ThreadBlock_Dynamic",
-        "GPU_Persistent",
-        "FPGA_Device",
-        "Snitch",
-        "Snitch_Multicore",
-        "FPGA_Multi_Pumped"
-      ]
-    },
-    "debuginfo": {
-      "metatype": "DebugInfo",
-      "desc": "",
-      "category": "General",
-      "default": {
-        "type": "DebugInfo",
-        "start_line": 0,
-        "end_line": 0,
-        "start_column": 0,
-        "end_column": 0,
-        "filename": null
-      }
-    },
-    "label": {
-      "metatype": "str",
-      "desc": "Name of the CodeNode",
-      "category": "General",
-      "default": ""
-    },
-    "location": {
-      "metatype": "dict",
-      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "pystr_to_symbolic"
-    },
-    "environments": {
-      "metatype": "set",
-      "desc": "Environments required by CMake to build and run this code node.",
-      "category": "General",
-      "default": []
-    },
-    "in_connectors": {
-      "metatype": "dict",
-      "desc": "A set of input connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    },
-    "out_connectors": {
-      "metatype": "dict",
-      "desc": "A set of output connectors for this node.",
-      "category": "General",
-      "default": {},
-      "key_type": "str",
-      "value_type": "typeclass"
-    }
-  },
-  "CUDA": {},
-  "ExpandReducePure": {
+  "ExpandTransposeOpenBLAS": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -6073,7 +7355,7 @@
       "default": 0
     }
   },
-  "ExpandReducePureSequentialDim": {
+  "ExpandTransposeCuBLAS": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -6101,190 +7383,9 @@
       "default": 0
     }
   },
-  "ExpandReduceOpenMP": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDADevice": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDABlock": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceCUDABlockAll": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceFPGAPartialReduction": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "ExpandReduceGPUAuto": {
-    "sdfg_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "state_id": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    },
-    "_subgraph": {
-      "metatype": "dict",
-      "desc": "",
-      "category": "(Debug)",
-      "default": {},
-      "key_type": "int",
-      "value_type": "int"
-    },
-    "expr_index": {
-      "metatype": "int",
-      "desc": "",
-      "category": "(Debug)",
-      "default": 0
-    }
-  },
-  "dace.libraries.standard.nodes.reduce.Reduce": {
-    "axes": {
-      "metatype": "list",
-      "desc": "",
-      "category": "General",
-      "default": null,
-      "element_type": "int"
-    },
-    "wcr": {
-      "metatype": "LambdaProperty",
-      "desc": "",
-      "category": "General",
-      "default": "(lambda a, b: a)"
-    },
-    "identity": {
-      "metatype": "Property",
+  "dace.libraries.standard.nodes.transpose.Transpose": {
+    "dtype": {
+      "metatype": "typeclass",
       "desc": "",
       "category": "General",
       "default": null
@@ -6302,13 +7403,9 @@
       "default": null,
       "choices": [
         "pure",
-        "pure-seq",
-        "OpenMP",
-        "CUDA (device)",
-        "CUDA (block)",
-        "CUDA (block allreduce)",
-        "FPGAPartialReduction",
-        "GPUAuto"
+        "MKL",
+        "OpenBLAS",
+        "cuBLAS"
       ]
     },
     "schedule": {
@@ -6321,6 +7418,7 @@
         "Sequential",
         "MPI",
         "CPU_Multicore",
+        "CPU_Persistent",
         "Unrolled",
         "SVE_Map",
         "GPU_Default",
@@ -6384,14 +7482,7 @@
       "value_type": "typeclass"
     }
   },
-  "StateReachability": {},
-  "SymbolAccessSets": {},
-  "AccessSets": {},
-  "FindAccessStates": {},
-  "FindAccessNodes": {},
-  "SymbolWriteScopes": {},
-  "ScalarWriteShadowScopes": {},
-  "MapCollapse": {
+  "ExpandPure": {
     "sdfg_id": {
       "metatype": "int",
       "desc": "",
@@ -6419,12 +7510,202 @@
       "default": 0
     }
   },
+  "ExpandHPTT": {
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "dace.libraries.standard.nodes.ttranspose.TensorTranspose": {
+    "axes": {
+      "metatype": "list",
+      "desc": "Permutation of input tensor's modes",
+      "category": "General",
+      "default": [],
+      "element_type": "int"
+    },
+    "alpha": {
+      "metatype": "Number",
+      "desc": "Input tensor scaling factor",
+      "category": "General",
+      "default": 1
+    },
+    "beta": {
+      "metatype": "Number",
+      "desc": "Output tensor scaling factor",
+      "category": "General",
+      "default": 0
+    },
+    "name": {
+      "metatype": "str",
+      "desc": "Name of node",
+      "category": "General",
+      "default": ""
+    },
+    "implementation": {
+      "metatype": "LibraryImplementationProperty",
+      "desc": "Which implementation this library node will expand into.Must match a key in the list of possible implementations.",
+      "category": "General",
+      "default": null,
+      "choices": [
+        "pure",
+        "HPTT"
+      ]
+    },
+    "schedule": {
+      "metatype": "ScheduleType",
+      "desc": "If set, determines the default device mapping of the node upon expansion, if expanded to a nested SDFG.",
+      "category": "General",
+      "default": "Default",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
+    },
+    "debuginfo": {
+      "metatype": "DebugInfo",
+      "desc": "",
+      "category": "General",
+      "default": {
+        "type": "DebugInfo",
+        "start_line": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "end_column": 0,
+        "filename": null
+      }
+    },
+    "label": {
+      "metatype": "str",
+      "desc": "Name of the CodeNode",
+      "category": "General",
+      "default": ""
+    },
+    "location": {
+      "metatype": "dict",
+      "desc": "Full storage location identifier (e.g., rank, GPU ID)",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "pystr_to_symbolic"
+    },
+    "environments": {
+      "metatype": "set",
+      "desc": "Environments required by CMake to build and run this code node.",
+      "category": "General",
+      "default": []
+    },
+    "in_connectors": {
+      "metatype": "dict",
+      "desc": "A set of input connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    },
+    "out_connectors": {
+      "metatype": "dict",
+      "desc": "A set of output connectors for this node.",
+      "category": "General",
+      "default": {},
+      "key_type": "str",
+      "value_type": "typeclass"
+    }
+  },
   "MapReduceFusion": {
     "no_init": {
       "metatype": "bool",
       "desc": "If enabled, does not create initialization states for reduce nodes with identity",
       "category": "General",
       "default": false
+    },
+    "sdfg_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "state_id": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    },
+    "_subgraph": {
+      "metatype": "dict",
+      "desc": "",
+      "category": "(Debug)",
+      "default": {},
+      "key_type": "int",
+      "value_type": "int"
+    },
+    "expr_index": {
+      "metatype": "int",
+      "desc": "",
+      "category": "(Debug)",
+      "default": 0
+    }
+  },
+  "MapExpansion": {
+    "inner_schedule": {
+      "metatype": "ScheduleType",
+      "desc": "Schedule for inner maps",
+      "category": "General",
+      "default": "Sequential",
+      "choices": [
+        "Default",
+        "Sequential",
+        "MPI",
+        "CPU_Multicore",
+        "CPU_Persistent",
+        "Unrolled",
+        "SVE_Map",
+        "GPU_Default",
+        "GPU_Device",
+        "GPU_ThreadBlock",
+        "GPU_ThreadBlock_Dynamic",
+        "GPU_Persistent",
+        "FPGA_Device",
+        "Snitch",
+        "Snitch_Multicore",
+        "FPGA_Multi_Pumped"
+      ]
     },
     "sdfg_id": {
       "metatype": "int",
@@ -7795,7 +9076,7 @@
       "metatype": "bool",
       "desc": "Validate the sdfg and the nested sdfg",
       "category": "General",
-      "default": true
+      "default": false
     },
     "include_in_assignment": {
       "metatype": "bool",
@@ -8527,7 +9808,7 @@
   "FuseStates": {
     "permissive": {
       "metatype": "bool",
-      "desc": "If True, ignores some race conditions checks.",
+      "desc": "If True, ignores some race condition checks.",
       "category": "General",
       "default": false
     },
@@ -8558,6 +9839,7 @@
       "default": true
     }
   },
+  "FixNestedSDFGReferences": {},
   "OptionalArrayInference": {},
   "PatternMatchAndApply": {
     "transformations": {
@@ -8715,6 +9997,12 @@
       "desc": "Prune nested SDFGs recursively",
       "category": "General",
       "default": true
+    },
+    "symbols": {
+      "metatype": "set",
+      "desc": "Limit considered symbols to this set",
+      "category": "General",
+      "default": null
     }
   },
   "ScalarToSymbolPromotion": {
