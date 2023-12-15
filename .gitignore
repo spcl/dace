@@ -1,0 +1,2 @@
+# Include the built files from the webclient
+!webclient2/dist/**/*
