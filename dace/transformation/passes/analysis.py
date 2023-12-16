@@ -531,10 +531,7 @@ class AccessRanges(ppl.Pass):
             result: Dict[str, Set[Memlet]] = defaultdict(set)
             for state in sdfg.states():
                 for anode in state.data_nodes():
-                    seen_edges = set()
                     for e in state.all_edges(anode):
-                        if e in seen_edges:  # Skip already-processed edges
-                            continue
                         if e.dst is anode and e.dst_conn == 'set':  # Skip reference sets
                             continue
                         if e.data.is_empty():  # Skip empty memlets
