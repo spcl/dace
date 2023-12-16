@@ -525,7 +525,13 @@ namespace dace
             return (T)std::pow(a, (T)b);
         }
 
-        template<typename T>
+        template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)
+        {
+            return a;
+        }
+
+        template<typename T, typename std::enable_if<std::is_floating_point<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI int ifloor(const T& a)
         {
             return (int)std::floor(a);

@@ -3,6 +3,7 @@
 #define __DACE_NAN_H
 
 // Class to define a stateless NAN and related operators.
+#include <limits>
 
 namespace dace
 {
@@ -15,15 +16,15 @@ namespace dace
             operator int() const = delete;
             operator float() const
             {
-                return std::nanf("");
+                return std::numeric_limits<float>::quiet_NaN();
             }
             operator double() const
             {
-                return std::nan("");
+                return std::numeric_limits<double>::quiet_NaN();
             }
             operator long double() const
             {
-                return std::nanl("");
+                return std::numeric_limits<long double>::quiet_NaN();
             }
             typeless_nan operator+() const
             {
