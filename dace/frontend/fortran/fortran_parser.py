@@ -1294,6 +1294,8 @@ def recursive_ast_improver(ast,
     ufl.get_used_modules(ast)
     objects_in_modules = ufl.objects_in_use
     used_modules = ufl.list_of_modules
+    if ast.children[0].children[0].children[1].string=="mo_fortran_tools":
+        print("Assumption failed: mo_fortran_tools is used")
     fandsl=ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
     functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
@@ -1363,7 +1365,8 @@ def recursive_ast_improver(ast,
                 exclude_list.append(mod.children[0].children[1].string)
 
     for i in added_modules:
-        ast.children.append(i)
+        if ast.children.count(i) == 0:
+            ast.children.append(i)
         asts[i.children[0].children[1].string.lower()] = i
     return ast
 
@@ -1404,10 +1407,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         
         for j in in_edges:
             in_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            # if in_names_local_obj is not None:
+            #   for k in in_names_local_obj:
+            #     if k.__class__.__name__!="Name":
+            #         print("Assumption failed: Object list contains non-name node")
             in_names_local=[]
             if in_names_local_obj is not None:
                 for k in in_names_local_obj:
-                    in_names_local.append(k.string)
+                    if k.__class__.__name__=="Name":
+                        in_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        in_names_local.append(k.children[1].string)    
             if in_names_local is not None:
                 for k in in_names_local:
                     if k not in in_names:
@@ -1417,7 +1427,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             out_names_local=[]
             if out_names_local_obj is not None:
                 for k in out_names_local_obj:
-                    out_names_local.append(k.string)
+                    if k.__class__.__name__=="Name":
+                        out_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        out_names_local.append(k.children[1].string)        
             
             if out_names_local is not None:
                 for k in out_names_local:
@@ -1464,16 +1477,25 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             out_names_local=[]
             if out_names_local_obj is not None:
                 for k in out_names_local_obj:
-                    out_names_local.append(k.string)
+                    if k.__class__.__name__=="Name":
+                        out_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        out_names_local.append(k.children[1].string)   
+                    
             new_out_names_local=[]
             if len(out_names_local)==0:
                 continue
             for k in out_names_local:
                 if k not in not_used:
                     for kk in out_names_local_obj:
-                        if kk.string==k:
-                            new_out_names_local.append(kk)
-                            break
+                        if kk.__class__.__name__=="Name":
+                            if kk.string==k:
+                                new_out_names_local.append(kk)
+                                break
+                        elif kk.__class__.__name__=="Rename":
+                            if kk.children[1].string==k:
+                                new_out_names_local.append(kk)
+                                break    
             if len(new_out_names_local)>0:
                 if simple_graph.has_node(i)==False:
                     if i!=simplify_order[0]:              
@@ -1510,18 +1532,22 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj in res.list_of_subroutines:
                         if jj not in fands_list:
                             fands_list.append(jj)
-        #print("Module " + i + " used names: " + str(parse_list[i]))
+        print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list)) 
     top_level_ast = parse_order.pop()
     changes=True
-    while changes:
-        changes=False
-        for i in ast.children:
-            if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
-                ast.children.remove(i)
-                changes=True
-    #ast.children=new_children  
+    new_children=[]
+    
+    for i in ast.children:
+        if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+            print("Module " + i.children[0].children[1].string + " not needing parsing")
+        else:
+            new_children.append(i)
+
+    ast.children.clear()
+    for i in new_children:
+        ast.children.append(i)  
     name_dict = {}
     rename_dict = {}
     for i in parse_order:
