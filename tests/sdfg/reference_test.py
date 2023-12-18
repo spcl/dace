@@ -112,9 +112,17 @@ def test_reference_tasklet_assignment_analysis():
     }
 
 
+def test_reference_tasklet_assignment_stree():
+    from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t, treenodes as tn
+    sdfg = _create_tasklet_assignment_sdfg()
+    stree = s2t.as_schedule_tree(sdfg)
+    assert [type(n) for n in stree.children] == [tn.TaskletNode, tn.RefSetNode, tn.TaskletNode]
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
     test_reference_sources_pass()
     test_reference_tasklet_assignment()
     test_reference_tasklet_assignment_analysis()
+    test_reference_tasklet_assignment_stree()
