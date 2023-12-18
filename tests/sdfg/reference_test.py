@@ -1,8 +1,22 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the use of Reference data descriptors. """
 import dace
+from dace.sdfg import validation
 from dace.transformation.passes.analysis import FindReferenceSources
 import numpy as np
+import pytest
+
+
+def test_unset_reference():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_reference('ref', [20], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('doit', {'a'}, {'b'}, 'b = a + 1')
+    state.add_edge(state.add_read('ref'), None, t, 'a', dace.Memlet('ref[0]'))
+    state.add_edge(t, 'b', state.add_write('ref'), None, dace.Memlet('ref[1]'))
+
+    with pytest.raises(validation.InvalidSDFGNodeError):
+        sdfg.validate()
 
 
 def _create_branch_sdfg():
@@ -58,5 +72,6 @@ def test_reference_sources_pass():
 
 
 if __name__ == '__main__':
+    test_unset_reference()
     test_reference_branch()
     test_reference_sources_pass()
