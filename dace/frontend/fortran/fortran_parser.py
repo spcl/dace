@@ -23,6 +23,7 @@ from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
+import os
 from os import path
 from shutil import copyfile
 import networkx as nx
@@ -1367,7 +1368,7 @@ def recursive_ast_improver(ast,
         asts[i.children[0].children[1].string.lower()] = i
     return ast
 
-def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list):
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -1669,7 +1670,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if path.lower().find(i.name.name.lower())!=-1:
                 mypath=path
                 break
-        copyfile(mypath, "icon-artifact/sources/"+i.name.name.lower()+".f90")
+        copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             if j.execution_part is None:
                 continue
@@ -1681,7 +1682,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.translate(program, sdfg)
             sdfg.validate()
             sdfg.simplify(verbose=True)
-            sdfg.save("icon-artifact/sdfgs/"+sdfg.name + ".sdfg")
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
             try:
                 sdfg.compile()
             except:

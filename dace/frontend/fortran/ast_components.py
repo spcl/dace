@@ -759,6 +759,7 @@ class InternalFortranAst:
                     #sanity check
                     if isinstance(dim, f03.Explicit_Shape_Spec):
                         self.parse_shape_specification(dim, size, offset)
+
             #handle initializiation
             init = None
 
@@ -775,14 +776,47 @@ class InternalFortranAst:
             if symbol == False:
 
                 if attr_size is None:
-                    vardecls.append(
-                        ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                        type=testtype,
-                                                        alloc=alloc,
-                                                        sizes=size,
-                                                        offsets=offset,
-                                                        kind=kind,
-                                                        line_number=node.item.span))
+
+                    if size is not None:
+                        vardecls.append(
+                            ast_internal_classes.Var_Decl_Node(name=actual_name.name,
+                                                            type=testtype,
+                                                            alloc=alloc,
+                                                            sizes=size,
+                                                            offsets=offset,
+                                                            kind=kind,
+                                                            line_number=node.item.span))
+                    else:
+                        # We do not know the array size. Thus, we insert symbols
+                        # to mark its size
+                        shape = get_children(var, "Assumed_Shape_Spec_List")
+                        # this is based on structures observed in Fortran codes
+                        # I don't know why the shape is an array
+                        if len(shape) > 0:
+                            dims_count = len(shape[0].items)
+                            size = []
+                            for i in range(dims_count):
+
+                                name = f'__dace_ARRAY_{actual_name.name}_dim_{i}_size'
+
+                                var = ast_internal_classes.Var_Decl_Node(name=name,
+                                                                type='INTEGER',
+                                                                alloc=False,
+                                                                sizes=None,
+                                                                offsets=None,
+                                                                kind=None,
+                                                                line_number=node.item.span)
+                                size.append(var)
+                                self.symbols[name] = None
+
+                        vardecls.append(
+                            ast_internal_classes.Var_Decl_Node(name=actual_name.name,
+                                                            type=testtype,
+                                                            alloc=alloc,
+                                                            sizes=size,
+                                                            offsets=offset,
+                                                            kind=kind,
+                                                            line_number=node.item.span))
                 else:
                     vardecls.append(
                         ast_internal_classes.Var_Decl_Node(name=actual_name.name,
