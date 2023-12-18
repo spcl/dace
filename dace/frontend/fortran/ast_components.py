@@ -806,7 +806,7 @@ class InternalFortranAst:
                                                                 offsets=None,
                                                                 kind=None,
                                                                 line_number=node.item.span)
-                                size.append(var)
+                                size.append(ast_internal_classes.Name_Node(name=name))
                                 self.symbols[name] = None
 
                         vardecls.append(
