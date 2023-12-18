@@ -5,6 +5,8 @@ on:
     branches: [ master, ci-fix ]
   pull_request:
     branches: [ master, ci-fix ]
+  merge_group:
+    branches: [ master, ci-fix ]
 
 jobs:
   test-gpu:
