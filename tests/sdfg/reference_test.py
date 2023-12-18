@@ -47,6 +47,23 @@ def _create_branch_sdfg():
     return sdfg
 
 
+def _create_tasklet_assignment_sdfg():
+    sdfg = dace.SDFG('refta')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [19], dace.float64)
+    sdfg.add_reference('ref', [19], dace.float64)
+
+    state = sdfg.add_state()
+    t = state.add_tasklet('ptrset', {'a': dace.pointer(dace.float64)}, {'o'}, 'o = a + 1')
+    state.add_edge(state.add_read('A'), None, t, 'a', dace.Memlet('A'))
+    ref = state.add_access('ref')
+    state.add_edge(t, 'o', ref, 'set', dace.Memlet('ref'))
+    t2 = state.add_tasklet('addone', {'a'}, {'o'}, 'o = a + 1')
+    state.add_edge(ref, None, t2, 'a', dace.Memlet('ref[0]'))
+    state.add_edge(t2, 'o', state.add_write('B'), None, dace.Memlet('B[0]'))
+    return sdfg
+
+
 def test_reference_branch():
     sdfg = _create_branch_sdfg()
 
@@ -71,7 +88,33 @@ def test_reference_sources_pass():
     assert sources == {dace.Memlet('A[0:20]', volume=1), dace.Memlet('B[0:20]', volume=1)}
 
 
+def test_reference_tasklet_assignment():
+    sdfg = _create_tasklet_assignment_sdfg()
+
+    A = np.random.rand(20)
+    B = np.random.rand(19)
+    ref = np.copy(B)
+    ref[0] = A[1] + 1
+
+    sdfg(A=A, B=B)
+    assert np.allclose(ref, B)
+
+
+def test_reference_tasklet_assignment_analysis():
+    sdfg = _create_tasklet_assignment_sdfg()
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1 and 'ref' in sources  # There is one reference
+    sources = sources['ref']
+    assert sources == {
+        next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet) and n.label == 'ptrset')
+    }
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
     test_reference_sources_pass()
+    test_reference_tasklet_assignment()
+    test_reference_tasklet_assignment_analysis()
