@@ -1,10 +1,11 @@
-# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the use of Reference data descriptors. """
 import dace
+from dace.transformation.passes.analysis import FindReferenceSources
 import numpy as np
 
 
-def test_reference_branch():
+def _create_branch_sdfg():
     sdfg = dace.SDFG('refbranch')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
@@ -29,6 +30,11 @@ def test_reference_branch():
     r = finish.add_read('ref')
     w = finish.add_write('out')
     finish.add_nedge(r, w, dace.Memlet('ref'))
+    return sdfg
+
+
+def test_reference_branch():
+    sdfg = _create_branch_sdfg()
 
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -41,5 +47,16 @@ def test_reference_branch():
     assert np.allclose(out, A)
 
 
+def test_reference_sources_pass():
+    sdfg = _create_branch_sdfg()
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1 and 'ref' in sources  # There is one reference
+    sources = sources['ref']
+    assert sources == {dace.Memlet('A[0:20]', volume=1), dace.Memlet('B[0:20]', volume=1)}
+
+
 if __name__ == '__main__':
     test_reference_branch()
+    test_reference_sources_pass()
