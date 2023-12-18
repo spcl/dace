@@ -64,6 +64,70 @@ def _create_tasklet_assignment_sdfg():
     return sdfg
 
 
+def _create_twostate_sdfg():
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_reference('ref', [10], dace.float64)
+
+    setstate = sdfg.add_state()
+    computestate = sdfg.add_state_after(setstate)
+
+    setstate.add_edge(setstate.add_read('A'), None, setstate.add_write('ref'), 'set', dace.Memlet('A[10:20]'))
+
+    # Read from A[10], write to A[11]
+    t = computestate.add_tasklet('addone', {'a'}, {'b'}, 'b = a + 1')
+    computestate.add_edge(computestate.add_write('ref'), None, t, 'a', dace.Memlet('ref[0]'))
+    computestate.add_edge(t, 'b', computestate.add_write('ref'), None, dace.Memlet('ref[1]'))
+    return sdfg
+
+
+def _create_multisubset_sdfg():
+    """
+    A Jacobi-2d style SDFG to test multi-dimensional subsets and the use of an empty memlet
+    as a dependency edge.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [22, 22], dace.float64)
+    sdfg.add_array('B', [20, 20], dace.float64)
+    sdfg.add_reference('ref1', [22], dace.float64)
+    sdfg.add_reference('ref2', [22], dace.float64, strides=[22])
+    sdfg.add_reference('ref3', [22], dace.float64, strides=[22])
+    sdfg.add_reference('ref4', [22], dace.float64, strides=[22])
+    sdfg.add_reference('refB', [20], dace.float64)
+
+    state = sdfg.add_state()
+
+    # Access nodes
+    a = state.add_read('A')
+    b = state.add_read('B')
+    r1 = state.add_access('ref1')
+    r2 = state.add_access('ref2')
+    r3 = state.add_access('ref3')
+    r4 = state.add_access('ref4')
+    rbset = state.add_access('refB')
+    rbwrite = state.add_write('refB')
+
+    # Add reference sets
+    state.add_edge(a, None, r1, 'set', dace.Memlet('A[5, 0:22]'))
+    state.add_edge(a, None, r2, 'set', dace.Memlet('A[0:22, 5]'))
+    state.add_edge(a, None, r3, 'set', dace.Memlet('A[0:22, 4]'))
+    state.add_edge(a, None, r4, 'set', dace.Memlet('A[0:22, 3]'))
+    state.add_edge(b, None, rbset, 'set', dace.Memlet('B[4, 0:20]'))
+
+    # Add tasklet
+    t = state.add_tasklet('stencil', {'a', 'b', 'c', 'd'}, {'o'}, 'o = 0.25 * (a + b + c + d)')
+
+    # Connect tasklet
+    state.add_nedge(rbset, t, dace.Memlet())  # Happens-before edge
+    state.add_edge(r1, None, t, 'a', dace.Memlet('ref1[4]'))  # (5,4)
+    state.add_edge(r2, None, t, 'b', dace.Memlet('ref2[4]'))  # (4,5)
+    state.add_edge(r3, None, t, 'c', dace.Memlet('ref3[3]'))  # (3,4)
+    state.add_edge(r4, None, t, 'd', dace.Memlet('ref4[4]'))  # (4,3)
+    state.add_edge(t, 'o', rbwrite, None, dace.Memlet('refB[4]'))
+
+    return sdfg
+
+
 def test_reference_branch():
     sdfg = _create_branch_sdfg()
 
@@ -119,6 +183,46 @@ def test_reference_tasklet_assignment_stree():
     assert [type(n) for n in stree.children] == [tn.TaskletNode, tn.RefSetNode, tn.TaskletNode]
 
 
+def test_twostate():
+    sdfg = _create_twostate_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1 and 'ref' in sources  # There is one reference
+    sources = sources['ref']
+    assert sources == {dace.Memlet('A[10:20]')}
+
+    # Test correctness
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    ref[11] = ref[10] + 1
+    sdfg(A=A)
+    assert np.allclose(A, ref)
+
+
+def test_multisubset():
+    sdfg = _create_multisubset_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 5
+    assert sources['ref1'] == {dace.Memlet('A[5, 0:22]')}
+    assert sources['ref2'] == {dace.Memlet('A[0:22, 5]')}
+    assert sources['refB'] == {dace.Memlet('B[4, 0:20]')}
+
+    # Test correctness
+    A = np.random.rand(22, 22)
+    B = np.random.rand(20, 20)
+    ref = np.copy(B)
+    ref[4, 4] = 0.25 * (A[5, 4] + A[4, 5] + A[3, 4] + A[4, 3])
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
@@ -126,3 +230,5 @@ if __name__ == '__main__':
     test_reference_tasklet_assignment()
     test_reference_tasklet_assignment_analysis()
     test_reference_tasklet_assignment_stree()
+    test_twostate()
+    test_multisubset()
