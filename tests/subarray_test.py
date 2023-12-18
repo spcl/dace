@@ -12,7 +12,7 @@ def subarray(A, B):
         a << A[:, i, i, i]
         a2 << A(1)[i, i, i, :]
         b >> B[i, :, i, i]
-        b[i] = a[i] + a2[i]
+        b[0, i, 0, 0] = a[i, 0, 0, 0] + a2[0, 0, 0, i]
 
 
 def test():
