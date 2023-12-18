@@ -40,8 +40,9 @@ def test_strides_propagation_to_tasklet():
 
     def build_nsdfg():
         sdfg = dc.SDFG('vec_to_mat')
+        sdfg.add_symbol('_w', dc.int32)
         sdfg.add_array(
-            'vec_field', (1, N), dc.float64,
+            'vec_field', (W, N), dc.float64,
             strides=(vec_stride_W, vec_stride_d0)
         )
         sdfg.add_array(
@@ -52,12 +53,12 @@ def test_strides_propagation_to_tasklet():
         tasklet = state.add_tasklet(
             'vec_to_mat', {'_vec'}, {'_mat'}, f"\
 for i in range({N}):\
-    _mat[i, i] = _vec[i] + dace.float64(1)\
+    _mat[0, i, i] = _vec[0, i] + dace.float64(1)\
         ")
         state.add_edge(
             state.add_access('vec_field'), None,
             tasklet, '_vec',
-            dc.Memlet.from_array('vec_field', sdfg.arrays['vec_field'])
+            dc.Memlet.simple('vec_field', f"_w, 0:{N}")
         )
         state.add_edge(
             tasklet, '_mat',
@@ -76,13 +77,16 @@ for i in range({N}):\
         strides=(mat_stride_W, mat_stride_d0, mat_stride_d1)
     )
     state = sdfg.add_state()
+    me, mx = state.add_map('map_W', dict(i='0:W'))
     nsdfg_node = state.add_nested_sdfg(
         build_nsdfg(),
         sdfg,
         inputs={'vec_field'},
         outputs={'mat_field'},
+        symbol_mapping={
+            '_w': 'i',
+        }
     )
-    me, mx = state.add_map('map_W', dict(i='0:W'))
     state.add_memlet_path(
         state.add_access('vec_field'),
         me,
