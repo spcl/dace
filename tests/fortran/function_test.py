@@ -182,7 +182,7 @@ REAL z
 
     ! line class
     TYPE t_line
-        TYPE(t_geographical_coordinates) :: p1
+        TYPE(t_geographical_coordinates) :: p1(10)
         TYPE(t_geographical_coordinates) :: p2
     END TYPE t_line
 
