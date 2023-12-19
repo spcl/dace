@@ -12,7 +12,7 @@ def subarray(A, B):
         a << A[:, i, i, i]
         a2 << A(1)[i, i, i, :]
         b >> B[i, :, i, i]
-        b[0, i, 0, 0] = a[i, 0, 0, 0] + a2[0, 0, 0, i]
+        b[i] = a[i] + a2[i]
 
 
 def test():
@@ -53,7 +53,7 @@ def test_strides_propagation_to_tasklet():
         tasklet = state.add_tasklet(
             'vec_to_mat', {'_vec'}, {'_mat'}, f"\
 for i in range({N}):\
-    _mat[0, i, i] = _vec[0, i] + dace.float64(1)\
+    _mat[0, i, i] = _vec[i] + dace.float64(1)\
         ")
         state.add_edge(
             state.add_access('vec_field'), None,

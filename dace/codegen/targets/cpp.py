@@ -1092,17 +1092,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             memlet = self.memlets[target][0]
             dtype = self.memlets[target][3]
             dname = memlet.data
-            desc = self.sdfg.arrays[dname]
+            strides = self.sdfg.arrays[dname].strides
             # Get memlet absolute strides, including tile sizes
-            strides = memlet.subset.absolute_strides(desc.strides)
+            strides = memlet.subset.absolute_strides(strides)
             # Filter ("squeeze") strides w.r.t. scalar dimensions
-            dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 0
+            dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
             subset_size = memlet.subset.size()
+            indexdims = [i for i, s in enumerate(subset_size) if s == 1]
             # Pointer to a single element can use all strides
             is_scalar = not isinstance(dtype, dtypes.pointer)
             if is_scalar or data._prod(subset_size) != 1:
                 strides = [
-                    s for i, s in enumerate(strides) if desc.shape[i] != 1 and not (s == 1 and subset_size[i] == dimlen)
+                    s for i, s in enumerate(strides) if i not in indexdims and not (s == 1 and subset_size[i] == dimlen)
                 ]
 
         if isinstance(visited_slice, ast.Tuple):
@@ -1110,6 +1111,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             # - Assume this is indirection (?)
             # - Soft-squeeze the slice (remove unit-modes) to match the treatment of the strides above.
             if target not in self.constants:
+                desc = self.sdfg.arrays[dname]
                 if isinstance(desc, data.Array) and data._prod(desc.shape) != 1:
                     elts = [e for i, e in enumerate(visited_slice.elts) if desc.shape[i] != 1]
             else:
