@@ -1429,7 +1429,9 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
     var sdfv_{uid} = new SDFV();
