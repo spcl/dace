@@ -182,7 +182,7 @@ REAL z
 
     ! line class
     TYPE t_line
-        TYPE(t_geographical_coordinates) :: p1(10)
+        TYPE(t_geographical_coordinates) :: p1
         TYPE(t_geographical_coordinates) :: p2
     END TYPE t_line
 
@@ -225,10 +225,77 @@ end
     sdfg.compile()
 
 
+
+def test_fortran_frontend_function_test4():
+    """
+    Test for elemental functions
+    """
+    test_name = "function4_test"
+    test_string = """
+                    PROGRAM """ + test_name + """_program
+implicit none
+
+REAL b
+REAL v
+REAL z(10)
+z(:)=4.0
+
+b=function4_test_function(v,z)
+
+end
+
+
+  
+   FUNCTION function4_test_function (v,z) result(length)
+     REAL, INTENT(in) :: v
+     REAL z(10)
+     REAL :: length
+
+     
+REAL a
+REAL b
+
+
+
+a=norm(z)
+length=norm(v)+a
+
+  END FUNCTION function4_test_function
+
+ ELEMENTAL FUNCTION norm (v) result(length)
+     REAL, INTENT(in) :: v
+     REAL :: length
+
+     
+     length = v*v
+
+  END FUNCTION norm
+
+
+
+  
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG):
+            if node.sdfg is not None:
+                if 'test_function' in node.sdfg.name:
+                    sdfg = node.sdfg
+                    break
+    sdfg.parent = None
+    sdfg.parent_sdfg = None
+    sdfg.parent_nsdfg_node = None
+    sdfg.reset_sdfg_list()                
+    sdfg.simplify(verbose=True)
+    sdfg.view()
+    sdfg.compile()
+
+
 if __name__ == "__main__":
 
     #test_fortran_frontend_function_test()
     #test_fortran_frontend_function_test2()
-    test_fortran_frontend_function_test3()
+    #test_fortran_frontend_function_test3()
+    test_fortran_frontend_function_test4()
     #test_fortran_frontend_view_test_2()
     #test_fortran_frontend_view_test_3()
