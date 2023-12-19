@@ -231,9 +231,8 @@ class AST_translator:
             for k in j.vardecl:
                 complex_datatype=False
                 datatype = self.get_dace_type(k.type)
-                if hasattr(datatype,"name"):
-                    if datatype.name == "Structure":
-                        complex_datatype=True
+                if isinstance(datatype, dat.Structure):
+                    complex_datatype=True
                 if k.sizes is not None:
                     sizes = []
                     offset = []
@@ -252,15 +251,15 @@ class AST_translator:
                         offset=offset,
                         )
                     else:
-                        dict_setup[k.name] = dat.create_datadescriptor(datatype, shape=sizes, strides=strides, offset=offset)    
+                        dict_setup[k.name] = dat.StructArray(datatype, sizes, strides=strides, offset=offset)
 
                 else:
                     if not complex_datatype:
                         dict_setup[k.name] = dat.Scalar(datatype)
                     else:
-                        dict_setup[k.name] = dat.create_datadescriptor(datatype)
+                        dict_setup[k.name] = datatype
 
-        structure_obj = Structure(dict_setup)
+        structure_obj = Structure(dict_setup, name)
         self.registered_types[name] = structure_obj
 
     def basicblock2sdfg(self, node: ast_internal_classes.Execution_Part_Node, sdfg: SDFG):
