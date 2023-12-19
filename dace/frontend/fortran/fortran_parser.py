@@ -1626,6 +1626,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         except:
             print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
             #print(partial_ast.unsupported_fortran_syntax[i])
+            if i!="mo_icon_interpolation_scalar":
+                partial_modules.append(partial_ast.create_ast(asts[i]))
             continue
         tmp_rename=rename_dict[i]
         for j in tmp_rename:
