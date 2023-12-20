@@ -231,6 +231,10 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Check incoming edges
             for e in state.in_edges(node):
+                # A reference set should not be removed
+                if e.dst_conn == 'set':
+                    return False
+
                 for l in state.memlet_tree(e).leaves():
                     # If data is connected to a side-effect tasklet/library node, cannot remove
                     if _has_side_effects(l.src, sdfg):
