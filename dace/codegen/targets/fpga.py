@@ -422,7 +422,7 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                for sg in utils.concurrent_subgraphs(n.sdfg.start_state):
                     node = self.find_rtl_tasklet(sg)
                     if node:
                         return node
@@ -439,7 +439,7 @@ class FPGACodeGen(TargetCodeGenerator):
         '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                for sg in utils.concurrent_subgraphs(n.sdfg.start_state):
                     if self.is_multi_pumped_subgraph(sg):
                         return True
             elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
@@ -553,7 +553,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # Determine independent components: these are our starting kernels.
             # Then, try to split these components further
-            subgraphs = dace.sdfg.concurrent_subgraphs(state)
+            subgraphs = utils.concurrent_subgraphs(state)
 
             if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
                 start_kernel = 0
@@ -590,7 +590,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Kernels are now sorted considering their dependencies
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
-                subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                subgraphs = utils.concurrent_subgraphs(kern)
                 single_sgs: list(ScopeSubgraphView) = []
                 multi_sgs: list(ScopeSubgraphView) = []
                 for sg in subgraphs:
@@ -737,7 +737,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             to_allocate = dace.sdfg.local_transients(sdfg, state, None)
             allocated = set()
-            subgraphs = dace.sdfg.concurrent_subgraphs(state)
+            subgraphs = utils.concurrent_subgraphs(state)
 
             for node in state.data_nodes():
                 data = node.desc(sdfg)

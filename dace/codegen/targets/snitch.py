@@ -205,7 +205,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # dependencies have been executed (topological sort).
         # For different connected components, run them concurrently.
 
-        components = dace.sdfg.concurrent_subgraphs(state)
+        components = sdutils.concurrent_subgraphs(state)
 
         if len(components) == 1:
             self.dispatcher.dispatch_subgraph(sdfg, state, sid, global_stream, callsite_stream, skip_entry_node=False)

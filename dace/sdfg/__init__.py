@@ -7,7 +7,7 @@ from dace.sdfg.scope import (scope_contains_scope, is_devicelevel_gpu, devicelev
 
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 
-from dace.sdfg.utils import (has_dynamic_map_inputs, dynamic_map_inputs, is_parallel, concurrent_subgraphs,
+from dace.sdfg.utils import (has_dynamic_map_inputs, dynamic_map_inputs, is_parallel,
                              find_input_arraynode, find_output_arraynode, trace_nested_access, is_array_stream_view,
                              local_transients, load_precompiled_sdfg)
 

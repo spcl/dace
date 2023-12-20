@@ -418,7 +418,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # dependencies have been executed (topological sort).
         # For different connected components, run them concurrently.
 
-        components = dace.sdfg.concurrent_subgraphs(state)
+        components = utils.concurrent_subgraphs(state)
 
         if len(components) <= 1:
             self._dispatcher.dispatch_subgraph(sdfg, state, sid, global_stream, callsite_stream, skip_entry_node=False)

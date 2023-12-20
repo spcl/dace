@@ -1311,7 +1311,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
                 callsite_stream.write("{}.reset();".format(ptrname), sdfg, state.node_id)
 
-            components = dace.sdfg.concurrent_subgraphs(state)
+            components = sdutil.concurrent_subgraphs(state)
             for c in components:
 
                 has_map = any(isinstance(node, dace.nodes.MapEntry) for node in c.nodes())
@@ -2466,9 +2466,9 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if any((isinstance(node, dace.nodes.MapEntry) and node != scope_entry
                 and node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic) for node in dfg_scope.nodes()):
 
-            subgraphs = dace.sdfg.concurrent_subgraphs(dfg_scope)
+            subgraphs = sdutil.concurrent_subgraphs(dfg_scope)
             for subdfg in subgraphs:
-                components = dace.sdfg.utils.separate_maps(
+                components = sdutil.separate_maps(
                     sdfg.nodes()[state_id],
                     subdfg,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,

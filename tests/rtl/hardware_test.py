@@ -3,6 +3,7 @@
     Test suite for testing RTL integration with DaCe targeting Xilinx FPGAs.
 """
 import dace
+from dace.sdfg import utils as sdutil
 from dace.fpga_testing import rtl_test
 import numpy as np
 import importlib.util
@@ -479,7 +480,7 @@ def test_hardware_vadd_temporal_vectorization():
         assert (applied == 3)
 
         # Apply temporal vectorization transformation
-        sgs = dace.sdfg.concurrent_subgraphs(sdfg.states()[0])
+        sgs = sdutil.concurrent_subgraphs(sdfg.states()[0])
         sf = TemporalVectorization()
         cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
         assert (sum(cba) == 1)

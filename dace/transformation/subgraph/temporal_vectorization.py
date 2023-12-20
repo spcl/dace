@@ -5,6 +5,7 @@ from dace.memlet import Memlet
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
+from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.transformation.subgraph import helpers
 
@@ -41,6 +42,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
             - Data packers/issuers are allowed to be inserted at the cost of performance through additional data plumbing overhead.
         5. If the approach is 2, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
         '''
+
         # Extract all of the relevant components of the subgraph
         graph = subgraph.graph
         src_nodes = subgraph.source_nodes()
@@ -63,7 +65,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         # TODO scalars
 
         # 2. All of the non- source and sink nodes only resides within this subgraph.
-        for sg in dace.sdfg.concurrent_subgraphs(graph):
+        for sg in sdutil.concurrent_subgraphs(graph):
             if sg == subgraph: continue
             for nd in sg.nodes():
                 if isinstance(nd, nodes.AccessNode) and nd in access_nodes:
