@@ -275,13 +275,82 @@ def test_fortran_frontend_array_offset_symbol():
         # offset -1 is already added
         assert a[i-1] == i * 2
 
+def test_fortran_frontend_array_arbitrary():
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision :: d(arrsize, arrsize2)
+                    CALL index_test_function(d, arrsize, arrsize2)
+                    end
+
+                    SUBROUTINE index_test_function(d, arrsize, arrsize2)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision :: d(:,:)
+
+                    do i=1, arrsize
+                       d(i, 1) = i * 2.0
+                    end do
+
+                    END SUBROUTINE index_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    arrsize=5
+    arrsize2=10
+    a = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
+    sdfg(d=a,arrsize=arrsize,arrsize2=arrsize2)
+    print(a)
+    for i in range(arrsize):
+        # offset -1 is already added
+        assert a[i, 0] == (i + 1) * 2
+
+def test_fortran_frontend_array_arbitrary_attribute():
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision :: d(arrsize, arrsize2)
+                    CALL index_test_function(d, arrsize, arrsize2)
+                    end
+
+                    SUBROUTINE index_test_function(d, arrsize, arrsize2)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision, dimension(:,:) :: d
+
+                    do i=1, arrsize
+                       d(i, 1) = i * 2.0
+                    end do
+
+                    END SUBROUTINE index_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    arrsize=5
+    arrsize2=10
+    a = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
+    sdfg(d=a,arrsize=arrsize,arrsize2=arrsize2)
+    print(a)
+    for i in range(arrsize):
+        # offset -1 is already added
+        assert a[i, 0] == (i + 1) * 2
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_offset()
-    test_fortran_frontend_array_attribute_no_offset()
-    test_fortran_frontend_array_attribute_offset()
-    test_fortran_frontend_array_attribute_no_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol2()
-    test_fortran_frontend_array_offset_symbol()
+    #test_fortran_frontend_array_offset()
+    #test_fortran_frontend_array_attribute_no_offset()
+    #test_fortran_frontend_array_attribute_offset()
+    #test_fortran_frontend_array_attribute_no_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol2()
+    #test_fortran_frontend_array_offset_symbol()
+    #test_fortran_frontend_array_arbitrary()
+    test_fortran_frontend_array_arbitrary_attribute()
