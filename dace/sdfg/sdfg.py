@@ -1234,33 +1234,6 @@ class SDFG(ControlFlowRegion):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
 
-    def all_nodes_recursive(self) -> Iterator[Tuple[nd.Node, Union['SDFG', 'SDFGState']]]:
-        """ Iterate over all nodes in this SDFG, including states, nodes in
-            states, and recursive states and nodes within nested SDFGs,
-            returning tuples on the form (node, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for node in self.nodes():
-            yield node, self
-            yield from node.all_nodes_recursive()
-
-    def all_sdfgs_recursive(self):
-        """ Iterate over this and all nested SDFGs. """
-        yield self
-        for state in self.nodes():
-            for node in state.nodes():
-                if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.all_sdfgs_recursive()
-
-    def all_edges_recursive(self):
-        """ Iterate over all edges in this SDFG, including state edges,
-            inter-state edges, and recursively edges within nested SDFGs,
-            returning tuples on the form (edge, parent), where the parent is
-            either the SDFG (for states) or a DFG (nodes). """
-        for e in self.edges():
-            yield e, self
-        for node in self.nodes():
-            yield from node.all_edges_recursive()
-
     def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
             nested SDFGs. Yields 3-tuples of (sdfg, array name, array).
