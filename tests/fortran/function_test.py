@@ -158,12 +158,13 @@ def test_fortran_frontend_function_test3():
     """
     test_name = "function3_test"
     test_string = """
-                    PROGRAM """ + test_name + """_program
-implicit none
+PROGRAM """ + test_name + """_program
 
-REAL z
+    implicit none
 
-! cartesian coordinate class
+    REAL z
+
+    ! cartesian coordinate class
     TYPE t_cartesian_coordinates
         REAL :: x(3)
     END TYPE t_cartesian_coordinates
@@ -182,33 +183,83 @@ REAL z
 
     ! line class
     TYPE t_line
+<<<<<<< HEAD
         TYPE(t_geographical_coordinates) :: p1
         TYPE(t_geographical_coordinates) :: p2
+=======
+        TYPE(t_geographical_coordinates) :: p1(10)
+>>>>>>> ced40004d (Updated test case)
     END TYPE t_line
 
-TYPE(t_cartesian_coordinates) :: v    
+    TYPE(t_line) :: v
+    TYPE(t_geographical_coordinates) :: gp1_1
+    TYPE(t_geographical_coordinates) :: gp1_2
+    TYPE(t_geographical_coordinates) :: gp1_3
+    TYPE(t_geographical_coordinates) :: gp1_4
+    TYPE(t_geographical_coordinates) :: gp1_5
+    TYPE(t_geographical_coordinates) :: gp1_6
+    TYPE(t_geographical_coordinates) :: gp1_7
+    TYPE(t_geographical_coordinates) :: gp1_8
+    TYPE(t_geographical_coordinates) :: gp1_9
+    TYPE(t_geographical_coordinates) :: gp1_10
 
-v%x(1)=1.0
-v%x(2)=2.0
-v%x(3)=3.0
+    gp1_1%lon = 1.0
+    gp1_1%lat = 1.0
+    gp1_2%lon = 2.0
+    gp1_2%lat = 2.0
+    gp1_3%lon = 3.0
+    gp1_3%lat = 3.0
+    gp1_4%lon = 4.0
+    gp1_4%lat = 4.0
+    gp1_5%lon = 5.0
+    gp1_5%lat = 5.0
+    gp1_6%lon = 6.0
+    gp1_6%lat = 6.0
+    gp1_7%lon = 7.0
+    gp1_7%lat = 7.0
+    gp1_8%lon = 8.0
+    gp1_8%lat = 8.0
+    gp1_9%lon = 9.0
+    gp1_9%lat = 9.0
+    gp1_10%lon = 10.0
+    gp1_10%lat = 10.0
 
-z=function3_test_function(v)
+    v%p1(1) = gp1_1
+    v%p1(2) = gp1_2
+    v%p1(3) = gp1_3
+    v%p1(4) = gp1_4
+    v%p1(5) = gp1_5
+    v%p1(6) = gp1_6
+    v%p1(7) = gp1_7
+    v%p1(8) = gp1_8
+    v%p1(9) = gp1_9
+    v%p1(10) = gp1_10
 
-end
+    z = function3_test_function(v)
 
+END PROGRAM """ + test_name + """_program
 
-  
-   ELEMENTAL FUNCTION function3_test_function (v) result(length)
-     TYPE(t_cartesian_coordinates), INTENT(in) :: v
-     REAL :: length
+ELEMENTAL FUNCTION function3_test_function (v) result(length)
+    TYPE(t_line), INTENT(in) :: v
+    REAL :: length
+    REAL :: segment
+    REAL :: dlon
+    REAL :: dlat
 
-     !length = SQRT(DOT_PRODUCT(v%x,v%x))
-     length = v%x(1) *v%x(2)*v%x(3)
+    length = 0
+    DO i = 1, 9
+        segment = 0
+        dlon = 0
+        dlat = 0
+        dlon = v%p1(i + 1)%lon - v%p1(i)%lon
+        dlat = v%p1(i + 1)%lat - v%p1(i)%lat
+        segment = dlon * dlon + dlat * dlat
+        length = length + SQRT(segment)
+    ENDDO
 
-  END FUNCTION function3_test_function
+END FUNCTION function3_test_function
+"""
 
-  
-                    """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
