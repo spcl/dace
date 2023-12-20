@@ -7,7 +7,7 @@ functionality to registered code generators based on user-defined predicates.
 from dace.codegen.prettycode import CodeIOStream
 import aenum
 from dace import config, data as dt, dtypes, nodes, registry
-from dace.codegen import exceptions as cgx, prettycode
+from dace.codegen import exceptions as cgx, prettycode, scheduling
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.state import StateSubgraphView
@@ -382,7 +382,7 @@ class TargetDispatcher(object):
             nodes_to_skip.add(exit_node)
         state = dfg if isinstance(dfg, SDFGState) else dfg.state
 
-        for v in sdutil.dfs_topological_sort(dfg, start_nodes):
+        for v in scheduling.data_aware_topological_sort(sdfg, dfg, start_nodes):
             if v in nodes_to_skip:
                 continue
 

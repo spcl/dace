@@ -731,11 +731,11 @@ def test_promote_twice_written_scalar():
     state.add_edge(t3, 'w', w, None, dace.Memlet('A[0:20]', volume=1))
 
     # Test before promotion
-    # a = np.random.rand(20)
-    # ref = np.copy(a)
-    # ref[2] = ref[1] + 2
-    # sdfg(A=a)
-    # assert np.allclose(a, ref)
+    a = np.random.rand(20)
+    ref = np.copy(a)
+    ref[2] = ref[1] + 2
+    sdfg(A=a)
+    assert np.allclose(a, ref)
 
     promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     assert 'val2' in promoted
