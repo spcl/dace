@@ -2360,6 +2360,9 @@ class StateSubgraphView(SubgraphView, DataflowGraphView):
         state: SDFGState = self.graph
         return state.sdfg
 
+    @property
+    def state(self) -> 'SDFGState':
+        return self.graph
 
 @make_properties
 class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEdge'], ControlGraphView,

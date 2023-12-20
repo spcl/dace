@@ -959,12 +959,12 @@ def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphVie
     return subgraph
 
 
-def concurrent_subgraphs(graph):
-    """ Finds subgraphs of an SDFGState or ScopeSubgraphView that can
-        run concurrently. """
-    from dace.sdfg.scope import ScopeSubgraphView
-
-    if not isinstance(graph, (SDFGState, ScopeSubgraphView)):
+def concurrent_subgraphs(graph: StateSubgraphView):
+    """
+    Finds subgraphs of an SDFGState or subgraph thereof that can
+    run concurrently.
+    """
+    if not isinstance(graph, (StateSubgraphView, SDFGState, ScopeSubgraphView)):
         raise TypeError("Expected SDFGState or ScopeSubgraphView, got: {}".format(type(graph).__name__))
     candidates = graph.source_nodes()
     components = collections.OrderedDict()  # {start node: nodes in component}
@@ -1013,10 +1013,10 @@ def concurrent_subgraphs(graph):
 
             subgraphs.append(new_subgraph)
 
-    # Now stick each of the found components in a ScopeSubgraphView and return
+    # Now stick each of the found components in a StateSubgraphView and return
     # them. Sort according to original order of nodes
     all_nodes = graph.nodes()
-    return [ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None) for sg in subgraphs]
+    return [StateSubgraphView(graph, [n for n in all_nodes if n in sg]) for sg in subgraphs]
 
 
 def separate_maps(state, dfg, schedule):
