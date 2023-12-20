@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState, properties, InterstateEdge
+from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
 from dace.sdfg.analysis import cfg
@@ -503,5 +503,83 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                     result[desc][write] = set()
                 for write in to_remove:
                     del result[desc][write]
+            top_result[sdfg.sdfg_id] = result
+        return top_result
+
+
+@properties.make_properties
+class AccessRanges(ppl.Pass):
+    """
+    For each data descriptor, finds all memlets used to access it (read/write ranges).
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.Memlets
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[str, Set[Memlet]]]:
+        """
+        :return: A dictionary mapping each data descriptor name to a set of memlets.
+        """
+        top_result: Dict[int, Dict[str, Set[Memlet]]] = dict()
+
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            result: Dict[str, Set[Memlet]] = defaultdict(set)
+            for state in sdfg.states():
+                for anode in state.data_nodes():
+                    for e in state.all_edges(anode):
+                        if e.dst is anode and e.dst_conn == 'set':  # Skip reference sets
+                            continue
+                        if e.data.is_empty():  # Skip empty memlets
+                            continue
+                        # Find (hopefully propagated) root memlet
+                        e = state.memlet_tree(e).root().edge
+                        result[anode.data].add(e.data)
+            top_result[sdfg.sdfg_id] = result
+        return top_result
+
+
+@properties.make_properties
+class FindReferenceSources(ppl.Pass):
+    """
+    For each Reference data descriptor, finds all memlets used to set it. If a Tasklet was used
+    to set the reference, the Tasklet is given as a source.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.Memlets
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[str, Set[Union[Memlet, nd.CodeNode]]]]:
+        """
+        :return: A dictionary mapping each data descriptor name to a set of memlets.
+        """
+        top_result: Dict[int, Dict[str, Set[Union[Memlet, nd.CodeNode]]]] = dict()
+
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            result: Dict[str, Set[Memlet]] = defaultdict(set)
+            reference_descs = set(k for k, v in sdfg.arrays.items() if isinstance(v, dt.Reference))
+            for state in sdfg.states():
+                for anode in state.data_nodes():
+                    if anode.data not in reference_descs:
+                        continue
+                    for e in state.in_edges(anode):
+                        if e.dst_conn != 'set':
+                            continue
+                        true_src = state.memlet_path(e)[0].src
+                        if isinstance(true_src, nd.CodeNode):
+                            # Code  -> Reference
+                            result[anode.data].add(true_src)
+                        else:
+                            # Array -> Reference
+                            result[anode.data].add(e.data)
             top_result[sdfg.sdfg_id] = result
         return top_result
