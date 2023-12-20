@@ -17,9 +17,8 @@ from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
 from dace.data import Array
-from dace.sdfg.work_depth_analysis.op_in_helpers import CacheLineTracker, AccessStack
+from dace.sdfg.work_depth_analysis.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
 from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work
-from dace.sdfg.work_depth_analysis.extrapolation import fit_curve, plot, compute_mape
 
 
 class SymbolRange():
