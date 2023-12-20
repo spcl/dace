@@ -1,18 +1,16 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
 import dace as dc
-from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth, parse_assumptions
+from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par, parse_assumptions
 from dace.sdfg.work_depth_analysis.helpers import get_uuid
 from dace.sdfg.work_depth_analysis.assumptions import ContradictingAssumptions
 import sympy as sp
+import numpy as np
 
 from dace.transformation.interstate import NestSDFG
 from dace.transformation.dataflow import MapExpansion
 
 from pytest import raises
-
-# TODO: add tests for library nodes (e.g. reduce, matMul)
-# TODO: add tests for average parallelism
 
 N = dc.symbol('N')
 M = dc.symbol('M')
@@ -172,6 +170,26 @@ def sequntial_ifs(x: dc.float64[N + 1], y: dc.float64[M + 1]):  # --> cannot ass
     #       Depth: Max(1, M) + 1
 
 
+@dc.program
+def reduction_library_node(x: dc.float64[456]):
+    return np.sum(x)
+
+
+@dc.program
+def reduction_library_node_symbolic(x: dc.float64[N]):
+    return np.sum(x)
+
+
+@dc.program
+def gemm_library_node(x: dc.float64[456, 200], y: dc.float64[200, 111], z: dc.float64[456, 111]):
+    z[:] = x @ y
+
+
+@dc.program
+def gemm_library_node_symbolic(x: dc.float64[M, K], y: dc.float64[K, N], z: dc.float64[M, N]):
+    z[:] = x @ y
+
+
 #(sdfg, (expected_work, expected_depth))
 tests_cases = [
     (single_map, (N, 1)),
@@ -191,7 +209,11 @@ tests_cases = [
     (continue_for_loop, (sp.Symbol('num_execs_0_6') * N, sp.Symbol('num_execs_0_6'))),
     (break_for_loop, (N**2, N)),
     (break_while_loop, (sp.Symbol('num_execs_0_5') * N, sp.Symbol('num_execs_0_5'))),
-    (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1))
+    (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
+    (reduction_library_node, (456, sp.log(456))),
+    (reduction_library_node_symbolic, (N, sp.log(N))),
+    (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200))),
+    (gemm_library_node_symbolic, (2 * M * K * N, sp.log(K)))
 ]
 
 
@@ -214,6 +236,36 @@ def test_work_depth():
             for s in (sp.sympify(correct[0]).free_symbols | sp.sympify(correct[1]).free_symbols)
         }
         correct = (sp.sympify(correct[0]).subs(reps), sp.sympify(correct[1]).subs(reps))
+        # check result
+        assert correct == res
+
+
+#(sdfg, expected_avg_par)
+tests_cases_avg_par = [(single_map, N), (single_for_loop, 1), (if_else, 1), (nested_sdfg, 2 * N / (N + 1)),
+                       (nested_maps, N * M), (nested_for_loops, 1),
+                       (max_of_positive_symbol, N), (unbounded_while_do, N), (unbounded_do_while, N),
+                       (unbounded_nonnegify, N), (continue_for_loop, N), (break_for_loop, N), (break_while_loop, N),
+                       (reduction_library_node, 456 / sp.log(456)), (reduction_library_node_symbolic, N / sp.log(N)),
+                       (gemm_library_node, 2 * 456 * 200 * 111 / sp.log(200)),
+                       (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K))]
+
+
+def test_avg_par():
+    for test, correct in tests_cases_avg_par:
+        w_d_map = {}
+        sdfg = test.to_sdfg()
+        if 'nested_sdfg' in test.name:
+            sdfg.apply_transformations(NestSDFG)
+        if 'nested_maps' in test.name:
+            sdfg.apply_transformations(MapExpansion)
+        analyze_sdfg(sdfg, w_d_map, get_tasklet_avg_par, [], False)
+        res = w_d_map[get_uuid(sdfg)][0] / w_d_map[get_uuid(sdfg)][1]
+        # substitue each symbol without assumptions.
+        # We do this since sp.Symbol('N') == Sp.Symbol('N', positive=True) --> False.
+        reps = {s: sp.Symbol(s.name) for s in res.free_symbols}
+        res = res.subs(reps)
+        reps = {s: sp.Symbol(s.name) for s in sp.sympify(correct).free_symbols}
+        correct = sp.sympify(correct).subs(reps)
         # check result
         assert correct == res
 
@@ -259,4 +311,5 @@ def test_assumption_system():
 
 if __name__ == '__main__':
     test_work_depth()
+    test_avg_par()
     test_assumption_system()

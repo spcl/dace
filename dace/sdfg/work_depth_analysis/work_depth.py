@@ -70,8 +70,8 @@ def count_work_matmul(node, symbols, state):
     if len(C_memlet.data.subset) == 3:
         result *= symeval(C_memlet.data.subset.size()[0], symbols)
     # M*N
-    # TODO: line below gives index out of range if we compute matrix vector product (as in e.g. atax from npbench)
-    result *= symeval(C_memlet.data.subset.size()[-2], symbols)
+    # we need the if else, since C_memlet is one dimensional in case of matrix vector product
+    result *= 1 if len(C_memlet.data.subset.size()) < 2 else symeval(C_memlet.data.subset.size()[-2], symbols)
     result *= symeval(C_memlet.data.subset.size()[-1], symbols)
     # K
     result *= symeval(A_memlet.data.subset.size()[-1], symbols)
@@ -82,7 +82,7 @@ def count_depth_matmul(node, symbols, state):
     # optimal depth of a matrix multiplication is O(log(size of shared dimension)):
     A_memlet = next(e for e in state.in_edges(node) if e.dst_conn == '_a')
     size_shared_dimension = symeval(A_memlet.data.subset.size()[-1], symbols)
-    return bigo(sp.log(size_shared_dimension))
+    return sp.log(size_shared_dimension)
 
 
 def count_work_reduce(node, symbols, state):
@@ -102,7 +102,7 @@ def count_work_reduce(node, symbols, state):
 
 def count_depth_reduce(node, symbols, state):
     # optimal depth of reduction is log of the work
-    return bigo(sp.log(count_work_reduce(node, symbols, state)))
+    return sp.log(count_work_reduce(node, symbols, state))
 
 
 LIBNODES_TO_WORK = {
@@ -117,7 +117,6 @@ LIBNODES_TO_DEPTH = {
     Reduce: count_depth_reduce,
 }
 
-bigo = sp.Function('bigo')
 PYFUNC_TO_ARITHMETICS = {
     'float': 0,
     'dace.float64': 0,
@@ -225,7 +224,6 @@ class DepthCounter(ast.NodeVisitor):
 
 
 def count_depth_code(code):
-    # so far this is the same as the work counter, since work = depth for each tasklet, as we can't assume any parallelism
     ctr = ArithmeticCounter()
     if isinstance(code, (tuple, list)):
         for stmt in code:
@@ -241,9 +239,9 @@ def tasklet_work(tasklet_node, state):
     if tasklet_node.code.language == dtypes.Language.CPP:
         # simplified work analysis for CPP tasklets.
         for oedge in state.out_edges(tasklet_node):
-            return oedge.data.num_accesses or 0     # on Lulesh this was None for some tasklet(s)
+            return oedge.data.num_accesses
     elif tasklet_node.code.language == dtypes.Language.Python:
-        return count_arithmetic_ops_code(tasklet_node.code.code) or 0     # on Lulesh this was None for some tasklet(s)
+        return count_arithmetic_ops_code(tasklet_node.code.code)
     else:
         # other languages not implemented, count whole tasklet as work of 1
         warnings.warn('Work of tasklets only properly analyzed for Python or CPP. For all other '
@@ -291,12 +289,8 @@ def do_initial_subs(w, d, eq, subs1):
     """
     Calls subs three times for the given (w)ork and (d)epth values.
     """
-    try:
-        result = sp.simplify(sp.sympify(w).subs(eq[0]).subs(eq[1]).subs(subs1)), sp.simplify(sp.sympify(d).subs(eq[0]).subs(eq[1]).subs(subs1))
-    except Exception as e:
-        print('w:', w)
-        print('d:', d)
-        raise(e)
+    result = sp.simplify(sp.sympify(w).subs(eq[0]).subs(eq[1]).subs(subs1)), sp.simplify(
+        sp.sympify(d).subs(eq[0]).subs(eq[1]).subs(subs1))
     return result
 
 
@@ -334,10 +328,12 @@ def sdfg_work_depth(sdfg: SDFG,
                                                    detailed_analysis)
 
         # Substitutions for state_work and state_depth already performed, but state.executions needs to be subs'd now.
-        state_work = sp.simplify(state_work *
-                                 state.executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
-        state_depth = sp.simplify(state_depth *
-                                  state.executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+        state_work = sp.simplify(
+            state_work.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1) *
+            state.executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
+        state_depth = sp.simplify(
+            state_depth.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1) *
+            state.executions.subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1))
 
         state_works[state], state_depths[state] = state_work, state_depth
         w_d_map[get_uuid(state)] = (state_works[state], state_depths[state])
@@ -388,19 +384,8 @@ def sdfg_work_depth(sdfg: SDFG,
     traversal_q.append((sdfg.start_state, sp.sympify(0), sp.sympify(0), None, [], [], {}))
     visited = set()
 
-    # print('number of states in this sdfg: ', len(sdfg.states()))
-    # num_states = 0
-
     while traversal_q:
         state, depth, work, ie, condition_stack, common_subexpr_stack, value_map = traversal_q.popleft()
-
-        # num_states += 1
-        # if num_states % 50 == 0:
-        #     print(state.name)
-        #     print('work:', work)
-        #     print()
-        #     print()
-
 
         if ie is not None:
             visited.add(ie)
@@ -411,11 +396,7 @@ def sdfg_work_depth(sdfg: SDFG,
         else:
             state_value_map[state] = value_map
 
-        # ignore assignments such as tmp=x[0], as those do not give much information.
-        try:
-            value_map = {pystr_to_symbolic(k): pystr_to_symbolic(v) for k, v in state_value_map[state].items()}
-        except:
-            print('gg')
+        value_map = {pystr_to_symbolic(k): pystr_to_symbolic(v) for k, v in state_value_map[state].items()}
         n_depth = sp.simplify((depth + state_depths[state]).subs(value_map))
         n_work = sp.simplify((work + state_works[state]).subs(value_map))
 
@@ -480,10 +461,19 @@ def sdfg_work_depth(sdfg: SDFG,
                     new_cse_stack.append((work_map[state], depth_map[state]))
                     # same for value_map
                     new_value_map = dict(state_value_map[state])
-                    new_value_map.update({sp.Symbol(k): sp.Symbol(v) for k, v in oedge.data.assignments.items()})
+                    new_value_map.update({
+                        pystr_to_symbolic(k):
+                        pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+                        for k, v in oedge.data.assignments.items()
+                    })
                     traversal_q.append((oedge.dst, 0, 0, oedge, new_cond_stack, new_cse_stack, new_value_map))
                 else:
-                    value_map.update(oedge.data.assignments)
+                    # value_map.update(oedge.data.assignments)
+                    value_map.update({
+                        pystr_to_symbolic(k):
+                        pystr_to_symbolic(v).subs(equality_subs[0]).subs(equality_subs[1]).subs(subs1)
+                        for k, v in oedge.data.assignments.items()
+                    })
                     traversal_q.append((oedge.dst, depth_map[state], work_map[state], oedge, condition_stack,
                                         common_subexpr_stack, value_map))
 
@@ -498,6 +488,17 @@ def sdfg_work_depth(sdfg: SDFG,
 
     sdfg_result = (max_work, max_depth)
     w_d_map[get_uuid(sdfg)] = sdfg_result
+    # TODO:
+    # for k, v in w_d_map.items():
+    #     w_d_map[k] = (v[0].subs(value_map), v[1].subs(value_map))
+
+    # TODO: is this needed
+    for k, (v_w, v_d) in w_d_map.items():
+        # The symeval replaces nested SDFG symbols with their global counterparts.
+        # v_w, v_d = do_subs(v_w, v_d, all_subs)
+        v_w = symeval(v_w, symbols)
+        v_d = symeval(v_d, symbols)
+        w_d_map[k] = (v_w, v_d)
     return sdfg_result
 
 
@@ -553,9 +554,6 @@ def scope_work_depth(
             # add up work for whole state, but also save work for this sub-scope scope in w_d_map
             work += s_work
             w_d_map[get_uuid(node, state)] = (s_work, s_depth)
-        elif node == scope_exit:
-            # don't do anything for exit nodes, everthing handled already in the corresponding entry node.
-            pass
         elif isinstance(node, nd.Tasklet):
             # add up work for whole state, but also save work for this node in w_d_map
             t_work, t_depth = analyze_tasklet(node, state)
@@ -598,7 +596,7 @@ def scope_work_depth(
                     # Hence, we don't need to add anyting.
                     pass
                 lib_node_work = sp.Symbol(f'{node.name}_work', positive=True)
-            lib_node_depth = sp.sympify(-1)  # not analyzed
+            lib_node_depth = sp.sympify(-1)
             if analyze_tasklet != get_tasklet_work:
                 # we are analyzing depth
                 try:
@@ -852,7 +850,7 @@ def main() -> None:
     elif args.analyze == 'work':
         print("Work:\t", result_whole_sdfg)
     elif args.analyze == 'avgPar':
-        print("Average Parallelism:\t", result_whole_sdfg)
+        print("Average Parallelism:\t", sp.N(result_whole_sdfg))
     print(80 * '-')
 
 
