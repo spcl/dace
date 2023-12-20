@@ -249,6 +249,11 @@ class DeadDataflowElimination(ppl.Pass):
             if isinstance(desc, data.Stream) and node.data in access_set[0]:
                 return False
 
+            # If it is a reference, it may point to other data containers,
+            # be conservative for now
+            if isinstance(desc, data.Reference):
+                return False
+
         # Any other case can be marked as dead
         return True
 

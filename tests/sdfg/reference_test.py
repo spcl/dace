@@ -2,7 +2,9 @@
 """ Tests the use of Reference data descriptors. """
 import dace
 from dace.sdfg import validation
+from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import FindReferenceSources
+from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
 
@@ -325,6 +327,10 @@ def test_reference_branch():
     sdfg(A=A, B=B, out=out, i=1)
     assert np.allclose(out, A)
 
+    # Test reference-to-view - should fail to apply
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert 'ReferenceToView' not in result or not result['ReferenceToView']
+
 
 def test_reference_sources_pass():
     sdfg = _create_branch_sdfg()
@@ -367,7 +373,16 @@ def test_reference_tasklet_assignment_stree():
     assert [type(n) for n in stree.children] == [tn.TaskletNode, tn.RefSetNode, tn.TaskletNode]
 
 
-def test_twostate():
+def test_reference_tasklet_assignment_reftoview():
+    sdfg = _create_tasklet_assignment_sdfg()
+
+    # Test reference-to-view - should fail to apply
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert 'ReferenceToView' not in result or not result['ReferenceToView']
+
+
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_twostate(reftoview):
     sdfg = _create_twostate_sdfg()
 
     # Test sources
@@ -378,6 +393,10 @@ def test_twostate():
     sources = sources['ref']
     assert sources == {dace.Memlet('A[10:20]')}
 
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
+
     # Test correctness
     A = np.random.rand(20)
     ref = np.copy(A)
@@ -386,7 +405,8 @@ def test_twostate():
     assert np.allclose(A, ref)
 
 
-def test_multisubset():
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_multisubset(reftoview):
     sdfg = _create_multisubset_sdfg()
 
     # Test sources
@@ -398,6 +418,10 @@ def test_multisubset():
     assert sources['ref2'] == {dace.Memlet('A[0:22, 5]')}
     assert sources['refB'] == {dace.Memlet('B[4, 0:20]')}
 
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
+
     # Test correctness
     A = np.random.rand(22, 22)
     B = np.random.rand(20, 20)
@@ -407,7 +431,8 @@ def test_multisubset():
     assert np.allclose(B, ref)
 
 
-def test_scoped():
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_scoped(reftoview):
     sdfg = _create_scoped_sdfg()
 
     # Test sources
@@ -416,6 +441,10 @@ def test_scoped():
     sources = sources[0]
     assert len(sources) == 1
     assert sources['ref'] == {dace.Memlet('A[2:4, 3]')}
+
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
 
     # Test correctness
     A = np.random.rand(20, 20)
@@ -429,7 +458,8 @@ def test_scoped():
     assert np.allclose(A, ref)
 
 
-def test_scoped_empty_memlet():
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_scoped_empty_memlet(reftoview):
     sdfg = _create_scoped_empty_memlet_sdfg()
 
     # Test sources
@@ -438,6 +468,10 @@ def test_scoped_empty_memlet():
     sources = sources[0]
     assert len(sources) == 1
     assert sources['ref'] == {dace.Memlet('A[2:4, 3]')}
+
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
 
     # Test correctness
     A = np.random.rand(20, 20)
@@ -449,7 +483,8 @@ def test_scoped_empty_memlet():
     assert np.allclose(B, ref)
 
 
-def test_reference_neighbors():
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_reference_neighbors(reftoview):
     sdfg = _create_neighbor_sdfg()
 
     # Test sources
@@ -458,6 +493,10 @@ def test_reference_neighbors():
     sources = sources[0]
     assert len(sources) == 1
     assert sources['ref'] == {dace.Memlet('A[2:4, 3:5]')}
+
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
 
     # Test correctness
     A = np.random.rand(20, 20)
@@ -486,7 +525,8 @@ def test_reference_loop_nonfree():
     assert sdfg.apply_transformations(LoopToMap) == 0
 
     # Test reference-to-view - should fail to apply
-    # TODO
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert 'ReferenceToView' not in result or not result['ReferenceToView']
 
     # Test correctness
     A = np.random.rand(20)
@@ -496,7 +536,8 @@ def test_reference_loop_nonfree():
     assert np.allclose(ref, A)
 
 
-def test_reference_loop_internal_use():
+@pytest.mark.parametrize('reftoview', (False, True))
+def test_reference_loop_internal_use(reftoview):
     sdfg = _create_loop_reference_internal_use()
 
     # Test sources
@@ -505,6 +546,10 @@ def test_reference_loop_internal_use():
     sources = sources[0]
     assert len(sources) == 1
     assert sources['ref'] == {dace.Memlet('A[i]')}
+
+    if reftoview:
+        sdfg.simplify()
+        assert not any(isinstance(v, dace.data.Reference) for v in sdfg.arrays.values())
 
     # Test correctness
     A = np.random.rand(20)
@@ -524,6 +569,10 @@ def test_reference_loop_nonfree_internal_use():
     assert len(sources) == 1
     assert sources['ref'] == {dace.Memlet('A[i]')}
 
+    # Test reference-to-view - should fail to apply
+    result = Pipeline([ReferenceToView()]).apply_pass(sdfg, {})
+    assert 'ReferenceToView' not in result or not result['ReferenceToView']
+
     # Test correctness
     A = np.random.rand(20)
     ref = np.copy(A)
@@ -539,11 +588,18 @@ if __name__ == '__main__':
     test_reference_tasklet_assignment()
     test_reference_tasklet_assignment_analysis()
     test_reference_tasklet_assignment_stree()
-    test_twostate()
-    test_multisubset()
-    test_scoped()
-    test_scoped_empty_memlet()
-    test_reference_neighbors()
+    test_reference_tasklet_assignment_reftoview()
+    test_twostate(False)
+    test_twostate(True)
+    test_multisubset(False)
+    test_multisubset(True)
+    test_scoped(False)
+    test_scoped(True)
+    test_scoped_empty_memlet(False)
+    test_scoped_empty_memlet(True)
+    test_reference_neighbors(False)
+    test_reference_neighbors(True)
     test_reference_loop_nonfree()
-    test_reference_loop_internal_use()
+    test_reference_loop_internal_use(False)
+    test_reference_loop_internal_use(True)
     test_reference_loop_nonfree_internal_use()
