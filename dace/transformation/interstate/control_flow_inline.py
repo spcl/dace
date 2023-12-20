@@ -106,19 +106,19 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         loop_tail_state = parent.add_state(self.loop.label + '_tail')
 
         # Add all loop states and make sure to keep track of all the ones that need to be connected in the end.
-        to_connect: Set[SDFGState] = set()
+        connect_to_tail: Set[SDFGState] = set()
+        connect_to_end: Set[SDFGState] = set()
         for node in self.loop.nodes():
+            node.label = self.loop.label + '_' + node.label
             parent.add_node(node)
-            if self.loop.out_degree(node) == 0:
-                to_connect.add(node)
-
-        # Handle break and continue.
-        for continue_state_id in self.loop.continue_states:
-            continue_state = self.loop.node(continue_state_id)
-            to_connect.add(continue_state)
-        for break_state_id in self.loop.break_states:
-            break_state = self.loop.node(break_state_id)
-            parent.add_edge(break_state, end_state, InterstateEdge())
+            if isinstance(node, LoopRegion.BreakState):
+                node.__class__ = SDFGState
+                connect_to_end.add(node)
+            elif isinstance(node, LoopRegion.ContinueState):
+                node.__class__ = SDFGState
+                connect_to_tail.add(node)
+            elif self.loop.out_degree(node) == 0:
+                connect_to_tail.add(node)
 
         # Add all internal loop edges.
         for edge in self.loop.edges():
@@ -161,9 +161,11 @@ class LoopRegionInline(transformation.MultiStateTransformation):
         parent.add_edge(guard_state, internal_start, InterstateEdge(CodeBlock(cond_expr).code))
 
         # Connect any end states from the loop's internal state machine to the tail state so they end a
-        # loop iteration. Do the same for any continue states.
-        for node in to_connect:
+        # loop iteration. Do the same for any continue states, and connect any break states to the end of the loop.
+        for node in connect_to_tail:
             parent.add_edge(node, loop_tail_state, InterstateEdge())
+        for node in connect_to_end:
+            parent.add_edge(node, end_state, InterstateEdge())
 
         # Remove the original loop.
         parent.remove_node(self.loop)

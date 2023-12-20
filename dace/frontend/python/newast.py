@@ -2379,6 +2379,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 if self.last_block is not None:
                     self.cfg_target.add_edge(self.last_block, state, dace.InterstateEdge())
                 self.last_block = state
+
+                self._generate_orelse(loop_region, state)
+
                 return state
 
             self.last_block = loop_region
@@ -2448,11 +2451,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if test_region is not None:
             iter_end_blocks = set()
-            iter_end_blocks.update(loop_region.continue_states)
+            for n in loop_region.nodes():
+                if isinstance(n, LoopRegion.ContinueState):
+                    iter_end_blocks.add(n)
+                    # If it needs to be connected back to the test region, it does no longer need
+                    # to be handled specially and thus is no longer a special continue state.
+                    n.__class__ = SDFGState
             for inner_node in loop_region.nodes():
                 if loop_region.out_degree(inner_node) == 0:
                     iter_end_blocks.add(inner_node)
-            loop_region.continue_states = []
 
             test_region_copy = copy.deepcopy(test_region)
             loop_region.add_node(test_region_copy)
@@ -2482,12 +2489,36 @@ class ProgramVisitor(ExtNodeVisitor):
             # The state that all "break" edges go to
             self._add_state(f'postwhile_{node.lineno}')
 
+            postloop_block = self.last_block
+            self._generate_orelse(loop_region, postloop_block)
+
         self.last_block = loop_region
+
+    def _generate_orelse(self, loop_region: LoopRegion, postloop_block: ControlFlowBlock):
+        did_break_symbol = 'did_break_' + loop_region.label
+        self.sdfg.add_symbol(did_break_symbol, dace.int32)
+        for n in loop_region.nodes():
+            if isinstance(n, LoopRegion.BreakState):
+                for iedge in loop_region.in_edges(n):
+                    iedge.data.assignments[did_break_symbol] = '1'
+        for iedge in self.cfg_target.in_edges(loop_region):
+            iedge.data.assignments[did_break_symbol] = '0'
+        oedges = self.cfg_target.out_edges(loop_region)
+        if len(oedges) > 1:
+            raise DaceSyntaxError('Multiple exits to a loop with for-else syntax')
+
+        intermediate = self.cfg_target.add_state(f'{loop_region.label}_normal_exit')
+        self.cfg_target.add_edge(loop_region, intermediate,
+                                 dace.InterstateEdge(condition=f"(not {did_break_symbol} == 1)"))
+        oedge = oedges[0]
+        self.cfg_target.add_edge(intermediate, oedge.dst, copy.deepcopy(oedge.data))
+        self.cfg_target.remove_edge(oedge)
+        self.cfg_target.add_edge(loop_region, postloop_block, dace.InterstateEdge(condition=f"{did_break_symbol} == 1"))
 
     def visit_Break(self, node: ast.Break):
         if isinstance(self.cfg_target, LoopRegion):
-            break_state = self._add_state('break_%s' % node.lineno)
-            self.cfg_target.break_states.append(self.cfg_target.node_id(break_state))
+            break_state = self.cfg_target.add_state('break_%s' % node.lineno, is_break=True)
+            self._on_block_added(break_state)
         else:
             error_msg = "'break' is only supported inside loops "
             if self.nested:
@@ -2497,8 +2528,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Continue(self, node: ast.Continue):
         if isinstance(self.cfg_target, LoopRegion):
-            continue_state = self._add_state('continue_%s' % node.lineno)
-            self.cfg_target.continue_states.append(self.cfg_target.node_id(continue_state))
+            continue_state = self.cfg_target.add_state('continue_%s' % node.lineno, is_continue=True)
+            self._on_block_added(continue_state)
         else:
             error_msg = ("'continue' is only supported inside loops ")
             if self.nested:

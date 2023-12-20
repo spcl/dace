@@ -2633,9 +2633,6 @@ class LoopRegion(ControlFlowRegion):
     inverted = Property(dtype=bool, default=False,
                         desc='If True, the loop condition is checked after the first iteration.')
     loop_variable = Property(dtype=str, default='', desc='The loop variable, if given')
-    break_states = ListProperty(element_type=int, desc='States that when reached break out of the loop')
-    continue_states = ListProperty(element_type=int,
-                                   desc='States that when reached directly execute the next iteration')
 
     def __init__(self,
                  label: str,
@@ -2708,22 +2705,28 @@ class LoopRegion(ControlFlowRegion):
     def to_json(self, parent=None):
         return super().to_json(parent)
 
-    def _add_node_internal(self, node, is_continue=False, is_break=False):
-        if is_continue:
-            if is_break:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.continue_states.append(self.node_id(node))
-        if is_break:
-            if is_continue:
-                raise ValueError('Cannot set both is_continue and is_break')
-            self.break_states.append(self.node_id(node))
-
-    def add_node(self, node, is_start_block=False, is_continue=False, is_break=False, *, is_start_state: bool = None):
-        super().add_node(node, is_start_block, is_start_state=is_start_state)
-        self._add_node_internal(node, is_continue, is_break)
-
-    def add_state(self, label=None, is_start_block=False, is_continue=False, is_break=False, *,
+    def add_state(self, label=None, is_start_block=False, is_break=False, is_continue=False, *,
                   is_start_state: bool = None) -> SDFGState:
         state = super().add_state(label, is_start_block, is_start_state=is_start_state)
-        self._add_node_internal(state, is_continue, is_break)
+        # Cast to the corresponding type if the state is a break or continue state.
+        if is_break and is_continue:
+            raise ValueError('State cannot represent both a break and continue at the same time.')
+        elif is_break:
+            state.__class__ = LoopRegion.BreakState
+        elif is_continue:
+            state.__class__ = LoopRegion.ContinueState
         return state
+
+
+    class BreakState(SDFGState):
+        """ Special state representing breaks inside of loop regions. """
+
+        def __repr__(self) -> str:
+            return f"SDFGState ({self.label}) [Break]"
+
+
+    class ContinueState(SDFGState):
+        """ Special state representing continue statements inside of loop regions. """
+
+        def __repr__(self) -> str:
+            return f"SDFGState ({self.label}) [Continue]"
