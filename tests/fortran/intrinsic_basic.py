@@ -82,7 +82,6 @@ def test_fortran_frontend_bit_size_symbolic():
     res2 = np.full([size, size2, size3], 42, order="F", dtype=np.int32)
     res3 = np.full([size+size2, size2*5, size3 + size*size2], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, res3=res3, arrsize=size, arrsize2=size2, arrsize3=size3)
-    print(res)
 
     assert res[0] == size
     assert res[1] == size*size2*size3
@@ -92,8 +91,42 @@ def test_fortran_frontend_bit_size_symbolic():
     assert res[5] == size + size2 + size3
     assert res[6] == size + size2 + size2*5 + size3 + size*size2
 
+def test_fortran_frontend_size_arbitrary():
+    test_string = """
+                    PROGRAM intrinsic_basic_size_arbitrary
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer :: res(arrsize, arrsize2)
+                    CALL intrinsic_basic_size_arbitrary_function(res)
+                    end
+
+                    SUBROUTINE intrinsic_basic_size_arbitrary_function(res)
+                    implicit none
+                    integer :: res(:, :)
+
+                    res(1) = SIZE(res)
+                    res(2) = SIZE(res, 1)
+                    res(3) = SIZE(res, 2)
+
+                    END SUBROUTINE intrinsic_basic_size_arbitrary_function
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_function", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 7
+    size2 = 5
+    res = np.full([size, size2], 42, order="F", dtype=np.int32)
+    sdfg(res=res)
+
+    assert res[0] == size*size2
+    assert res[1] == size
+    assert res[2] == size2
 
 if __name__ == "__main__":
 
     test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_size_arbitrary()
