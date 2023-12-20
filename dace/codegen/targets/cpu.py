@@ -646,18 +646,6 @@ class CPUCodeGen(TargetCodeGenerator):
             #############################################
             # Corner cases
 
-            # NOTE: This looks obsolete but keeping it commented out in case tests fail.
-            # Writing one index
-            # if (isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None
-            #         and self._dispatcher.defined_vars.get(vconn)[0] == DefinedType.Scalar):
-            #     stream.write(
-            #         "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, dst_nodedesc.dtype, False)),
-            #         sdfg,
-            #         state_id,
-            #         [src_node, dst_node],
-            #     )
-            #     return
-
             # Setting a reference
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
                 srcptr = cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)
