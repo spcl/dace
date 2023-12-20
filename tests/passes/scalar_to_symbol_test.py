@@ -692,6 +692,65 @@ def test_ternary_expression(compile_time_evaluatable):
     sdfg.compile()
 
 
+def test_promote_twice_written_scalar():
+    """
+    Test designed after a bug was observed with a twice-written scalar in the same state, used both as
+    the old value and the new.
+    """
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_scalar('val', dace.int32, transient=True)
+    sdfg.add_scalar('val2', dace.int32, transient=True)
+    sdfg.add_scalar('tmp', dace.float64, transient=True)
+
+    initstate = sdfg.add_state()
+    t = initstate.add_tasklet('init', {}, {'o'}, 'o = 1')
+    initstate.add_edge(t, 'o', initstate.add_write('val'), None, dace.Memlet('val'))
+
+    state = sdfg.add_state_after(initstate)
+
+    val = state.add_access('val')
+    val2 = state.add_access('val2')
+    val3 = state.add_access('val')
+    t = state.add_tasklet('addone', {'i'}, {'o'}, 'o = i + 1')
+    state.add_edge(val, None, t, 'i', dace.Memlet('val'))
+    state.add_edge(t, 'o', val2, None, dace.Memlet('val2'))
+    state.add_nedge(val2, val3, dace.Memlet('val2'))
+
+    r = state.add_read('A')
+    w = state.add_write('A')
+    tmp = state.add_access('tmp')
+    t2 = state.add_tasklet('addtwo', {'r', 'v'}, {'w'}, 'w = r[v] + 2')
+    state.add_edge(r, None, t2, 'r', dace.Memlet('A[0:20]', volume=1))
+    state.add_edge(t2, 'w', tmp, None, dace.Memlet('tmp'))
+    state.add_edge(val, None, t2, 'v', dace.Memlet('val'))
+
+    t3 = state.add_tasklet('store', {'r', 'v'}, {'w'}, 'w[v] = r')
+    state.add_edge(val3, None, t3, 'v', dace.Memlet('val'))
+    state.add_edge(tmp, None, t3, 'r', dace.Memlet('tmp'))
+    state.add_edge(t3, 'w', w, None, dace.Memlet('A[0:20]', volume=1))
+
+    # Test before promotion
+    # a = np.random.rand(20)
+    # ref = np.copy(a)
+    # ref[2] = ref[1] + 2
+    # sdfg(A=a)
+    # assert np.allclose(a, ref)
+
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert 'val2' in promoted
+    # TODO: Promoting val2 creates a data race between val and symassign->val
+    # promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    # assert 'val' in promoted
+
+    # Test after promotion
+    a = np.random.rand(20)
+    ref = np.copy(a)
+    ref[2] = ref[1] + 2
+    sdfg(A=a)
+    assert np.allclose(a, ref)
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -715,3 +774,4 @@ if __name__ == '__main__':
     test_dynamic_mapind()
     test_ternary_expression(False)
     test_ternary_expression(True)
+    test_promote_twice_written_scalar()
