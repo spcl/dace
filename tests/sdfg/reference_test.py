@@ -20,6 +20,9 @@ def test_unset_reference():
 
 
 def _create_branch_sdfg():
+    """
+    An SDFG in which a reference is set conditionally.
+    """
     sdfg = dace.SDFG('refbranch')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
@@ -48,6 +51,9 @@ def _create_branch_sdfg():
 
 
 def _create_tasklet_assignment_sdfg():
+    """
+    An SDFG in which a reference is set by a tasklet.
+    """
     sdfg = dace.SDFG('refta')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [19], dace.float64)
@@ -65,6 +71,9 @@ def _create_tasklet_assignment_sdfg():
 
 
 def _create_twostate_sdfg():
+    """
+    An SDFG in which a reference set happens on another state.
+    """
     sdfg = dace.SDFG('reftest')
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_reference('ref', [10], dace.float64)
@@ -124,6 +133,181 @@ def _create_multisubset_sdfg():
     state.add_edge(r3, None, t, 'c', dace.Memlet('ref3[3]'))  # (3,4)
     state.add_edge(r4, None, t, 'd', dace.Memlet('ref4[4]'))  # (4,3)
     state.add_edge(t, 'o', rbwrite, None, dace.Memlet('refB[4]'))
+
+    return sdfg
+
+
+def _create_scoped_sdfg():
+    """
+    An SDFG in which a reference is used inside a scope.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [20, 20], dace.float64)
+    sdfg.add_reference('ref', [2], dace.float64, strides=[20])
+
+    istate = sdfg.add_state()
+    state = sdfg.add_state_after(istate)
+
+    istate.add_edge(istate.add_read('A'), None, istate.add_write('ref'), 'set', dace.Memlet('A[2:4, 3]'))
+
+    me, mx = state.add_map('mapit', dict(i='0:2'))
+    ref = state.add_access('ref')
+    inp = state.add_read('B')
+    t = state.add_tasklet('doit', {'r'}, {'w'}, 'w = r + 1')
+    out = state.add_write('A')
+    state.add_memlet_path(inp, me, ref, memlet=dace.Memlet('B[1, i] -> i'))
+    state.add_edge(ref, None, t, 'r', dace.Memlet('ref[i]'))
+    state.add_edge_pair(mx, t, out, internal_connector='w', internal_memlet=dace.Memlet('A[10, i]'))
+
+    return sdfg
+
+
+def _create_scoped_empty_memlet_sdfg():
+    """
+    An SDFG in which a reference is used inside a scope with no inputs.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [20, 20], dace.float64)
+    sdfg.add_reference('ref', [2], dace.float64, strides=[20])
+
+    istate = sdfg.add_state()
+    state = sdfg.add_state_after(istate)
+
+    istate.add_edge(istate.add_read('A'), None, istate.add_write('ref'), 'set', dace.Memlet('A[2:4, 3]'))
+
+    me, mx = state.add_map('mapit', dict(i='0:2'))
+    ref = state.add_access('ref')
+    t = state.add_tasklet('doit', {'r'}, {'w'}, 'w = r + 1')
+    out = state.add_write('B')
+    state.add_edge(me, None, ref, None, memlet=dace.Memlet())
+    state.add_edge(ref, None, t, 'r', dace.Memlet('ref[i]'))
+    state.add_edge_pair(mx, t, out, internal_connector='w', internal_memlet=dace.Memlet('B[10, i]'))
+
+    return sdfg
+
+
+def _create_neighbor_sdfg():
+    """
+    An SDFG where a reference has both predecessors and successors.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20, 20], dace.float64)
+    sdfg.add_array('B', [2, 2], dace.float64)
+    sdfg.add_reference('ref', [2, 2], dace.float64, strides=[20, 1])
+
+    istate = sdfg.add_state()
+    state = sdfg.add_state_after(istate)
+
+    istate.add_edge(istate.add_read('A'), None, istate.add_write('ref'), 'set', dace.Memlet('A[2:4, 3:5]'))
+
+    b = state.add_read('B')
+    ref1 = state.add_access('ref')
+    ref2 = state.add_write('ref')
+    state.add_mapped_tasklet('addtwo',
+                             dict(i='0:2', j='0:2'),
+                             dict(r=dace.Memlet('B[i, j]')),
+                             'w = r + 2',
+                             dict(w=dace.Memlet('ref[i, j]')),
+                             external_edges=True,
+                             input_nodes=dict(B=b),
+                             output_nodes=dict(ref=ref1))
+    state.add_mapped_tasklet('sum',
+                             dict(i='0:2'),
+                             dict(r=dace.Memlet('ref[0, i]')),
+                             'w = r',
+                             dict(w=dace.Memlet('ref[1, 0]', wcr='lambda a,b: a+b')),
+                             external_edges=True,
+                             input_nodes=dict(ref=ref1),
+                             output_nodes=dict(ref=ref2))
+    state.add_mapped_tasklet('addone',
+                             dict(i='1:2'),
+                             dict(r=dace.Memlet('ref[i - 1, i - 1]')),
+                             'w = r + 1',
+                             dict(w=dace.Memlet('ref[i, i]')),
+                             external_edges=True,
+                             input_nodes=dict(ref=ref1),
+                             output_nodes=dict(ref=ref2))
+    return sdfg
+
+
+def _create_loop_nonfree_symbols_sdfg():
+    """
+    An SDFG where a reference is set inside a loop and used outside.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    # Create state machine
+    istate = sdfg.add_state()
+    state = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(istate, state, after, 'i', '0', 'i < 20', 'i + 1')
+
+    # Reference set inside loop
+    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i] -> 0'))
+
+    # Use outisde loop
+    t = after.add_tasklet('setone', {}, {'out'}, 'out = 1')
+    after.add_edge(t, 'out', after.add_write('ref'), None, dace.Memlet('ref[0]'))
+
+    return sdfg
+
+
+def _create_loop_reference_internal_use():
+    """
+    An SDFG where a reference is set and used inside a loop.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    # Create state machine
+    istate = sdfg.add_state()
+    state = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_edge(state, after, dace.InterstateEdge())
+    sdfg.add_loop(istate, state, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=after)
+
+    # Reference set inside loop
+    state.add_edge(state.add_read('A'), None, state.add_write('ref'), 'set', dace.Memlet('A[i]'))
+
+    # Use inside loop
+    t = after.add_tasklet('setone', {}, {'out'}, 'out = 1')
+    after.add_edge(t, 'out', after.add_write('ref'), None, dace.Memlet('ref[0]'))
+
+    return sdfg
+
+
+def _create_loop_reference_nonfree_internal_use():
+    """
+    An SDFG where a reference is set inside one loop and used in another, with
+    the same symbol name.
+    """
+    sdfg = dace.SDFG('reftest')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+
+    # Create state machine
+    istate = sdfg.add_state()
+    between_loops = sdfg.add_state()
+
+    # First loop
+    state1 = sdfg.add_state()
+    sdfg.add_loop(istate, state1, between_loops, 'i', '0', 'i < 20', 'i + 1')
+
+    # Second loop
+    state2 = sdfg.add_state()
+    sdfg.add_loop(between_loops, state2, None, 'i', '0', 'i < 20', 'i + 1')
+
+    # Reference set inside first loop
+    state1.add_edge(state1.add_read('A'), None, state1.add_write('ref'), 'set', dace.Memlet('A[i]'))
+
+    # Use inside second loop
+    t = state2.add_tasklet('setone', {}, {'out'}, 'out = 1')
+    state2.add_edge(t, 'out', state2.add_write('ref'), None, dace.Memlet('ref[0]'))
 
     return sdfg
 
@@ -223,6 +407,131 @@ def test_multisubset():
     assert np.allclose(B, ref)
 
 
+def test_scoped():
+    sdfg = _create_scoped_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[2:4, 3]')}
+
+    # Test correctness
+    A = np.random.rand(20, 20)
+    B = np.random.rand(20, 20)
+    ref = np.copy(A)
+
+    ref[2:4, 3] = B[1, 0:2]
+    ref[10, 0:2] = ref[2:4, 3] + 1
+
+    sdfg(A=A, B=B)
+    assert np.allclose(A, ref)
+
+
+def test_scoped_empty_memlet():
+    sdfg = _create_scoped_empty_memlet_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[2:4, 3]')}
+
+    # Test correctness
+    A = np.random.rand(20, 20)
+    B = np.random.rand(20, 20)
+    ref = np.copy(B)
+    ref[10, 0:2] = A[2:4, 3] + 1
+
+    sdfg(A=A, B=B)
+    assert np.allclose(B, ref)
+
+
+def test_reference_neighbors():
+    sdfg = _create_neighbor_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[2:4, 3:5]')}
+
+    # Test correctness
+    A = np.random.rand(20, 20)
+    B = np.random.rand(2, 2)
+    ref = np.copy(A)
+    ref[2:4, 3:5] = B + 2
+    ref[3, 3] += np.sum(ref[2, 3:5])
+    ref[3, 4] = ref[2, 3] + 1
+
+    sdfg(A=A, B=B)
+    assert np.allclose(A, ref)
+
+
+def test_reference_loop_nonfree():
+    sdfg = _create_loop_nonfree_symbols_sdfg()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[i] -> 0')}
+
+    # Test loop-to-map - should fail to apply
+    from dace.transformation.interstate import LoopToMap
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+    # Test reference-to-view - should fail to apply
+    # TODO
+
+    # Test correctness
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    ref[-1] = 1
+    sdfg(A=A)
+    assert np.allclose(ref, A)
+
+
+def test_reference_loop_internal_use():
+    sdfg = _create_loop_reference_internal_use()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[i]')}
+
+    # Test correctness
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    ref[:] = 1
+    sdfg(A=A)
+    assert np.allclose(ref, A)
+
+
+def test_reference_loop_nonfree_internal_use():
+    sdfg = _create_loop_reference_nonfree_internal_use()
+
+    # Test sources
+    sources = FindReferenceSources().apply_pass(sdfg, {})
+    assert len(sources) == 1  # There is only one SDFG
+    sources = sources[0]
+    assert len(sources) == 1
+    assert sources['ref'] == {dace.Memlet('A[i]')}
+
+    # Test correctness
+    A = np.random.rand(20)
+    ref = np.copy(A)
+    ref[-1] = 1
+    sdfg(A=A)
+    assert np.allclose(ref, A)
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
@@ -232,3 +541,9 @@ if __name__ == '__main__':
     test_reference_tasklet_assignment_stree()
     test_twostate()
     test_multisubset()
+    test_scoped()
+    test_scoped_empty_memlet()
+    test_reference_neighbors()
+    test_reference_loop_nonfree()
+    test_reference_loop_internal_use()
+    test_reference_loop_nonfree_internal_use()
