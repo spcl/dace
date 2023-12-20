@@ -6,7 +6,7 @@ from fparser.two import symbol_table
 import copy
 from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
-from typing import Any, List, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
+from typing import Any, List, Optional, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -282,6 +282,7 @@ class InternalFortranAst:
             #"Component_Decl_List": self.component_decl_list,
             #"Component_Decl": self.component_decl,
         }
+        self.type_arbitrary_array_variable_count = 0
 
     def fortran_intrinsics(self) -> "FortranIntrinsics":
         return self.intrinsic_handler
@@ -650,6 +651,42 @@ class InternalFortranAst:
         else:
             raise TypeError("Array dimension must be at most two expressions")
 
+    def assumed_array_shape(self, var, array_name: Optional[str], linenumber):
+
+        # We do not know the array size. Thus, we insert symbols
+        # to mark its size
+        shape = get_children(var, "Assumed_Shape_Spec_List")
+
+        if shape is None:
+            return None
+
+        # this is based on structures observed in Fortran codes
+        # I don't know why the shape is an array
+        if len(shape) > 0:
+            dims_count = len(shape[0].items)
+            size = []
+            for i in range(dims_count):
+
+                if array_name is not None:
+                    name = f'__dace_ARRAY_{array_name}_dim_{i}_size'
+                else:
+                    name = f'__dace_ARRAY_{self.type_arbitrary_array_variable_count}_dim_{i}_size'
+                    self.type_arbitrary_array_variable_count += 1
+
+                var = ast_internal_classes.Var_Decl_Node(name=name,
+                                                type='INTEGER',
+                                                alloc=False,
+                                                sizes=None,
+                                                offsets=None,
+                                                kind=None,
+                                                line_number=linenumber)
+                size.append(ast_internal_classes.Name_Node(name=name))
+                self.symbols[name] = None
+
+            return size
+        else:
+            return None
+
     def type_declaration_stmt(self, node: FASTNode):
 
         #decide if its a intrinsic variable type or a derived type
@@ -719,6 +756,7 @@ class InternalFortranAst:
         attr_size = None
         attr_offset = None
         for i in attributes:
+
             if i.string.lower() == "allocatable":
                 alloc = True
             if i.string.lower() == "parameter":
@@ -735,9 +773,14 @@ class InternalFortranAst:
                 attr_size = []
                 attr_offset = []
                 sizes = get_child(dimension_spec[0], ["Explicit_Shape_Spec_List"])
-                
-                for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
-                    self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+
+                if sizes is not None:
+                    for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
+                        self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                else:
+                    sizes = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
+                    if sizes is None:
+                        raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
         vardecls = []
 
@@ -787,28 +830,8 @@ class InternalFortranAst:
                                                             kind=kind,
                                                             line_number=node.item.span))
                     else:
-                        # We do not know the array size. Thus, we insert symbols
-                        # to mark its size
-                        shape = get_children(var, "Assumed_Shape_Spec_List")
-                        # this is based on structures observed in Fortran codes
-                        # I don't know why the shape is an array
-                        if len(shape) > 0:
-                            dims_count = len(shape[0].items)
-                            size = []
-                            for i in range(dims_count):
 
-                                name = f'__dace_ARRAY_{actual_name.name}_dim_{i}_size'
-
-                                var = ast_internal_classes.Var_Decl_Node(name=name,
-                                                                type='INTEGER',
-                                                                alloc=False,
-                                                                sizes=None,
-                                                                offsets=None,
-                                                                kind=None,
-                                                                line_number=node.item.span)
-                                size.append(ast_internal_classes.Name_Node(name=name))
-                                self.symbols[name] = None
-
+                        sizes = self.assumed_array_shape(var, actual_name.name, node.item.span)
                         vardecls.append(
                             ast_internal_classes.Var_Decl_Node(name=actual_name.name,
                                                             type=testtype,
