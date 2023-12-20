@@ -12,13 +12,13 @@ import sympy as sp
 from copy import deepcopy
 from dace.symbolic import pystr_to_symbolic, SymExpr
 
-from dace.sdfg.work_depth_analysis.helpers import get_uuid
+from dace.sdfg.performance_evaluation.helpers import get_uuid
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
 from dace.data import Array
-from dace.sdfg.work_depth_analysis.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
-from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work
+from dace.sdfg.performance_evaluation.op_in_helpers import CacheLineTracker, AccessStack, fit_curve, plot, compute_mape
+from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work
 
 
 class SymbolRange():

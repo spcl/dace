@@ -18,8 +18,8 @@ import ast
 import astunparse
 import warnings
 
-from dace.sdfg.work_depth_analysis.helpers import get_uuid, find_loop_guards_tails_exits
-from dace.sdfg.work_depth_analysis.assumptions import parse_assumptions
+from dace.sdfg.performance_evaluation.helpers import get_uuid, find_loop_guards_tails_exits
+from dace.sdfg.performance_evaluation.assumptions import parse_assumptions
 from dace.transformation.passes.symbol_ssa import StrictSymbolSSA
 from dace.transformation.pass_pipeline import FixedPointPipeline
 

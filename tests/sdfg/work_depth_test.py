@@ -1,9 +1,9 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains test cases for the work depth analysis. """
 import dace as dc
-from dace.sdfg.work_depth_analysis.work_depth import analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par, parse_assumptions
-from dace.sdfg.work_depth_analysis.helpers import get_uuid
-from dace.sdfg.work_depth_analysis.assumptions import ContradictingAssumptions
+from dace.sdfg.performance_evaluation.work_depth import analyze_sdfg, get_tasklet_work_depth, get_tasklet_avg_par, parse_assumptions
+from dace.sdfg.performance_evaluation.helpers import get_uuid
+from dace.sdfg.performance_evaluation.assumptions import ContradictingAssumptions
 import sympy as sp
 import numpy as np
 

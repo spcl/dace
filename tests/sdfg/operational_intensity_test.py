@@ -3,8 +3,8 @@
 import dace as dc
 import sympy as sp
 import numpy as np
-from dace.sdfg.work_depth_analysis.operational_intensity import analyze_sdfg_op_in
-from dace.sdfg.work_depth_analysis.helpers import get_uuid
+from dace.sdfg.performance_evaluation.operational_intensity import analyze_sdfg_op_in
+from dace.sdfg.performance_evaluation.helpers import get_uuid
 
 from math import isclose
 
