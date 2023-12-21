@@ -376,7 +376,7 @@ class CompiledSDFG(object):
         - Transforming data container objects to their C equivalent (for example, pointers).
 
         If you know what you are doing, you can also use `_fast_call()` which
-        allows to bypass these operations and call the extension directly.
+        allows to bypass these operations and call the generated C function directly.
         """
         if self.argnames is None and len(args) != 0:
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
