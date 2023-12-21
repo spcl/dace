@@ -371,7 +371,7 @@ class CompiledSDFG(object):
         The positional arguments (`args`) are expected to be in the same order as
         `argnames` (which are either sorted or follow the `arg_names` property in the source `SDFG`).
         This function will roughly do the following steps:
-        - bringing the arguments in the order dictated by the C callable.
+        - Structuring arguments in the order dictated by the generated code.
         - perfrom some basic checks on the arguments.
         - transfroms `ndarray`s to their `C` equivalent.
 
