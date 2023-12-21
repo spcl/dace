@@ -369,7 +369,7 @@ class CompiledSDFG(object):
         """This function forwards the Python call to the compiled `C` code.
 
         The positional arguments (`args`) are expected to be in the same order as
-        `argnames` (which comes from `arg_names` in the source `SDFG`).
+        `argnames` (which are either sorted or follow the `arg_names` property in the source `SDFG`).
         This function will roughly do the following steps:
         - bringing the arguments in the order dictated by the C callable.
         - perfrom some basic checks on the arguments.
