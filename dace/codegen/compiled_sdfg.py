@@ -373,7 +373,7 @@ class CompiledSDFG(object):
         This function will roughly do the following steps:
         - Structuring arguments in the order dictated by the generated code.
         - Performing type checks on the arguments.
-        - transfroms `ndarray`s to their `C` equivalent.
+        - Transforming data container objects to their C equivalent (for example, pointers).
 
         If you are know what you are doing you can also use `_fast_call()` which
         allows to bypass these operations and call the extension directly.
