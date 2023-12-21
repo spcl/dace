@@ -9,6 +9,11 @@ from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_utils import fortrantypes2dacetypes
 from dace.frontend.fortran.ast_transforms import NodeVisitor, NodeTransformer, ParentScopeAssigner, ScopeVarsDeclarations, par_Decl_Range_Finder, mywalk
 
+from dace.libraries.blas.nodes.dot import dot_libnode
+from dace.sdfg.graph import OrderedDiGraph
+from dace.transformation import transformation as xf
+from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
+
 FASTNode = Any
 
 class IntrinsicTransformation:
@@ -1180,7 +1185,8 @@ class MathFunctions(IntrinsicTransformation):
         "ASIN": MathTransformation("asin", "FIRST_ARG"),
         "ACOS": MathTransformation("acos", "FIRST_ARG"),
         "ATAN": MathTransformation("atan", "FIRST_ARG"),
-        "ATAN2": MathTransformation("atan2", "FIRST_ARG")
+        "ATAN2": MathTransformation("atan2", "FIRST_ARG"),
+        "DOT_PRODUCT": MathTransformation("dace.libraries.blas.dot", "FIRST_ARG")
     }
 
     class TypeTransformer(IntrinsicNodeTransformer):
@@ -1397,3 +1403,44 @@ class FortranIntrinsics:
                 name=name, type="VOID",
                 args=args.args, line_number=line
             )
+
+class IntrinsicSDFGTransformation(xf.SingleStateTransformation):
+
+    array1 = xf.PatternNode(nodes.AccessNode)
+    array2 = xf.PatternNode(nodes.AccessNode)
+    tasklet = xf.PatternNode(nodes.Tasklet)
+    out = xf.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+
+        g = OrderedDiGraph()
+        g.add_node(cls.array1)
+        g.add_node(cls.array2)
+        g.add_node(cls.tasklet)
+        g.add_node(cls.out)
+        g.add_edge(cls.array1, cls.tasklet, None)
+        g.add_edge(cls.array2, cls.tasklet, None)
+        g.add_edge(cls.tasklet, cls.out, None)
+        return [g]
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+
+        # FIXME: filter tasklet functions
+        return True
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+
+        # FIXME: hardcoded DOT_PRODUCT -> replace with others
+        dot_libnode(None, sdfg, state, self.array1.data, self.array2.data, self.out.data)
+
+        for in_edge in state.in_edges(self.tasklet):
+            print(dir(in_edge))
+            print(type(in_edge.src))
+            print(type(in_edge.src_conn))
+            state.remove_memlet_path(in_edge)
+
+        for in_edge in state.out_edges(self.tasklet):
+            state.remove_memlet_path(in_edge)
+
+        state.remove_node(self.tasklet)

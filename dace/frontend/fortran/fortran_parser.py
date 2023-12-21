@@ -9,6 +9,7 @@ import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
+from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from typing import List, Tuple, Set
 from dace import dtypes
 from dace import Language as lang
@@ -1243,6 +1244,10 @@ def create_sdfg_from_string(
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
+
+    sdfg.apply_transformations(IntrinsicSDFGTransformation)
+    sdfg.expand_library_nodes()
+
     return sdfg
 
 
@@ -1276,6 +1281,8 @@ def create_sdfg_from_fortran_file(source_string: str):
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
+    sdfg.apply_transformations(IntrinsicSDFGTransformation)
+    sdfg.expand_library_nodes()
 
     return sdfg
 
@@ -1711,6 +1718,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
             ast2sdfg.translate(program, sdfg)
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            sdfg.expand_library_nodes()
             sdfg.validate()
             sdfg.simplify(verbose=True)
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
