@@ -33,7 +33,7 @@ class ReloadableDLL(object):
         """
         self._stub_filename = os.path.join(
             os.path.dirname(os.path.realpath(library_filename)),
-            'libdacestub_%s.%s' % (program_name, Config.get('compiler', 'library_extension')))
+            f'libdacestub_{program_name}.{Config.get("compiler", "library_extension")}')
         self._library_filename = os.path.realpath(library_filename)
         self._stub = None
         self._lib = None
@@ -47,7 +47,7 @@ class ReloadableDLL(object):
 
         func = self._stub.get_symbol(self._lib, ctypes.c_char_p(name.encode()))
         if func is None:
-            raise KeyError('Function %s not found in library %s' % (name, os.path.basename(self._library_filename)))
+            raise KeyError(f'Function {name} not found in library {os.path.basename(self._library_filename)}')
 
         return ctypes.CFUNCTYPE(restype)(func)
 
@@ -105,15 +105,14 @@ class ReloadableDLL(object):
 
             is_loaded = self._stub.is_library_loaded(lib_cfilename)
             if is_loaded == 1:
-                warnings.warn('Library %s already loaded, renaming file' % self._library_filename)
+                warnings.warn(f'Library {self._library_filename} already loaded, renaming file')
                 try:
                     shutil.copyfile(self._library_filename, self._library_filename + '_')
                     self._library_filename += '_'
                 except shutil.Error:
-                    raise cgx.DuplicateDLLError('Library %s is already loaded somewhere else ' %
-                                                os.path.basename(self._library_filename) +
-                                                'and cannot be unloaded. Please use a different name ' +
-                                                'for the SDFG/program.')
+                    raise cgx.DuplicateDLLError(f'Library {os.path.basename(self._library_filename)}'
+                                                'is already loaded somewhere else and cannot be unloaded. '
+                                                'Please use a different name for the SDFG/program.')
 
         # Actually load the library
         self._lib = ctypes.c_void_p(self._stub.load_library(lib_cfilename))
@@ -126,7 +125,7 @@ class ReloadableDLL(object):
                 result = subprocess.run(['ld', self._library_filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 stderr = result.stderr.decode('utf-8')
                 reason = 'Reason:\n' + '\n'.join([l for l in stderr.split('\n') if '_start' not in l])
-            raise RuntimeError('Could not load library %s. %s' % (os.path.basename(self._library_filename), reason))
+            raise RuntimeError(f'Could not load library {os.path.basename(self._library_filename)}. {reason}')
 
     def unload(self):
         """ Unloads the internal library using the stub. """
@@ -212,6 +211,7 @@ class CompiledSDFG(object):
                     self.has_gpu_code = True
                     break
 
+
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
         Tries to find a symbol by name in the compiled SDFG, and convert it to a callable function
@@ -225,6 +225,7 @@ class CompiledSDFG(object):
         except KeyError:  # Function not found
             return None
 
+
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
@@ -237,6 +238,7 @@ class CompiledSDFG(object):
             raise ValueError('Library was not initialized')
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
+
 
     def _try_parse_state_struct(self) -> Optional[Type[ctypes.Structure]]:
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid import cycle
@@ -365,18 +367,25 @@ class CompiledSDFG(object):
         else:
             return result
 
+
     def __call__(self, *args, **kwargs):
-        """This function forwards the Python call to the compiled `C` code.
+        """
+        Forwards the Python call to the compiled ``SDFG``.
 
-        The positional arguments (`args`) are expected to be in the same order as
-        `argnames` (which are either sorted or follow the `arg_names` property in the source `SDFG`).
-        This function will roughly do the following steps:
-        - Structuring arguments in the order dictated by the generated code.
-        - Performing type checks on the arguments.
-        - Transforming data container objects to their C equivalent (for example, pointers).
+        The order of the positional arguments is expected to be the same as in
+        the ``argnames`` member. The function will roughly perform the
+        following tasks:
+        - Change the order of the Python arguments into the one required by
+          the binary.
+        - Performing some basic sanity checks.
+        - Transforming the Python arguments into their ``C`` equivalents.
+        - Allocate the memory for the return values.
+        - Call the ``C` function.
 
-        If you know what you are doing, you can also use `_fast_call()` which
-        allows to bypass these operations and call the generated C function directly.
+        :note: The memory for the return values is only allocated the first
+               time this function is called. Thus, this function will always
+               return the same objects. To force the allocation of new memory
+               you can call ``clear_return_values()`` in advance.
         """
         if self.argnames is None and len(args) != 0:
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
@@ -387,25 +396,27 @@ class CompiledSDFG(object):
             )
         argtuple, initargtuple = self._construct_args(kwargs)   # Missing arguments will be detected here.
                                                                 # Return values are cached in `self._lastargs`.
-        return self._fast_call(argtuple, initargtuple)
+        return self.fast_call(argtuple, initargtuple)
 
 
-    def _fast_call(
-            self,
-            callargs: Tuple[Any, ...],
-            initargs: Tuple[Any, ...],
-    ) -> Any:
-        """This function allows to bypass the construction of arguments.
+    def fast_call(
+        self,
+        callargs: Tuple[Any, ...],
+        initargs: Tuple[Any, ...],
+    ) -> Union[Tuple[Any, ...], Any]:
+        """
+        Calls the underlying binary functions directly and bypassing
+        argument sanitation.
 
-        By default `self.__call__()` will reorder its arguments, whose order is given by `argnames`,
-        to the one that is given by `_sig`, i.e., in the generated code,
-        which is done by `_construct_args()`, and transforms the arguments.
-        This function excepts that this reordering and transformation has already been done.
+        This is a faster, but less user friendly version of ``__call__()``.
+        While ``__call__()`` will transforms its Python arguments such that
+        they can be forwarded, this function assumes that this processing
+        was already done by the user.
 
-        :param callargs:        Tuples containing the arguments for the call to the C function.
-        :param initargs:        Tupels containing the arguments for the initialization.
+        :param callargs: Arguments passed to the actual computation.
+        :param initargs: Arguments passed to the initialization function.
 
-        This is an internal function that is used for benchmarking.
+        :note: You may use `_construct_args()` to generate the processed arguments.
         """
         try:
             # Call initializer function if necessary, then SDFG
@@ -442,23 +453,40 @@ class CompiledSDFG(object):
         self._lib.unload()
 
     def _construct_args(self, kwargs) -> Tuple[Tuple[Any], Tuple[Any]]:
-        """ Main function that controls argument construction for calling
-            the C prototype of the SDFG.
-
-            Organizes arguments first by `sdfg.arglist`, then data descriptors
-            by alphabetical order, then symbols by alphabetical order.
         """
-        # Return value initialization (for values that have not been given)
+        Main function that controls argument construction for calling
+        the C prototype of the SDFG.
+
+        Organizes arguments first by ``sdfg.arglist``, then data descriptors
+        by alphabetical order, then symbols by alphabetical order.
+
+        :note: If not initialized this function will initialize the memory for
+               the return values, however, it might also reallocate said memory.
+        :note: This function will also update the internal argument cache.
+        """
         self._initialize_return_values(kwargs)
+
+        # Add the return values to the arguments, since they are part of the C signature.
         for desc, arr in zip(self._retarray_shapes, self._return_arrays):
             kwargs[desc[0]] = arr
 
-        # Argument construction
+        arglist, argtypes, argnames = self._construct_args_arglist(kwargs)
+        self._construct_args_type_checking(argnames, arglist, argtypes)
+        arg_ctypes = self._construct_args_input_casting(arglist, argtypes, kwargs)
+        callparams = self._construct_args_callparams(arglist, arg_ctypes, argtypes, argnames)
+        initargs   = self._construct_args_initarg(callparams)
+        newargs    = self._construct_args_output_casting(callparams)
+
+        self._lastargs = newargs, initargs
+        return self._lastargs
+
+
+    def _construct_args_arglist(self, kwargs):
         sig = self._sig
         typedict = self._typedict
         if len(kwargs) > 0:
             # Construct mapping from arguments to signature
-            arglist = []
+            arglist  = []
             argtypes = []
             argnames = []
             for a in sig:
@@ -468,80 +496,42 @@ class CompiledSDFG(object):
                     argnames.append(a)
                 except KeyError:
                     raise KeyError("Missing program argument \"{}\"".format(a))
+
         else:
             arglist = []
             argtypes = []
             argnames = []
-            sig = []
 
-        # Type checking
-        self._construct_args_type_checking(argnames, arglist, argtypes)
-
-        # Explicit casting
-        arg_ctypes = self._construct_args_explicit_casting(arglist, argtypes, kwargs)
-
-        # Creates the call parameters
-        callparams = self._construct_args_callparams(arglist, arg_ctypes, argtypes, argnames)
-
-        initargs = self._construct_args_initarg(callparams)
-
-        try:
-            # Replace arrays with their base host/device pointers
-            newargs = []
-            for arg, actype, atype, _ in callparams:
-                if dtypes.is_array(arg):
-                    newargs.append( ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)) )     # `c_void_p` is subclass of `ctypes._SimpleCData`.
-                elif not isinstance(arg, (ctypes._SimpleCData)):
-                    newargs.append( actype(arg) )
-                else:
-                    newargs.append( arg )
-            #
-        except TypeError:
-            # Pinpoint bad argument
-            for i, (arg, actype, _) in enumerate(newargs):
-                try:
-                    if not isinstance(arg, ctypes._SimpleCData):
-                        actype(arg)
-                except TypeError as ex:
-                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
-
-        # Store the arguments.
-        self._lastargs = newargs, initargs
-        return self._lastargs
+        return arglist, argtypes, argnames
 
 
     def _construct_args_type_checking(self, argnames, arglist, argtypes):
-        """This function performs the type checking for `_construct_args()`
-
-        Will modify `arglist`.
-        It either succeed or throws.
-        """
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
             arg_is_array = dtypes.is_array(arg)
+            arg_is_ndarray = isinstance(arg, np.ndarray)
             atype_is_dtArray = isinstance(atype, dt.Array)
-            expr1 = atype_is_dtArray and isinstance(arg, np.ndarray)
             if not arg_is_array and atype_is_dtArray:
                 if isinstance(arg, list):
-                    print('WARNING: Casting list argument "%s" to ndarray' % a)
+                    print(f'WARNING: Casting list argument "{a}" to ndarray')
                 elif arg is None:
                     if atype.optional is False:  # If array cannot be None
                         raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
                     # Otherwise, None values are passed as null pointers below
                 else:
-                    raise TypeError('Passing an object (type %s) to an array in argument "%s"' % (type(arg).__name__, a))
+                    raise TypeError(f'Passing an object (type {type(arg).__name__}) to an array in argument "{a}"')
             elif arg_is_array and not atype_is_dtArray:
                 # GPU scalars and return values are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
-                    raise TypeError('Passing an array to a scalar (type %s) in argument "%s"' % (atype.dtype.ctype, a))
-            elif (expr1 and not isinstance(atype, dt.StructArray)
+                    raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
+            elif (atype_is_dtArray and arg_is_ndarray and not isinstance(atype, dt.StructArray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):
                     pass
                 else:
-                    print('WARNING: Passing %s array argument "%s" to a %s array' %
-                          (arg.dtype, a, atype.dtype.type.__name__))
-            elif (expr1 and arg.base is not None and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
+                    print(f'WARNING: Passing {arg.dtype} array argument "{a}" to a {atype.dtype.type.__name__} array')
+            elif (atype_is_dtArray and arg_is_ndarray and arg.base is not None and not '__return' in a
+                  and not Config.get_bool('compiler', 'allow_view_arguments')):
                 raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
                                 'programs is not allowed in order to retain analyzability. '
                                 'Please make a copy with "numpy.copy(...)". If you know what '
@@ -574,9 +564,7 @@ class CompiledSDFG(object):
         return True
 
 
-    def _construct_args_explicit_casting(self, arglist, argtypes, kwargs):
-        """Explicitly performs the type casting for `_construct_args()`.
-        """
+    def _construct_args_input_casting(self, arglist, argtypes, kwargs):
         arg_ctypes = []
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
@@ -597,29 +585,48 @@ class CompiledSDFG(object):
 
 
     def _construct_args_callparams(self, arglist, arg_ctypes, argtypes, argnames):
-        """Construct the call parameters.
-        """
         constants  = self.sdfg.constants
         callparams = []
 
         for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames):
             if symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants):
-                continue    # Ignore symbolic constants with a compiletime value.
-            callparams.append(  # If the argument is a symbol replace it with its actual value.
+                continue            # Ignore symbolic constants with a compiletime value.
+            callparams.append(      # If the argument is a symbol replace it with its actual value.
                 (actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
             )
         return tuple(callparams)
 
 
+    def _construct_args_output_casting(self, callparams):
+        try:
+            # Replace arrays with their base host/device pointers
+            newargs = []
+            for arg, actype, atype, _ in callparams:
+                if dtypes.is_array(arg):
+                    newargs.append( ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)) )     # `c_void_p` is subclass of `ctypes._SimpleCData`.
+                elif not isinstance(arg, (ctypes._SimpleCData)):
+                    newargs.append( actype(arg) )
+                else:
+                    newargs.append( arg )
+
+        except TypeError:
+            # Pinpoint bad argument
+            for i, (arg, actype, _) in enumerate(newargs):
+                try:
+                    if not isinstance(arg, ctypes._SimpleCData):
+                        actype(arg)
+                except TypeError as ex:
+                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
+
+        return newargs
+
+
     def _construct_args_initarg(self, callparams):
-        """Constructs the initialarguments.
-        """
-        # Construct init args, which only consist of the symbols
         symbols = self._free_symbols
         initargs = []
 
         # Construct init args, which only consist of the symbols
-        for arg, actype, atype, aname in filter(lambda X: X[-1] in symbols, callparams):
+        for arg, actype, atype, aname in filter(lambda callparam: callparam[-1] in symbols, callparams):
             initargs.append(
                 actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
             )
@@ -702,6 +709,7 @@ class CompiledSDFG(object):
                 # Create an array with the properties of the SDFG array
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
+
 
     def _convert_return_values(self):
         # Return the values as they would be from a Python function
