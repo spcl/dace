@@ -753,6 +753,7 @@ class InternalFortranAst:
 
         alloc = False
         symbol = False
+        optional = False
         attr_size = None
         attr_offset = None
         for i in attributes:
@@ -763,6 +764,8 @@ class InternalFortranAst:
                 symbol = True
             if i.string.lower() == "pointer":
                 alloc = True
+            if i.string.lower() == "optional":
+                optional = True
 
             if isinstance(i, f08.Attr_Spec_List):
 
@@ -828,6 +831,7 @@ class InternalFortranAst:
                                                             sizes=size,
                                                             offsets=offset,
                                                             kind=kind,
+                                                            optional=optional,
                                                             line_number=node.item.span))
                     else:
 
@@ -839,6 +843,7 @@ class InternalFortranAst:
                                                             sizes=size,
                                                             offsets=offset,
                                                             kind=kind,
+                                                            optional=optional,
                                                             line_number=node.item.span))
                 else:
                     vardecls.append(
@@ -848,6 +853,7 @@ class InternalFortranAst:
                                                         sizes=attr_size,
                                                         offsets=attr_offset,
                                                         kind=kind,
+                                                        optional=optional,
                                                         line_number=node.item.span))
             else:
                 if size is None and attr_size is None:

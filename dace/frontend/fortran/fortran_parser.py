@@ -466,10 +466,12 @@ class AST_translator:
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
                  and not isinstance(node.result_type, ast_internal_classes.Void))):
-            for i in variables_in_call:
-                print("VAR CALL: ", i.name)
-            for j in parameters:
-                print("LOCAL TO UPDATE: ", j.name)
+            print('Variables in call', len(variables_in_call))
+            print('Parameters', len(parameters))
+            #for i in variables_in_call:
+            #    print("VAR CALL: ", i.name)
+            #for j in parameters:
+            #    print("LOCAL TO UPDATE: ", j.name)
             raise ValueError("number of parameters does not match the function signature")
 
         # creating new arrays for nested sdfg
@@ -1172,6 +1174,8 @@ def create_ast_from_string(
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
 
+        program = ast_transforms.optionalArgsExpander(program)
+
     return (program, own_ast)
 
 def create_sdfg_from_string(
@@ -1220,6 +1224,7 @@ def create_sdfg_from_string(
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
     own_ast.tables = own_ast.symbols
 
     ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
@@ -1265,6 +1270,7 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.SumToLoop().visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor().visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
     ast2sdfg = AST_translator(own_ast, __file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program

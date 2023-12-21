@@ -231,6 +231,7 @@ class Var_Decl_Node(Statement_Node):
         'type',
         'alloc',
         'kind',
+        'optional'
     )
     _fields = (
         'sizes',

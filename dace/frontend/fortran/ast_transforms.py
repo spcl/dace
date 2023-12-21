@@ -769,6 +769,117 @@ class ReplaceFunctionStatementPass(NodeTransformer):
                 return ast_internal_classes.Parenthesis_Expr_Node(expr=ret_node)
         return self.generic_visit(node)
 
+def optionalArgsHandleFunction(func):
+
+    func.optional_args = []
+
+    for spec in func.specification_part.specifications:
+        for var in spec.vardecl:
+            if var.optional:
+                func.optional_args.append((var.name, var.type))
+
+    vardecls = []
+    new_args = []
+    for arg in func.args:
+
+        found = False
+        for opt_arg in func.optional_args:
+            if opt_arg[0] == arg.name:
+                found = True
+                break
+
+        if found:
+
+            name = f'__dace_OPTIONAL_{var.name}'
+            var = ast_internal_classes.Var_Decl_Node(name=name,
+                                            type='BOOL',
+                                            alloc=False,
+                                            sizes=None,
+                                            offsets=None,
+                                            kind=None,
+                                            optional=False,
+                                            line_number=func.line_number)
+            new_args.append(ast_internal_classes.Name_Node(name=name))
+            vardecls.append(var)
+
+    if len(new_args) > 0:
+        func.args.extend(new_args)
+
+    if len(vardecls) > 0:
+        func.specification_part.specifications.append(
+            ast_internal_classes.Decl_Stmt_Node(
+                vardecl=vardecls,
+                line_number=func.line_number
+            )
+        )
+
+    return len(new_args)
+
+class OptionalArgsTransformer(NodeTransformer):
+    def __init__(self, funcs_with_opt_args):
+        self.funcs_with_opt_args = funcs_with_opt_args
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        if node.name.name not in self.funcs_with_opt_args:
+            return node
+
+        # Basic assumption for positioanl arguments
+        # Optional arguments follow the mandatory ones
+        # We use that to determine which optional arguments are missing
+        func_decl = self.funcs_with_opt_args[node.name.name]
+        optional_args = len(func_decl.optional_args)
+        if optional_args == 0:
+            return node
+
+        should_be_args = len(func_decl.args)
+        mandatory_args = should_be_args - optional_args*2
+
+        present_args = len(node.args)
+        # Remove the deduplicated variable entries acting as flags for optional args
+        missing_args_count = should_be_args - present_args - optional_args
+        present_optional_args = present_args - mandatory_args
+
+        for i in range(missing_args_count):
+            relative_position = i + present_optional_args
+            dtype = func_decl.optional_args[i][1]
+            if dtype == 'INTEGER':
+                node.args.append(ast_internal_classes.Int_Literal_Node(value='0'))
+            elif dtype == 'BOOL':
+                node.args.append(ast_internal_classes.Bool_Literal_Node(value='0'))
+            else:
+                raise NotImplementedError()
+
+        # Now pass the 'present' flags
+        for i in range(optional_args - missing_args_count):
+            node.args.append(ast_internal_classes.Bool_Literal_Node(value='1'))
+        for i in range(missing_args_count):
+            node.args.append(ast_internal_classes.Bool_Literal_Node(value='0'))
+
+        return node
+
+def optionalArgsExpander(node=ast_internal_classes.Program_Node):
+    """
+    Adds to each optional arg a logical value specifying its status.
+    Eliminates function statements from the AST
+    :param node: The AST to be transformed
+    :return: The transformed AST
+    :note Should only be used on the program node
+    """
+
+    modified_functions = {}
+
+    for func in node.subroutine_definitions:
+        if optionalArgsHandleFunction(func):
+            modified_functions[func.name.name] = func
+    for mod in node.modules:
+        for func in mod.subroutine_definitions:
+            if optionalArgsHandleFunction(func):
+                modified_functions[func.name.name] = func
+
+    node = OptionalArgsTransformer(modified_functions).visit(node)
+
+    return node
 
 def functionStatementEliminator(node=ast_internal_classes.Program_Node):
     """
