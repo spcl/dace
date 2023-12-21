@@ -490,7 +490,7 @@ class CompiledSDFG(object):
             newargs = []
             for arg, actype, atype, _ in callparams:
                 if dtypes.is_array(arg):
-                    newargs.append( ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)) )     # c_void_p` is subclass of `ctypes._SimpleCData`.
+                    newargs.append( ctypes.c_void_p(_array_interface_ptr(arg, atype.storage)) )     # `c_void_p` is subclass of `ctypes._SimpleCData`.
                 elif not isinstance(arg, (ctypes._SimpleCData)):
                     newargs.append( actype(arg) )
                 else:
