@@ -842,11 +842,13 @@ class OptionalArgsTransformer(NodeTransformer):
 
         for i in range(missing_args_count):
             relative_position = i + present_optional_args
-            dtype = func_decl.optional_args[i][1]
+            dtype = func_decl.optional_args[relative_position][1]
             if dtype == 'INTEGER':
                 node.args.append(ast_internal_classes.Int_Literal_Node(value='0'))
             elif dtype == 'BOOL':
                 node.args.append(ast_internal_classes.Bool_Literal_Node(value='0'))
+            elif dtype == 'DOUBLE':
+                node.args.append(ast_internal_classes.Real_Literal_Node(value='0'))
             else:
                 raise NotImplementedError()
 
