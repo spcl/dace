@@ -112,7 +112,7 @@ def test_fortran_frontend_size_arbitrary():
                     END SUBROUTINE intrinsic_basic_size_arbitrary_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_function", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary", False)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -125,8 +125,95 @@ def test_fortran_frontend_size_arbitrary():
     assert res[1] == size
     assert res[2] == size2
 
+def test_fortran_frontend_present():
+    test_string = """
+                    PROGRAM intrinsic_basic_present
+                    implicit none
+                    integer, dimension(4) :: res
+                    integer, dimension(4) :: res2
+                    integer :: a
+                    CALL test_function(res, res2, a)
+                    end
+
+                    SUBROUTINE test_function(res, res2, a)
+                    integer, dimension(4) :: res
+                    integer, dimension(4) :: res2
+                    integer :: a
+
+                    CALL test_function2(res, a)
+                    CALL test_function2(res2)
+
+                    END SUBROUTINE test_function
+
+                    SUBROUTINE test_function2(res, a)
+                    integer, dimension(4) :: res
+                    integer, optional :: a
+
+                    res(1) = PRESENT(a)
+
+                    END SUBROUTINE test_function2
+                    """
+    #test_string = """
+    #                PROGRAM intrinsic_basic_present
+    #                implicit none
+    #                integer, dimension(4) :: res
+    #                integer, dimension(4) :: res2
+    #                integer :: a
+    #                CALL test_intrinsic_basic_pre2sent_function(res, res2,a)
+    #                end
+
+    #                SUBROUTINE test_intrinsic_basic_pre2sent_function(res, res2,a)
+    #                integer, dimension(4) :: res
+    #                integer, dimension(4) :: res2
+    #                integer :: a
+
+    #                res(1) = 1
+    #                END SUBROUTINE test_intrinsic_basic_pre2sent_function
+    #                !PROGRAM intrinsic_basic_present
+    #                !implicit none
+    #                !integer, dimension(4) :: res
+    #                !integer, dimension(4) :: res2
+    #                !integer :: a
+    #                !CALL intrinsic_basic_present_function(res, res2, a)
+    #                !end
+
+    #                !SUBROUTINE intrinsic_basic_present_function(res, res2, a)
+    #                !integer, dimension(4) :: res
+    #                !integer, dimension(4) :: res2
+    #                !integer :: a
+
+    #                !res(1) = 5
+    #                !!CALL intrinsic_basic_present_function2(res, a)
+    #                !!CALL intrinsic_basic_present_function2(res2)
+
+    #                !END SUBROUTINE intrinsic_basic_present_function
+
+    #                !SUBROUTINE intrinsic_basic_present_function2(res, a)
+    #                !integer, dimension(4) :: res
+    #                !integer :: a
+
+    #                !!res(1) = PRESENT(a)
+    #                !res(1) = 2
+    #                !res(2) = 2
+
+    #                !END SUBROUTINE intrinsic_basic_present_function2
+    #                """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 4
+    res = np.full([size], 42, order="F", dtype=np.int32)
+    res2 = np.full([size], 42, order="F", dtype=np.int32)
+    sdfg(res=res, res2=res2, a=5)
+
+    assert res[0] == 1
+    assert res2[0] == 0
+
 if __name__ == "__main__":
 
     test_fortran_frontend_bit_size()
     test_fortran_frontend_bit_size_symbolic()
-    test_fortran_frontend_size_arbitrary()
+    #test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_present()

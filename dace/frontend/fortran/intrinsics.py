@@ -180,12 +180,23 @@ class DirectReplacement(IntrinsicTransformation):
         else:
             return ast_internal_classes.Int_Literal_Node(value="2", line_number=line)
 
+    def replace_present(call: ast_internal_classes.Call_Expr_Node, line, symbols: list):
+
+        assert len(call.args) == 1
+        assert isinstance(call.args[0], ast_internal_classes.Name_Node)
+
+        var_name = call.args[0].name
+        test_var_name = f'__dace_OPTIONAL_{var_name}'
+
+        return (ast_internal_classes.Name_Node(name=test_var_name), "BOOL")
+        #return (ast_internal_classes.Int_Literal_Node(value='1'), "INTEGER")
 
     FUNCTIONS = {
         "SELECTED_INT_KIND": Replacement(replace_int_kind),
         "SELECTED_REAL_KIND": Replacement(replace_real_kind),
         "BIT_SIZE": Transformation(replace_bit_size),
-        "SIZE": Transformation(replace_size)
+        "SIZE": Transformation(replace_size),
+        "PRESENT": Transformation(replace_present)
     }
 
     @staticmethod

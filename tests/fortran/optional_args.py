@@ -92,11 +92,16 @@ def test_fortran_frontend_optional_complex():
     res2 = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, a=5, b=7, c=1)
 
-    print(res)
-    print(res2)
+    assert res[0] == 5
+    assert res[1] == 7
+    assert res[2] == 0
+
+    assert res2[0] == 0
+    assert res2[1] == 0
+    assert res2[2] == 0
 
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_optional()
+    test_fortran_frontend_optional()
     test_fortran_frontend_optional_complex()
