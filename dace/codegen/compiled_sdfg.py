@@ -375,7 +375,7 @@ class CompiledSDFG(object):
         - Performing type checks on the arguments.
         - Transforming data container objects to their C equivalent (for example, pointers).
 
-        If you are know what you are doing you can also use `_fast_call()` which
+        If you know what you are doing, you can also use `_fast_call()` which
         allows to bypass these operations and call the extension directly.
         """
         if self.argnames is None and len(args) != 0:
