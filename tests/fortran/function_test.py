@@ -183,12 +183,8 @@ PROGRAM """ + test_name + """_program
 
     ! line class
     TYPE t_line
-<<<<<<< HEAD
-        TYPE(t_geographical_coordinates) :: p1
-        TYPE(t_geographical_coordinates) :: p2
-=======
         TYPE(t_geographical_coordinates) :: p1(10)
->>>>>>> ced40004d (Updated test case)
+        TYPE(t_geographical_coordinates) :: p2
     END TYPE t_line
 
     TYPE(t_line) :: v
