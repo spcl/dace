@@ -982,8 +982,13 @@ class InternalFortranAst:
     def level_2_expr(self, node: FASTNode):
         children = self.create_children(node)
         line = get_line(node)
+        if children[1]=="==": type="LOGICAL"
+        else: 
+            type="VOID"
+            if hasattr(children[0],"type"):
+                type=children[0].type   
         if len(children) == 3:
-            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line, type=children[0].type)
+            return ast_internal_classes.BinOp_Node(lval=children[0], op=children[1], rval=children[2], line_number=line, type=type)
         else:
             return ast_internal_classes.UnOp_Node(lval=children[1], op=children[0], line_number=line,type=children[1].type)
 

@@ -191,6 +191,8 @@ class CallToArray(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         if isinstance(node.name, str):
             return node
+        if node.name is None:
+            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
         if node.name.name in self.excepted_funcs or node.name in self.funcs:
             processed_args = []
             for i in node.args:
