@@ -382,7 +382,7 @@ class CompiledSDFG(object):
             raise KeyError(f"Passed positional arguments to an SDFG that does not accept them.")
         elif len(args) > 0 and self.argnames is not None:
             kwargs.update(
-                # `_construct_args` will handle all of its argument as kwargs.
+                # `_construct_args` will handle all of its arguments as kwargs.
                 {aname: arg for aname, arg in zip(self.argnames, args)}
             )
         argtuple, initargtuple = self._construct_args(kwargs)   # Missing arguments will be detected here.
