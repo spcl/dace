@@ -366,7 +366,7 @@ class CompiledSDFG(object):
             return result
 
     def __call__(self, *args, **kwargs):
-        """This function forwards the Python call to the complied `C` code.
+        """This function forwards the Python call to the compiled `C` code.
 
         The positional arguments (`args`) are expected to be in the same order as
         `argnames` (which comes from `arg_names` in the source `SDFG`).
