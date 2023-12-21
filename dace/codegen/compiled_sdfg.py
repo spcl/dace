@@ -372,7 +372,7 @@ class CompiledSDFG(object):
         `argnames` (which are either sorted or follow the `arg_names` property in the source `SDFG`).
         This function will roughly do the following steps:
         - Structuring arguments in the order dictated by the generated code.
-        - perfrom some basic checks on the arguments.
+        - Performing type checks on the arguments.
         - transfroms `ndarray`s to their `C` equivalent.
 
         If you are know what you are doing you can also use `_fast_call()` which
