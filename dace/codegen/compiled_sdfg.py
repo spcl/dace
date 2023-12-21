@@ -397,7 +397,7 @@ class CompiledSDFG(object):
     ) -> Any:
         """This function allows to bypass the construction of arguments.
 
-        By default `self.__call__()` will reorder its argument, whose order is given by `argnames`,
+        By default `self.__call__()` will reorder its arguments, whose order is given by `argnames`,
         to the one that is given by `_sig`, i.e. the one of the C callback,
         which is done by `_construct_args()`, and transforms the arguments.
         This function excepts that this reordering and transformation has already been done.
