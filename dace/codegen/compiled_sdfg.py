@@ -386,7 +386,7 @@ class CompiledSDFG(object):
                 {aname: arg for aname, arg in zip(self.argnames, args)}
             )
         argtuple, initargtuple = self._construct_args(kwargs)   # Missing arguments will be detected here.
-                                                                #  Return values cached in `self._lastargs`.
+                                                                # Return values are cached in `self._lastargs`.
         return self._fast_call(argtuple, initargtuple)
 
 
