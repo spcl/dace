@@ -34,15 +34,10 @@ def preamble():
 
     result = ''
 
-    # Rely on internet connection for Material icons
-    result += '<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">'
-    result += '<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">'
-
     # Try to load dependencies from online sources
     if _connected():
         for dep in sdfv_js_deps:
             result += '<script src="https://spcl.github.io/dace-webclient/dist/%s"></script>\n' % dep
-        print('Using online')
         return result
 
     # Load local dependencies
