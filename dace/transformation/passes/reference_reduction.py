@@ -121,7 +121,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}):
+                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)
@@ -183,11 +183,12 @@ class ReferenceToView(ppl.Pass):
 
                 # Modify the state graph as necessary
                 for e in edges_to_remove:
-                    state.remove_edge_and_connectors(e)
+                    state.remove_memlet_path(e)
                 for n in nodes_to_remove:
                     state.remove_node(n)
                 for e in edges_to_add:
-                    state.add_edge(*e)
+                    if len(state.edges_between(e[0], e[2])) == 0:
+                        state.add_edge(*e)
                 for n in affected_nodes:  # Orphaned nodes
                     if n in nodes_to_remove:
                         continue
