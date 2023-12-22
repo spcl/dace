@@ -391,12 +391,13 @@ class PatternTransformation(TransformationBase):
                      if ext.__name__ == json_obj['transformation'])
 
         # Recreate subgraph
-        expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+        expr = xform.expressions()[json_obj.get('expr_index', 0)]
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj.get('_subgraph', {}).items()}
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret.setup_match(None, json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0), subgraph,
+                        json_obj.get('expr_index', 0))
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
@@ -652,12 +653,13 @@ class ExpandTransformation(PatternTransformation):
         xform = pydoc.locate(json_obj['classpath'])
 
         # Recreate subgraph
-        expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
+        expr = xform.expressions()[json_obj.get('expr_index', 0)]
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj.get('_subgraph', {}).items()}
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret.setup_match(None, json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0), subgraph,
+                        json_obj.get('expr_index', 0))
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret,
@@ -864,7 +866,7 @@ class SubgraphTransformation(TransformationBase):
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
+        ret.setup_match(json_obj.get('subgraph', {}), json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0))
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})

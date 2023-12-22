@@ -169,8 +169,7 @@ class Memlet(object):
         attrs['is_data_src'] = self._is_data_src
 
         # Fill in legacy (DEPRECATED) values for backwards compatibility
-        attrs['num_accesses'] = \
-            str(self.volume) if not self.dynamic else -1
+        attrs['num_accesses'] = str(self.volume) if not self.dynamic else -1
 
         return {"type": "Memlet", "attributes": attrs}
 
@@ -421,13 +420,11 @@ class Memlet(object):
         return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):
-        return hash((self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
+        return hash((self.data, self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
 
     def __eq__(self, other):
-        return all([
-            self.volume == other.volume, self.src_subset == other.src_subset, self.dst_subset == other.dst_subset,
-            self.wcr == other.wcr
-        ])
+        return all((self.data == other.data, self.volume == other.volume, self.src_subset == other.src_subset,
+                    self.dst_subset == other.dst_subset, self.wcr == other.wcr))
 
     def replace(self, repl_dict):
         """

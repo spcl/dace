@@ -17,12 +17,7 @@ def _get_all_bases(class_or_name: Union[str, Type]) -> List[str]:
     """
     if isinstance(class_or_name, str):
         return [class_or_name]
-
-    classes = [class_or_name.__name__]
-    for base in class_or_name.__bases__:
-        classes.extend(_get_all_bases(base))
-
-    return deduplicate(classes)
+    return [base.__name__ for base in class_or_name.__mro__]
 
 
 class Replacements(object):
