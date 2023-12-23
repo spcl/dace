@@ -236,6 +236,7 @@ class InternalFortranAst:
             "Intrinsic_Type_Spec": self.intrinsic_type_spec,
             "Entity_Decl_List": self.entity_decl_list,
             "Int_Literal_Constant": self.int_literal_constant,
+            "Hex_Constant": self.hex_constant,
             "Logical_Literal_Constant": self.logical_literal_constant,
             "Actual_Arg_Spec_List": self.actual_arg_spec_list,
             "Actual_Arg_Spec": self.actual_arg_spec,
@@ -1318,6 +1319,9 @@ class InternalFortranAst:
 
     def int_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Int_Literal_Node(value=node.string,type="INTEGER")
+    
+    def hex_constant(self, node: FASTNode):
+        return ast_internal_classes.Int_Literal_Node(value=str(int(node.string[2:-1],16)),type="INTEGER")
 
     def logical_literal_constant(self, node: FASTNode):
         if node.string in [".TRUE.", ".true.", ".True."]:
