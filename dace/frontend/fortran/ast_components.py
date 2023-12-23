@@ -124,6 +124,7 @@ class InternalFortranAst:
             "CHARACTER": "CHAR",
             "INTEGER": "INTEGER",
             "INTEGER4": "INTEGER",
+            "INTEGER8": "INTEGER8",
             "REAL4": "REAL",
             "REAL8": "DOUBLE",
             "DOUBLE PRECISION": "DOUBLE",
@@ -534,6 +535,7 @@ class InternalFortranAst:
         line = get_line(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
+        
         if name is None:
             return Name_Node(name="Error!",type='VOID')
         return self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
