@@ -225,7 +225,10 @@ class AST_translator:
         :param sdfg: The SDFG to which the node should be translated
         """
         name = node.name.name
-        components = node.component_part.component_def_stmts
+        if node.component_part is None:
+            components=[]
+        else:     
+            components = node.component_part.component_def_stmts
         dict_setup = {}
         for i in components:
             j = i.vars
@@ -1523,6 +1526,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
       
     parse_list={}
+    what_to_parse_list={}
     for i in parse_order:
         edges=simple_graph.in_edges(i)
         parse_list[i]=[]
@@ -1547,7 +1551,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             fands_list.append(jj)
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
-            print("Module " + i + " used fands: " + str(fands_list)) 
+            print("Module " + i + " used fands: " + str(fands_list))
+        what_to_parse_list[i]=fands_list     
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
@@ -1625,9 +1630,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     
     #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
-
+    partial_ast.to_parse_list=what_to_parse_list
     for i in parse_order:
         partial_ast.current_ast=i
+        
         partial_ast.unsupported_fortran_syntax[i]=[]
         if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
             continue

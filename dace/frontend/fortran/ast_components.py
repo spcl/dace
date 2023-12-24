@@ -114,6 +114,7 @@ class InternalFortranAst:
 
         """
         self.name_list = {}
+        self.to_parse_list= {}
         self.unsupported_fortran_syntax = {}
         self.current_ast=None
         self.functions_and_subroutines = []
@@ -320,7 +321,7 @@ class InternalFortranAst:
                     self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
                 for i in node.children:
                     self.create_ast(i)
-                #print("Unsupported syntax: ", type(node).__name__, node.string)
+                print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
 
         return None
@@ -413,6 +414,14 @@ class InternalFortranAst:
         return ast_internal_classes.Program_Stmt_Node(name=name, line_number=node.item.span)
 
     def subroutine_subprogram(self, node: FASTNode):
+        subroutine_name=node.children[0].children[1].string
+        found=False
+        for i in self.to_parse_list:
+            for j in self.to_parse_list[i]:
+                if j==subroutine_name:
+                    found=True
+        if not found:
+            return                
         children = self.create_children(node)
 
         name = get_child(children, ast_internal_classes.Subroutine_Stmt_Node)

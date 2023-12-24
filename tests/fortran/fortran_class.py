@@ -37,75 +37,11 @@ def test_fortran_frontend_class():
 END TYPE t_comm_pattern
 
 TYPE, EXTENDS(t_comm_pattern) :: t_comm_pattern_orig
-
-  PRIVATE
-
-   ! Number of points we receive in communication,
-   ! this is the same as recv_limits
-
-   INTEGER :: n_recv  ! Number of points we receive from other PEs
    INTEGER :: n_pnts  ! Number of points we output into local array;
                       ! this may be bigger than n_recv due to
                       ! duplicate entries
-   INTEGER :: n_send  ! Number of points we send to other PEs
 
-   INTEGER :: np_recv ! Number of PEs from which data have to be received
-   INTEGER :: np_send ! Number of PEs to which data have to be sent
-
-   !> which communicator to apply this pattern to
-   INTEGER :: comm
-
-   ! "recv_limits":
-   !
-   ! All data that is received from PE np is buffered in the receive
-   ! buffer between start index "p_pat%recv_limits(np)+1" and the end
-   ! index "p_pat%recv_limits(np+1)".
    INTEGER, ALLOCATABLE :: recv_limits(:)
-
-   ! "recv_src", "recv_dst_blk/idx":
-   !
-   ! For all points i=1,n_pnts the data received at index recv_src(i)
-   ! in the receiver buffer is copied to the destination array at
-   ! position recv_dst_idx/blk(i)
-   INTEGER, ALLOCATABLE :: recv_src(:)
-   INTEGER, ALLOCATABLE :: recv_dst_blk(:)
-   INTEGER, ALLOCATABLE :: recv_dst_idx(:)
-
-   ! "send_limits":
-   !
-   ! All data that is sent to PE np is buffered by the local PE in the
-   ! send buffer between start index "p_pat%send_limits(np)+1" and the
-   ! end index "p_pat%send_limits(np+1)".
-   INTEGER, ALLOCATABLE :: send_limits(:)
-
-   ! "send_src_idx/blk":
-   !
-   ! For all points i=1,n_send the data in the send buffer at the ith
-   ! position is copied from the source array at position
-   ! send_src_idx/blk(i)
-   INTEGER, ALLOCATABLE :: send_src_blk(:)
-   INTEGER, ALLOCATABLE :: send_src_idx(:)
-
-   ! "pelist_send", "pelist_recv":
-   !
-   ! list of PEs where to send the data to, and from where to receive
-   ! the data
-   INTEGER, ALLOCATABLE :: pelist_send(:)
-   INTEGER, ALLOCATABLE :: pelist_recv(:)
-
-   ! "send_startidx", "send_count":
-   !
-   ! The local PE sends send_count(i) data items to PE pelist_send(i),
-   ! starting at send_startidx(i) in the send buffer.
-   INTEGER, ALLOCATABLE :: send_startidx(:)
-   INTEGER, ALLOCATABLE :: send_count(:)
-
-   ! "recv_startidx", "recv_count":
-   !
-   ! The local PE recvs recv_count(i) data items from PE pelist_recv(i),
-   ! starting at recv_startidx(i) in the receiver buffer.
-   INTEGER, ALLOCATABLE :: recv_startidx(:)
-   INTEGER, ALLOCATABLE :: recv_count(:)
 
   CONTAINS
 
@@ -122,47 +58,33 @@ END TYPE t_comm_pattern_orig
                     end
 
 
-SUBROUTINE setup_comm_pattern(p_pat, dst_n_points, dst_owner, &
-                                dst_global_index, send_glb2loc_index, &
-                                src_n_points, src_owner, src_global_index, &
-                                inplace, comm)
+SUBROUTINE setup_comm_pattern(p_pat, dst_n_points)
 
     CLASS(t_comm_pattern_orig), TARGET, INTENT(OUT) :: p_pat
 
     INTEGER, INTENT(IN) :: dst_n_points        ! Total number of points
-    INTEGER, INTENT(IN) :: dst_owner(:)        ! Owner of every point
-    INTEGER, INTENT(IN) :: dst_global_index(:) ! Global index of every point
-    TYPE(t_glb2loc_index_lookup), INTENT(IN) :: send_glb2loc_index
-                                               ! global to local index
-                                               ! lookup information
-                                               ! of the SENDER array
-    INTEGER, INTENT(IN) :: src_n_points        ! Total number of points
-    INTEGER, INTENT(IN) :: src_owner(:)        ! Owner of every point
-    INTEGER, INTENT(IN) :: src_global_index(:) ! Global index of every point
 
-    LOGICAL, OPTIONAL, INTENT(IN) :: inplace
-    INTEGER, OPTIONAL, INTENT(in) :: comm
-
-    
-
-
+    p_pat%n_pnts = dst_n_points
   END SUBROUTINE setup_comm_pattern
 
-  SUBROUTINE exchange_data_r3d(p_pat, recv, send, add)
+  SUBROUTINE exchange_data_r3d(p_pat, recv)
 
     CLASS(t_comm_pattern_orig), TARGET, INTENT(INOUT) :: p_pat
-    REAL(dp), INTENT(INOUT), TARGET           :: recv(:,:,:)
-    REAL(dp), INTENT(IN), OPTIONAL, TARGET    :: send(:,:,:)
-    REAL(dp), INTENT(IN), OPTIONAL, TARGET    :: add (:,:,:)
-
+    REAL, INTENT(INOUT), TARGET           :: recv(:,:,:)
+  
+  recv(1,1,1)=recv(1,1,1)+p_pat%n_pnts
 
   END SUBROUTINE exchange_data_r3d                    
 
                     SUBROUTINE class_test_function(d)
                     integer d(2)
+                    real recv(2,2,2)
+
                     CLASS(t_comm_pattern_orig) :: p_pat
-                    p_pat%src_n_points=12
-                   d(1)=p_pat%src_n_points               
+
+                    CALL setup_comm_pattern(p_pat, 42)
+                    CALL exchange_data_r3d(p_pat, recv)
+                   d(1)=p_pat%n_pnts               
                    END SUBROUTINE class_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "class_test",False,False)
