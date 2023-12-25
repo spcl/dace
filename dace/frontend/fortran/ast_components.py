@@ -323,6 +323,9 @@ class InternalFortranAst:
                     self.create_ast(i)
                 print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
+            except Exception as e:
+                print("Error in create_ast: ", e)
+                return None
 
         return None
 
@@ -414,14 +417,8 @@ class InternalFortranAst:
         return ast_internal_classes.Program_Stmt_Node(name=name, line_number=node.item.span)
 
     def subroutine_subprogram(self, node: FASTNode):
-        subroutine_name=node.children[0].children[1].string
-        found=False
-        for i in self.to_parse_list:
-            for j in self.to_parse_list[i]:
-                if j==subroutine_name:
-                    found=True
-        if not found:
-            return                
+       
+        
         children = self.create_children(node)
 
         name = get_child(children, ast_internal_classes.Subroutine_Stmt_Node)
@@ -1070,6 +1067,8 @@ class InternalFortranAst:
         line = get_line(node)
         cond = children[0]
         body = children[1:]
+        #!THIS IS HACK
+        body= [i for i in body if i is not None]
         return ast_internal_classes.If_Stmt_Node(cond=cond,
                                                  body=ast_internal_classes.Execution_Part_Node(execution=body),
                                                  body_else=ast_internal_classes.Execution_Part_Node(execution=[]),
@@ -1087,6 +1086,8 @@ class InternalFortranAst:
         toplevelIf = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
         currentIf = toplevelIf
         for i in children[1:-1]:
+            if i is not None:
+                continue
             if isinstance(i, ast_internal_classes.Else_If_Stmt_Node):
                 newif = ast_internal_classes.If_Stmt_Node(cond=i.cond, line_number=i.line_number)
                 currentIf.body = ast_internal_classes.Execution_Part_Node(execution=body)
@@ -1100,6 +1101,7 @@ class InternalFortranAst:
             if else_mode:
                 body_else.append(i)
             else:
+                
                 body.append(i)
         currentIf.body = ast_internal_classes.Execution_Part_Node(execution=body)
         currentIf.body_else = ast_internal_classes.Execution_Part_Node(execution=body_else)
@@ -1191,7 +1193,7 @@ class InternalFortranAst:
             line_number = -1
         else:
             line_number = node.item.span     
-        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="Unknown", line_number=line_number)
+        return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="VOID", line_number=line_number)
 
     def return_stmt(self, node: FASTNode):
         return None
@@ -1219,7 +1221,7 @@ class InternalFortranAst:
             name=name,
             args=args.list,
             line=line,
-            type="Unknown",
+            type="VOID",
         )
 
     def loop_control(self, node: FASTNode):
@@ -1254,7 +1256,7 @@ class InternalFortranAst:
         children = self.create_children(node)
         do = get_child(children, ast_internal_classes.Nonlabel_Do_Stmt_Node)
         body = children[1:-1]
-        
+        body= [i for i in body if i is not None]
         if do is None:
             while_true_header=get_child(children, ast_internal_classes.While_True_Control)
             if while_true_header is not None:
@@ -1351,7 +1353,7 @@ class InternalFortranAst:
         children = self.create_children(node)
         if len(children) != 2:
             raise ValueError("Actual arg spec must have two children")
-        return ast_internal_classes.Actual_Arg_Spec_Node(arg_name=children[0], arg=children[1])
+        return ast_internal_classes.Actual_Arg_Spec_Node(arg_name=children[0], arg=children[1],type="VOID")
     
     def actual_arg_spec_list(self, node: FASTNode):
         children = self.create_children(node)
@@ -1361,7 +1363,7 @@ class InternalFortranAst:
         return node
 
     def name(self, node: FASTNode):
-        return ast_internal_classes.Name_Node(name=node.string.lower(),type="Unknown")
+        return ast_internal_classes.Name_Node(name=node.string.lower(),type="VOID")
     
     
     def rename(self, node: FASTNode):

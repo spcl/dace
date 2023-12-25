@@ -1,5 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 from venv import create
 import warnings
 
@@ -1400,6 +1401,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     missing_modules = []
     dep_graph = nx.DiGraph()
     asts = {}
+    actually_used_in_module={}
     ast = recursive_ast_improver(ast,
                                  source_list,
                                  include_list,
@@ -1408,121 +1410,20 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
-    simplify_order=(list(nx.topological_sort(dep_graph)))
-    print(dep_graph)
-    simple_graph = nx.DiGraph()
-    for i in simplify_order:
-        
-        res=dep_graph.nodes.get(i).get("info_list")
-        if simple_graph.has_node(i)==True:
-            simple_graph.add_node(i,info_list=res)
-        out_edges=dep_graph.out_edges(i)
-        in_edges=dep_graph.in_edges(i)
-        in_names=[]
-        out_names=[]
-        
-        for j in in_edges:
-            in_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
-            # if in_names_local_obj is not None:
-            #   for k in in_names_local_obj:
-            #     if k.__class__.__name__!="Name":
-            #         print("Assumption failed: Object list contains non-name node")
-            in_names_local=[]
-            if in_names_local_obj is not None:
-                for k in in_names_local_obj:
-                    if k.__class__.__name__=="Name":
-                        in_names_local.append(k.string)
-                    elif k.__class__.__name__=="Rename":
-                        in_names_local.append(k.children[1].string)    
-            if in_names_local is not None:
-                for k in in_names_local:
-                    if k not in in_names:
-                        in_names.append(k)
-        for j in out_edges:
-            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
-            out_names_local=[]
-            if out_names_local_obj is not None:
-                for k in out_names_local_obj:
-                    if k.__class__.__name__=="Name":
-                        out_names_local.append(k.string)
-                    elif k.__class__.__name__=="Rename":
-                        out_names_local.append(k.children[1].string)        
-            
-            if out_names_local is not None:
-                for k in out_names_local:
-                    if k not in out_names:
-                        out_names.append(k)
-        actually_used=[]
-        not_used=[]
-        if res is not None:
-            for j in out_names:
-                if i==simplify_order[0]:
-                    for fname in res.list_of_functions:
-                        if j in res.names_in_functions[fname]:
-                            if j not in actually_used:
-                                actually_used.append(j)
-                    for sname in res.list_of_subroutines:
-                        if j in res.names_in_subroutines[sname]:
-                            if j not in actually_used:
-                                actually_used.append(j)
-                else:
-                    for fname in res.list_of_functions:
-                        if fname in in_names:
-                            if j in res.names_in_functions[fname]:
-                                if j not in actually_used:
-                                    actually_used.append(j)
-                    for sname in res.list_of_subroutines:
-                        if sname in in_names:
-                            if j in res.names_in_subroutines[sname]:
-                                if j not in actually_used:
-                                    actually_used.append(j)
-
-
-            
-            for j in out_names:
-                if j not in actually_used:
-                    not_used.append(j)
-            #if not_used!=[]:
-            #print(i)                
-            #print("NOT USED: "+ str(not_used))  
-       
-        out_edges=dep_graph.out_edges(i)
-        out_names=[]
-        for j in out_edges:
-            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
-            out_names_local=[]
-            if out_names_local_obj is not None:
-                for k in out_names_local_obj:
-                    if k.__class__.__name__=="Name":
-                        out_names_local.append(k.string)
-                    elif k.__class__.__name__=="Rename":
-                        out_names_local.append(k.children[1].string)   
-                    
-            new_out_names_local=[]
-            if len(out_names_local)==0:
-                continue
-            for k in out_names_local:
-                if k not in not_used:
-                    for kk in out_names_local_obj:
-                        if kk.__class__.__name__=="Name":
-                            if kk.string==k:
-                                new_out_names_local.append(kk)
-                                break
-                        elif kk.__class__.__name__=="Rename":
-                            if kk.children[1].string==k:
-                                new_out_names_local.append(kk)
-                                break    
-            if len(new_out_names_local)>0:
-                if simple_graph.has_node(i)==False:
-                    if i!=simplify_order[0]:              
-                        continue
-                    else:
-                        simple_graph.add_node(i,info_list=res)
-                if simple_graph.has_node(j[1])==False:
-                    simple_graph.add_node(j[1])
-                simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
-    print(simple_graph)
     
+    print(dep_graph)
+
+    simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
+    
+    changed=True
+    while changed:
+        
+        simpler_graph=simple_graph.copy()
+        simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
+        if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
+            changed=False
+
+
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
       
     parse_list={}
@@ -1534,6 +1435,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            print(j[0],j[1],deps)
             if deps is None:   
                 continue
             for k in deps:
@@ -1552,15 +1454,30 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list))
+            print("ACtually used: "+str(actually_used_in_module[i]))    
         what_to_parse_list[i]=fands_list     
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
     
     for i in ast.children:
+    
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
             print("Module " + i.children[0].children[1].string + " not needing parsing")
         else:
+
+            subroutinesandfunctions=[]
+            if i.children[2].__class__.__name__=="End_Module_Stmt":
+                continue
+            if i.children[0].children[1].string!=top_level_ast:
+                for j in i.children[2].children:
+                    if j.__class__.__name__!="Contains_Stmt":
+
+                        if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                            subroutinesandfunctions.append(j)        
+                i.children[2].children.clear()
+                for j in subroutinesandfunctions:
+                    i.children[2].children.append(j)        
             new_children.append(i)
 
     ast.children.clear()
@@ -1587,32 +1504,32 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
-    for i in parse_order:
-        edges = list(simple_graph.in_edges(i))
-        for j in edges:
-            list_dict = simple_graph.get_edge_data(j[0], j[1]) 
-            names_in_edge = []
-            if (list_dict['obj_list'] is not None):
-                for k in list_dict['obj_list']:
-                        names_in_edge.append(k.string)
+    # for i in parse_order:
+    #     edges = list(simple_graph.in_edges(i))
+    #     for j in edges:
+    #         list_dict = simple_graph.get_edge_data(j[0], j[1]) 
+    #         names_in_edge = []
+    #         if (list_dict['obj_list'] is not None):
+    #             for k in list_dict['obj_list']:
+    #                     names_in_edge.append(k.string)
 
-            changes=True
-            while changes:
-                changes=False
-                if asts.get(i) is None:
-                    continue
-                for k in asts[i].children[2].children:
-                    if k.__class__.__name__ == "Contains_Stmt":
-                        asts[i].children[2].children.remove(k)
-                        changes=True
-                    elif k.__class__.__name__ == "Subroutine_Subprogram":
-                        if k.children[0].children[1].string not in names_in_edge:
-                            asts[i].children[2].children.remove(k)
-                            changes=True
-                    elif k.__class__.__name__ == "Function_Subprogram":
-                        if k.children[0].children[1].string not in names_in_edge :
-                            asts[i].children[2].children.remove(k)
-                            changes=True
+    #         changes=True
+    #         while changes:
+    #             changes=False
+    #             if asts.get(i) is None:
+    #                 continue
+    #             for k in asts[i].children[2].children:
+    #                 if k.__class__.__name__ == "Contains_Stmt":
+    #                     asts[i].children[2].children.remove(k)
+    #                     changes=True
+    #                 elif k.__class__.__name__ == "Subroutine_Subprogram":
+    #                     if k.children[0].children[1].string not in names_in_edge:
+    #                         asts[i].children[2].children.remove(k)
+    #                         changes=True
+    #                 elif k.__class__.__name__ == "Function_Subprogram":
+    #                     if k.children[0].children[1].string not in names_in_edge :
+    #                         asts[i].children[2].children.remove(k)
+    #                         changes=True
                     
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
@@ -1714,7 +1631,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if path.lower().find(i.name.name.lower())!=-1:
                 mypath=path
                 break
-        copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
+        #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             if j.execution_part is None:
                 continue
@@ -1735,4 +1652,4 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 print("Compilation failed for ", sdfg.name)
                 continue
 
-    return sdfg
+    #return sdfg

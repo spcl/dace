@@ -21,6 +21,7 @@ from numpy import float64 as fl
 
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
+import networkx as nx
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
@@ -31,6 +32,152 @@ fortrantypes2dacetypes = {
     "BOOL": dtypes.int32,  #This is a hack to allow fortran to pass through external C 
     "Unknown": dtypes.float64, # TMP hack unti lwe have a proper type inference
 }
+
+
+def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
+    simple_graph = nx.DiGraph()
+    simplify_order=(list(nx.topological_sort(dep_graph)))
+    actually_used_in_module={}
+    for i in simplify_order:
+        
+        res=dep_graph.nodes.get(i).get("info_list")
+        if simple_graph.has_node(i)==True:
+            simple_graph.add_node(i,info_list=res)
+        out_edges=dep_graph.out_edges(i)
+        in_edges=dep_graph.in_edges(i)
+        in_names=[]
+        out_names=[]
+        
+        for j in in_edges:
+            in_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            # if in_names_local_obj is not None:
+            #   for k in in_names_local_obj:
+            #     if k.__class__.__name__!="Name":
+            #         print("Assumption failed: Object list contains non-name node")
+            in_names_local=[]
+            if in_names_local_obj is not None:
+                for k in in_names_local_obj:
+                    if k.__class__.__name__=="Name":
+                        in_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        in_names_local.append(k.children[1].string)    
+            if in_names_local is not None:
+                for k in in_names_local:
+                    if k not in in_names:
+                        in_names.append(k)
+        for j in out_edges:
+            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            out_names_local=[]
+            if out_names_local_obj is not None:
+                for k in out_names_local_obj:
+                    if k.__class__.__name__=="Name":
+                        out_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        out_names_local.append(k.children[1].string)        
+            
+            if out_names_local is not None:
+                for k in out_names_local:
+                    if k not in out_names:
+                        out_names.append(k)
+        actually_used=[]
+        not_used=[]
+        if res is not None:
+            for j in out_names:
+                if i==simplify_order[0]:
+                    for fname in res.list_of_functions:
+                        if j in res.names_in_functions[fname]:
+                            if j not in actually_used:
+                                actually_used.append(j)
+                    for sname in res.list_of_subroutines:
+                        if j in res.names_in_subroutines[sname]:
+                            if j not in actually_used:
+                                actually_used.append(j)
+                else:
+                    changed=True
+                    while(changed):
+                        changed=False 
+                        for fname in res.list_of_functions:
+                            if fname in in_names or fname in actually_used:
+                                if j in res.names_in_functions[fname]:
+                                    if j not in actually_used:
+                                        actually_used.append(j)
+                                        changed=True
+                                    for k in res.names_in_functions[fname]:
+                                            if k in res.list_of_functions:
+                                                if k not in actually_used:
+                                                    actually_used.append(k)
+                                                    changed=True
+                                    for k in res.names_in_functions[fname]:
+                                            if k in res.list_of_subroutines:
+                                                if k not in actually_used:
+                                                    actually_used.append(k)
+                                                    changed=True                
+
+                        for sname in res.list_of_subroutines:
+                            if sname in in_names or sname in actually_used:
+                                if j in res.names_in_subroutines[sname]:
+                                    if j not in actually_used:
+                                        actually_used.append(j)
+                                        changed=True
+                                    for k in res.names_in_subroutines[sname]:
+                                            if k in res.list_of_functions:
+                                                if k not in actually_used:
+                                                    actually_used.append(k)
+                                                    changed=True
+                                    for k in res.names_in_subroutines[sname]:
+                                            if k in res.list_of_subroutines:
+                                                if k not in actually_used:
+                                                    actually_used.append(k)
+                                                    changed=True    
+
+
+            
+            for j in out_names:
+                if j not in actually_used:
+                    not_used.append(j)
+            #if not_used!=[]:
+            #print(i)                
+            #print("NOT USED: "+ str(not_used))  
+       
+        out_edges=dep_graph.out_edges(i)
+        out_names=[]
+        for j in out_edges:
+            out_names_local_obj=dep_graph.get_edge_data(j[0],j[1])["obj_list"]
+            out_names_local=[]
+            if out_names_local_obj is not None:
+                for k in out_names_local_obj:
+                    if k.__class__.__name__=="Name":
+                        out_names_local.append(k.string)
+                    elif k.__class__.__name__=="Rename":
+                        out_names_local.append(k.children[1].string)   
+                    
+            new_out_names_local=[]
+            if len(out_names_local)==0:
+                continue
+            for k in out_names_local:
+                if k not in not_used:
+                    for kk in out_names_local_obj:
+                        if kk.__class__.__name__=="Name":
+                            if kk.string==k:
+                                new_out_names_local.append(kk)
+                                break
+                        elif kk.__class__.__name__=="Rename":
+                            if kk.children[1].string==k:
+                                new_out_names_local.append(kk)
+                                break    
+            if len(new_out_names_local)>0:
+                if simple_graph.has_node(i)==False:
+                    if i!=simplify_order[0]:              
+                        continue
+                    else:
+                        simple_graph.add_node(i,info_list=res)
+                if simple_graph.has_node(j[1])==False:
+                    simple_graph.add_node(j[1])
+                simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
+        actually_used_in_module[i]=actually_used        
+    print(simple_graph)
+    return simple_graph,actually_used_in_module
+    
 
 
 def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set[str], code: str, debuginfo: list,

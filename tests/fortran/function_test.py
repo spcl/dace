@@ -338,11 +338,70 @@ length=norm(v)+a
     sdfg.compile()
 
 
+
+def test_fortran_frontend_function_test5():
+    """
+    Test for elemental functions
+    """
+    test_name = "function5_test"
+    test_string = """
+                    PROGRAM """ + test_name + """_program
+implicit none
+
+REAL b
+REAL v
+REAL z(10)
+REAL y(10)
+INTEGER proc(10)
+INTEGER keyval(10)
+z(:)=4.0
+
+CALL function5_test_function(z,y,10,1,2,proc,keyval,3,0)
+
+end
+
+
+  
+  SUBROUTINE function5_test_function(in_field, out_field, n, op, loc_op, &
+       proc_id, keyval, comm, root)
+    INTEGER, INTENT(in) :: n, op, loc_op
+    REAL, INTENT(in) :: in_field(n)
+    REAL, INTENT(out) :: out_field(n)
+
+    INTEGER, OPTIONAL, INTENT(inout) :: proc_id(n)
+    INTEGER, OPTIONAL, INTENT(inout) :: keyval(n)
+    INTEGER, OPTIONAL, INTENT(in)    :: root
+    INTEGER, OPTIONAL, INTENT(in)    :: comm
+
+
+    out_field = in_field
+
+  END SUBROUTINE function5_test_function
+
+
+  
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name,False,False)
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.NestedSDFG):
+            if node.sdfg is not None:
+                if 'test_function' in node.sdfg.name:
+                    sdfg = node.sdfg
+                    break
+    sdfg.parent = None
+    sdfg.parent_sdfg = None
+    sdfg.parent_nsdfg_node = None
+    sdfg.reset_sdfg_list()                
+    sdfg.simplify(verbose=True)
+    sdfg.view()
+    sdfg.compile()
+
 if __name__ == "__main__":
 
     #test_fortran_frontend_function_test()
     #test_fortran_frontend_function_test2()
     #test_fortran_frontend_function_test3()
-    test_fortran_frontend_function_test4()
+    #test_fortran_frontend_function_test4()
+    test_fortran_frontend_function_test5()
     #test_fortran_frontend_view_test_2()
     #test_fortran_frontend_view_test_3()
