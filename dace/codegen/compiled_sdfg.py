@@ -493,7 +493,9 @@ class CompiledSDFG(object):
             arglist = []
             argtypes = []
             argnames = []
+            sig = []
 
+        # Type checking
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
             is_array = dtypes.is_array(arg)
@@ -559,7 +561,7 @@ class CompiledSDFG(object):
             # Null pointer
             elif arg is None and isinstance(argtype, dt.Array):
                 arglist[index] = ctypes.c_void_p(0)
-        
+
         # Retain only the element datatype for upcoming checks and casts
         arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
@@ -589,7 +591,7 @@ class CompiledSDFG(object):
                 elif not isinstance(arg, (ctypes._SimpleCData)):
                     newargs[i] = actype(arg)
                 else:
-                    newargs[i] = arg 
+                    newargs[i] = arg
 
         except TypeError as ex:
             raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
