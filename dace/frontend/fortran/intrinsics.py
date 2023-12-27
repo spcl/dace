@@ -347,7 +347,10 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
             # If we access SUM(arr) where arr has many dimensions,
             # We need to create a ParDecl_Node for each dimension
-            dims = len(self.scope_vars.get_var(node.parent, arg.name).sizes)
+            array_sizes = self.scope_vars.get_var(node.parent, arg.name).sizes
+            if array_sizes is None:
+                return None
+            dims = len(array_sizes)
             array_node.indices = [ast_internal_classes.ParDecl_Node(type='ALL')] * dims
 
             return array_node
@@ -355,6 +358,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         # supports syntax func(arr(:))
         if isinstance(arg, ast_internal_classes.Array_Subscript_Node):
             return arg
+
+        return None
 
     def _parse_binary_op(self, node: ast_internal_classes.Call_Expr_Node, arg: ast_internal_classes.BinOp_Node) -> Tuple[
             ast_internal_classes.Array_Subscript_Node,
@@ -379,7 +384,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
         """
         if not isinstance(arg, ast_internal_classes.BinOp_Node):
-            return False
+            return (None, None, None)
 
         first_array = self._parse_array(node, arg.lval)
         second_array = self._parse_array(node, arg.rval)
@@ -1003,11 +1008,19 @@ class Merge(LoopBasedReplacement):
 
             # First argument is always an array
             self.first_array = self._parse_array(node, node.args[0])
-            assert self.first_array is not None
-
+                
             # Second argument is always an array
             self.second_array = self._parse_array(node, node.args[1])
-            assert self.second_array is not None
+
+            # weird overload of MERGE - passing two scalars
+            if self.first_array is None and self.second_array is None:
+                self.uses_scalars = True
+                self.first_array = node.args[0]
+                self.second_array = node.args[1]
+                self.mask_cond = node.args[2]
+                return
+            else:
+                self.uses_scalars = False
 
             # Last argument is either an array or a binary op
             arg = node.args[2]
@@ -1027,6 +1040,10 @@ class Merge(LoopBasedReplacement):
                 self.mask_first_array, self.mask_second_array, self.mask_cond = self._parse_binary_op(node, arg)
 
         def _summarize_args(self, exec_node: ast_internal_classes.Execution_Part_Node, node: ast_internal_classes.FNode, new_func_body: List[ast_internal_classes.FNode]):
+
+            if self.uses_scalars:
+                self.destination_array = node.lval
+                return
 
             self.destination_array = self._parse_array(exec_node, node.lval)
 
