@@ -34,11 +34,12 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None):
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None,sdfg_path=None):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
         """
+        self.sdfg_path=sdfg_path
         self.registered_types = {}
         self.transient_mode=True
         self.tables = ast.tables
@@ -877,8 +878,8 @@ class AST_translator:
             self.translate(node.execution_part, new_sdfg)
 
         if self.multiple_sdfgs==True:
-            internal_sdfg.path="/home/alex/fcdc/test_msdfg/"+ new_sdfg.name + ".sdfg"
-            new_sdfg.save(path.join("/home/alex/fcdc/test_msdfg/", new_sdfg.name + ".sdfg"))        
+            internal_sdfg.path=self.sdfg_path+ new_sdfg.name + ".sdfg"
+            new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))        
 
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG):
@@ -1636,7 +1637,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if j.execution_part is None:
                 continue
             startpoint = j
-            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint=startpoint)
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
