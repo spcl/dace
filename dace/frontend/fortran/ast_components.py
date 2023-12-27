@@ -849,7 +849,7 @@ class InternalFortranAst:
                             ast_internal_classes.Var_Decl_Node(name=actual_name.name,
                                                             type=testtype,
                                                             alloc=alloc,
-                                                            sizes=size,
+                                                            sizes=sizes,
                                                             offsets=offset,
                                                             kind=kind,
                                                             optional=optional,
