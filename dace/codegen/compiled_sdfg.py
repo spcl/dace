@@ -474,18 +474,6 @@ class CompiledSDFG(object):
         for desc, arr in zip(self._retarray_shapes, self._return_arrays):
             kwargs[desc[0]] = arr
 
-        arglist, argtypes, argnames = self._construct_args_arglist(kwargs)
-        self._construct_args_type_checking(argnames, arglist, argtypes)
-        arg_ctypes = self._construct_args_input_casting(arglist, argtypes, kwargs)
-        callparams = self._construct_args_callparams(arglist, arg_ctypes, argtypes, argnames)
-        initargs   = self._construct_args_initarg(callparams)
-        newargs    = self._construct_args_output_casting(callparams)
-
-        self._lastargs = newargs, initargs
-        return self._lastargs
-
-
-    def _construct_args_arglist(self, kwargs):
         sig = self._sig
         typedict = self._typedict
         if len(kwargs) > 0:
@@ -506,10 +494,6 @@ class CompiledSDFG(object):
             argtypes = []
             argnames = []
 
-        return arglist, argtypes, argnames
-
-
-    def _construct_args_type_checking(self, argnames, arglist, argtypes):
         no_view_arguments = not Config.get_bool('compiler', 'allow_view_arguments')
         for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
             is_array = dtypes.is_array(arg)
@@ -565,10 +549,6 @@ class CompiledSDFG(object):
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)
 
-        return True
-
-
-    def _construct_args_input_casting(self, arglist, argtypes, kwargs):
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
@@ -581,12 +561,10 @@ class CompiledSDFG(object):
                 arglist[index] = ctypes.c_void_p(0)
         
         # Retain only the element datatype for upcoming checks and casts
-        return tuple(at.dtype.as_ctypes() for at in argtypes)
+        arg_ctypes = tuple(at.dtype.as_ctypes() for at in argtypes)
 
-
-    def _construct_args_callparams(self, arglist, arg_ctypes, argtypes, argnames):
         constants  = self.sdfg.constants
-        return tuple(
+        callparams = tuple(
             (actype(arg.get())
              if isinstance(arg, symbolic.symbol)
              else arg, actype, atype, aname
@@ -595,8 +573,13 @@ class CompiledSDFG(object):
             if not (symbolic.issymbolic(arg) and (hasattr(arg, 'name') and arg.name in constants))
         )
 
+        symbols = self._free_symbols
+        initargs = tuple(
+            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
+            for arg, actype, atype, aname in callparams
+            if aname in symbols
+        )
 
-    def _construct_args_output_casting(self, callparams):
         try:
             # Replace arrays with their base host/device pointers
             newargs = [None] * len(callparams)
@@ -611,20 +594,13 @@ class CompiledSDFG(object):
         except TypeError as ex:
             raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
 
-        return newargs
-
-
-    def _construct_args_initarg(self, callparams):
-        symbols = self._free_symbols
-        return tuple(
-            actype(arg) if not isinstance(arg, ctypes._SimpleCData) else arg
-            for arg, actype, atype, aname in callparams
-            if aname in symbols
-        )
+        self._lastargs = newargs, initargs
+        return self._lastargs
 
 
     def clear_return_values(self):
         self._create_new_arrays = True
+
 
     def _create_array(self, _: str, dtype: np.dtype, storage: dtypes.StorageType, shape: Tuple[int],
                       strides: Tuple[int], total_size: int):
@@ -649,6 +625,7 @@ class CompiledSDFG(object):
 
         # Create an array with the properties of the SDFG array
         return ndarray(shape, dtype, buffer=zeros(total_size, dtype), strides=strides)
+
 
     def _initialize_return_values(self, kwargs):
         # Obtain symbol values from arguments and constants
