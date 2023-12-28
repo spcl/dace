@@ -11,6 +11,10 @@ on:
 env:
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+concurrency:
+  group: ci-${{github.ref}}-${{github.event.pull_request.number || github.run_number}}
+  cancel-in-progress: true
+
 jobs:
   test-fpga:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-ci') }}
