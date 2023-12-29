@@ -1536,6 +1536,8 @@ def is_array(obj: Any) -> bool:
             return hasattr(obj, 'shape') and len(obj.shape) > 0
         except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        return True
     return False
 
 
@@ -1556,4 +1558,9 @@ def is_gpu_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return False
+
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
+            return True
+
     return False
