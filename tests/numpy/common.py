@@ -11,7 +11,8 @@ from numpy.random import default_rng
 rng = default_rng(42)
 
 
-def compare_numpy_output(non_zero=False,
+def compare_numpy_output(device=dace.dtypes.DeviceType.CPU,
+                         non_zero=False,
                          positive=False,
                          check_dtype=False,
                          validation_func=None,
@@ -27,6 +28,7 @@ def compare_numpy_output(non_zero=False,
         Note that this should be used *instead* of the `@dace.program`
         annotation, not along with it!
 
+        :param device: Selects the target device for test execution.
         :param non_zero: if `True`, replace `0` inputs with `1`.
         :param positive: if `False`, floats sample from [-10.0, 10.0], and ints
                          sample from [-3, 3). Else, floats sample from
@@ -41,7 +43,7 @@ def compare_numpy_output(non_zero=False,
     """
     def decorator(func):
         def test():
-            dp = dace.program(func)
+            dp = dace.program(device=device)(func)
 
             def get_rand_arr(ddesc):
                 if type(ddesc) is dace.dtypes.typeclass:
@@ -115,7 +117,13 @@ def compare_numpy_output(non_zero=False,
                 numpy_thrown = e
 
             try:
-                dace_result = dp(**dace_input)
+                if device == dace.dtypes.DeviceType.GPU:
+                    sdfg = dp.to_sdfg()
+                    sdfg.apply_gpu_transformations()
+                    dace_result = sdfg(**dace_input)
+                else:
+                    dace_result = dp(**dace_input)
+
             except Exception as e:
                 dace_thrown = e
 

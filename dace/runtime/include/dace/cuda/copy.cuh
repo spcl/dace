@@ -736,60 +736,77 @@ namespace dace
         int COPY_XLEN, bool ASYNC>
     struct SharedToGlobal1D
     {
-        template <typename WCR>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE, WCR wcr)
-        {
-            if (!ASYNC)
-                __syncthreads();
+        static constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
+        static constexpr int TOTAL = COPY_XLEN;
+        static constexpr int WRITES = TOTAL / BLOCK_SIZE;
+        static constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
 
+        static DACE_DFI void Copy(const T *smem, int src_xstride, T *ptr, int dst_xstride)
+        {
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
-            constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
-            constexpr int TOTAL = COPY_XLEN;
-            constexpr int WRITES = TOTAL / BLOCK_SIZE;
-            constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
+
+            #pragma unroll
+            for (int i = 0; i < WRITES; ++i) {
+                *(ptr + (ltid + i * BLOCK_SIZE) * dst_xstride) =
+                    *(smem + (ltid + i * BLOCK_SIZE) * src_xstride);
+            }
+
+            if (REM_WRITES != 0 && ltid < REM_WRITES) {
+                *(ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride) =
+                    *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride);
+            }
+
+            if (!ASYNC)
+                __syncthreads();
+        }
+
+        template <typename WCR>
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride, WCR wcr)
+        {
+            // Linear thread ID
+            int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_custom<T>::template reduce(
-                    wcr, ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    wcr, ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_custom<T>::template reduce(
-                        ptr + (ltid + WRITES * BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES * BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
 
         template <ReductionType REDTYPE>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int dst_xstride)
         {
-            if (!ASYNC)
-                __syncthreads();
-            
             // Linear thread ID
             int ltid = GetLinearTID<BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH>();
-            constexpr int BLOCK_SIZE = BLOCK_WIDTH * BLOCK_HEIGHT * BLOCK_DEPTH;
-            constexpr int TOTAL = COPY_XLEN;
-            constexpr int WRITES = TOTAL / BLOCK_SIZE;
-            constexpr int REM_WRITES = TOTAL % BLOCK_SIZE;
 
             #pragma unroll
             for (int i = 0; i < WRITES; ++i) {
                 wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                    ptr + (ltid + i * BLOCK_SIZE) * DST_XSTRIDE,
+                    ptr + (ltid + i * BLOCK_SIZE) * dst_xstride,
                     *(smem + (ltid + i * BLOCK_SIZE) * src_xstride));
             }
 
             if (REM_WRITES != 0) {
                 if (ltid < REM_WRITES)
                     wcr_fixed<REDTYPE, T>::template reduce_atomic(
-                        ptr + (ltid + WRITES*BLOCK_SIZE)* DST_XSTRIDE,
+                        ptr + (ltid + WRITES*BLOCK_SIZE)* dst_xstride,
                         *(smem + (ltid + WRITES * BLOCK_SIZE) * src_xstride));
             }
+
+            if (!ASYNC)
+                __syncthreads();
         }
     };
     
