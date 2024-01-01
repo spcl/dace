@@ -71,6 +71,9 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTr
 
     # TODO: Insert boundaries after unmet memory dependencies
     # TODO: Implement generic methods that get input/output memlets for stree scopes and nodes
+    # TODO: Implement method that searches for a memlet in a dictionary of memlets (even if that memlet
+    #       is a subset of a dictionary key) and returns that key. If intersection indeterminate, assume
+    #       intersects and replace key with union key. Implement in dace.sdfg.memlet_utils.
 
     return stree
 
@@ -90,6 +93,8 @@ def create_state_boundary(bnode: tn.StateBoundaryNode, sdfg_region: ControlFlowR
     :param behavior: The state boundary behavior with which to create the boundary.
     :return: The newly created state.
     """
+    # TODO: Some boundaries (control flow, state labels with goto) could not be fulfilled with every
+    #       behavior. Fall back to state transition in that case.
     scope: tn.ControlFlowScope = bnode.parent
     assert scope is not None
     pass

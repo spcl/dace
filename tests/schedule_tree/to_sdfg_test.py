@@ -63,6 +63,53 @@ def test_state_boundaries_war():
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode] == [type(n) for n in stree.children]
 
 
+def test_state_boundaries_read_write_chain():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+            'B': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla1', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[0]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('B[0]')},
+                           {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla3', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[0]')}),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [tn.TaskletNode, tn.TaskletNode, tn.TaskletNode] == [type(n) for n in stree.children]
+
+
+def test_state_boundaries_data_race():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+            'B': dace.data.Array(dace.float64, [20]),
+        },
+        children=[
+            tn.TaskletNode(nodes.Tasklet('bla1', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[0]')}),
+            tn.TaskletNode(nodes.Tasklet('bla11', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla2', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('B[0]')},
+                           {'out': dace.Memlet('A[1]')}),
+            tn.TaskletNode(nodes.Tasklet('bla3', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('A[1]')},
+                           {'out': dace.Memlet('B[0]')}),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [tn.TaskletNode, tn.TaskletNode, tn.StateBoundaryNode, tn.TaskletNode,
+            tn.TaskletNode] == [type(n) for n in stree.children]
+
+
 def test_state_boundaries_cfg():
     # Manually create a schedule tree
     stree = tn.ScheduleTreeRoot(
@@ -86,4 +133,6 @@ if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
     test_state_boundaries_war()
+    test_state_boundaries_read_write_chain()
+    test_state_boundaries_data_race()
     test_state_boundaries_cfg()
