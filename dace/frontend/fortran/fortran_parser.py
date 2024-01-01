@@ -170,8 +170,9 @@ class AST_translator:
         for i in node.modules:
             for j in i.specification_part.typedecls:
                 self.translate(j, sdfg)
-                for k in j.vardecl:
-                    self.module_vars.append((k.name, i.name))
+                if j.__class__.__name__ != "Derived_Type_Def_Node":
+                    for k in j.vardecl:
+                        self.module_vars.append((k.name, i.name))
             for j in i.specification_part.symbols:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
@@ -1625,6 +1626,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.IndexExtractor(program).visit(program)
     program.tables=partial_ast.symbols
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
+    unordered_modules=program.modules
+    program.modules=[]
+    for i in parse_order:
+        for j in unordered_modules:
+            if j.name.name==i:
+                program.modules.append(j)
+    for j in unordered_modules:
+        if j.name.name==top_level_ast:
+            program.modules.append(j)            
 
     for i in program.modules:
         for path in source_list:
@@ -1641,13 +1651,14 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
-            ast2sdfg.translate(program, sdfg)
-            sdfg.apply_transformations(IntrinsicSDFGTransformation)
-            sdfg.expand_library_nodes()
-            sdfg.validate()
-            sdfg.simplify(verbose=True)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
             try:
+                ast2sdfg.translate(program, sdfg)
+                sdfg.apply_transformations(IntrinsicSDFGTransformation)
+                sdfg.expand_library_nodes()
+                sdfg.validate()
+                sdfg.simplify(verbose=True)
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
+                
                 sdfg.compile()
             except:
                 print("Compilation failed for ", sdfg.name)

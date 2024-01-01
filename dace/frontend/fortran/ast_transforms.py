@@ -380,7 +380,8 @@ class FunctionToSubroutineDefiner(NodeTransformer):
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         if node.ret!=None:
             ret=node.ret
-        for j in node.specification_part.specifications:
+        if node.specification_part is not None:    
+          for j in node.specification_part.specifications:
             
             for k in j.vardecl:
                 if node.ret!=None:
