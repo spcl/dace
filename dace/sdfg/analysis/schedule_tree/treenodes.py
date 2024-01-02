@@ -5,6 +5,7 @@ from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
 from dace.sdfg.memlet_utils import MemletSet
+from dace.sdfg.propagation import propagate_subset
 from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
@@ -36,7 +37,7 @@ class ScheduleTreeNode:
             raise ValueError('Non-root schedule tree node has no parent')
         return self.parent.get_root()
 
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         """
         Returns a set of inputs for this node. For scopes, returns the union of its contents.
 
@@ -46,7 +47,7 @@ class ScheduleTreeNode:
         """
         raise NotImplementedError
 
-    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None, **kwargs) -> MemletSet:
         """
         Returns a set of outputs for this node. For scopes, returns the union of its contents.
 
@@ -80,13 +81,94 @@ class ScheduleTreeScope(ScheduleTreeNode):
         for child in self.children:
             yield from child.preorder_traversal()
 
-    # TODO: Missing propagation and locals
-    # TODO: Add symbol ranges as an argument
-    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return MemletSet().union(*(c.input_memlets(root) for c in self.children))
+    def _gather_memlets_in_scope(self, inputs: bool, root: Optional['ScheduleTreeRoot'], keep_locals: bool,
+                                 propagate: Dict[str, subsets.Range], disallow_propagation: Set[str]) -> MemletSet:
+        gather = (lambda n, root: n.input_memlets(root)) if inputs else (lambda n, root: n.output_memlets(root))
 
-    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return MemletSet().union(*(c.output_memlets(root) for c in self.children))
+        # Fast path, no propagation necessary
+        if keep_locals:
+            return MemletSet().union(*(gather(c) for c in self.children))
+
+        root = root if root is not None else self.get_root()
+
+        if propagate:
+            to_propagate = list(propagate.items())
+            propagate_keys = [a[0] for a in to_propagate]
+            propagate_values = subsets.Range([a[1].ndrange() for a in to_propagate])
+
+        current_locals = set()
+        current_locals |= disallow_propagation
+        result = MemletSet()
+
+        # Loop over children in order, if any new symbol is defined within this scope (e.g., symbol assignment,
+        # dynamic map range), consider it as a new local
+        for c in self.children:
+            # Add new locals
+            if isinstance(c, AssignNode):
+                current_locals.add(c.name)
+            elif isinstance(c, DynScopeCopyNode):
+                current_locals.add(c.target)
+
+            internal_memlets: MemletSet = gather(c, root)
+            if propagate:
+                for memlet in internal_memlets:
+                    result.add(
+                        propagate_subset(memlet,
+                                         root.containers[memlet.data],
+                                         propagate_keys,
+                                         propagate_values,
+                                         undefined_variables=current_locals,
+                                         use_dst=not inputs))
+
+        return result
+
+    def input_memlets(self,
+                      root: Optional['ScheduleTreeRoot'] = None,
+                      keep_locals: bool = False,
+                      propagate: Optional[Dict[str, subsets.Range]] = None,
+                      disallow_propagation: Optional[Set[str]] = None) -> MemletSet:
+        """
+        Returns a union of the set of inputs for this scope. Propagates the memlets used in the scope if ``keep_locals``
+        is set to False.
+
+        :param root: An optional argument specifying the schedule tree's root. If not given,
+                     the value is computed from the current tree node.
+        :param keep_locals: If True, keeps the local symbols defined within the scope as part of the resulting memlets.
+                            Otherwise, performs memlet propagation (see ``propagate`` and ``disallow_propagation``) or
+                            assumes the entire container is used.
+        :param propagate: An optional dictionary mapping symbols to their corresponding ranges outside of this scope.
+                          For example, the range of values a for-loop may take.
+                          If ``keep_locals`` is False, this dictionary will be used to create projection memlets over
+                          the ranges. See :ref:`memprop` in the documentation for more information.
+        :param disallow_propagation: If ``keep_locals`` is False, this optional set of strings will be considered
+                                     as additional locals.
+        :return: A set of memlets representing the inputs of this scope.
+        """
+        return self._gather_memlets_in_scope(True, root, keep_locals, propagate or {}, disallow_propagation or set())
+
+    def output_memlets(self,
+                       root: Optional['ScheduleTreeRoot'] = None,
+                       keep_locals: bool = False,
+                       propagate: Optional[Dict[str, subsets.Range]] = None,
+                       disallow_propagation: Optional[Set[str]] = None) -> MemletSet:
+        """
+        Returns a union of the set of outputs for this scope. Propagates the memlets used in the scope if
+        ``keep_locals`` is set to False.
+
+        :param root: An optional argument specifying the schedule tree's root. If not given,
+                     the value is computed from the current tree node.
+        :param keep_locals: If True, keeps the local symbols defined within the scope as part of the resulting memlets.
+                            Otherwise, performs memlet propagation (see ``propagate`` and ``disallow_propagation``) or
+                            assumes the entire container is used.
+        :param propagate: An optional dictionary mapping symbols to their corresponding ranges outside of this scope.
+                          For example, the range of values a for-loop may take.
+                          If ``keep_locals`` is False, this dictionary will be used to create projection memlets over
+                          the ranges. See :ref:`memprop` in the documentation for more information.
+        :param disallow_propagation: If ``keep_locals`` is False, this optional set of strings will be considered
+                                     as additional locals.
+        :return: A set of memlets representing the inputs of this scope.
+        """
+        return self._gather_memlets_in_scope(True, root, keep_locals, propagate or {}, disallow_propagation or set())
 
 
 @dataclass

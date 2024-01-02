@@ -680,6 +680,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
     return condition_edges
 
+
 def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
     """
     Annotate the states of an SDFG with the number of executions.
@@ -1389,6 +1390,7 @@ def propagate_subset(memlets: List[Memlet],
                      params: List[str],
                      rng: subsets.Subset,
                      defined_variables: Set[symbolic.SymbolicType] = None,
+                     undefined_variables: Set[symbolic.SymbolicType] = None,
                      use_dst: bool = False) -> Memlet:
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
@@ -1401,8 +1403,12 @@ def propagate_subset(memlets: List[Memlet],
                     range to propagate with.
         :param defined_variables: A set of symbols defined that will remain the
                                   same throughout propagation. If None, assumes
-                                  that all symbols outside of `params` have been
-                                  defined.
+                                  that all symbols outside of ``params``, except
+                                  for ``undefined_variables``, have been defined.
+        :param undefined_variables: A set of symbols that are explicitly considered
+                                    as not defined throughout propagation, such as
+                                    locals. Their existence will trigger propagating
+                                    the entire memlet.
         :param use_dst: Whether to propagate the memlets' dst subset or use the
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
@@ -1416,6 +1422,9 @@ def propagate_subset(memlets: List[Memlet],
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
         defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+
+    if undefined_variables:
+        defined_variables = defined_variables - undefined_variables
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1441,10 +1450,7 @@ def propagate_subset(memlets: List[Memlet],
                 tmp_subset = pattern.propagate(arr, [subset], rng)
                 break
         else:
-            # No patterns found. Emit a warning and propagate the entire
-            # array whenever symbols are used
-            warnings.warn('Cannot find appropriate memlet pattern to '
-                          'propagate %s through %s' % (str(subset), str(rng)))
+            # No patterns found. Propagate the entire array whenever symbols are used
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
