@@ -141,10 +141,10 @@ class StateLabel(ScheduleTreeNode):
         return indent * INDENTATION + f'label {self.state.name}:'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -156,10 +156,10 @@ class GotoNode(ScheduleTreeNode):
         return indent * INDENTATION + f'goto {name}'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -176,10 +176,10 @@ class AssignNode(ScheduleTreeNode):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        return set(self.edge.get_read_memlets(root.containers))
+        return MemletSet(self.edge.get_read_memlets(root.containers))
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -198,7 +198,7 @@ class ForScope(ControlFlowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        result = set()
+        result = MemletSet()
         result.update(memlets_in_ast(ast.parse(self.header.init), root.containers))
         result.update(memlets_in_ast(self.header.condition.code[0], root.containers))
         result.update(memlets_in_ast(ast.parse(self.header.update), root.containers))
@@ -219,7 +219,7 @@ class WhileScope(ControlFlowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        result = set()
+        result = MemletSet()
         result.update(memlets_in_ast(self.header.test.code[0], root.containers))
         result.update(super().input_memlets(root))
         return result
@@ -239,7 +239,7 @@ class DoWhileScope(ControlFlowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        result = set()
+        result = MemletSet()
         result.update(memlets_in_ast(self.header.test.code[0], root.containers))
         result.update(super().input_memlets(root))
         return result
@@ -258,7 +258,7 @@ class IfScope(ControlFlowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        result = set()
+        result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers))
         result.update(super().input_memlets(root))
         return result
@@ -285,10 +285,10 @@ class BreakNode(ScheduleTreeNode):
         return indent * INDENTATION + 'break'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -301,10 +301,10 @@ class ContinueNode(ScheduleTreeNode):
         return indent * INDENTATION + 'continue'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -320,7 +320,7 @@ class ElifScope(ControlFlowScope):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
-        result = set()
+        result = MemletSet()
         result.update(memlets_in_ast(self.condition.code[0], root.containers))
         result.update(super().input_memlets(root))
         return result
@@ -388,10 +388,10 @@ class TaskletNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set(self.in_memlets.values())
+        return MemletSet(self.in_memlets.values())
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set(self.out_memlets.values())
+        return MemletSet(self.out_memlets.values())
 
 
 @dataclass
@@ -417,13 +417,13 @@ class LibraryCall(ScheduleTreeNode):
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         if isinstance(self.in_memlets, set):
-            return set(self.in_memlets)
-        return set(self.in_memlets.values())
+            return MemletSet(self.in_memlets)
+        return MemletSet(self.in_memlets.values())
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         if isinstance(self.out_memlets, set):
-            return set(self.out_memlets)
-        return set(self.out_memlets.values())
+            return MemletSet(self.out_memlets)
+        return MemletSet(self.out_memlets.values())
 
 
 @dataclass
@@ -444,14 +444,14 @@ class CopyNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{self.target}{offset} = copy {self.memlet.data}[{self.memlet.subset}]{wcr}'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {self.memlet}
+        return MemletSet({self.memlet})
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
         root = root if root is not None else self.get_root()
         if self.memlet.other_subset is not None:
-            return {Memlet(data=self.target, subset=self.memlet.other_subset, wcr=self.memlet.wcr)}
+            return MemletSet({Memlet(data=self.target, subset=self.memlet.other_subset, wcr=self.memlet.wcr)})
 
-        return {Memlet.from_array(self.target, root.containers[self.target], self.memlet.wcr)}
+        return MemletSet({Memlet.from_array(self.target, root.containers[self.target], self.memlet.wcr)})
 
 
 @dataclass
@@ -466,10 +466,10 @@ class DynScopeCopyNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{self.target} = dscopy {self.memlet.data}[{self.memlet.subset}]'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {self.memlet}
+        return MemletSet({self.memlet})
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 @dataclass
@@ -484,10 +484,10 @@ class ViewNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{self.target} = view {self.memlet} as {self.view_desc.shape}'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {self.memlet}
+        return MemletSet({self.memlet})
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {Memlet.from_array(self.target, self.view_desc)}
+        return MemletSet({Memlet.from_array(self.target, self.view_desc)})
 
 
 @dataclass
@@ -516,10 +516,10 @@ class RefSetNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{self.target} = refset to {self.memlet}'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {self.memlet}
+        return MemletSet({self.memlet})
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return {Memlet.from_array(self.target, self.ref_desc)}
+        return MemletSet({Memlet.from_array(self.target, self.ref_desc)})
 
 
 @dataclass
@@ -534,10 +534,10 @@ class StateBoundaryNode(ScheduleTreeNode):
         return indent * INDENTATION + 'state boundary'
 
     def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
     def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
-        return set()
+        return MemletSet()
 
 
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
