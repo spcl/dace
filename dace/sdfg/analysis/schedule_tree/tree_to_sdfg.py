@@ -1,11 +1,13 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace.sdfg import nodes
+from collections import defaultdict
+from dace.memlet import Memlet
+from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion
 from dace.sdfg.state import SDFGState
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from enum import Enum, auto
-from typing import Optional, Sequence
+from typing import Dict, List, Set, Union
 
 
 class StateBoundaryBehavior(Enum):
@@ -34,6 +36,7 @@ def from_schedule_tree(stree: tn.ScheduleTreeRoot,
     stree = insert_state_boundaries_to_tree(stree)  # after WAW, before label, etc.
 
     # TODO: create_state_boundary
+    #     TODO: When creating a state boundary, include all inter-state assignments that precede it.
     # TODO: create_loop_block
     # TODO: create_conditional_block
     # TODO: create_dataflow_scope
@@ -60,22 +63,88 @@ def insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTr
 
         def visit_scope(self, scope: tn.ScheduleTreeScope):
             if isinstance(scope, tn.ControlFlowScope):
-                return [tn.StateBoundaryNode(), self.generic_visit(scope)]
+                return [tn.StateBoundaryNode(True), self.generic_visit(scope)]
             return self.generic_visit(scope)
 
         def visit_StateLabel(self, node: tn.StateLabel):
-            return [tn.StateBoundaryNode(), self.generic_visit(node)]
+            return [tn.StateBoundaryNode(True), self.generic_visit(node)]
 
     # First, insert boundaries around labels and control flow
     stree = SimpleStateBoundaryInserter().visit(stree)
 
-    # TODO: Insert boundaries after unmet memory dependencies
-    # TODO: Implement generic methods that get input/output memlets for stree scopes and nodes
-    # TODO: Implement method that searches for a memlet in a dictionary of memlets (even if that memlet
-    #       is a subset of a dictionary key) and returns that key. If intersection indeterminate, assume
-    #       intersects and replace key with union key. Implement in dace.sdfg.memlet_utils.
+    # Then, insert boundaries after unmet memory dependencies or potential data races
+    _insert_memory_dependency_state_boundaries(stree)
 
     return stree
+
+
+def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
+    """
+    Helper function that inserts boundaries after unmet memory dependencies.
+    """
+    reads: Dict[mmu.MemletSet, List[tn.ScheduleTreeNode]] = defaultdict(list)
+    writes: Dict[mmu.MemletSet, List[tn.ScheduleTreeNode]] = defaultdict(list)
+    parents: Dict[int, Set[int]] = defaultdict(set)
+    boundaries_to_insert: List[int] = []
+
+    for i, n in enumerate(scope.children):
+        if isinstance(n, (tn.StateBoundaryNode, tn.ControlFlowScope)):  # Clear state
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            if isinstance(n, tn.ControlFlowScope):  # Insert memory boundaries recursively
+                _insert_memory_dependency_state_boundaries(n)
+            continue
+
+        # If dataflow scope, insert state boundaries recursively and as a node
+        if isinstance(n, tn.DataflowScope):
+            _insert_memory_dependency_state_boundaries(n)
+
+        inputs = n.input_memlets()
+        outputs = n.output_memlets()
+
+        # Register reads
+        for inp in inputs:
+            reads[inp].append(n)
+
+            # Transitively add parents
+            if inp in writes:
+                for parent in writes[inp]:
+                    parents[id(n)].add(id(parent))
+                    parents[id(n)].update(parents[id(parent)])
+
+        # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
+        if isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs):
+            boundaries_to_insert.append(i)
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            continue
+
+        # Write after write or potential write/write data race, insert state boundary
+        if any(o in writes and (o not in reads or any(id(r) not in parents for r in reads[o])) for o in outputs):
+            boundaries_to_insert.append(i)
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            continue
+
+        # Potential read/write data race: if any read is not in the parents of this node, it might
+        # be performed in parallel
+        if any(o in reads and any(id(r) not in parents for r in reads[o]) for o in outputs):
+            boundaries_to_insert.append(i)
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            continue
+
+        # Register writes after all hazards have been tested for
+        for out in outputs:
+            writes[out].append(n)
+
+    # Insert memory dependency state boundaries in reverse in order to keep indices intact
+    for i in reversed(boundaries_to_insert):
+        scope.children.insert(i, tn.StateBoundaryNode())
 
 
 #############################################################################

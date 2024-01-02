@@ -77,3 +77,10 @@ class MemletReplacer(ast.NodeTransformer):
         if isinstance(node.value, ast.Name) and node.value.id in self.array_filter:
             return self._replace(node)
         return self.generic_visit(node)
+
+
+class MemletSet(Set[Memlet], set):
+    # TODO: Implement method that searches for a memlet in a dictionary of memlets (even if that memlet
+    #       is a subset of a dictionary key) and returns that key. If intersection indeterminate, assume
+    #       intersects and replace key with union key.
+    pass

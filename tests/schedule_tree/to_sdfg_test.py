@@ -129,6 +129,28 @@ def test_state_boundaries_cfg():
     assert [tn.TaskletNode, tn.StateBoundaryNode, tn.ForScope] == [type(n) for n in stree.children]
 
 
+def test_state_boundaries_state_transition():
+    # Manually create a schedule tree
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': dace.data.Array(dace.float64, [20]),
+        },
+        symbols={
+            'N': dace.symbol('N'),
+        },
+        children=[
+            tn.AssignNode('irrelevant', CodeBlock('N + 1'), dace.InterstateEdge(assignments=dict(irrelevant='N + 1'))),
+            tn.TaskletNode(nodes.Tasklet('bla', {}, {'out'}, 'out = 2'), {}, {'out': dace.Memlet('A[1]')}),
+            tn.AssignNode('relevant', CodeBlock('A[1] + 2'),
+                          dace.InterstateEdge(assignments=dict(relevant='A[1] + 2'))),
+        ],
+    )
+
+    stree = t2s.insert_state_boundaries_to_tree(stree)
+    assert [tn.AssignNode, tn.TaskletNode, tn.StateBoundaryNode, tn.AssignNode] == [type(n) for n in stree.children]
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -136,3 +158,4 @@ if __name__ == '__main__':
     test_state_boundaries_read_write_chain()
     test_state_boundaries_data_race()
     test_state_boundaries_cfg()
+    test_state_boundaries_state_transition()

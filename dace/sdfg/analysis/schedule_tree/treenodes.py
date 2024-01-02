@@ -1,9 +1,11 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.properties import CodeBlock
-from dace.sdfg.sdfg import InterstateEdge, SDFG
+from dace.sdfg.memlet_utils import MemletSet
+from dace.sdfg.sdfg import InterstateEdge, SDFG, memlets_in_ast
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
@@ -29,6 +31,31 @@ class ScheduleTreeNode:
         """
         yield self
 
+    def get_root(self) -> 'ScheduleTreeRoot':
+        if self.parent is None:
+            raise ValueError('Non-root schedule tree node has no parent')
+        return self.parent.get_root()
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        """
+        Returns a set of inputs for this node. For scopes, returns the union of its contents.
+
+        :param root: An optional argument specifying the schedule tree's root. If not given,
+                     the value is computed from the current tree node.
+        :return: A set of memlets representing the inputs of this node.
+        """
+        raise NotImplementedError
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        """
+        Returns a set of outputs for this node. For scopes, returns the union of its contents.
+
+        :param root: An optional argument specifying the schedule tree's root. If not given,
+                     the value is computed from the current tree node.
+        :return: A set of memlets representing the inputs of this node.
+        """
+        raise NotImplementedError
+
 
 @dataclass
 class ScheduleTreeScope(ScheduleTreeNode):
@@ -53,7 +80,13 @@ class ScheduleTreeScope(ScheduleTreeNode):
         for child in self.children:
             yield from child.preorder_traversal()
 
-    # TODO: Helper function that gets input/output memlets of the scope
+    # TODO: Missing propagation and locals
+    # TODO: Add symbol ranges as an argument
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return MemletSet().union(*(c.input_memlets(root) for c in self.children))
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return MemletSet().union(*(c.output_memlets(root) for c in self.children))
 
 
 @dataclass
@@ -72,6 +105,9 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     def as_sdfg(self) -> SDFG:
         from dace.sdfg.analysis.schedule_tree import tree_to_sdfg as t2s  # Avoid import loop
         return t2s.from_schedule_tree(self)
+
+    def get_root(self) -> 'ScheduleTreeRoot':
+        return self
 
 
 @dataclass
@@ -104,6 +140,12 @@ class StateLabel(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'label {self.state.name}:'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
 
 @dataclass
 class GotoNode(ScheduleTreeNode):
@@ -112,6 +154,12 @@ class GotoNode(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         name = self.target or 'exit'
         return indent * INDENTATION + f'goto {name}'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
 
 
 @dataclass
@@ -125,6 +173,13 @@ class AssignNode(ScheduleTreeNode):
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'assign {self.name} = {self.value.as_string}'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return set(self.edge.get_read_memlets(root.containers))
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
 
 
 @dataclass
@@ -141,6 +196,15 @@ class ForScope(ControlFlowScope):
                   f'{node.itervar} = {node.update}:\n')
         return result + super().as_string(indent)
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        result = set()
+        result.update(memlets_in_ast(ast.parse(self.header.init), root.containers))
+        result.update(memlets_in_ast(self.header.condition.code[0], root.containers))
+        result.update(memlets_in_ast(ast.parse(self.header.update), root.containers))
+        result.update(super().input_memlets(root))
+        return result
+
 
 @dataclass
 class WhileScope(ControlFlowScope):
@@ -152,6 +216,13 @@ class WhileScope(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'while {self.header.test.as_string}:\n'
         return result + super().as_string(indent)
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        result = set()
+        result.update(memlets_in_ast(self.header.test.code[0], root.containers))
+        result.update(super().input_memlets(root))
+        return result
 
 
 @dataclass
@@ -166,6 +237,13 @@ class DoWhileScope(ControlFlowScope):
         footer = indent * INDENTATION + f'while {self.header.test.as_string}\n'
         return header + super().as_string(indent) + footer
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        result = set()
+        result.update(memlets_in_ast(self.header.test.code[0], root.containers))
+        result.update(super().input_memlets(root))
+        return result
+
 
 @dataclass
 class IfScope(ControlFlowScope):
@@ -177,6 +255,13 @@ class IfScope(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        result = set()
+        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(super().input_memlets(root))
+        return result
 
 
 @dataclass
@@ -199,6 +284,12 @@ class BreakNode(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'break'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
 
 @dataclass
 class ContinueNode(ScheduleTreeNode):
@@ -208,6 +299,12 @@ class ContinueNode(ScheduleTreeNode):
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'continue'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
 
 
 @dataclass
@@ -220,6 +317,13 @@ class ElifScope(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'elif {self.condition.as_string}:\n'
         return result + super().as_string(indent)
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        result = set()
+        result.update(memlets_in_ast(self.condition.code[0], root.containers))
+        result.update(super().input_memlets(root))
+        return result
 
 
 @dataclass
@@ -283,12 +387,18 @@ class TaskletNode(ScheduleTreeNode):
             return indent * INDENTATION + f'tasklet({in_memlets})'
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set(self.in_memlets.values())
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set(self.out_memlets.values())
+
 
 @dataclass
 class LibraryCall(ScheduleTreeNode):
     node: nodes.LibraryNode
-    in_memlets: Union[Dict[str, Memlet], Set[Memlet]]
-    out_memlets: Union[Dict[str, Memlet], Set[Memlet]]
+    in_memlets: Union[Dict[str, Memlet], MemletSet]
+    out_memlets: Union[Dict[str, Memlet], MemletSet]
 
     def as_string(self, indent: int = 0):
         if isinstance(self.in_memlets, set):
@@ -304,6 +414,16 @@ class LibraryCall(ScheduleTreeNode):
         own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
                                    if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
         return indent * INDENTATION + f'{out_memlets} = library {libname}[{own_properties}]({in_memlets})'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        if isinstance(self.in_memlets, set):
+            return set(self.in_memlets)
+        return set(self.in_memlets.values())
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        if isinstance(self.out_memlets, set):
+            return set(self.out_memlets)
+        return set(self.out_memlets.values())
 
 
 @dataclass
@@ -323,6 +443,16 @@ class CopyNode(ScheduleTreeNode):
 
         return indent * INDENTATION + f'{self.target}{offset} = copy {self.memlet.data}[{self.memlet.subset}]{wcr}'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {self.memlet}
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        if self.memlet.other_subset is not None:
+            return {Memlet(data=self.target, subset=self.memlet.other_subset, wcr=self.memlet.wcr)}
+
+        return {Memlet.from_array(self.target, root.containers[self.target], self.memlet.wcr)}
+
 
 @dataclass
 class DynScopeCopyNode(ScheduleTreeNode):
@@ -335,6 +465,12 @@ class DynScopeCopyNode(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'{self.target} = dscopy {self.memlet.data}[{self.memlet.subset}]'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {self.memlet}
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
 
 @dataclass
 class ViewNode(ScheduleTreeNode):
@@ -346,6 +482,12 @@ class ViewNode(ScheduleTreeNode):
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'{self.target} = view {self.memlet} as {self.view_desc.shape}'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {self.memlet}
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {Memlet.from_array(self.target, self.view_desc)}
 
 
 @dataclass
@@ -373,6 +515,12 @@ class RefSetNode(ScheduleTreeNode):
             return indent * INDENTATION + f'{self.target} = refset from {type(self.src_desc).__name__.lower()}'
         return indent * INDENTATION + f'{self.target} = refset to {self.memlet}'
 
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {self.memlet}
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return {Memlet.from_array(self.target, self.ref_desc)}
+
 
 @dataclass
 class StateBoundaryNode(ScheduleTreeNode):
@@ -380,9 +528,16 @@ class StateBoundaryNode(ScheduleTreeNode):
     A node that represents a state boundary (e.g., when a write-after-write is encountered). This node
     is used only during conversion from a schedule tree to an SDFG.
     """
+    due_to_control_flow: bool = False
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'state boundary'
+
+    def input_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
+
+    def output_memlets(self, root: Optional['ScheduleTreeRoot'] = None) -> MemletSet:
+        return set()
 
 
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
