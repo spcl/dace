@@ -488,14 +488,9 @@ def sdfg_work_depth(sdfg: SDFG,
 
     sdfg_result = (max_work, max_depth)
     w_d_map[get_uuid(sdfg)] = sdfg_result
-    # TODO:
-    # for k, v in w_d_map.items():
-    #     w_d_map[k] = (v[0].subs(value_map), v[1].subs(value_map))
-
-    # TODO: is this needed
+    
     for k, (v_w, v_d) in w_d_map.items():
         # The symeval replaces nested SDFG symbols with their global counterparts.
-        # v_w, v_d = do_subs(v_w, v_d, all_subs)
         v_w = symeval(v_w, symbols)
         v_d = symeval(v_d, symbols)
         w_d_map[k] = (v_w, v_d)
@@ -561,8 +556,6 @@ def scope_work_depth(
             for e in state.out_edges(node):
                 if e.data.wcr is not None:
                     t_work += count_arithmetic_ops_code(e.data.wcr)
-            if t_work is None:
-                t_work = 0
             t_work, t_depth = do_initial_subs(t_work, t_depth, equality_subs, subs1)
             work += t_work
             w_d_map[get_uuid(node, state)] = (t_work, t_depth)

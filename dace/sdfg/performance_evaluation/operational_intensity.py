@@ -99,7 +99,7 @@ def find_states_between(sdfg: SDFG, start_state: SDFGState, end_state: SDFGState
 
 def find_merge_state(sdfg: SDFG, state: SDFGState):
     """
-    adapted from ``cfg.stateorder_topological_sort``.
+    Adapted from ``cfg.stateorder_topological_sort``.
     """
     from dace.sdfg.analysis import cfg
 
@@ -172,7 +172,7 @@ def update_map_iterators(map, mapping):
         curr_value = mapping[p]
         if not isinstance(range[1], SymExpr):
             if curr_value.subs(mapping) + range[2].subs(mapping) <= range[1].subs(mapping):
-                # update this value and we done
+                # update this value and then we are done
                 mapping[p] = curr_value.subs(mapping) + range[2].subs(mapping)
                 map_exhausted = False
                 break
@@ -466,7 +466,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
     with a range of (start, stop, step), e.g. {'M' : '2,10,1'}.
     :param generate_plots: If True (and there is a range symbol N), a plot showing the operational intensity as a function of N
     for the whole SDFG.
-    :param stringify: If True, the final operational intensity values will the converted to strings.
+    :param stringify: If True, the final operational intensity values will be converted to strings.
     :param test_set_size: The size of the test set when testing the goodness of fit.
     :param ask_user: If True, the user has to decide which branch to analyze in case it cannot be determined automatically. If False,
     all branches get analyzed.

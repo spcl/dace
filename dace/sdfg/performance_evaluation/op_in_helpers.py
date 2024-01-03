@@ -139,7 +139,7 @@ def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, eleme
 
     a = np.linspace(1, max(x) + 5, max(x) * 4)
 
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))  # Create a figure containing a single axes.
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
     ax[0].scatter(x, cache_misses, label=f'C={C*L}, L={L}')
     b = []
     for curr in a:
