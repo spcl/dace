@@ -147,6 +147,7 @@ class InternalFortranAst:
             "Module_Subprogram_Part": self.module_subprogram_part,
             "Subroutine_Stmt": self.subroutine_stmt,
             "Function_Stmt": self.function_stmt,
+            "Prefix": self.prefix_stmt,
             "End_Subroutine_Stmt": self.end_subroutine_stmt,
             "End_Function_Stmt": self.end_function_stmt,
             "Rename": self.rename,
@@ -432,6 +433,7 @@ class InternalFortranAst:
             execution_part=execution_part,
             type=return_type,
             line_number=name.line_number,
+            elemental=name.elemental,
         )
 
     def end_program_stmt(self, node: FASTNode):
@@ -442,6 +444,12 @@ class InternalFortranAst:
         names = [i for i in children if isinstance(i, ast_internal_classes.Name_Node)]
         renames=[i for i in children if isinstance(i, ast_internal_classes.Rename_Node)]
         return ast_internal_classes.Only_List_Node(names=names,renames=renames)
+
+    def prefix_stmt(self, node: FASTNode):
+        for i in node.children:
+                if i.string.lower()=="elemental":
+                    return ast_internal_classes.Prefix_Node(elemental=True)
+        return ast_internal_classes.Prefix_Node(elemental=False)
 
     def function_subprogram(self, node: FASTNode):
         children = self.create_children(node)
@@ -459,29 +467,40 @@ class InternalFortranAst:
             execution_part=execution_part,
             type=return_type,
             line_number=name.line_number,
+            elemental=name.elemental,
         )
 
     def function_stmt(self, node: FASTNode):    
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
+        prefix = get_child(children, ast_internal_classes.Prefix_Node)
+        if prefix is None:
+            elemental = False
+        else:
+            elemental = prefix.elemental
         ret = get_child(children, ast_internal_classes.Suffix_Node)
         if args==None:
             ret_args = []
         else:
             ret_args = args.args    
-        return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args,return_type=ret, line_number=node.item.span,ret=ret)
+        return ast_internal_classes.Function_Stmt_Node(name=name, args=ret_args,return_type=ret, line_number=node.item.span,ret=ret,elemental=elemental)
 
     def subroutine_stmt(self, node: FASTNode):
         #print(self.name_list)
         children = self.create_children(node)
         name = get_child(children, ast_internal_classes.Name_Node)
         args = get_child(children, ast_internal_classes.Arg_List_Node)
+        prefix = get_child(children, ast_internal_classes.Prefix_Node)
+        if prefix is None:
+            elemental = False
+        else:
+            elemental = prefix.elemental
         if args==None:
             ret_args = []
         else:
             ret_args = args.args   
-        return ast_internal_classes.Subroutine_Stmt_Node(name=name, args=ret_args, line_number=node.item.span)
+        return ast_internal_classes.Subroutine_Stmt_Node(name=name, args=ret_args, line_number=node.item.span,elemental=elemental)
 
     def ac_value_list(self, node: FASTNode):
         children = self.create_children(node)

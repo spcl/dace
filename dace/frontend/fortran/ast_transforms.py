@@ -104,10 +104,14 @@ class FindFunctionAndSubroutines(NodeVisitor):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
-        self.nodes.append(node.name)
+        ret=node.name
+        ret.elemental=node.elemental
+        self.nodes.append(ret)
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
-        self.nodes.append(node.name)
+        ret=node.name
+        ret.elemental=node.elemental
+        self.nodes.append(ret)
 
 
 class FindInputs(NodeVisitor):
@@ -402,7 +406,8 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                                                                 specification_part=node.specification_part,
                                                                 execution_part=execution_part,
                                                                 subroutine=True,
-                                                                line_number=node.line_number)
+                                                                line_number=node.line_number,
+                                                                elemental=node.elemental)
     
 
 class CallExtractor(NodeTransformer):
@@ -1254,3 +1259,78 @@ class ForDeclarer(NodeTransformer):
             else:
                 newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+
+class ElementalFunctionExpander(NodeTransformer):
+    "Makes elemental functions into normal functions by creating a loop around thme if they are called with arrays"
+    def __init__(self, func_list:list ):
+        self.func_list = func_list
+        self.count=0
+    
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+        for child in node.execution:
+            if isinstance(child, ast_internal_classes.Call_Expr_Node):
+                arrays=False
+                for i in self.func_list:
+                    if child.name.name==i.name or child.name.name==i.name+"_srt":
+                        if i.elemental is True:
+                            if len(child.args)>0:
+                                for j in child.args:
+                                    #THIS Needs a proper check
+                                    if j.name=="z":
+                                        arrays=True
+                if not arrays:       
+                    newbody.append(self.visit(child))
+                else:
+                    newbody.append(
+                        ast_internal_classes.Decl_Stmt_Node(vardecl=[
+                            ast_internal_classes.Symbol_Decl_Node(
+                                name="_for_elem_it_" + str(self.count), type="INTEGER", sizes=None, init=None)
+                    ]))
+                    newargs=[]
+                    #The range must be determined! It's currently hard set to 10  
+                    shape=["10"]
+                    for i in child.args:
+                        if isinstance(i,ast_internal_classes.Name_Node):
+                            newargs.append(ast_internal_classes.Array_Subscript_Node(name=i,indices=[ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count))],line_number=child.line_number,type=i.type))
+                            if i.name.startswith("tmp_call_"):
+                                for j in newbody:
+                                    if isinstance(j,ast_internal_classes.Decl_Stmt_Node):
+                                        if j.vardecl[0].name==i.name:
+                                            newbody[newbody.index(j)].vardecl[0].sizes=shape
+                                            break
+                        else:
+                            raise NotImplementedError("Only name nodes are supported")    
+                      
+                    newbody.append(ast_internal_classes.For_Stmt_Node(
+                        init=ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                                                            op="=",
+                                                            rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                                                            line_number=child.line_number),
+                        cond=ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                                                            op="<=",
+                                                            rval=ast_internal_classes.Int_Literal_Node(value=shape[0]),
+                                                            line_number=child.line_number),
+                        body=ast_internal_classes.Execution_Part_Node(execution=[
+                            ast_internal_classes.Call_Expr_Node(type=child.type,
+                                                                name=child.name,
+                                                                args=newargs,
+                                                                line_number=child.line_number)
+                        ]), line_number=child.line_number ,
+                        iter = ast_internal_classes.BinOp_Node(
+                        lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                        op="=",
+                        rval=ast_internal_classes.BinOp_Node(
+                            lval=ast_internal_classes.Name_Node(name="_for_elem_it_" + str(self.count)),
+                            op="+",
+                            rval=ast_internal_classes.Int_Literal_Node(value="1")),
+                        line_number=child.line_number)                                                                
+                    ))
+                    self.count += 1
+                    
+
+            else:
+                newbody.append(self.visit(child))
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)
+    

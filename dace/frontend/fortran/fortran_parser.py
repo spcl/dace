@@ -1213,6 +1213,8 @@ def create_sdfg_from_string(
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    
     count=0
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
@@ -1232,6 +1234,7 @@ def create_sdfg_from_string(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+    
     own_ast.tables = own_ast.symbols
 
     ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
@@ -1596,6 +1599,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArgumentExtractor().visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
     count=0
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
@@ -1651,14 +1655,14 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
-            try:
-                ast2sdfg.translate(program, sdfg)
-                sdfg.apply_transformations(IntrinsicSDFGTransformation)
-                sdfg.expand_library_nodes()
-                sdfg.validate()
-                sdfg.simplify(verbose=True)
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
-                
+            
+            ast2sdfg.translate(program, sdfg)
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            sdfg.expand_library_nodes()
+            sdfg.validate()
+            sdfg.simplify(verbose=True)
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
+            try:    
                 sdfg.compile()
             except:
                 print("Compilation failed for ", sdfg.name)

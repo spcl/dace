@@ -299,7 +299,7 @@ end
      REAL :: length
 
      
-REAL a
+REAL a(10)
 REAL b
 
 
@@ -401,7 +401,7 @@ if __name__ == "__main__":
     #test_fortran_frontend_function_test()
     #test_fortran_frontend_function_test2()
     #test_fortran_frontend_function_test3()
-    #test_fortran_frontend_function_test4()
-    test_fortran_frontend_function_test5()
+    test_fortran_frontend_function_test4()
+    #test_fortran_frontend_function_test5()
     #test_fortran_frontend_view_test_2()
     #test_fortran_frontend_view_test_3()

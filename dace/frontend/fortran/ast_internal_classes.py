@@ -133,6 +133,9 @@ class Function_Stmt_Node(FNode):
     _attributes = ('name', )
     _fields = ('args', 'ret')
 
+class Prefix_Node(FNode):
+    _attributes = ('elemental', )
+    _fields = ()
 
 class Name_Node(FNode):
     _attributes = ('name', 'type')
