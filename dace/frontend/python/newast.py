@@ -1149,7 +1149,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if sym.name not in self.sdfg.symbols:
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
-        self.last_state = self.sdfg.add_state('init', is_start_state=True)
+        self.last_state = self.sdfg.add_state('init', is_start_block=True)
 
         self.inputs: DependencyType = {}
         self.outputs: DependencyType = {}
