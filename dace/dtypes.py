@@ -360,6 +360,7 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -600,6 +601,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -635,6 +637,7 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -680,6 +683,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -737,6 +741,7 @@ class stringtype(pointer):
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
 
@@ -756,6 +761,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -859,6 +865,7 @@ class pyobject(opaque):
     It cannot be used inside a DaCe program, but can be passed back to other Python callbacks.
     Use with caution, and ensure the value is not removed by the garbage collector or the program will crash.
     """
+
     def __init__(self):
         super().__init__('pyobject')
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
@@ -892,6 +899,7 @@ class compiletime:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
         raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
@@ -914,6 +922,7 @@ class callback(typeclass):
     """
     Looks like ``dace.callback([None, <some_native_type>], *types)``
     """
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -1240,31 +1249,39 @@ class Typeclasses(aenum.AutoNumberEnum):
     complex128 = complex128
 
 
-DTYPE_TO_TYPECLASS = {
-    bool: typeclass(bool),
-    int: typeclass(int),
-    float: typeclass(float),
-    complex: typeclass(complex),
-    numpy.bool_: bool_,
-    numpy.int8: int8,
-    numpy.int16: int16,
-    numpy.int32: int32,
-    numpy.int64: int64,
-    numpy.intc: int32,
-    numpy.uint8: uint8,
-    numpy.uint16: uint16,
-    numpy.uint32: uint32,
-    numpy.uint64: uint64,
-    numpy.uintc: uint32,
-    numpy.float16: float16,
-    numpy.float32: float32,
-    numpy.float64: float64,
-    numpy.complex64: complex64,
-    numpy.complex128: complex128,
-    # FIXME
-    numpy.longlong: int64,
-    numpy.ulonglong: uint64
-}
+_bool = bool
+
+
+def dtype_to_typeclass(dtype=None):
+    DTYPE_TO_TYPECLASS = {
+        _bool: typeclass(_bool),
+        int: typeclass(int),
+        float: typeclass(float),
+        complex: typeclass(complex),
+        numpy.bool_: bool_,
+        numpy.int8: int8,
+        numpy.int16: int16,
+        numpy.int32: int32,
+        numpy.int64: int64,
+        numpy.intc: int32,
+        numpy.uint8: uint8,
+        numpy.uint16: uint16,
+        numpy.uint32: uint32,
+        numpy.uint64: uint64,
+        numpy.uintc: uint32,
+        numpy.float16: float16,
+        numpy.float32: float32,
+        numpy.float64: float64,
+        numpy.complex64: complex64,
+        numpy.complex128: complex128,
+        # FIXME
+        numpy.longlong: int64,
+        numpy.ulonglong: uint64
+    }
+    if dtype is None:
+        return DTYPE_TO_TYPECLASS
+    return DTYPE_TO_TYPECLASS[dtype]
+
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
@@ -1354,6 +1371,7 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
+
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1397,6 +1415,7 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data
@@ -1478,20 +1497,22 @@ def can_allocate(storage: StorageType, schedule: ScheduleType):
     # Host-only allocation
     if storage in [StorageType.CPU_Heap, StorageType.CPU_Pinned, StorageType.CPU_ThreadLocal]:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
+            ScheduleType.GPU_Default
         ]
 
     # GPU-global memory
     if storage is StorageType.GPU_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
+            ScheduleType.GPU_Default
         ]
 
     # FPGA-global memory
     if storage is StorageType.FPGA_Global:
         return schedule in [
-            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI, ScheduleType.FPGA_Device,
-            ScheduleType.GPU_Default
+            ScheduleType.CPU_Multicore, ScheduleType.CPU_Persistent, ScheduleType.Sequential, ScheduleType.MPI,
+            ScheduleType.FPGA_Device, ScheduleType.GPU_Default
         ]
 
     # FPGA-local memory
