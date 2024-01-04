@@ -1002,8 +1002,8 @@ class ArrayLoopNodeLister(NodeVisitor):
                 self.nodes.append(node)
                 return
             elif len(rval_pardecls) > 1:
-                for i in rval_pardecls:
-                    if i != rval_pardecls[0]:
+                for i in rval_pardecls[1:]:
+                    if i != rval_pardecls[0] and i.type != 'ALL':
                         raise NotImplementedError("Only supporting one range in right expression")
 
                 self.range_nodes.append(node)
@@ -1102,7 +1102,21 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                 else:
                     end = i.range[1]
 
-                rangeslen.append(end - start + 1)
+                if isinstance(end, int) and isinstance(start, int):
+                    rangeslen.append(end - start + 1)
+                else:
+                    add = ast_internal_classes.BinOp_Node(
+                        lval=start,
+                        op="+",
+                        rval=ast_internal_classes.Int_Literal_Node(value="1")
+                    )
+                    substr = ast_internal_classes.BinOp_Node(
+                        lval=end,
+                        op="-",
+                        rval=add
+                    )
+                    rangeslen.append(substr)
+
             rangepos.append(currentindex)
             if declaration:
                 newbody.append(
