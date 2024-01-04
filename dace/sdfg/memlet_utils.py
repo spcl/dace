@@ -131,16 +131,19 @@ class MemletSet(Set[Memlet]):
         # Memlet is in set, either perform a union (if possible) or add to internal set
         # TODO(later): Consider other_subset as well
         for existing_memlet in self.internal_set[elem.data]:
-            if existing_memlet.subset.intersects(elem.subset) == True:  # Definitely intersects
-                if existing_memlet.subset.covers(elem.subset):
-                    break  # Nothing to do
+            try:
+                if existing_memlet.subset.intersects(elem.subset) == True:  # Definitely intersects
+                    if existing_memlet.subset.covers(elem.subset):
+                        break  # Nothing to do
 
-                # Create a new union memlet
-                self.internal_set[elem.data].remove(existing_memlet)
-                new_memlet = copy.deepcopy(existing_memlet)
-                new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
-                self.internal_set[elem.data].add(new_memlet)
-                break
+                    # Create a new union memlet
+                    self.internal_set[elem.data].remove(existing_memlet)
+                    new_memlet = copy.deepcopy(existing_memlet)
+                    new_memlet.subset = subsets.union(existing_memlet.subset, elem.subset)
+                    self.internal_set[elem.data].add(new_memlet)
+                    break
+            except TypeError:  # Indeterminate
+                pass
         else:  # all intersections were False or indeterminate (may or does not intersect with existing memlets)
             self.internal_set[elem.data].add(elem)
 
@@ -154,9 +157,12 @@ class MemletSet(Set[Memlet]):
             if existing_memlet.subset.covers(elem.subset):
                 return True
             if self.intersection_is_contained:
-                if existing_memlet.subset.intersects(elem.subset) == False:
-                    continue
-                else:  # May intersect or indeterminate
+                try:
+                    if existing_memlet.subset.intersects(elem.subset) == False:
+                        continue
+                    else:  # May intersect or indeterminate
+                        return True
+                except TypeError:
                     return True
 
         return False

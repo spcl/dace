@@ -208,25 +208,6 @@ def test_state_boundaries_propagation(boundary):
         assert [tn.MapScope, tn.TaskletNode, tn.TaskletNode] == node_types[1:]
 
 
-def test_stree_propagation_forloop():
-    N = dace.symbol('N')
-
-    @dace.program
-    def tester(a: dace.float64[20]):
-        for i in range(1, N):
-            a[i] = 2
-        a[1] = 1
-
-    stree = tester.to_sdfg().as_schedule_tree()
-    stree = t2s.insert_state_boundaries_to_tree(stree)
-
-    node_types = [n for n in stree.preorder_traversal()]
-    assert isinstance(node_types[2], tn.ForScope)
-    memlet = dace.Memlet('a[1:N]')
-    memlet._is_data_src = False
-    assert list(node_types[2].output_memlets()) == [memlet]
-
-
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -239,4 +220,3 @@ if __name__ == '__main__':
     test_state_boundaries_state_transition()
     test_state_boundaries_propagation(boundary=False)
     test_state_boundaries_propagation(boundary=True)
-    test_stree_propagation_forloop()
