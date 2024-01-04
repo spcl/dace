@@ -417,6 +417,10 @@ class GenericSMemlet(SeparableMemletPattern):
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
+        if any(s not in defined_vars for s in (used_symbols - set(self.params))):
+            # Cannot propagate symbols that are undefined outside scope (e.g., internal symbols)
+            return False
+
         if (used_symbols & set(self.params)
                 and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
             # Cannot propagate symbols that are undefined in the outer range
@@ -1422,9 +1426,11 @@ def propagate_subset(memlets: List[Memlet],
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
         defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
+    else:
+        defined_variables = set(defined_variables)
 
     if undefined_variables:
-        defined_variables = defined_variables - undefined_variables
+        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1454,11 +1460,21 @@ def propagate_subset(memlets: List[Memlet],
             entire_array = subsets.Range.from_array(arr)
             paramset = set(map(str, params))
             # Fill in the entire array only if one of the parameters appears in the
-            # free symbols list of the subset dimension
-            tmp_subset = subsets.Range([
-                ea if any(set(map(str, _freesyms(sd))) & paramset for sd in s) else s
-                for s, ea in zip(subset, entire_array)
-            ])
+            # free symbols list of the subset dimension or is undefined outside
+            tmp_subset_rng = []
+            for s, ea in zip(subset, entire_array):
+                contains_params = False
+                contains_undefs = False
+                for sdim in s:
+                    fsyms = _freesyms(sdim)
+                    fsyms_str = set(map(str, fsyms))
+                    contains_params |= len(fsyms_str & paramset) != 0
+                    contains_undefs |= len(fsyms - defined_variables) != 0
+                if contains_params or contains_undefs:
+                    tmp_subset_rng.append(ea)
+                else:
+                    tmp_subset_rng.append(s)
+            tmp_subset = subsets.Range(tmp_subset_rng)
 
         # Union edges as necessary
         if new_subset is None:

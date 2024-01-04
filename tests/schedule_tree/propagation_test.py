@@ -56,9 +56,9 @@ def test_stree_propagation_symassign():
 
 
 def test_stree_propagation_dynset():
-    H = dace.symbol()
+    H = dace.symbol('H')
     nnz = dace.symbol('nnz')
-    W = dace.symbol()
+    W = dace.symbol('W')
 
     @dace.program
     def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], A_val: dace.float32[nnz], x: dace.float32[W]):
@@ -77,10 +77,25 @@ def test_stree_propagation_dynset():
     mapscope = stree.children[1]
     _, _, dynrangemap = mapscope.children
     assert isinstance(dynrangemap, tn.MapScope)
-    print('internal:', list(dynrangemap.input_memlets()))
-    print('external:', list(mapscope.input_memlets()))
-    assert list(dynrangemap.input_memlets()) == []
-    assert list(mapscope.input_memlets()) == []
+
+    # Check dynamic range map memlets
+    internal_memlets = list(dynrangemap.input_memlets())
+    internal_memlet_data = [m.data for m in internal_memlets]
+    assert 'x' in internal_memlet_data
+    assert 'A_val' in internal_memlet_data
+    assert 'A_row' not in internal_memlet_data
+    for m in internal_memlets:
+        if m.data == 'A_val':
+            assert m.subset != dace.subsets.Range([(0, nnz - 1, 1)])  # Not propagated
+
+    # Check top-level scope memlets
+    external_memlets = list(mapscope.input_memlets())
+    assert dace.Memlet('A_row[0:H+1]') in external_memlets  # Two memlets should be unioned
+    assert dace.Memlet('x[0:W]', volume=0, dynamic=True) in external_memlets
+    assert dace.Memlet('A_val[0:nnz]', volume=0, dynamic=True) in external_memlets
+    for m in external_memlets:
+        if m.data == 'A_val':
+            assert m.subset == dace.subsets.Range([(0, nnz - 1, 1)])  # Propagated
 
 
 if __name__ == '__main__':
