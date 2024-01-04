@@ -82,8 +82,8 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
     """
     Helper function that inserts boundaries after unmet memory dependencies.
     """
-    reads: Dict[mmu.MemletSet, List[tn.ScheduleTreeNode]] = defaultdict(list)
-    writes: Dict[mmu.MemletSet, List[tn.ScheduleTreeNode]] = defaultdict(list)
+    reads: mmu.MemletDict[List[tn.ScheduleTreeNode]] = mmu.MemletDict()
+    writes: mmu.MemletDict[List[tn.ScheduleTreeNode]] = mmu.MemletDict()
     parents: Dict[int, Set[int]] = defaultdict(set)
     boundaries_to_insert: List[int] = []
 
@@ -105,7 +105,10 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 
         # Register reads
         for inp in inputs:
-            reads[inp].append(n)
+            if inp not in reads:
+                reads[inp] = [n]
+            else:
+                reads[inp].append(n)
 
             # Transitively add parents
             if inp in writes:
@@ -140,7 +143,10 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 
         # Register writes after all hazards have been tested for
         for out in outputs:
-            writes[out].append(n)
+            if out not in writes:
+                writes[out] = [n]
+            else:
+                writes[out].append(n)
 
     # Insert memory dependency state boundaries in reverse in order to keep indices intact
     for i in reversed(boundaries_to_insert):

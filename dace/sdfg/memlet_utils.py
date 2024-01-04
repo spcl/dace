@@ -1,10 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+from collections import defaultdict
 import copy
 from dace.frontend.python import memlet_parser
 from dace import data, Memlet, subsets
-from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Union
+from typing import Callable, Dict, Iterable, Optional, Set, TypeVar, Tuple, Union
 
 
 class MemletReplacer(ast.NodeTransformer):
@@ -178,4 +179,62 @@ class MemletDict(Dict[Memlet, T]):
     """
     Implements a dictionary with memlet keys that considers subsets that intersect or are covered by its other memlets.
     """
-    pass
+
+    def __init__(self, **kwargs):
+        self.internal_dict: Dict[str, Dict[Memlet, T]] = defaultdict(dict)
+        if kwargs:
+            self.update(kwargs)
+
+    def _getkey(self, elem: Memlet) -> Optional[Memlet]:
+        """
+        Returns the corresponding key (exact, covered, intersecting, or indeterminately intersecting memlet) if
+        exists in the dictionary, or None if it does not.
+        """
+        if elem.data not in self.internal_dict:
+            return None
+        for existing_memlet in self.internal_dict[elem.data]:
+            if existing_memlet.subset.covers(elem.subset):
+                return existing_memlet
+            try:
+                if existing_memlet.subset.intersects(elem.subset) == False:  # Definitely does not intersect
+                    continue
+            except TypeError:
+                pass
+
+            # May or will intersect
+            return existing_memlet
+
+        return None
+
+    def _setkey(self, key: Memlet, value: T) -> None:
+        self.internal_dict[key.data][key] = value
+
+    def clear(self):
+        self.internal_dict.clear()
+
+    def update(self, mapping: Dict[Memlet, T]):
+        for k, v in mapping.items():
+            ak = self._getkey(k)
+            if ak is None:
+                self._setkey(k, v)
+            else:
+                self._setkey(ak, v)
+
+    def __contains__(self, elem: Memlet) -> bool:
+        """
+        Returns True iff the memlet or a range superset thereof exists in this dictionary.
+        """
+        return self._getkey(elem) is not None
+
+    def __getitem__(self, key: Memlet) -> T:
+        actual_key = self._getkey(key)
+        if actual_key is None:
+            raise KeyError(key)
+        return self.internal_dict[key.data][actual_key]
+
+    def __setitem__(self, key: Memlet, value: T) -> None:
+        actual_key = self._getkey(key)
+        if actual_key is None:
+            self._setkey(key, value)
+        else:
+            self._setkey(actual_key, value)
