@@ -155,7 +155,11 @@ class DaCeCodeGenerator(object):
             if arr is not None:
                 datatypes.add(arr.dtype)
         
+        emitted_definitions = set()
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
+            if dtype in emitted_definitions:
+                return False
+            emitted_definitions.add(dtype)
             if isinstance(dtype, dtypes.pointer):
                 wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
             elif isinstance(dtype, dtypes.struct):
