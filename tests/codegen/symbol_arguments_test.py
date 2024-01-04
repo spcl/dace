@@ -48,7 +48,21 @@ def test_global_sizes_multidim():
     assert 'N' in sdfg.arglist()
 
 
+def test_nested_sdfg_redefinition():
+    sdfg = dace.SDFG('tester')
+    nsdfg = dace.SDFG('nester')
+    state = sdfg.add_state()
+    nnode = state.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping=dict(sym=0))
+
+    nstate = nsdfg.add_state()
+    nstate.add_tasklet('nothing', {}, {}, 'a = sym')
+    nstate2 = nsdfg.add_state()
+    nsdfg.add_edge(nstate, nstate2, dace.InterstateEdge(assignments=dict(sym=1)))
+    sdfg.compile()
+
+
 if __name__ == '__main__':
     test_global_sizes()
     test_global_sizes_used()
     test_global_sizes_multidim()
+    test_nested_sdfg_redefinition()
