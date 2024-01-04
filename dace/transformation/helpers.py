@@ -693,7 +693,7 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
     newstate = sdfg.add_state_after(state, label=label)
 
     # Bookkeeping
-    successors = set([node])
+    nodes_to_move = set([node])
     boundary_nodes = set()
     orig_edges = set()
 
@@ -701,12 +701,12 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
     if not isinstance(node, nodes.AccessNode):
         for edge in state.in_edges(node):
             for e in state.memlet_path(edge):
-                successors.add(e.src)
+                nodes_to_move.add(e.src)
                 orig_edges.add(e)
 
-    # Collect successors
+    # Collect nodes_to_move
     for edge in state.bfs_edges(node):
-        successors.add(edge.dst)
+        nodes_to_move.add(edge.dst)
         orig_edges.add(edge)
 
         if not isinstance(edge.dst, nodes.AccessNode):
@@ -715,14 +715,14 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                     continue
 
                 for e in state.memlet_path(iedge):
-                    successors.add(e.src)
+                    nodes_to_move.add(e.src)
                     orig_edges.add(e)
 
     # Define boundary nodes
-    for node in set(successors):
+    for node in set(nodes_to_move):
         if isinstance(node, nodes.AccessNode):
             for iedge in state.in_edges(node):
-                if iedge.src not in successors:
+                if iedge.src not in nodes_to_move:
                     boundary_nodes.add(node)
                     break
 
@@ -730,7 +730,7 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                 continue
 
             for oedge in state.out_edges(node):
-                if oedge.dst not in successors:
+                if oedge.dst not in nodes_to_move:
                     boundary_nodes.add(node)
                     break
 
@@ -751,14 +751,14 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
             state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
 
     # Move nodes
-    state.remove_nodes_from(successors)
+    state.remove_nodes_from(nodes_to_move)
 
-    for n in successors:
+    for n in nodes_to_move:
         if isinstance(n, nodes.NestedSDFG):
             # Set the new parent state
             n.sdfg.parent = newstate
 
-    newstate.add_nodes_from(successors)
+    newstate.add_nodes_from(nodes_to_move)
 
     for e in orig_edges:
         newstate.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)

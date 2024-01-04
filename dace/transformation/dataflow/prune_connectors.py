@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Set, Tuple
 import re
-import networkx as nx
 
 from dace import dtypes, SDFG, SDFGState, symbolic, properties, data as dt
 from dace.transformation import transformation as pm, helpers
