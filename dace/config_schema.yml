@@ -289,8 +289,8 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-std=c++14 -Xcompiler -fPIC -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-std=c++14 -O3 --use_fast_math'
+                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: '-O3 --use_fast_math'
 
                     hip_args:
                         type: str
@@ -945,10 +945,10 @@ required:
 
             serialize_all_fields:
                 type: bool
-                default: false
+                default: true
                 title: Serialize all unmodified fields in SDFG files
                 description: >
-                    If False (default), saving an SDFG keeps only the modified non-default properties. If True,
+                    If False, saving an SDFG keeps only the modified non-default properties. If True,
                     saves all fields.
 
     #############################################
