@@ -90,7 +90,8 @@ def test_stree_propagation_dynset():
 
     # Check top-level scope memlets
     external_memlets = list(mapscope.input_memlets())
-    assert dace.Memlet('A_row[0:H+1]') in external_memlets  # Two memlets should be unioned
+    assert dace.Memlet('A_row[0:H]') in external_memlets
+    assert dace.Memlet('A_row[1:H+1]') in external_memlets
     assert dace.Memlet('x[0:W]', volume=0, dynamic=True) in external_memlets
     assert dace.Memlet('A_val[0:nnz]', volume=0, dynamic=True) in external_memlets
     for m in external_memlets:
