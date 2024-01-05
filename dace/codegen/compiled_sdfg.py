@@ -159,8 +159,16 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
+
     if storage == dtypes.StorageType.GPU_Global:
-        return array.__cuda_array_interface__['data'][0]
+        try:
+            return array.__cuda_array_interface__['data'][0]
+        except AttributeError:
+            # Special case for CuPy with HIP
+            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+                return array.data.ptr
+            raise
+
     return array.__array_interface__['data'][0]
 
 
