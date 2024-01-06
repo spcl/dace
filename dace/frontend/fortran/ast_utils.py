@@ -197,6 +197,7 @@ def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_c
         substate.add_memlet_path(src, tasklet, dst_conn=dest_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
         substate.add_memlet_path(src, tasklet, dst_conn=dest_conn, memlet=Memlet(expr=var_name))
+    return src    
 
 
 def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, source_conn: str, memlet_range: str):
@@ -205,6 +206,7 @@ def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, sourc
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name))
+    return dst    
 
 
 def add_simple_state_to_sdfg(state: SDFGState, top_sdfg: SDFG, state_name: str):

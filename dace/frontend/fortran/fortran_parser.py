@@ -61,6 +61,7 @@ class AST_translator:
         self.last_returns = {}
         self.module_vars = []
         self.libraries = {}
+        self.struct_views={}
         self.last_call_expression = {}
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -210,16 +211,22 @@ class AST_translator:
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
         """
-        if node.name_target.name not in self.name_mapping[sdfg]:
-            raise ValueError("Unknown variable " + node.name_target.name)
-        found = False
-        for i in self.unallocated_arrays:
-            if i[0] == node.name_pointer.name:
-                if found:
-                    raise ValueError("Multiple unallocated arrays with the same name")
-                fount = True
-                self.unallocated_arrays.remove(i)
-        self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
+        if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
+            if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
+                raise ValueError("Unknown variable " + node.name_target.name)
+            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.name]
+
+        else:       
+            if node.name_target.name not in self.name_mapping[sdfg]:
+                raise ValueError("Unknown variable " + node.name_target.name)
+            found = False
+            for i in self.unallocated_arrays:
+                if i[0] == node.name_pointer.name:
+                    if found:
+                        raise ValueError("Multiple unallocated arrays with the same name")
+                    fount = True
+                    self.unallocated_arrays.remove(i)
+            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
 
     def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
         """
@@ -944,7 +951,13 @@ class AST_translator:
 
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
-            ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+            src= ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+            if self.struct_views.get(sdfg) is not None:
+              if self.struct_views[sdfg].get(i) is not None:
+                pair= self.struct_views[sdfg][i]
+                access=substate.add_access(pair[0])
+                substate.add_edge(access, None,src,'views',  Memlet(data=pair[0], subset=memlet_range))
+
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
 
@@ -1120,11 +1133,25 @@ class AST_translator:
         if sizes is None:
             if isinstance(datatype, Structure):
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype)
+                if self.struct_views.get(sdfg) is None:
+                    self.struct_views[sdfg] = {}
+                for i in datatype.members:
+                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype.members[i].shape,datatype.members[i].dtype)
+                    self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
+                    self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
             else:
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
-            sdfg.add_array(self.name_mapping[sdfg][node.name],
+            if isinstance(datatype, Structure):
+                sdfg.add_datadesc(self.name_mapping[sdfg][node.name],
+                                  shape=sizes,
+                                  dtype=datatype,
+                                  offset=offset,
+                                  strides=strides,
+                                  transient=transient)
+            else:    
+                sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
                            dtype=datatype,
                            offset=offset,

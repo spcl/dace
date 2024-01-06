@@ -67,7 +67,8 @@ end
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()                
+    sdfg.reset_sdfg_list()   
+    sdfg.validate()             
     sdfg.simplify(verbose=True)
     sdfg.view()
 
