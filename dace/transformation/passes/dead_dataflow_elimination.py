@@ -1,10 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
 from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
+from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
@@ -137,8 +139,7 @@ class DeadDataflowElimination(ppl.Pass):
                                     predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
                             # Pruning connectors on tasklets sometimes needs to change their code
-                            elif (isinstance(leaf.src, nodes.Tasklet)
-                                  and leaf.src.code.language != dtypes.Language.Python):
+                            elif isinstance(leaf.src, nodes.Tasklet):
                                 if leaf.src.code.language == dtypes.Language.CPP:
                                     ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
                                     if ctype is None:
@@ -147,6 +148,15 @@ class DeadDataflowElimination(ppl.Pass):
                                             'tasklet due to connector type inference failure.')
                                     # Add definition
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
+                                elif leaf.src.code.language == dtypes.Language.Python:
+                                    ast_find = astutils.ASTFindReplace({}, trigger_names={leaf.src_conn})
+                                    try:
+                                        for code in leaf.src.code.code:
+                                            ast_find.generic_visit(code)
+                                    except astutils.NameFound:
+                                        dtype = "dace." + str(sdfg.arrays[leaf.data.data].dtype.as_numpy_dtype())
+                                        leaf.src.code.code = [ast.parse(f'{leaf.src_conn}: {dtype}\n')] + leaf.src.code.code
+                                    # print(ast.unparse(leaf.src.code.code))
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
