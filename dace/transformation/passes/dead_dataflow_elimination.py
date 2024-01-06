@@ -140,23 +140,23 @@ class DeadDataflowElimination(ppl.Pass):
 
                             # Pruning connectors on tasklets sometimes needs to change their code
                             elif isinstance(leaf.src, nodes.Tasklet):
+                                ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
+                                # Add definition
                                 if leaf.src.code.language == dtypes.Language.CPP:
-                                    ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
                                     if ctype is None:
                                         raise NotImplementedError(
                                             f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                             'tasklet due to connector type inference failure.')
-                                    # Add definition
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
                                 elif leaf.src.code.language == dtypes.Language.Python:
-                                    ast_find = astutils.ASTFindReplace({}, trigger_names={leaf.src_conn})
-                                    try:
-                                        for code in leaf.src.code.code:
-                                            ast_find.generic_visit(code)
-                                    except astutils.NameFound:
-                                        dtype = "dace." + str(sdfg.arrays[leaf.data.data].dtype.as_numpy_dtype())
-                                        leaf.src.code.code = [ast.parse(f'{leaf.src_conn}: {dtype}\n')] + leaf.src.code.code
-                                    # print(ast.unparse(leaf.src.code.code))
+                                    if ctype is not None:
+                                        ast_find = astutils.ASTFindReplace({}, trigger_names={leaf.src_conn})
+                                        try:
+                                            for code in leaf.src.code.code:
+                                                ast_find.generic_visit(code)
+                                        except astutils.NameFound:
+                                            leaf.src.code.code = [ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n')] + leaf.src.code.code
+                                        # print(ast.unparse(leaf.src.code.code))
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
                                                               'tasklet due to its code language.')
