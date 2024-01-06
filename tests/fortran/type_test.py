@@ -72,10 +72,10 @@ def test_fortran_frontend_basic_type():
                         INTEGER:: a         
                     END TYPE simple_type
 
-                    !TYPE comlex_type
-                    !    TYPE(simple_type):: s
-                    !    INTEGER:: b
-                    !END TYPE comlex_type
+                    TYPE comlex_type
+                        TYPE(simple_type):: s
+                        REAL:: b
+                    END TYPE comlex_type
 
                     REAL :: d(5,5)
                     CALL type_test_function(d)
@@ -84,9 +84,12 @@ def test_fortran_frontend_basic_type():
                     SUBROUTINE type_test_function(d)
                     REAL d(5,5)
                     TYPE(simple_type) :: s(3)
+                    TYPE(comlex_type) :: c
                     
-                    s(1)%w(1,1,1)=5.5
-                    d(2,1)=5.5+s(1)%w(1,1,1)
+                    c%b=1.0
+                    c%s%w(1,1,1)=5.5
+                    s(1)%w(1,1,1)=5.5+c%b
+                    d(2,1)=c%s%w(1,1,1)+s(1)%w(1,1,1)
                     
                     END SUBROUTINE type_test_function
                     """

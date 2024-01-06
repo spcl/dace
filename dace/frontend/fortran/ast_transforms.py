@@ -530,6 +530,22 @@ class ParentScopeAssigner(NodeVisitor):
 
         return node
 
+class ModuleVarsDeclarations(NodeVisitor):
+    """
+        Creates a mapping (scope name, variable name) -> variable declaration.
+
+        The visitor is used to access information on variable dimension, sizes, and offsets.
+    """
+
+    def __init__(self): #, module_name: str):
+
+        self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+
+        var_name = node.name
+        self.scope_vars[var_name] = node
+
 class ScopeVarsDeclarations(NodeVisitor):
     """
         Creates a mapping (scope name, variable name) -> variable declaration.
@@ -543,6 +559,9 @@ class ScopeVarsDeclarations(NodeVisitor):
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
         return self.scope_vars[(self._scope_name(scope), variable_name)]
+
+    def contains_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> bool:
+        return (self._scope_name(scope), variable_name) in self.scope_vars
 
     def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
 

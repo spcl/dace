@@ -5,6 +5,8 @@ import os
 import sys
 from fparser.common.readfortran import FortranStringReader, FortranFileReader
 
+from dace.frontend.fortran import ast_components
+
 #dace imports
 from dace import subsets
 from dace.data import Scalar
@@ -659,4 +661,19 @@ class DefModuleLister:
                     if j.__class__.__name__ == "Name":
                         self.list_of_modules.append(j.string)
             else:
-                self.get_defined_modules(i)    
+                self.get_defined_modules(i)
+
+def parse_module_declarations(internal_ast: ast_components.InternalFortranAst, ast, parsed_modules):
+
+    module_level_variables = {}
+
+    for module_name, module in parsed_modules.items():
+
+        from dace.frontend.fortran.ast_transforms import ModuleVarsDeclarations
+
+        visitor = ModuleVarsDeclarations() #module_name)
+        if module.specification_part is not None:
+            visitor.visit(module.specification_part)
+            module_level_variables = {**module_level_variables, **visitor.scope_vars}
+
+    return module_level_variables

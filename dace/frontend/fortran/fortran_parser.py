@@ -1345,6 +1345,7 @@ def recursive_ast_improver(ast,
     fandsl=ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
     functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
+
     #print("Functions and subroutines: ", functions_and_subroutines)
     if not main_program_mode:
         parent_module = defined_modules[0]
@@ -1397,6 +1398,7 @@ def recursive_ast_improver(ast,
             continue
         next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
         next_ast = parser(next_reader)
+
         next_ast = recursive_ast_improver(next_ast,
                                           source_list,
                                           include_list,
@@ -1562,7 +1564,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     
     tables = SymbolTable
     partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
-    partial_modules = []
+    partial_modules = {}
     partial_ast.symbols["c_int"]=ast_internal_classes.Int_Literal_Node(value=4)
     partial_ast.symbols["c_int8_t"]=ast_internal_classes.Int_Literal_Node(value=1)
     partial_ast.symbols["c_int64_t"]=ast_internal_classes.Int_Literal_Node(value=8)
@@ -1573,7 +1575,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     partial_ast.symbols["c_char"]=ast_internal_classes.Int_Literal_Node(value=1)
     partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
     functions_to_rename={}
-    
+
     #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
     #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
     partial_ast.to_parse_list=what_to_parse_list
@@ -1586,7 +1588,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
        
         partial_ast.add_name_list_for_module(i, name_dict[i])
         try:
-            partial_modules.append(partial_ast.create_ast(asts[i]))
+            partial_module = partial_ast.create_ast(asts[i])
+            partial_modules[partial_module.name.name] = partial_module
         except:
             print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
             #print(partial_ast.unsupported_fortran_syntax[i])
@@ -1607,7 +1610,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #print(partial_ast.unsupported_fortran_syntax[i])
     #try:
     partial_ast.current_ast="top level"
+
     program = partial_ast.create_ast(ast)
+    program.module_declarations = ast_utils.parse_module_declarations(partial_ast, ast, partial_modules)
     #except:
         
     #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
