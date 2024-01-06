@@ -158,7 +158,11 @@ class FindOutputs(NodeVisitor):
             elif isinstance(node.lval, ast_internal_classes.Array_Subscript_Node):
                 self.nodes.append(node.lval.name)
             elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
-                self.nodes.append(node.lval.parent_ref)    
+                if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(node.lval.parent_ref)    
+                elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(node.lval.parent_ref.name)
+
             self.visit(node.rval)
 
 

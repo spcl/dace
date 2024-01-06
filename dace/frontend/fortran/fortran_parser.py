@@ -1144,12 +1144,9 @@ class AST_translator:
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
             if isinstance(datatype, Structure):
-                sdfg.add_datadesc(self.name_mapping[sdfg][node.name],
-                                  shape=sizes,
-                                  dtype=datatype,
-                                  offset=offset,
-                                  strides=strides,
-                                  transient=transient)
+                if len(sizes)==1:
+                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]])
+                
             else:    
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
