@@ -93,7 +93,7 @@ def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, va
             raise DaceSyntaxError(pv, None,
                                   f"{arr}.fill requires a scalar argument, but {type(value_array)} was given.")
         body = '__inp'
-        inputs = {'__inp': dtypes.Memlet(data=value, subset='0')}
+        inputs = {'__inp': Memlet(data=value, subset='0')}
     else:
         raise DaceSyntaxError(pv, None, f"Unsupported argument '{value}' for {arr}.fill.")
 
