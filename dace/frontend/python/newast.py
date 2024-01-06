@@ -38,8 +38,9 @@ from dace.symbolic import pystr_to_symbolic, inequal_symbols
 import numpy
 import sympy
 
-# register replacements in oprepo
+# The following line registers replacements in oprepo
 import dace.frontend.python.replacements
+
 from dace.frontend.python.replacements.utils import sym_type, broadcast_to
 
 # Type hints
@@ -48,7 +49,6 @@ ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
-
 
 if sys.version_info < (3, 8):
     _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
@@ -65,14 +65,12 @@ else:
     NumConstant = ast.Constant
     StrConstant = ast.Constant
 
-
 if sys.version_info < (3, 9):
     Index = ast.Index
     ExtSlice = ast.ExtSlice
 else:
     Index = type(None)
     ExtSlice = type(None)
-
 
 if sys.version_info < (3, 12):
     TypeAlias = type(None)
@@ -2416,8 +2414,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.loop_idx += 1
         self.continue_states.append([])
         self.break_states.append([])
-        laststate, first_loop_state, last_loop_state, _ = \
-            self._recursive_visit(node.body, 'while', node.lineno)
+        laststate, first_loop_state, last_loop_state, _ = self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
         assert (laststate == end_guard)
@@ -2514,8 +2511,7 @@ class ProgramVisitor(ExtNodeVisitor):
         cond, cond_else = self._visit_test(node.test)
 
         # Visit recursively
-        laststate, first_if_state, last_if_state, return_stmt = \
-            self._recursive_visit(node.body, 'if', node.lineno)
+        laststate, first_if_state, last_if_state, return_stmt = self._recursive_visit(node.body, 'if', node.lineno)
         end_if_state = self.last_state
 
         # Connect the states
@@ -2525,8 +2521,8 @@ class ProgramVisitor(ExtNodeVisitor):
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
             # Visit recursively
-            _, first_else_state, last_else_state, return_stmt = \
-                self._recursive_visit(node.orelse, 'else', node.lineno, False)
+            _, first_else_state, last_else_state, return_stmt = self._recursive_visit(
+                node.orelse, 'else', node.lineno, False)
 
             # Connect the states
             self.sdfg.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
@@ -2540,14 +2536,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and \
-            hasattr(node, 'decorator_list') and \
-            isinstance(node.decorator_list, list) and \
-            len(node.decorator_list) > 0 and \
-            hasattr(node.decorator_list[0], 'args') and \
-            isinstance(node.decorator_list[0].args, list) and \
-            len(node.decorator_list[0].args) > 0 and \
-            hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
+                node.decorator_list,
+                list) and len(node.decorator_list) > 0 and hasattr(node.decorator_list[0], 'args') and isinstance(
+                    node.decorator_list[0].args, list) and len(node.decorator_list[0].args) > 0 and hasattr(
+                        node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -3207,8 +3200,9 @@ class ProgramVisitor(ExtNodeVisitor):
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if true_name in self.views:
-                    if result in self.sdfg.arrays and self.views[true_name] == (
-                            result, Memlet.from_array(result, self.sdfg.arrays[result])):
+                    if result in self.sdfg.arrays and self.views[true_name] == (result,
+                                                                                Memlet.from_array(
+                                                                                    result, self.sdfg.arrays[result])):
                         continue
                     else:
                         raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
@@ -4584,8 +4578,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     name = self.name
 
-                tasklet, inputs, outputs, sdfg_inp, sdfg_out = \
-                    self._parse_tasklet(state, node, name)
+                tasklet, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node, name)
 
                 # Add memlets
                 inputs = {k: (state, v, set()) for k, v in inputs.items()}
@@ -4718,7 +4711,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
-    
+
     def visit_TypeAlias(self, node: TypeAlias):
         raise NotImplementedError('Type aliases are not supported in DaCe')
 

@@ -86,7 +86,7 @@ def test_argmax_1_int64(A: dace.int64[10, 5, 3]):
 
 
 def test_return_both():
-    from dace.frontend.python.replacements import _argminmax
+    from dace.frontend.python.replacements.reduction import _argminmax
 
     sdfg = dace.SDFG("test_return_both")
     state = sdfg.add_state()

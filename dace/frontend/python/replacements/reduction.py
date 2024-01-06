@@ -9,6 +9,7 @@ from dace.frontend.python.replacements.utils import ProgramVisitor, normalize_ax
 from dace import dtypes, nodes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 import copy
+import functools
 from numbers import Integral, Number
 from typing import Any, Dict, Callable, Union
 
@@ -101,11 +102,11 @@ def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     sum = nest(_sum)(a, axis=axis)
 
     if axis is None:
-        div_amount = reduce(lambda x, y: x * y, (d for d in sdfg.arrays[a].shape))
+        div_amount = functools.reduce(lambda x, y: x * y, (d for d in sdfg.arrays[a].shape))
     elif isinstance(axis, (tuple, list)):
         axis = normalize_axes(axis, len(sdfg.arrays[a].shape))
         # each entry needs to be divided by the size of the reduction
-        div_amount = reduce(lambda x, y: x * y, (d for i, d in enumerate(sdfg.arrays[a].shape) if i in axis))
+        div_amount = functools.reduce(lambda x, y: x * y, (d for i, d in enumerate(sdfg.arrays[a].shape) if i in axis))
     else:
         div_amount = sdfg.arrays[a].shape[axis]
 

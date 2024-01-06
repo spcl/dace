@@ -15,6 +15,7 @@ import warnings
 
 import numpy as np
 import sympy as sp
+import dace  # For evaluation of data types
 
 
 def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
@@ -174,9 +175,9 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
         if not operator:
             restype = datatypes[0]
         elif operator == 'USub' and coarse_types[0] == 0:
-            restype = eval('dace.int{}'.format(8 * datatypes[0].bytes))
+            restype = eval('dtypes.int{}'.format(8 * datatypes[0].bytes))
         elif operator == 'Abs' and coarse_types[0] == 3:
-            restype = eval('dace.float{}'.format(4 * datatypes[0].bytes))
+            restype = eval('dtypes.float{}'.format(4 * datatypes[0].bytes))
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
             raise TypeError("ufunc '{}' not supported for complex input".format(operator))
@@ -219,9 +220,9 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             if operator == 'Div' and max(type1, type2) < 2:
                 # NOTE: Leaving this here in case we implement a C/C++ flag
                 # if type1 == type2 and type1 == 0:  # Unsigned integers
-                #     restype = eval('dace.uint{}'.format(8 * max_bytes))
+                #     restype = eval('dtypes.uint{}'.format(8 * max_bytes))
                 # else:
-                #     restype = eval('dace.int{}'.format(8 * max_bytes))
+                #     restype = eval('dtypes.int{}'.format(8 * max_bytes))
                 restype = dtypes.float64
             # Floor division with at least one complex argument
             # NOTE: NumPy allows this operation
@@ -230,21 +231,21 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             # Floor division with at least one float argument
             elif operator == 'FloorDiv' and max(type1, type2) == 2:
                 if type1 == type2:
-                    restype = eval('dace.float{}'.format(8 * max_bytes))
+                    restype = eval('dtypes.float{}'.format(8 * max_bytes))
                 else:
                     restype = dtypes.float64
             # Floor division between integers
             elif operator == 'FloorDiv' and max(type1, type2) < 2:
                 if type1 == type2 and type1 == 0:  # Unsigned integers
-                    restype = eval('dace.uint{}'.format(8 * max_bytes))
+                    restype = eval('dtypes.uint{}'.format(8 * max_bytes))
                 else:
-                    restype = eval('dace.int{}'.format(8 * max_bytes))
+                    restype = eval('dtypes.int{}'.format(8 * max_bytes))
             # Multiplication between integers
             elif operator == 'Mult' and max(type1, type2) < 2:
                 if type1 == 0 or type2 == 0:  # Unsigned integers
-                    restype = eval('dace.uint{}'.format(8 * max_bytes))
+                    restype = eval('dtypes.uint{}'.format(8 * max_bytes))
                 else:
-                    restype = eval('dace.int{}'.format(8 * max_bytes))
+                    restype = eval('dtypes.int{}'.format(8 * max_bytes))
             # Power with base integer and exponent signed integer
             elif (operator == 'Pow' and max(type1, type2) < 2 and dtype2 in signed_types):
                 restype = dtypes.float64
