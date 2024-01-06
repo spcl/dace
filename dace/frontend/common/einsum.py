@@ -7,6 +7,7 @@ from typing import Dict, Optional
 
 import dace
 from dace import dtypes, subsets, symbolic
+from dace.data import _prod as prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
@@ -24,6 +25,7 @@ def _is_sequential(index_list):
 
 class EinsumParser(object):
     """ String parser for einsum. """
+
     def __init__(self, string):
         inout = string.split('->')
         if len(inout) == 1:
@@ -33,7 +35,8 @@ class EinsumParser(object):
 
         for char in chain(inputs, output):
             if char not in ascii_letters + ',':
-                raise ValueError('Invalid einsum string, subscript must contain' ' letters, commas, and "->".')
+                raise ValueError('Invalid einsum string, subscript must contain'
+                                 ' letters, commas, and "->".')
 
         inputs = inputs.split(',')
 
@@ -64,7 +67,8 @@ class EinsumParser(object):
         ab_vars = a_vars.union(b_vars)
         c_vars = set(c)
         if not ab_vars.issuperset(c_vars):
-            raise ValueError('Einsum subscript string includes outputs that do' ' not appear as an input')
+            raise ValueError('Einsum subscript string includes outputs that do'
+                             ' not appear as an input')
 
         batch_vars = a_vars.intersection(b_vars).intersection(c_vars)
         sum_vars = a_vars.intersection(b_vars) - c_vars
@@ -154,43 +158,17 @@ def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     return sdfg
 
 
-def prod(iterable):
-    return reduce(lambda x, y: x * y, iterable, 1)
-
-
-@oprepo.replaces('numpy.einsum')
-def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
-                       sdfg: SDFG,
+def create_einsum_sdfg(sdfg: SDFG,
                        state: SDFGState,
-                       einsum_string: StringLiteral,
+                       einsum_string: str,
                        *arrays: str,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
                        output: Optional[str] = None,
-                       alpha: Optional[symbolic.SymbolicType] = 1.0,
-                       beta: Optional[symbolic.SymbolicType] = 0.0):
-    return _create_einsum_internal(sdfg,
-                                   state,
-                                   str(einsum_string),
-                                   *arrays,
-                                   dtype=dtype,
-                                   optimize=optimize,
-                                   output=output,
-                                   alpha=alpha,
-                                   beta=beta)[0]
-
-
-def _create_einsum_internal(sdfg: SDFG,
-                            state: SDFGState,
-                            einsum_string: str,
-                            *arrays: str,
-                            dtype: Optional[dtypes.typeclass] = None,
-                            optimize: bool = False,
-                            output: Optional[str] = None,
-                            nodes: Optional[Dict[str, AccessNode]] = None,
-                            init_output: bool = None,
-                            alpha: Optional[symbolic.SymbolicType] = None,
-                            beta: Optional[symbolic.SymbolicType] = None):
+                       nodes: Optional[Dict[str, AccessNode]] = None,
+                       init_output: bool = None,
+                       alpha: Optional[symbolic.SymbolicType] = None,
+                       beta: Optional[symbolic.SymbolicType] = None):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
@@ -221,7 +199,8 @@ def _create_einsum_internal(sdfg: SDFG,
         try:
             import opt_einsum as oe
         except (ModuleNotFoundError, NameError, ImportError):
-            raise ImportError('To optimize einsum expressions, please install ' 'the "opt_einsum" package.')
+            raise ImportError('To optimize einsum expressions, please install '
+                              'the "opt_einsum" package.')
 
         for char, shp in chardict.items():
             if symbolic.issymbolic(shp):
@@ -238,18 +217,18 @@ def _create_einsum_internal(sdfg: SDFG,
 
         # Follow path and create a chain of operation SDFG states
         for pair, nonfree, expr, after, blas in path_info.contraction_list:
-            result, result_node = _create_einsum_internal(sdfg,
-                                                          state,
-                                                          expr,
-                                                          arrays[pair[0]],
-                                                          arrays[pair[1]],
-                                                          dtype=dtype,
-                                                          optimize=False,
-                                                          output=None,
-                                                          nodes=input_nodes,
-                                                          init_output=init_output,
-                                                          alpha=alpha,
-                                                          beta=beta)
+            result, result_node = create_einsum_internal(sdfg,
+                                                         state,
+                                                         expr,
+                                                         arrays[pair[0]],
+                                                         arrays[pair[1]],
+                                                         dtype=dtype,
+                                                         optimize=False,
+                                                         output=None,
+                                                         nodes=input_nodes,
+                                                         init_output=init_output,
+                                                         alpha=alpha,
+                                                         beta=beta)
             arrays = ([a for i, a in enumerate(arrays) if i not in pair] + [result])
             input_nodes[result] = result_node
 
@@ -377,8 +356,9 @@ def _create_einsum_internal(sdfg: SDFG,
         if strides['sCM'] == 1:
             strides['sCM'], strides['sCN'] = strides['sCN'], strides['sCM']
             strides['M'], strides['N'] = strides['N'], strides['M']
-            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'], strides['sBB']) = \
-                (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'], strides['sAB'])
+            (strides['sAM'], strides['sAK'], strides['sAB'], strides['sBK'], strides['sBN'],
+             strides['sBB']) = (strides['sBN'], strides['sBK'], strides['sBB'], strides['sAK'], strides['sAM'],
+                                strides['sAB'])
             a, b = b, a
 
         # Create nested SDFG for GEMM

@@ -40,7 +40,7 @@ import sympy
 
 # register replacements in oprepo
 import dace.frontend.python.replacements
-from dace.frontend.python.replacements import _sym_type, _broadcast_to
+from dace.frontend.python.replacements.utils import sym_type, broadcast_to
 
 # Type hints
 Size = Union[int, dace.symbolic.symbol]
@@ -2656,7 +2656,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if len(ssize) != len(osize) or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op:
 
-                    _, all_idx_tuples, _, _, inp_idx = _broadcast_to(squeezed.size(), op_subset.size())
+                    _, all_idx_tuples, _, _, inp_idx = broadcast_to(squeezed.size(), op_subset.size())
 
                     idx = iter(i for i, _ in all_idx_tuples)
                     target_index = ','.join(
@@ -3252,7 +3252,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if result in self.sdfg.symbols:
                         rtype = self.sdfg.symbols[result]
                     elif symbolic.issymbolic(result):
-                        rtype = _sym_type(result)
+                        rtype = sym_type(result)
                     else:
                         rtype = type(result)
                     if name.startswith('__return'):

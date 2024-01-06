@@ -5,7 +5,6 @@ import sympy as sp
 
 from dace import dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.replacements import _define_local_scalar
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from numbers import Integral, Number
@@ -21,7 +20,8 @@ ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 @oprepo.replaces('mpi4py.MPI.COMM_WORLD.Create_cart')
 @oprepo.replaces('dace.comm.Cart_create')
 def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
-    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with
+        [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
         :return: Name of the new process-grid descriptor.
     """
@@ -161,6 +161,7 @@ def _bcast(pv: ProgramVisitor,
            fcomm: str = None):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
 
     libnode = Bcast('_Bcast_', grid, fcomm)
     desc = sdfg.arrays[buffer]
@@ -229,6 +230,7 @@ def _Reduce(pv: ProgramVisitor,
             grid: str = None):
 
     from dace.libraries.mpi.nodes.reduce import Reduce
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
 
     libnode = Reduce('_Reduce_', op, grid)
     desc = sdfg.arrays[buffer]
@@ -341,6 +343,7 @@ def _scatter(pv: ProgramVisitor,
              root: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.scatter import Scatter
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
 
     libnode = Scatter('_Scatter_')
     in_desc = sdfg.arrays[in_buffer]
@@ -372,6 +375,7 @@ def _gather(pv: ProgramVisitor,
             root: Union[str, sp.Expr, Number] = 0):
 
     from dace.libraries.mpi.nodes.gather import Gather
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
 
     libnode = Gather('_Gather_')
     in_desc = sdfg.arrays[in_buffer]
@@ -404,7 +408,7 @@ def _send(pv: ProgramVisitor,
           buffer: str,
           dst: Union[str, sp.Expr, Number],
           tag: Union[str, sp.Expr, Number] = 0):
-
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
     from dace.libraries.mpi.nodes.send import Send
 
     libnode = Send('_Send_')
@@ -500,7 +504,7 @@ def _isend(pv: ProgramVisitor,
            tag: Union[str, sp.Expr, Number],
            request: str = None,
            grid: str = None):
-
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
     from dace.libraries.mpi.nodes.isend import Isend
 
     ret_req = False
@@ -624,7 +628,7 @@ def _recv(pv: ProgramVisitor,
           buffer: str,
           src: Union[str, sp.Expr, Number],
           tag: Union[str, sp.Expr, Number] = 0):
-
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
     from dace.libraries.mpi.nodes.recv import Recv
 
     libnode = Recv('_Recv_')
@@ -721,6 +725,7 @@ def _irecv(pv: ProgramVisitor,
            request: str = None,
            grid: str = None):
 
+    from dace.frontend.python.replacements.definitions import _define_local_scalar
     from dace.libraries.mpi.nodes.irecv import Irecv
 
     ret_req = False

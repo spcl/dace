@@ -2,7 +2,7 @@
 import dace
 from dace.sdfg import utils
 import dace.dtypes as dtypes
-import dace.frontend.common.distr as comm
+import dace.frontend.python.replacements.mpi as comm
 import numpy as np
 import pytest
 
