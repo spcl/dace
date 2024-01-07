@@ -301,7 +301,7 @@ def _numpy_full(pv: ProgramVisitor,
     if is_data:
         state.add_mapped_tasklet(
             '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)},
+                             for i, s in enumerate(shape)},
             dict(__inp=dace.Memlet(data=fill_value, subset='0')),
             "__out = __inp",
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
@@ -309,7 +309,7 @@ def _numpy_full(pv: ProgramVisitor,
     else:
         state.add_mapped_tasklet(
             '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)}, {},
+                             for i, s in enumerate(shape)}, {},
             "__out = {}".format(fill_value),
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
             external_edges=True)
@@ -605,7 +605,8 @@ def _elementwise(pv: 'ProgramVisitor',
     else:
         state.add_mapped_tasklet(
             name="_elementwise_",
-            map_ranges={f'__i{dim}': f'0:{N}' for dim, N in enumerate(inparr.shape)},
+            map_ranges={f'__i{dim}': f'0:{N}'
+                        for dim, N in enumerate(inparr.shape)},
             inputs={'__inp': Memlet.simple(in_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
             code=code,
             outputs={'__out': Memlet.simple(out_array, ','.join([f'__i{dim}' for dim in range(len(inparr.shape))]))},
@@ -4045,14 +4046,13 @@ def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDF
 
 
 @oprepo.replaces('numpy.reshape')
-def reshape(
-    pv: ProgramVisitor,
-    sdfg: SDFG,
-    state: SDFGState,
-    arr: str,
-    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
-    order: StringLiteral = StringLiteral('C')
-) -> str:
+def reshape(pv: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            arr: str,
+            newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+            order: StringLiteral = StringLiteral('C'),
+            strides: Optional[Any] = None) -> str:
     if isinstance(arr, (list, tuple)) and len(arr) == 1:
         arr = arr[0]
     desc = sdfg.arrays[arr]
@@ -4066,10 +4066,11 @@ def reshape(
 
     # New shape and strides as symbolic expressions
     newshape = [symbolic.pystr_to_symbolic(s) for s in newshape]
-    if fortran_strides:
-        strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
-    else:
-        strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
+    if strides is None:
+        if fortran_strides:
+            strides = [data._prod(newshape[:i]) for i in range(len(newshape))]
+        else:
+            strides = [data._prod(newshape[i + 1:]) for i in range(len(newshape))]
 
     newarr, newdesc = sdfg.add_view(arr,
                                     newshape,
@@ -4255,10 +4256,8 @@ def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, va
     shape = sdfg.arrays[arr].shape
     state.add_mapped_tasklet(
         '_numpy_fill_',
-        map_ranges={
-            f"__i{dim}": f"0:{s}"
-            for dim, s in enumerate(shape)
-        },
+        map_ranges={f"__i{dim}": f"0:{s}"
+                    for dim, s in enumerate(shape)},
         inputs=inputs,
         code=f"__out = {body}",
         outputs={'__out': dace.Memlet.simple(arr, ",".join([f"__i{dim}" for dim in range(len(shape))]))},
@@ -4780,3 +4779,192 @@ def _makeboolop(op: str, method: str):
 
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+@oprepo.replaces('numpy.concatenate')
+def _concat(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            arrays: Tuple[Any],
+            axis: Optional[int] = 0,
+            out: Optional[Any] = None,
+            *,
+            dtype=None,
+            casting: str = 'same_kind'):
+    if dtype is not None and out is not None:
+        raise ValueError('Arguments dtype and out cannot be given together')
+    if casting != 'same_kind':
+        raise NotImplementedError('The casting argument is currently unsupported')
+    if not isinstance(arrays, (tuple, list)):
+        raise ValueError('List of arrays is not iterable, cannot compile concatenation')
+    if axis is not None and not isinstance(axis, Integral):
+        raise ValueError('Axis is not a compile-time evaluatable integer, cannot compile concatenation')
+    if len(arrays) == 1:
+        return arrays[0]
+    for i in range(len(arrays)):
+        if arrays[i] not in sdfg.arrays:
+            raise TypeError(f'Index {i} is not an array')
+    if out is not None:
+        if out not in sdfg.arrays:
+            raise TypeError('Output is not an array')
+        dtype = sdfg.arrays[out].dtype
+
+    descs = [sdfg.arrays[arr] for arr in arrays]
+    shape = list(descs[0].shape)
+
+    if axis is None:  # Flatten arrays, then concatenate
+        arrays = [flat(visitor, sdfg, state, arr) for arr in arrays]
+        descs = [sdfg.arrays[arr] for arr in arrays]
+        shape = list(descs[0].shape)
+        axis = 0
+    else:
+        # Check shapes for validity
+        first_shape = copy.copy(shape)
+        first_shape[axis] = 0
+        for i, d in enumerate(descs[1:]):
+            other_shape = list(d.shape)
+            other_shape[axis] = 0
+            if other_shape != first_shape:
+                raise ValueError(f'Array shapes do not match at index {i}')
+
+    shape[axis] = sum(desc.shape[axis] for desc in descs)
+    if out is None:
+        if dtype is None:
+            dtype = descs[0].dtype
+        name, odesc = sdfg.add_temp_transient(shape, dtype, storage=descs[0].storage, lifetime=descs[0].lifetime)
+    else:
+        name = out
+        odesc = sdfg.arrays[out]
+
+    # Make copies
+    w = state.add_write(name)
+    offset = 0
+    subset = subsets.Range.from_array(odesc)
+    for arr, desc in zip(arrays, descs):
+        r = state.add_read(arr)
+        subset = copy.deepcopy(subset)
+        subset[axis] = (offset, offset + desc.shape[axis] - 1, 1)
+        state.add_edge(r, None, w, None, Memlet(data=name, subset=subset))
+        offset += desc.shape[axis]
+
+    return name
+
+
+@oprepo.replaces('numpy.stack')
+def _stack(visitor: ProgramVisitor,
+           sdfg: SDFG,
+           state: SDFGState,
+           arrays: Tuple[Any],
+           axis: int = 0,
+           out: Any = None,
+           *,
+           dtype=None,
+           casting: str = 'same_kind'):
+    if dtype is not None and out is not None:
+        raise ValueError('Arguments dtype and out cannot be given together')
+    if casting != 'same_kind':
+        raise NotImplementedError('The casting argument is currently unsupported')
+    if not isinstance(arrays, (tuple, list)):
+        raise ValueError('List of arrays is not iterable, cannot compile stack call')
+    if not isinstance(axis, Integral):
+        raise ValueError('Axis is not a compile-time evaluatable integer, cannot compile stack call')
+
+    for i in range(len(arrays)):
+        if arrays[i] not in sdfg.arrays:
+            raise TypeError(f'Index {i} is not an array')
+
+    descs = [sdfg.arrays[a] for a in arrays]
+    shape = descs[0].shape
+    for i, d in enumerate(descs[1:]):
+        if d.shape != shape:
+            raise ValueError(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
+
+    if axis > len(shape):
+        raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+    if axis < 0:
+        naxis = len(shape) + 1 + axis
+        if naxis < 0 or naxis > len(shape):
+            raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+        axis = naxis
+
+    # Stacking is implemented as a reshape followed by concatenation
+    reshaped = []
+    for arr, desc in zip(arrays, descs):
+        # Make a reshaped view with the inserted dimension
+        new_shape = [0] * (len(shape) + 1)
+        new_strides = [0] * (len(shape) + 1)
+        for i in range(len(shape) + 1):
+            if i == axis:
+                new_shape[i] = 1
+                new_strides[i] = desc.strides[i - 1] if i != 0 else desc.strides[i]
+            elif i < axis:
+                new_shape[i] = shape[i]
+                new_strides[i] = desc.strides[i]
+            else:
+                new_shape[i] = shape[i - 1]
+                new_strides[i] = desc.strides[i - 1]
+
+        rname = reshape(visitor, sdfg, state, arr, new_shape, strides=new_strides)
+        reshaped.append(rname)
+
+    return _concat(visitor, sdfg, state, reshaped, axis, out, dtype=dtype, casting=casting)
+
+
+@oprepo.replaces('numpy.vstack')
+@oprepo.replaces('numpy.row_stack')
+def _vstack(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            tup: Tuple[Any],
+            *,
+            dtype=None,
+            casting: str = 'same_kind'):
+    if not isinstance(tup, (tuple, list)):
+        raise ValueError('List of arrays is not iterable, cannot compile stack call')
+    if tup[0] not in sdfg.arrays:
+        raise TypeError(f'Index 0 is not an array')
+
+    # In the 1-D case, stacking is performed along the first axis
+    if len(sdfg.arrays[tup[0]].shape) == 1:
+        return _stack(visitor, sdfg, state, tup, axis=0, out=None, dtype=dtype, casting=casting)
+    # Otherwise, concatenation is performed
+    return _concat(visitor, sdfg, state, tup, axis=0, out=None, dtype=dtype, casting=casting)
+
+
+@oprepo.replaces('numpy.hstack')
+@oprepo.replaces('numpy.column_stack')
+def _hstack(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            tup: Tuple[Any],
+            *,
+            dtype=None,
+            casting: str = 'same_kind'):
+    if not isinstance(tup, (tuple, list)):
+        raise ValueError('List of arrays is not iterable, cannot compile stack call')
+    if tup[0] not in sdfg.arrays:
+        raise TypeError(f'Index 0 is not an array')
+
+    # In the 1-D case, concatenation is performed along the first axis
+    if len(sdfg.arrays[tup[0]].shape) == 1:
+        return _concat(visitor, sdfg, state, tup, axis=0, out=None, dtype=dtype, casting=casting)
+
+    return _concat(visitor, sdfg, state, tup, axis=1, out=None, dtype=dtype, casting=casting)
+
+
+@oprepo.replaces('numpy.dstack')
+def _dstack(visitor: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            tup: Tuple[Any],
+            *,
+            dtype=None,
+            casting: str = 'same_kind'):
+    if not isinstance(tup, (tuple, list)):
+        raise ValueError('List of arrays is not iterable, cannot compile a stack call')
+    if tup[0] not in sdfg.arrays:
+        raise TypeError(f'Index 0 is not an array')
+    if len(sdfg.arrays[tup[0]].shape) < 3:
+        raise NotImplementedError('dstack is not implemented for arrays that are smaller than 3D')
+
+    return _concat(visitor, sdfg, state, tup, axis=2, out=None, dtype=dtype, casting=casting)
