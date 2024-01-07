@@ -689,12 +689,13 @@ def _linspace(pv: ProgramVisitor,
         stepname, _ = sdfg.add_scalar(sdfg.temp_data_name(), dtype, transient=True)
         out_index = '[0]'
 
-    state.add_mapped_tasklet('retstep',
-                             ranges,
-                             copy.deepcopy(inputs),
-                             f'__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})',
-                             {'__out': Memlet(f"{stepname}{out_index}")},
-                             external_edges=True)
+    state.add_mapped_tasklet(
+        'retstep',
+        ranges,
+        copy.deepcopy(inputs),
+        f'__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})',
+        {'__out': Memlet(f"{stepname}{out_index}")},
+        external_edges=True)
 
     return outname, stepname
 
@@ -5112,3 +5113,136 @@ def _dstack(visitor: ProgramVisitor,
         raise NotImplementedError('dstack is not implemented for arrays that are smaller than 3D')
 
     return _concat(visitor, sdfg, state, tup, axis=2, out=None, dtype=dtype, casting=casting)
+
+
+def _split_core(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
+                indices_or_sections: Union[int, Sequence[symbolic.SymbolicType], str], axis: int, allow_uneven: bool):
+    # Argument checks
+    if not isinstance(ary, str) or ary not in sdfg.arrays:
+        raise TypeError('Split object must be an array')
+    if not isinstance(axis, Integral):
+        raise ValueError('Cannot determine split dimension, axis is not a compile-time evaluatable integer')
+
+    desc = sdfg.arrays[ary]
+
+    # Test validity of axis
+    orig_axis = axis
+    if axis < 0:
+        axis = len(desc.shape) + axis
+    if axis < 0 or axis >= len(desc.shape):
+        raise ValueError(f'axis {orig_axis} is out of bounds for array of dimension {len(desc.shape)}')
+
+    # indices_or_sections may only be an integer (not symbolic), list of integers, list of symbols, or an array
+    if isinstance(indices_or_sections, str):
+        raise ValueError('Array-indexed split cannot be compiled due to data-dependent sizes. '
+                         'Consider using numpy.reshape instead.')
+    elif isinstance(indices_or_sections, (list, tuple)):
+        if any(isinstance(i, str) for i in indices_or_sections):
+            raise ValueError('Array-indexed split cannot be compiled due to data-dependent sizes. '
+                             'Use symbolic values as an argument instead.')
+        # Sequence is given
+        sections = indices_or_sections
+    elif isinstance(indices_or_sections, Integral):  # Constant integer given
+        if indices_or_sections <= 0:
+            raise ValueError('Number of sections must be larger than zero.')
+
+        # If uneven sizes are not allowed and ary shape is numeric, check evenness
+        if not allow_uneven and not symbolic.issymbolic(desc.shape[axis]):
+            if desc.shape[axis] % indices_or_sections != 0:
+                raise ValueError('Array split does not result in an equal division. Consider using numpy.array_split '
+                                 'instead.')
+        if indices_or_sections > desc.shape[axis]:
+            raise ValueError('Cannot compile array split as it will result in empty arrays.')
+
+        # Sequence is not given, compute sections
+        # Mimic behavior of array_split in numpy: Sections are [s+1 x N%s], s, ..., s
+        size = desc.shape[axis] // indices_or_sections
+        remainder = desc.shape[axis] % indices_or_sections
+        sections = []
+        offset = 0
+        for _ in range(min(remainder, indices_or_sections)):
+            offset += size + 1
+            sections.append(offset)
+        for _ in range(remainder, indices_or_sections - 1):
+            offset += size
+            sections.append(offset)
+
+    elif symbolic.issymbolic(indices_or_sections):
+        raise ValueError('Symbolic split cannot be compiled due to output tuple size being unknown. '
+                         'Consider using numpy.reshape instead.')
+    else:
+        raise TypeError(f'Unsupported type {type(indices_or_sections)} for indices_or_sections in numpy.split')
+
+    # Split according to sections
+    r = state.add_read(ary)
+    result = []
+    offset = 0
+    for section in sections:
+        shape = list(desc.shape)
+        shape[axis] = section - offset
+        name, _ = sdfg.add_temp_transient(shape, desc.dtype, storage=desc.storage, lifetime=desc.lifetime)
+        # Add copy
+        w = state.add_write(name)
+        subset = subsets.Range.from_array(desc)
+        subset[axis] = (offset, offset + shape[axis] - 1, 1)
+        offset += shape[axis]
+        state.add_nedge(r, w, Memlet(data=ary, subset=subset))
+        result.append(name)
+
+    # Add final section
+    shape = list(desc.shape)
+    shape[axis] -= offset
+    name, _ = sdfg.add_temp_transient(shape, desc.dtype, storage=desc.storage, lifetime=desc.lifetime)
+    w = state.add_write(name)
+    subset = subsets.Range.from_array(desc)
+    subset[axis] = (offset, offset + shape[axis] - 1, 1)
+    state.add_nedge(r, w, Memlet(data=ary, subset=subset))
+    result.append(name)
+
+    # Always return a list of results, even if the size is 1
+    return result
+
+
+@oprepo.replaces('numpy.split')
+def _split(visitor: ProgramVisitor,
+           sdfg: SDFG,
+           state: SDFGState,
+           ary: str,
+           indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+           axis: int = 0):
+    return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis, allow_uneven=False)
+
+
+@oprepo.replaces('numpy.array_split')
+def _array_split(visitor: ProgramVisitor,
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 ary: str,
+                 indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str],
+                 axis: int = 0):
+    return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis, allow_uneven=True)
+
+
+@oprepo.replaces('numpy.dsplit')
+def _dsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
+            indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str]):
+    if isinstance(ary, str) and ary in sdfg.arrays:
+        if len(sdfg.arrays[ary].shape) < 3:
+            raise ValueError('Array dimensionality must be 3 or above for dsplit')
+    return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=2, allow_uneven=False)
+
+
+@oprepo.replaces('numpy.hsplit')
+def _hsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
+            indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str]):
+    if isinstance(ary, str) and ary in sdfg.arrays:
+        # In case of a 1D array, split with axis=0
+        if len(sdfg.arrays[ary].shape) <= 1:
+            return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=0, allow_uneven=False)
+    return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=1, allow_uneven=False)
+
+
+@oprepo.replaces('numpy.vsplit')
+def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
+            indices_or_sections: Union[symbolic.SymbolicType, List[symbolic.SymbolicType], str]):
+    return _split_core(visitor, sdfg, state, ary, indices_or_sections, axis=0, allow_uneven=False)
