@@ -176,8 +176,11 @@ class AST_translator:
                         self.module_vars.append((k.name, i.name))
             for j in i.specification_part.symbols:
                 self.translate(j, sdfg)
-                for k in j.vardecl:
-                    self.module_vars.append((k.name, i.name))
+                if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
+                    self.module_vars.append((j.name, i.name))
+                else:
+                    for k in j.vardecl:
+                        self.module_vars.append((k.name, i.name))
             for j in i.specification_part.specifications:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
@@ -425,8 +428,13 @@ class AST_translator:
             if isinstance(node.init, ast_internal_classes.Int_Literal_Node) or isinstance(
                     node.init, ast_internal_classes.Real_Literal_Node):
                 self.contexts[sdfg.name].constants[node.name] = node.init.value
-            if isinstance(node.init, ast_internal_classes.Name_Node):
+            elif isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
+            else:
+                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                text = tw.write_code(node.init)
+                self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)    
+           
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
@@ -1485,7 +1493,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list))
-            print("ACtually used: "+str(actually_used_in_module[i]))    
+            print("ACtually used: "+str(actually_used_in_module[i]))
+        for j in actually_used_in_module[i]:
+            if res is not None:
+                if j in res.list_of_functions:
+                    if j not in fands_list:
+                        fands_list.append(j)
+                if j in res.list_of_subroutines:
+                    if j not in fands_list:
+                        fands_list.append(j)        
         what_to_parse_list[i]=fands_list     
     top_level_ast = parse_order.pop()
     changes=True
@@ -1499,6 +1515,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
             subroutinesandfunctions=[]
             if i.children[2].__class__.__name__=="End_Module_Stmt":
+                new_children.append(i)
                 continue
             if i.children[0].children[1].string!=top_level_ast:
                 for j in i.children[2].children:
