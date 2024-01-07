@@ -4673,9 +4673,12 @@ class ProgramVisitor(ExtNodeVisitor):
         return self.visit_Constant(node)
 
     def visit_Attribute(self, node: ast.Attribute):
-        # If visiting an attribute, return attribute value if it's of an array or global
-        name = until(astutils.unparse(node), '.')
-        result = self._visitname(name, node)
+        result = self.visit(node.value)
+        if isinstance(result, (tuple, list, dict)):
+            raise DaceSyntaxError(
+                self, node.value, f'{type(result)} object cannot use attributes. Try storing the '
+                'object to a different variable first (e.g., ``a = result; a.attribute``')
+
         if isinstance(result, str) and result in self.sdfg.arrays:
             arr = self.sdfg.arrays[result]
         elif isinstance(result, str) and result in self.scope_arrays:
