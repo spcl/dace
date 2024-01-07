@@ -4684,21 +4684,24 @@ class ProgramVisitor(ExtNodeVisitor):
         elif isinstance(result, str) and result in self.scope_arrays:
             arr = self.scope_arrays[result]
         else:
-            return result
+            arr = None
 
         # Try to find sub-SDFG attribute
-        func = oprepo.Replacements.get_attribute(type(arr), node.attr)
-        if func is not None:
-            # A new state is likely needed here, e.g., for transposition (ndarray.T)
-            self._add_state('%s_%d' % (type(node).__name__, node.lineno))
-            self.last_state.set_default_lineinfo(self.current_lineinfo)
-            result = func(self, self.sdfg, self.last_state, result)
-            self.last_state.set_default_lineinfo(None)
-            return result
+        if arr is not None:
+            func = oprepo.Replacements.get_attribute(type(arr), node.attr)
+            if func is not None:
+                # A new state is likely needed here, e.g., for transposition (ndarray.T)
+                self._add_state('%s_%d' % (type(node).__name__, node.lineno))
+                self.last_state.set_default_lineinfo(self.current_lineinfo)
+                result = func(self, self.sdfg, self.last_state, result)
+                self.last_state.set_default_lineinfo(None)
+                return result
 
         # Otherwise, try to find compile-time attribute (such as shape)
         try:
-            return getattr(arr, node.attr)
+            if arr is not None:
+                return getattr(arr, node.attr)
+            return getattr(result, node.attr)
         except KeyError:
             return result
 
