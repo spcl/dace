@@ -86,6 +86,10 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
         if res is not None:
             for j in out_names:
                 if i==simplify_order[0]:
+                    for tname in res.list_of_types:
+                        if j in res.names_in_types[tname]:
+                            if j not in actually_used:
+                                actually_used.append(j)
                     for fname in res.list_of_functions:
                         if j in res.names_in_functions[fname]:
                             if j not in actually_used:
@@ -98,6 +102,12 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     changed=True
                     while(changed):
                         changed=False 
+                        for tname in res.list_of_types:
+                            if tname in in_names or tname in actually_used:
+                                if j in res.names_in_types[tname]:
+                                    if j not in actually_used:
+                                        actually_used.append(j)
+                                        changed=True
                         for fname in res.list_of_functions:
                             if fname in in_names or fname in actually_used:
                                 if j in res.names_in_functions[fname]:
@@ -601,6 +611,8 @@ class FunctionSubroutineLister:
         self.names_in_functions = {}
         self.list_of_subroutines=[]
         self.names_in_subroutines={}
+        self.list_of_types=[]
+        self.names_in_types={}
         
 
     def get_functions_and_subroutines(self, node):
@@ -614,19 +626,51 @@ class FunctionSubroutineLister:
                     if j.__class__.__name__ == "Name":
                         nl = NameLister()
                         nl.get_names(node)
+                        tnl = TypeNameLister()
+                        tnl.get_typenames(node)
                         self.names_in_subroutines[j.string] = nl.list_of_names
+                        self.names_in_subroutines[j.string] += tnl.list_of_typenames
                         self.list_of_subroutines.append(j.string)
+            elif i.__class__.__name__ == "Derived_Type_Def":
+                        name=i.children[0].children[1].string
+                        nl = NameLister()
+                        nl.get_names(node)
+                        tnl = TypeNameLister()
+                        tnl.get_typenames(node)
+                        self.names_in_types[name] = nl.list_of_names
+                        self.names_in_types[name] += tnl.list_of_typenames
+                        self.list_of_types.append(name)            
             elif i.__class__.__name__ == "Function_Stmt":
                 for j in i.children:
                     if j.__class__.__name__ == "Name":
                         nl = NameLister()
                         nl.get_names(node)
+                        tnl = TypeNameLister()
+                        tnl.get_typenames(node)
                         self.names_in_functions[j.string] = nl.list_of_names
+                        self.names_in_functions[j.string] += tnl.list_of_typenames
                         self.list_of_functions.append(j.string)
                 
             else:
                 self.get_functions_and_subroutines(i)
 
+class TypeNameLister:
+    def __init__(self):
+        self.list_of_typenames = []
+        
+        
+
+    def get_typenames(self, node):
+        if node is None:
+            return
+        if not hasattr(node, "children"):
+            return
+        for i in node.children:
+            if i.__class__.__name__ == "Type_Name":
+                if i.string not in self.list_of_typenames:
+                    self.list_of_typenames.append(i.string)    
+            else:
+                self.get_typenames(i)
 
 class NameLister:
     def __init__(self):

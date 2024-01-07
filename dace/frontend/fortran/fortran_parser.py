@@ -1348,8 +1348,7 @@ def recursive_ast_improver(ast,
     ufl.get_used_modules(ast)
     objects_in_modules = ufl.objects_in_use
     used_modules = ufl.list_of_modules
-    if ast.children[0].children[0].children[1].string=="mo_fortran_tools":
-        print("Assumption failed: mo_fortran_tools is used")
+    
     fandsl=ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
     functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
@@ -1451,7 +1450,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                  asts=asts)
     
     print(dep_graph)
-
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
     simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
     
     changed=True
