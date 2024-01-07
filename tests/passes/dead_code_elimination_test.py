@@ -1,9 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various tests for dead code elimination passes. """
 
-import ast
 import pytest
-import unittest
 import dace
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
