@@ -527,6 +527,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
+        elif isinstance(value, sympy.Basic):  # Symbolic or constant expression
+            newnode = ast.parse(symbolic.symstr(value)).body[0].value
         elif isinstance(value, ast.Name):
             newnode = ast.Name(id=value.id, ctx=ast.Load())
         elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):

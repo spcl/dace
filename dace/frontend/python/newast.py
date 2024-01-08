@@ -4633,6 +4633,9 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
+        if name in __builtins__:
+            return name
+
         if name not in self.scope_vars:
             raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)
         rname = self.scope_vars[name]
