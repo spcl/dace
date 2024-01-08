@@ -100,6 +100,12 @@ class ExpandTransposeMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype != sdfg.arrays[list(
+                state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         dtype = node.dtype
         if dtype == dace.float32:
             func = "somatcopy"
@@ -140,6 +146,12 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype != sdfg.arrays[list(
+                state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
+
         dtype = node.dtype
         if dtype == dace.float32:
             func = "somatcopy"
@@ -178,6 +190,11 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
     def expansion(node, state, sdfg, **kwargs):
         node.validate(sdfg, state)
         dtype = node.dtype
+
+        # Fall back to native implementation if input and output types are not the same
+        if (sdfg.arrays[list(state.in_edges_by_connector(node, '_inp'))[0].data.data].dtype != sdfg.arrays[list(
+                state.out_edges_by_connector(node, '_out'))[0].data.data].dtype):
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
 
         try:
             func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
