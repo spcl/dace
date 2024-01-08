@@ -49,7 +49,6 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
-
 if sys.version_info < (3, 8):
     _simple_ast_nodes = (ast.Constant, ast.Name, ast.NameConstant, ast.Num)
     BytesConstant = ast.Bytes
@@ -65,14 +64,12 @@ else:
     NumConstant = ast.Constant
     StrConstant = ast.Constant
 
-
 if sys.version_info < (3, 9):
     Index = ast.Index
     ExtSlice = ast.ExtSlice
 else:
     Index = type(None)
     ExtSlice = type(None)
-
 
 if sys.version_info < (3, 12):
     TypeAlias = type(None)
@@ -4330,7 +4327,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 func = node.func.value
 
         if func is None:
-            funcname = rname(node)
+            func_result = self.visit(node.func)
+            if isinstance(func_result, str):
+                if isinstance(node.func, ast.Attribute):
+                    funcname = f'{func_result}.{node.func.attr}'
+                else:
+                    funcname = func_result
+            else:
+                funcname = rname(node)
             # Check if the function exists as an SDFG in a different module
             modname = until(funcname, '.')
             if ('.' in funcname and len(modname) > 0 and modname in self.globals
@@ -4426,7 +4430,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 arg = self.scope_vars[modname]
             else:
                 # Fallback to (name, object)
-                arg = (modname, self.defined[modname])
+                arg = modname
             args.append(arg)
         # Otherwise, try to find a default implementation for the SDFG
         elif not found_ufunc:
@@ -4675,9 +4679,12 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Attribute(self, node: ast.Attribute):
         result = self.visit(node.value)
         if isinstance(result, (tuple, list, dict)):
-            raise DaceSyntaxError(
-                self, node.value, f'{type(result)} object cannot use attributes. Try storing the '
-                'object to a different variable first (e.g., ``a = result; a.attribute``')
+            if len(result) > 1:
+                raise DaceSyntaxError(
+                    self, node.value, f'{type(result)} object cannot use attributes. Try storing the '
+                    'object to a different variable first (e.g., ``a = result; a.attribute``')
+            else:
+                result = result[0]
 
         if isinstance(result, str) and result in self.sdfg.arrays:
             arr = self.sdfg.arrays[result]
@@ -4702,7 +4709,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if arr is not None:
                 return getattr(arr, node.attr)
             return getattr(result, node.attr)
-        except KeyError:
+        except (AttributeError, KeyError):
             return result
 
     def visit_List(self, node: ast.List):
@@ -4724,7 +4731,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
-    
+
     def visit_TypeAlias(self, node: TypeAlias):
         raise NotImplementedError('Type aliases are not supported in DaCe')
 

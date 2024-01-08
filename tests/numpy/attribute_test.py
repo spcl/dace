@@ -84,9 +84,20 @@ def test_attribute_of_expr():
     assert np.allclose(c, ref)
 
 
+def test_attribute_function():
+
+    @dace.program
+    def tester():
+        return np.arange(10).reshape(10, 1)
+
+    a = tester()
+    assert np.allclose(a, np.arange(10).reshape(10, 1))
+
+
 if __name__ == '__main__':
     test_attribute_in_ranged_loop()
     test_attribute_in_ranged_loop_symbolic()
     test_attribute_new_state()
     test_nested_attribute()
     test_attribute_of_expr()
+    test_attribute_function()
