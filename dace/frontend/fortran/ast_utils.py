@@ -634,9 +634,9 @@ class FunctionSubroutineLister:
             elif i.__class__.__name__ == "Derived_Type_Def":
                         name=i.children[0].children[1].string
                         nl = NameLister()
-                        nl.get_names(node)
+                        nl.get_names(i)
                         tnl = TypeNameLister()
-                        tnl.get_typenames(node)
+                        tnl.get_typenames(i)
                         self.names_in_types[name] = nl.list_of_names
                         self.names_in_types[name] += tnl.list_of_typenames
                         self.list_of_types.append(name)            
