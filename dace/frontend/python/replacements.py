@@ -287,6 +287,9 @@ def _numpy_full(pv: ProgramVisitor,
     """ Creates and array of the specified shape and initializes it with
         the fill value.
     """
+    if isinstance(shape, Number) or symbolic.issymbolic(shape):
+        shape = [shape]
+    
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.dtype_to_typeclass(type(fill_value))
@@ -512,7 +515,12 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
 
 @oprepo.replaces('numpy.arange')
 @oprepo.replaces('dace.arange')
-def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
+def _arange(pv: ProgramVisitor,
+            sdfg: SDFG,
+            state: SDFGState,
+            *args,
+            dtype: dtypes.typeclass = None,
+            like: Optional[str] = None):
     """ Implements numpy.arange """
 
     start = 0
@@ -542,25 +550,25 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
         actual_step = type(start + step)(start + step) - start
 
     if any(not isinstance(s, Number) for s in [start, stop, step]):
-        shape = (symbolic.int_ceil(stop - start, step), )
+        if step == 1:  # Common case where ceiling is not necessary
+            shape = (stop - start,)
+        else:
+            shape = (symbolic.int_ceil(stop - start, step), )
     else:
         shape = (np.ceil((stop - start) / step), )
 
-    if not isinstance(shape[0], Number) and ('dtype' not in kwargs or kwargs['dtype'] == None):
-        raise NotImplementedError("The current implementation of numpy.arange requires that the output dtype is given "
-                                  "when at least one of (start, stop, step) is symbolic.")
+    # Infer dtype from input arguments
+    if dtype is None:
+        dtype, _ = _result_type(args)
+
     # TODO: Unclear what 'like' does
-    # if 'like' in kwargs and kwargs['like'] != None:
-    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[kwargs['like']])
+    # if like is not None:
+    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[like])
     #     outarr.shape = shape
-    if 'dtype' in kwargs and kwargs['dtype'] != None:
-        dtype = kwargs['dtype']
-        if not isinstance(dtype, dtypes.typeclass):
-            dtype = dtypes.dtype_to_typeclass(dtype)
-        outname, outarr = sdfg.add_temp_transient(shape, dtype)
-    else:
-        dtype = dtypes.dtype_to_typeclass(type(shape[0]))
-        outname, outarr = sdfg.add_temp_transient(shape, dtype)
+
+    if not isinstance(dtype, dtypes.typeclass):
+        dtype = dtypes.dtype_to_typeclass(dtype)
+    outname, outarr = sdfg.add_temp_transient(shape, dtype)
 
     start = f'decltype(__out)({start})'
     actual_step = f'decltype(__out)({actual_step})'
@@ -1729,8 +1737,17 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
     else:  # Operators with 3 or more arguments
         result_type = _np_result_type(dtypes_for_result)
+        coarse_result_type = None
+        if result_type in complex_types:
+            coarse_result_type = 3  # complex
+        elif result_type in float_types:
+            coarse_result_type = 2  # float
+        elif result_type in signed_types:
+            coarse_result_type = 1  # signed integer, bool
+        else:
+            coarse_result_type = 0  # unsigned integer
         for i, t in enumerate(coarse_types):
-            if t != result_type:
+            if t != coarse_result_type:
                 casting[i] = _cast_str(result_type)
 
     return result_type, casting
@@ -4418,9 +4435,13 @@ def _ndarray_reshape(
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
-    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    *newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
     order: StringLiteral = StringLiteral('C')
 ) -> str:
+    if len(newshape) == 0:
+        raise TypeError('reshape() takes at least 1 argument (0 given)')
+    if len(newshape) == 1 and isinstance(newshape, (list, tuple)):
+        newshape = newshape[0]
     return reshape(pv, sdfg, state, arr, newshape, order)
 
 
