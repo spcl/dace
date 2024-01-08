@@ -4627,6 +4627,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.add_symbol(result.name, result.dtype)
             return result
 
+        if name in self.closure.callbacks:
+            return name
+
         if name in self.sdfg.arrays:
             return name
 
