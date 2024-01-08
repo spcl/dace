@@ -156,23 +156,27 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
         if dtype == dace.float32:
             func = "somatcopy"
             alpha = "1.0f"
+            cast = ''
         elif dtype == dace.float64:
             func = "domatcopy"
             alpha = "1.0"
+            cast = ''
         elif dtype == dace.complex64:
             func = "comatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex64Pone()"
+            cast = '(float*)'
         elif dtype == dace.complex128:
             func = "zomatcopy"
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
+            cast = '(double*)'
         else:
             raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
         _, _, (m, n) = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
         order = 'CblasRowMajor'
         trans = 'CblasTrans'
-        code = ("cblas_{f}({o}, {t}, {m}, {n}, {a}, _inp, "
-                "{n}, _out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha)
+        code = ("cblas_{f}({o}, {t}, {m}, {n}, {cast}{a}, {cast}_inp, "
+                "{n}, {cast}_out, {m});").format(f=func, o=order, t=trans, m=m, n=n, a=alpha, cast=cast)
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
