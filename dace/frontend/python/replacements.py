@@ -289,7 +289,7 @@ def _numpy_full(pv: ProgramVisitor,
     """
     is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
-        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+        vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
     else:
@@ -546,10 +546,10 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     if 'dtype' in kwargs and kwargs['dtype'] != None:
         dtype = kwargs['dtype']
         if not isinstance(dtype, dtypes.typeclass):
-            dtype = dtypes.DTYPE_TO_TYPECLASS[dtype]
+            dtype = dtypes.dtype_to_typeclass(dtype)
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
     else:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[type(shape[0])]
+        dtype = dtypes.dtype_to_typeclass(type(shape[0]))
         outname, outarr = sdfg.add_temp_transient(shape, dtype)
 
     state.add_mapped_tasklet(name="_numpy_arange_",
@@ -1076,8 +1076,8 @@ def _array_array_where(visitor: ProgramVisitor,
     left_arr = sdfg.arrays.get(left_operand, None)
     right_arr = sdfg.arrays.get(right_operand, None)
 
-    left_type = left_arr.dtype if left_arr else dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
-    right_type = right_arr.dtype if right_arr else dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+    left_type = left_arr.dtype if left_arr else dtypes.dtype_to_typeclass(type(left_operand))
+    right_type = right_arr.dtype if right_arr else dtypes.dtype_to_typeclass(type(right_operand))
 
     # Implicit Python coversion implemented as casting
     arguments = [cond_arr, left_arr or left_type, right_arr or right_type]
@@ -1356,11 +1356,11 @@ def _np_result_type(nptypes):
     # Fix for np.result_type returning platform-dependent types,
     # e.g. np.longlong
     restype = np.result_type(*nptypes)
-    if restype.type not in dtypes.DTYPE_TO_TYPECLASS.keys():
-        for k in dtypes.DTYPE_TO_TYPECLASS.keys():
+    if restype.type not in dtypes.dtype_to_typeclass().keys():
+        for k in dtypes.dtype_to_typeclass().keys():
             if k == restype.type:
-                return dtypes.DTYPE_TO_TYPECLASS[k]
-    return dtypes.DTYPE_TO_TYPECLASS[restype.type]
+                return dtypes.dtype_to_typeclass(k)
+    return dtypes.dtype_to_typeclass(restype.type)
 
 
 def _sym_type(expr: Union[symbolic.symbol, sp.Basic]) -> dtypes.typeclass:
@@ -1393,7 +1393,7 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
             datatypes.append(arg.dtype)
             dtypes_for_result.append(_representative_num(arg.dtype))
         elif isinstance(arg, (Number, np.bool_)):
-            datatypes.append(dtypes.DTYPE_TO_TYPECLASS[type(arg)])
+            datatypes.append(dtypes.dtype_to_typeclass(type(arg)))
             dtypes_for_result.append(arg)
         elif symbolic.issymbolic(arg):
             datatypes.append(_sym_type(arg))
@@ -1668,13 +1668,13 @@ def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
         left_shape = left_arr.shape
         storage = left_arr.storage
         right_arr = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
+        right_type = dtypes.dtype_to_typeclass(type(right_operand))
         right_shape = [1]
         arguments = [left_arr, right_operand]
         tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_arr = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
+        left_type = dtypes.dtype_to_typeclass(type(left_operand))
         left_shape = [1]
         right_arr = sdfg.arrays[right_operand]
         right_type = right_arr.dtype
@@ -2229,7 +2229,7 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
 
     type1 = arr1.dtype.type
     type2 = arr2.dtype.type
-    restype = dace.DTYPE_TO_TYPECLASS[np.result_type(type1, type2).type]
+    restype = dace.dtype_to_typeclass(np.result_type(type1, type2).type)
 
     op3, arr3 = sdfg.add_temp_transient(output_shape, restype, arr1.storage)
 
@@ -3517,7 +3517,7 @@ def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, sta
         ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
-        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+        if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
 
     # Create output data (if needed)
@@ -3709,7 +3709,7 @@ def implement_ufunc_reduce(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SD
         datadesc = sdfg.arrays[arg]
         result_type = datadesc.dtype
     elif isinstance(arg, (Number, np.bool_)):
-        result_type = dtypes.DTYPE_TO_TYPECLASS[type(arg)]
+        result_type = dtypes.dtype_to_typeclass(type(arg))
     elif isinstance(arg, sp.Basic):
         result_type = _sym_type(arg)
 
@@ -4018,7 +4018,7 @@ def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDF
         ufunc_impl['operator'])
     if 'dtype' in kwargs.keys():
         dtype = kwargs['dtype']
-        if dtype in dtypes.DTYPE_TO_TYPECLASS.keys():
+        if dtype in dtypes.dtype_to_typeclass().keys():
             result_type = dtype
 
     # Create output data (if needed)
@@ -4412,9 +4412,9 @@ def _make_datatype_converter(typeclass: str):
     if typeclass == "bool":
         dtype = dace.bool
     elif typeclass in {"int", "float", "complex"}:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[eval(typeclass)]
+        dtype = dtypes.dtype_to_typeclass(eval(typeclass))
     else:
-        dtype = dtypes.DTYPE_TO_TYPECLASS[eval("np.{}".format(typeclass))]
+        dtype = dtypes.dtype_to_typeclass(eval("np.{}".format(typeclass)))
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
@@ -4711,7 +4711,7 @@ def _cupy_full(pv: ProgramVisitor,
         the fill value.
     """
     if isinstance(fill_value, (Number, np.bool_)):
-        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+        vtype = dtypes.dtype_to_typeclass(type(fill_value))
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
     else:

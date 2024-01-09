@@ -36,8 +36,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
     containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
     symbols: Optional[Dict[str, symbol]] = field(default_factory=dict, init=False)
 
-    def __init__(self,
-                 children: Optional[List['ScheduleTreeNode']] = None):
+    def __init__(self, children: Optional[List['ScheduleTreeNode']] = None):
         self.children = children or []
         if self.children:
             for child in children:
@@ -350,10 +349,12 @@ class RefSetNode(ScheduleTreeNode):
     """
     target: str
     memlet: Memlet
-    src_desc: data.Data
+    src_desc: Union[data.Data, nodes.CodeNode]
     ref_desc: data.Data
 
     def as_string(self, indent: int = 0):
+        if isinstance(self.src_desc, nodes.CodeNode):
+            return indent * INDENTATION + f'{self.target} = refset from {type(self.src_desc).__name__.lower()}'
         return indent * INDENTATION + f'{self.target} = refset to {self.memlet}'
 
 
