@@ -246,7 +246,7 @@ class Data:
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
-    
+
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
         raise NotImplementedError
@@ -415,7 +415,13 @@ class Structure(Data):
                 fields_and_types[k] = (v.dtype, str(v.total_size))
             elif isinstance(v, Array):
                 symbols |= v.free_symbols
-                fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
+                if v.byval:
+                    curdtype = v.dtype
+                    for s in reversed(v.shape):
+                        curdtype = dtypes.fixedlenarray(curdtype, s)
+                    fields_and_types[k] = curdtype
+                else:
+                    fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
             elif isinstance(v, Scalar):
                 symbols |= v.free_symbols
                 fields_and_types[k] = v.dtype
@@ -506,7 +512,7 @@ class Structure(Data):
         if isinstance(s, list) or isinstance(s, tuple):
             return StructArray(self, tuple(s))
         return StructArray(self, (s, ))
-    
+
 
 class TensorIterationTypes(aenum.AutoNumberEnum):
     """
@@ -645,18 +651,16 @@ class TensorIndex(ABC):
         """
         pass
 
-
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
 
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
         return retdict
-    
 
     @classmethod
     def from_json(cls, json_obj, context=None):
-        
+
         # Selecting proper subclass
         if json_obj['type'] == "TensorIndexDense":
             self = TensorIndexDense.__new__(TensorIndexDense)
@@ -670,7 +674,7 @@ class TensorIndex(ABC):
             self = TensorIndexOffset.__new__(TensorIndexOffset)
         else:
             raise TypeError(f"Invalid data type, got: {json_obj['type']}")
-        
+
         serialize.set_properties_from_json(self, json_obj['attributes'], context=context)
 
         return self
@@ -736,10 +740,10 @@ class TensorIndexDense(TensorIndex):
             non_defaults.append("¬O")
         if not self._unique:
             non_defaults.append("¬U")
-        
+
         if len(non_defaults) > 0:
             s += f"({','.join(non_defaults)})"
-        
+
         return s
 
 
@@ -789,10 +793,7 @@ class TensorIndexCompressed(TensorIndex):
     def compact(self) -> bool:
         return True
 
-    def __init__(self,
-                 full: bool = False,
-                 ordered: bool = True,
-                 unique: bool = True):
+    def __init__(self, full: bool = False, ordered: bool = True, unique: bool = True):
         self._full = full
         self._ordered = ordered
         self._unique = unique
@@ -813,12 +814,12 @@ class TensorIndexCompressed(TensorIndex):
             non_defaults.append("¬O")
         if not self._unique:
             non_defaults.append("¬U")
-        
+
         if len(non_defaults) > 0:
             s += f"({','.join(non_defaults)})"
-        
+
         return s
-    
+
 
 @make_properties
 class TensorIndexSingleton(TensorIndex):
@@ -866,10 +867,7 @@ class TensorIndexSingleton(TensorIndex):
     def compact(self) -> bool:
         return True
 
-    def __init__(self, 
-                 full: bool = False,
-                 ordered: bool = True,
-                 unique: bool = True):
+    def __init__(self, full: bool = False, ordered: bool = True, unique: bool = True):
         self._full = full
         self._ordered = ordered
         self._unique = unique
@@ -878,7 +876,7 @@ class TensorIndexSingleton(TensorIndex):
         return {
             f"idx{lvl}_crd": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
-    
+
     def __repr__(self) -> str:
         s = "Singleton"
 
@@ -889,11 +887,11 @@ class TensorIndexSingleton(TensorIndex):
             non_defaults.append("¬O")
         if not self._unique:
             non_defaults.append("¬U")
-        
+
         if len(non_defaults) > 0:
             s += f"({','.join(non_defaults)})"
-        
-        return s 
+
+        return s
 
 
 @make_properties
@@ -950,7 +948,7 @@ class TensorIndexRange(TensorIndex):
         return {
             f"idx{lvl}_offset": dtypes.int32[dummy_symbol],  # TODO (later) choose better length
         }
-        
+
     def __repr__(self) -> str:
         s = "Range"
 
@@ -959,12 +957,12 @@ class TensorIndexRange(TensorIndex):
             non_defaults.append("¬O")
         if not self._unique:
             non_defaults.append("¬U")
-        
+
         if len(non_defaults) > 0:
             s += f"({','.join(non_defaults)})"
-        
+
         return s
-    
+
 
 @make_properties
 class TensorIndexOffset(TensorIndex):
@@ -1027,10 +1025,10 @@ class TensorIndexOffset(TensorIndex):
             non_defaults.append("¬O")
         if not self._unique:
             non_defaults.append("¬U")
-        
+
         if len(non_defaults) > 0:
             s += f"({','.join(non_defaults)})"
-        
+
         return s
 
 
@@ -1045,21 +1043,20 @@ class Tensor(Structure):
     value_dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     tensor_shape = ShapeProperty(default=[])
     indices = ListProperty(element_type=TensorIndex)
-    index_ordering = ListProperty(element_type=symbolic.SymExpr) 
+    index_ordering = ListProperty(element_type=symbolic.SymExpr)
     value_count = SymbolicProperty(default=0)
 
-    def __init__(
-            self,
-            value_dtype: dtypes.Typeclasses,
-            tensor_shape,
-            indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
-            value_count: symbolic.SymExpr,
-            name: str,
-            transient: bool = False,
-            storage: dtypes.StorageType = dtypes.StorageType.Default,
-            location: Dict[str, str] = None,
-            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
-            debuginfo: dtypes.DebugInfo = None):
+    def __init__(self,
+                 value_dtype: dtypes.Typeclasses,
+                 tensor_shape,
+                 indices: List[Tuple[TensorIndex, Union[int, symbolic.SymExpr]]],
+                 value_count: symbolic.SymExpr,
+                 name: str,
+                 transient: bool = False,
+                 storage: dtypes.StorageType = dtypes.StorageType.Default,
+                 location: Dict[str, str] = None,
+                 lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                 debuginfo: dtypes.DebugInfo = None):
         """
         Constructor for Tensor storage format.
 
@@ -1155,7 +1152,7 @@ class Tensor(Structure):
         :param name: name of resulting struct.
         :param others: See Structure class for remaining arguments
         """
-        
+
         self.value_dtype = value_dtype
         self.tensor_shape = tensor_shape
         self.value_count = value_count
@@ -1168,11 +1165,9 @@ class Tensor(Structure):
 
         # all tensor dimensions must occure exactly once in indices
         if not sorted(dimension_order) == list(range(num_dims)):
-            raise TypeError((
-                f"All tensor dimensions must be refferenced exactly once in "
-                f"tensor indices. (referenced dimensions: {dimension_order}; "
-                f"tensor dimensions: {list(range(num_dims))})"
-            ))
+            raise TypeError((f"All tensor dimensions must be refferenced exactly once in "
+                             f"tensor indices. (referenced dimensions: {dimension_order}; "
+                             f"tensor dimensions: {list(range(num_dims))})"))
 
         # assembling permanent and index specific fields
         fields = dict(
@@ -1185,9 +1180,8 @@ class Tensor(Structure):
         for (lvl, index) in enumerate(indices):
             fields.update(index.fields(lvl, value_count))
 
-        super(Tensor, self).__init__(fields, name, transient, storage, location,
-                                     lifetime, debuginfo)
-    
+        super(Tensor, self).__init__(fields, name, transient, storage, location, lifetime, debuginfo)
+
     def __repr__(self):
         return f"{self.name} (dtype: {self.value_dtype}, shape: {list(self.tensor_shape)}, indices: {self.indices})"
 
@@ -1200,7 +1194,7 @@ class Tensor(Structure):
         tensor = Tensor.__new__(Tensor)
         serialize.set_properties_from_json(tensor, json_obj, context=context)
 
-        return  tensor
+        return tensor
 
 
 @make_properties
@@ -1306,7 +1300,7 @@ class Scalar(Data):
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
-    
+
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         if self.storage is dtypes.StorageType.GPU_Global:
             return Array(self.dtype, [1]).as_python_arg(with_types, for_call, name)
@@ -1421,6 +1415,10 @@ class Array(Data):
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
+    byval = Property(dtype=bool,
+                     default=False,
+                     desc='If True, all instances of this array will be defined by-value (e.g., '
+                     '``int a[5][4];``). This requires the array to not be symbolically-sized.')
 
     def __init__(self,
                  dtype,
@@ -1438,7 +1436,8 @@ class Array(Data):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -1452,6 +1451,7 @@ class Array(Data):
         if optional is None and self.transient:
             self.optional = False
         self.pool = pool
+        self.byval = byval
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -1476,7 +1476,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.byval)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -1576,10 +1576,12 @@ class Array(Data):
 
         if not with_types or for_call:
             return arrname
+        if self.byval:
+            return str(self.dtype.ctype) + ''.join(f'[{s}]' for s in reversed(self.shape))
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
-    
+
     def as_python_arg(self, with_types=True, for_call=False, name=None):
         arrname = name
 
