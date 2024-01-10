@@ -1140,6 +1140,7 @@ class AST_translator:
 
         if sizes is None:
             if isinstance(datatype, Structure):
+                datatype.transient = transient
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
@@ -1152,6 +1153,7 @@ class AST_translator:
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
             if isinstance(datatype, Structure):
+                datatype.transient = transient
                 if len(sizes)==1:
                     sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]])
                 

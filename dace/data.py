@@ -488,8 +488,8 @@ class Structure(Data):
             :return: A ``data.StructArray`` data descriptor.
         """
         if isinstance(s, list) or isinstance(s, tuple):
-            return StructArray(self, tuple(s))
-        return StructArray(self, (s, ))
+            return StructArray(self, tuple(s), transient=self.transient)
+        return StructArray(self, (s, ), transient=self.transient)
     
 
 class TensorIterationTypes(aenum.AutoNumberEnum):
