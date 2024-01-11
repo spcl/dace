@@ -31,16 +31,19 @@ jobs:
 
     - name: Test dependencies
       run: |
+        source ~/.venv/bin/activate # activate venv
         nvidia-smi
 
     - name: Run pytest GPU
       run: |
+        source ~/.venv/bin/activate # activate venv
         export DACE_cache=single
         # . /opt/setupenv --- what is this?
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
 
     - name: Run extra GPU tests
       run: |
+        source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
@@ -50,8 +53,8 @@ jobs:
 
     - name: Report overall coverage
       run: |
+        source ~/.venv/bin/activate # activate venv
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        . /opt/setupenv
         coverage combine . */; coverage report; coverage xml
         reachable=0
         ping -W 2 -c 1 codecov.io || reachable=$?
