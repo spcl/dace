@@ -19,6 +19,8 @@ jobs:
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
         # . /opt/setupenv --- what is this?
+        python -m venv ~/.venv      # create venv so we can use pip
+        source ~/.venv/bin/activate # activate venv
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
         pip install mpi4py
