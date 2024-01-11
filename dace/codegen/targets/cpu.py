@@ -74,7 +74,8 @@ class CPUCodeGen(TargetCodeGenerator):
             elif isinstance(arg_type, data.StructArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
-                _visit_structure(desc, arglist, name)
+                if isinstance(desc, data.Structure):
+                    _visit_structure(desc, arglist, name)
 
         for name, arg_type in arglist.items():
             if isinstance(arg_type, (data.Scalar, data.Structure)):
@@ -224,18 +225,23 @@ class CPUCodeGen(TargetCodeGenerator):
             elif not is_write and mpath[0].src_conn:
                 field_name = mpath[0].src_conn
 
-            if field_name is not None:
-                if isinstance(vdesc, data.StructArray):
-                    offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
-                    arrexpr = f'{ptrname}[{offset}]'
-                    stype = vdesc.stype
-                else:
-                    arrexpr = f'{ptrname}'
-                    stype = vdesc
+            # Plain view into a container array
+            if isinstance(vdesc, data.StructArray) and not isinstance(vdesc.stype, data.Structure):
+                offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                value = f'{ptrname}[{offset}]'
+            else:
+                if field_name is not None:
+                    if isinstance(vdesc, data.StructArray):
+                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                        arrexpr = f'{ptrname}[{offset}]'
+                        stype = vdesc.stype
+                    else:
+                        arrexpr = f'{ptrname}'
+                        stype = vdesc
 
-                value = f'{arrexpr}->{field_name}'
-                if isinstance(stype.members[field_name], data.Scalar):
-                    value = '&' + value
+                    value = f'{arrexpr}->{field_name}'
+                    if isinstance(stype.members[field_name], data.Scalar):
+                        value = '&' + value
 
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype

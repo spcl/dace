@@ -1837,7 +1837,10 @@ class StructArray(Array):
 
         self.stype = stype
         if stype:
-            dtype = stype.dtype
+            if isinstance(stype, Structure):
+                dtype = stype.dtype
+            else:
+                dtype = dtypes.pointer(stype.dtype)
         else:
             dtype = dtypes.int8
         super(StructArray,
