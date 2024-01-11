@@ -54,19 +54,27 @@ def _define_local_ex(pv: ProgramVisitor,
                      state: SDFGState,
                      shape: Shape,
                      dtype: dace.typeclass,
+                     strides: Optional[Shape] = None,
                      storage: dtypes.StorageType = dtypes.StorageType.Default,
                      lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage, lifetime=lifetime)
+    if strides is not None:
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        itemsize = dtype.bytes if isinstance(dtypes, dtypes.typeclass) else np.dtype(dtype).itemsize
+        if any((s // itemsize) * itemsize != s for s in strides):
+            raise ValueError('Only strides that are a multiple of the itemsize are supported!')
+        strides = tuple([int(s // itemsize) for s in strides])
+    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
     return name
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
+def _define_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass, strides: Optional[Shape] = None):
     """ Defines a local array in a DaCe program. """
-    return _define_local_ex(pv, sdfg, state, shape, dtype)
+    return _define_local_ex(pv, sdfg, state, shape, dtype, strides)
 
 
 @oprepo.replaces('dace.define_local_scalar')
@@ -4692,11 +4700,19 @@ def _define_cupy_local(
     state: SDFGState,
     shape: Shape,
     dtype: typeclass,
+    strides: Optional[Shape] = None,
 ):
     """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
+    if strides is not None:
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        itemsize = dtype.bytes if isinstance(dtypes, dtypes.typeclass) else np.dtype(dtype).itemsize
+        if any((s // itemsize) * itemsize != s for s in strides):
+            raise ValueError('Only strides that are a multiple of the itemsize are supported!')
+        strides = [int(s // itemsize) for s in strides]
+    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=dtypes.StorageType.GPU_Global)
     return name
 
 

@@ -150,6 +150,38 @@ def test_arange_6():
     return np.arange(2.5, 10, 3)
 
 
+@compare_numpy_output()
+def test_strides_0():
+    A = np.ndarray((2, 2), dtype=np.int32, strides=(8, 4))
+    A[:] = 0
+    A[:] = 1
+    return A
+
+
+@compare_numpy_output()
+def test_strides_1():
+    A = np.ndarray((2, 2), dtype=np.int32, strides=(16, 4))
+    A[:] = 0
+    A[:] = 1
+    return A
+
+
+@compare_numpy_output()
+def test_strides_2():
+    A = np.ndarray((2, 2), dtype=np.int32, strides=(4, 8))
+    A[:] = 0
+    A[:] = 1
+    return A
+
+
+@compare_numpy_output()
+def test_strides_3():
+    A = np.ndarray((2, 2), dtype=np.int32, strides=(4, 16))
+    A[:] = 0
+    A[:] = 1
+    return A
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -173,3 +205,7 @@ if __name__ == "__main__":
     test_arange_4()
     test_arange_5()
     test_arange_6()
+    test_strides_0()
+    test_strides_1()
+    test_strides_2()
+    test_strides_3()
