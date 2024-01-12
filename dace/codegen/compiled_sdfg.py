@@ -522,7 +522,7 @@ class CompiledSDFG(object):
                 # GPU scalars and return values are pointers, so this is fine
                 if atype.storage != dtypes.StorageType.GPU_Global and not a.startswith('__return'):
                     raise TypeError(f'Passing an array to a scalar (type {atype.dtype.ctype}) in argument "{a}"')
-            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.StructArray)
+            elif (is_dtArray and is_ndarray and not isinstance(atype, dt.ContainerArray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
                 if (isinstance(atype.dtype, dtypes.vector) and atype.dtype.vtype.as_numpy_dtype() == arg.dtype):

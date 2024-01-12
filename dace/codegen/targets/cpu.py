@@ -55,12 +55,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
@@ -71,10 +71,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(arg_type, data.Structure):
                 desc = sdfg.arrays[name]
                 _visit_structure(arg_type, arglist, name)
-            elif isinstance(arg_type, data.StructArray):
+            elif isinstance(arg_type, data.ContainerArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
-                _visit_structure(desc, arglist, name)
+                if isinstance(desc, data.Structure):
+                    _visit_structure(desc, arglist, name)
 
         for name, arg_type in arglist.items():
             if isinstance(arg_type, (data.Scalar, data.Structure)):
