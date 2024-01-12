@@ -160,6 +160,8 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     """
     if hasattr(array, 'data_ptr'):
         return array.data_ptr()
+    if isinstance(array, ctypes.Array):
+        return ctypes.addressof(array)
     if storage == dtypes.StorageType.GPU_Global:
         return array.__cuda_array_interface__['data'][0]
     return array.__array_interface__['data'][0]

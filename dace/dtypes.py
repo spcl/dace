@@ -1597,6 +1597,8 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
+    if isinstance(obj, ctypes.Array):
+        return True
     if hasattr(obj, '__array_interface__'):
         return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
     if hasattr(obj, 'data_ptr'):
