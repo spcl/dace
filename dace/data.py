@@ -1222,6 +1222,11 @@ class StructureView(Structure):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for Views')
 
+    def as_structure(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Structure
+        return copy
+
 
 @make_properties
 class Scalar(Data):
