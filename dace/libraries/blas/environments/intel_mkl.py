@@ -56,7 +56,8 @@ class IntelMKL:
                           '"conda install mkl-include" or set the MKLROOT environment '
                           'variable')
         elif IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --cflags") is not None:
-            return IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --cflags")
+            IntelMKL.cmake_compile_flags =  IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --cflags")
+            return []
         else:
             return []
 
@@ -73,7 +74,7 @@ class IntelMKL:
             if os.path.isfile(libfile):
                 return [libfile]
             if IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --libs") is not None:
-                return IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --libs")
+                IntelMKL.cmake_link_flags = IntelMKL.pkgconfig("mkl-dynamic-ilp64-iomp --libs")
 
         path = ctypes.util.find_library('mkl_rt')
         if not path:
