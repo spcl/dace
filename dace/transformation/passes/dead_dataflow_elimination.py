@@ -150,11 +150,15 @@ class DeadDataflowElimination(ppl.Pass):
                                     leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
                                 elif leaf.src.code.language == dtypes.Language.Python:
                                     if ctype is not None:
-                                        ast_find = astutils.ASTFindReplace({}, trigger_names={leaf.src_conn})
+                                        # ASTFindReplace won't do any replacement (note that repldict is empty), it is
+                                        # used only to check if leaf.src_conn is used in tasklet's code.
+                                        ast_find = astutils.ASTFindReplace(repldict={}, trigger_names={leaf.src_conn})
+                                        # if leaf.src_conn is found in leaf.src.code.code
                                         try:
                                             for code in leaf.src.code.code:
                                                 ast_find.generic_visit(code)
                                         except astutils.NameFound:
+                                            # then add the hint expression 
                                             leaf.src.code.code = ast.parse(f'{leaf.src_conn}: dace.{ctype.to_string()}\n').body + leaf.src.code.code
                                 else:
                                     raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
