@@ -214,6 +214,35 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write)
+
+        # Test for views of container arrays and structs
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray)):
+            vdesc = sdfg.arrays[viewed_dnode.data]
+            ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
+            field_name = None
+            if is_write and mpath[-1].dst_conn:
+                field_name = mpath[-1].dst_conn
+            elif not is_write and mpath[0].src_conn:
+                field_name = mpath[0].src_conn
+
+            # Plain view into a container array
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
+                offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                value = f'{ptrname}[{offset}]'
+            else:
+                if field_name is not None:
+                    if isinstance(vdesc, data.StructArray):
+                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                        arrexpr = f'{ptrname}[{offset}]'
+                        stype = vdesc.stype
+                    else:
+                        arrexpr = f'{ptrname}'
+                        stype = vdesc
+
+                    value = f'{arrexpr}->{field_name}'
+                    if isinstance(stype.members[field_name], data.Scalar):
+                        value = '&' + value
+
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)

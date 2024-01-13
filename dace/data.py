@@ -266,7 +266,7 @@ class Data:
                  rather than a set of strings.
         """
         result = set()
-        if self.transient or all_symbols:
+        if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
             for s in self.shape:
                 if isinstance(s, sp.Basic):
                     result |= set(s.free_symbols)
@@ -1570,7 +1570,7 @@ class Array(Data):
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
-        if self.transient or all_symbols:
+        if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
             if isinstance(self.total_size, sp.Expr):
                 result |= set(self.total_size.free_symbols)
         return result
@@ -1812,7 +1812,7 @@ class ContainerArray(Array):
             else:
                 dtype = dtypes.pointer(stype.dtype)
         else:
-            dtype = dtypes.int8
+            dtype = dtypes.pointer(None)  # void*
         super(ContainerArray,
               self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
                              lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
