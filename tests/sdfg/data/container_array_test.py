@@ -11,10 +11,10 @@ def test_read_struct_array():
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(
-        [('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]), ('data', dace.float32[nnz])],
-        name='CSRMatrix',
-        transient=True)
+    csr_obj_view = dace.data.StructureView([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
+                                            ('data', dace.float32[nnz])],
+                                           name='CSRMatrix',
+                                           transient=True)
 
     sdfg = dace.SDFG('array_of_csr_to_dense')
 
@@ -41,7 +41,11 @@ def test_read_struct_array():
 
     state.add_memlet_path(A, bme, vcsr, dst_conn='views', memlet=dace.Memlet(data='A', subset='b'))
     state.add_edge(vcsr, None, indptr, 'views', memlet=dace.Memlet.from_array('vcsr.indptr', csr_obj.members['indptr']))
-    state.add_edge(vcsr, None, indices, 'views', memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices']))
+    state.add_edge(vcsr,
+                   None,
+                   indices,
+                   'views',
+                   memlet=dace.Memlet.from_array('vcsr.indices', csr_obj.members['indices']))
     state.add_edge(vcsr, None, data, 'views', memlet=dace.Memlet.from_array('vcsr.data', csr_obj.members['data']))
 
     ime, imx = state.add_map('i', dict(i='0:M'))
@@ -54,13 +58,19 @@ def test_read_struct_array():
     state.add_memlet_path(indptr, ime, jme, memlet=dace.Memlet(data='vindptr', subset='i+1'), dst_conn='stop')
     state.add_memlet_path(indices, ime, jme, t, memlet=dace.Memlet(data='vindices', subset='idx'), dst_conn='j')
     state.add_memlet_path(data, ime, jme, t, memlet=dace.Memlet(data='vdata', subset='idx'), dst_conn='__val')
-    state.add_memlet_path(t, jmx, imx, bmx, B, memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1), src_conn='__out')
+    state.add_memlet_path(t,
+                          jmx,
+                          imx,
+                          bmx,
+                          B,
+                          memlet=dace.Memlet(data='B', subset='b, 0:M, 0:N', volume=1),
+                          src_conn='__out')
 
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
-    A = np.ndarray((10,), dtype=sparse.csr_matrix)
-    dace_A = np.ndarray((10,), dtype=ctypes.c_void_p)  
+    A = np.ndarray((10, ), dtype=sparse.csr_matrix)
+    dace_A = np.ndarray((10, ), dtype=ctypes.c_void_p)
     B = np.zeros((10, 20, 20), dtype=np.float32)
 
     ctypes_A = []
@@ -83,13 +93,14 @@ def test_read_struct_array():
 def test_write_struct_array():
 
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
-    csr_obj = dace.data.Structure(
-        [('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]), ('data', dace.float32[nnz])],
-        name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(
-        dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
-        name='CSRMatrix',
-        transient=True)
+    csr_obj = dace.data.Structure([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
+                                   ('data', dace.float32[nnz])],
+                                  name='CSRMatrix')
+    csr_obj_view = dace.data.StructureView(dict(indptr=dace.int32[M + 1],
+                                                indices=dace.int32[nnz],
+                                                data=dace.float32[nnz]),
+                                           name='CSRMatrix',
+                                           transient=True)
 
     sdfg = dace.SDFG('array_dense_to_csr')
 
@@ -155,8 +166,8 @@ def test_write_struct_array():
     func = sdfg.compile()
 
     rng = np.random.default_rng(42)
-    B = np.ndarray((10,), dtype=sparse.csr_matrix)
-    dace_B = np.ndarray((10,), dtype=ctypes.c_void_p)  
+    B = np.ndarray((10, ), dtype=sparse.csr_matrix)
+    dace_B = np.ndarray((10, ), dtype=ctypes.c_void_p)
     A = np.empty((10, 20, 20), dtype=np.float32)
 
     ctypes_B = []
@@ -178,6 +189,42 @@ def test_write_struct_array():
         assert np.allclose(A[b], B[b].toarray())
 
 
+def test_jagged_container_array():
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+    sdfg = dace.SDFG('tester')
+    sdfg.add_datadesc('A', dace.data.ContainerArray(dace.float64[N], [M]))
+    sdfg.add_view('v', [N], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+
+    # Make a state where the container array is first viewed with index i (i.e., dereferencing double** to double*)
+    # and then the view is accessed with index j
+    state = sdfg.add_state()
+    me, mx = state.add_map('outer', dict(i='0:M'))
+    ime, imx = state.add_map('inner', dict(j='0:i'))
+    t = state.add_tasklet('add', {'inp'}, {'out'}, 'out = inp')
+    r = state.add_read('A')
+    v = state.add_access('v')
+    w = state.add_write('B')
+    state.add_memlet_path(r, me, v, memlet=dace.Memlet('A[i]'), dst_conn='views')
+    state.add_memlet_path(v, ime, t, memlet=dace.Memlet('v[j]'), dst_conn='inp')
+    state.add_memlet_path(t, imx, mx, w, memlet=dace.Memlet('B[0]', wcr='lambda a,b: a+b'), src_conn='out')
+
+    m = 20
+    # Create a ctypes array of arrays
+    jagged_array = (ctypes.POINTER(ctypes.c_double) * m)(*[(ctypes.c_double * i)(*range(0, i))
+                                                           for i in range(1, m + 1)])
+    ref = 0
+    for i in range(m):
+        for j in range(i):
+            ref += jagged_array[i][j]
+
+    B = np.zeros([1])
+    sdfg(A=jagged_array, B=B, M=m)
+    assert np.allclose(ref, B[0])
+
+
 if __name__ == '__main__':
     test_read_struct_array()
     test_write_struct_array()
+    test_jagged_container_array()
