@@ -212,7 +212,7 @@ def test_jagged_container_array():
 
     m = 20
     # Create a ctypes array of arrays
-    jagged_array = (ctypes.POINTER(ctypes.c_double) * m)(*[(ctypes.c_double * i)(*range(0, i))
+    jagged_array = (ctypes.POINTER(ctypes.c_double) * m)(*[(ctypes.c_double * i)(*np.random.rand(i))
                                                            for i in range(1, m + 1)])
     ref = 0
     for i in range(m):
