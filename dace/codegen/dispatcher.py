@@ -562,6 +562,8 @@ class TargetDispatcher(object):
 
     def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
         """ Dispatches a code generator for a memory copy operation. """
+        if edge.data.is_empty():
+            return
         state = sdfg.node(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:
