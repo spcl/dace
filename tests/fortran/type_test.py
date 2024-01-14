@@ -43,8 +43,8 @@ def test_fortran_frontend_basic_type():
                     SUBROUTINE type_test_function(d)
                     REAL d(5,5)
                     TYPE(simple_type) :: s
-                    
                     s%w(1,1,1)=5.5
+                    !t=s
                     d(2,1)=5.5+s%w(1,1,1)
                     
                     END SUBROUTINE type_test_function
@@ -102,7 +102,64 @@ def test_fortran_frontend_basic_type2():
     assert (a[2, 0] == 42)
 
 
+def test_fortran_frontend_circular_type():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+                    PROGRAM type_test
+                    implicit none
+                    
+                    
+                    type a_t
+                        real :: w(5,5,5)
+                        type(b_t), pointer :: b
+                    end type a_t
+
+                    type b_t
+                        type(a_t)          :: a
+                        integer              :: x
+                    end type b_t
+
+                    type c_t
+                        type(d_t),pointer    :: ab
+                        integer              :: xz
+                    end type c_t
+
+                    type d_t
+                        type(c_t)          :: ac
+                        integer              :: xy
+                    end type d_t
+
+                    REAL :: d(5,5)
+
+                    CALL circular_type_test_function(d)
+                    end
+
+                    SUBROUTINE circular_type_test_function(d)
+                    REAL d(5,5)
+                    TYPE(a_t) :: s
+                    TYPE(b_t) :: b(3)
+                    
+                    s%w(1,1,1)=5.5
+                    !s%b=>b(1)
+                    !s%b%a=>s
+                    b(1)%x=1
+                    d(2,1)=5.5+s%w(1,1,1)
+                    
+                    END SUBROUTINE circular_type_test_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test")
+    sdfg.simplify(verbose=True)
+    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 11)
+    assert (a[2, 0] == 42)
+
 if __name__ == "__main__":
 
     #test_fortran_frontend_basic_type()
-    test_fortran_frontend_basic_type2()
+    #test_fortran_frontend_basic_type2()
+
+    test_fortran_frontend_circular_type()
