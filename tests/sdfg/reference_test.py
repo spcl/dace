@@ -4,6 +4,7 @@ import dace
 from dace.sdfg import validation
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.analysis import FindReferenceSources
+from dace.transformation.passes.canonicalization import SeparateRefsets
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
@@ -636,6 +637,42 @@ def test_ref2view_refset_in_scope(array_outside_scope, depends_on_iterate):
         assert np.allclose(B, ref)
 
 
+def test_separate_references():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_reference('ref1', [10], dace.float64)
+    sdfg.add_reference('ref2', [5], dace.float64)
+
+    # Add two reference sets in a row
+    state = sdfg.add_state()
+    b = state.add_read('B')
+    refset1 = state.add_tasklet('rset', {'b'}, {'r1'}, 'r1 = b + 5')
+    ref1 = state.add_access('ref1')
+    ref1.add_in_connector('set')
+    state.add_edge(b, None, refset1, 'b', dace.Memlet('B[0:20]'))
+    state.add_edge(refset1, 'r1', ref1, 'set', dace.Memlet('ref1[0:10]'))
+
+    # Second set
+    ref2 = state.add_access('ref2')
+    ref2.add_in_connector('set')
+    state.add_edge(ref1, None, ref2, 'set', dace.Memlet('ref1[1:6]'))
+
+    # Some write
+    a = state.add_write('A')
+    state.add_edge(ref2, None, a, None, dace.Memlet(data='ref2', subset='1', other_subset='7'))
+
+    # Apply pass
+    moved = SeparateRefsets().apply_pass(sdfg, {})
+    assert len(moved) == 2
+    assert len(sdfg.states()) == 3
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    sdfg(A=a, B=b)
+    assert np.allclose(b[7], a[7])
+
+
 if __name__ == '__main__':
     test_unset_reference()
     test_reference_branch()
@@ -662,3 +699,4 @@ if __name__ == '__main__':
     test_ref2view_refset_in_scope(False, True)
     test_ref2view_refset_in_scope(True, False)
     test_ref2view_refset_in_scope(True, True)
+    test_separate_references()

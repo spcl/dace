@@ -106,7 +106,10 @@ class DaCeCodeGenerator(object):
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
-        pass
+        # Move reference sets into a previous state
+        from dace.transformation.passes.canonicalization import SeparateRefsets
+        for sd in sdfg.all_sdfgs_recursive():
+            SeparateRefsets().apply_pass(sd, {})
 
     def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         # Write constants
@@ -131,7 +134,7 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         # Hash file include
         if backend == 'frame':
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
@@ -154,8 +157,9 @@ class DaCeCodeGenerator(object):
         for _, arrname, arr in sdfg.arrays_recursive():
             if arr is not None:
                 datatypes.add(arr.dtype)
-        
+
         emitted_definitions = set()
+
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if dtype in emitted_definitions:
                 return False
@@ -231,7 +235,7 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param callsite_stream: Stream to write to (at call site).
         """
         import dace.library
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
@@ -269,10 +273,12 @@ DACE_EXPORTED void __program_{fname}({mangle_dace_state_struct_name(fname)} *__s
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n', sdfg)
+                    f'DACE_EXPORTED int __dace_init_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state{initparams_comma});\n',
+                    sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    f'DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n', sdfg)
+                    f'DACE_EXPORTED int __dace_exit_{target.target_name}({mangle_dace_state_struct_name(sdfg)} *__state);\n',
+                    sdfg)
 
         callsite_stream.write(
             f"""
@@ -357,8 +363,8 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
         pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
-        
+        from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
+
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
@@ -391,13 +397,13 @@ DACE_EXPORTED size_t __dace_get_external_memory_size_{storage.name}({mangle_dace
                 f'''
 DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_struct_name(sdfg)} *__state, char *ptr{initparams_comma})
 {{''', sdfg)
-            
+
             offset = 0
             for subsdfg, aname, arr in arrays:
                 allocname = f'__state->__{subsdfg.sdfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
                 offset += arr.total_size * arr.dtype.bytes
-            
+
             # Footer
             callsite_stream.write('}', sdfg)
 
