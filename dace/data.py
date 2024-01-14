@@ -1592,15 +1592,6 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
-    def __getitem__(self, s):
-        """ This is syntactic sugar that allows us to define a container array type
-            with the following syntax: ``dace.float64[N][M]``
-            :return: A ``data.ContainerArray`` data descriptor.
-        """
-        if isinstance(s, list) or isinstance(s, tuple):
-            return ContainerArray(self, tuple(s))
-        return ContainerArray(self, (s, ))
-
 
 @make_properties
 class Stream(Data):
@@ -1817,6 +1808,7 @@ class ContainerArray(Array):
 
         return ret
 
+
 class IView:
     """
     Interface that specifies the data container views another data container.
@@ -1824,6 +1816,7 @@ class IView:
     on another data container.
     """
     pass
+
 
 @make_properties
 class View(Array, IView):
@@ -1914,14 +1907,39 @@ class StructureView(Structure, IView):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for Views')
 
+    def as_structure(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Structure
+        return copy
 
 
 @make_properties
 class ContainerView(ContainerArray, IView):
     """ 
-    Data descriptor that acts as a reference (or view) of another container array. Can
+    Data descriptor that acts as a view of another container array. Can
     be used to access nested container types without a copy.
     """
+
+    def __init__(self,
+                 stype: Data,
+                 shape=None,
+                 transient=True,
+                 allow_conflicts=False,
+                 storage=dtypes.StorageType.Default,
+                 location=None,
+                 strides=None,
+                 offset=None,
+                 may_alias=False,
+                 lifetime=dtypes.AllocationLifetime.Scope,
+                 alignment=0,
+                 debuginfo=None,
+                 total_size=None,
+                 start_offset=None,
+                 optional=None,
+                 pool=False):
+        shape = [1] if shape is None else shape
+        super().__init__(stype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
+                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
 
     def validate(self):
         super().validate()

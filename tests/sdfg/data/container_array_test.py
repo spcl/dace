@@ -11,17 +11,13 @@ def test_read_struct_array():
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
-                                            ('data', dace.float32[nnz])],
-                                           name='CSRMatrix',
-                                           transient=True)
 
     sdfg = dace.SDFG('array_of_csr_to_dense')
 
     sdfg.add_datadesc('A', csr_obj[L])
     sdfg.add_array('B', [L, M, N], dace.float32)
 
-    sdfg.add_datadesc('vcsr', csr_obj_view)
+    sdfg.add_datadesc_view('vcsr', csr_obj)
     sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
     sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
     sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
@@ -96,18 +92,13 @@ def test_write_struct_array():
     csr_obj = dace.data.Structure([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
                                    ('data', dace.float32[nnz])],
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(dict(indptr=dace.int32[M + 1],
-                                                indices=dace.int32[nnz],
-                                                data=dace.float32[nnz]),
-                                           name='CSRMatrix',
-                                           transient=True)
 
     sdfg = dace.SDFG('array_dense_to_csr')
 
     sdfg.add_array('A', [L, M, N], dace.float32)
     sdfg.add_datadesc('B', csr_obj[L])
 
-    sdfg.add_datadesc('vcsr', csr_obj_view)
+    sdfg.add_datadesc_view('vcsr', csr_obj)
     sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
     sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
     sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
@@ -229,9 +220,9 @@ def test_two_levels():
     M = dace.symbol('M')
     K = dace.symbol('K')
     sdfg = dace.SDFG('tester')
-    sdfg.add_datadesc('A', dace.float64[N][M][K])
-    desc = dace.data.ContainerView(dace.float64[N], [M], True)
-    sdfg.add_datadesc('v', desc)
+    desc = dace.data.ContainerArray(dace.data.ContainerArray(dace.float64[N], [M]), [K])
+    sdfg.add_datadesc('A', desc)
+    sdfg.add_datadesc_view('v', desc.stype)
     sdfg.add_view('vv', [N], dace.float64)
     sdfg.add_array('B', [1], dace.float64)
 

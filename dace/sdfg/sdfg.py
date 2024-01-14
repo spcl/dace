@@ -610,9 +610,7 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'],
-                   constants=constants_prop,
-                   parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
@@ -1239,10 +1237,10 @@ class SDFG(ControlFlowRegion):
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
-                               defined_syms: Optional[Set]=None,
-                               free_syms: Optional[Set]=None,
-                               used_before_assignment: Optional[Set]=None,
-                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1259,10 +1257,11 @@ class SDFG(ControlFlowRegion):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super()._used_symbols_internal(
-            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
-            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
-        )
+        return super()._used_symbols_internal(all_symbols=all_symbols,
+                                              keep_defined_in_mapping=keep_defined_in_mapping,
+                                              defined_syms=defined_syms,
+                                              free_syms=free_syms,
+                                              used_before_assignment=used_before_assignment)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1917,6 +1916,25 @@ class SDFG(ControlFlowRegion):
         _add_symbols(datadesc)
 
         return name
+
+    def add_datadesc_view(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a view of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = copy.deepcopy(datadesc)
+        if isinstance(datadesc, dt.ContainerArray):
+            vdesc.__class__ = dt.ContainerView
+        elif isinstance(datadesc, dt.Structure):
+            vdesc.__class__ = dt.StructureView
+        elif isinstance(datadesc, dt.Array):
+            vdesc.__class__ = dt.View
+        vdesc.transient = True
+        return self.add_datadesc(name, vdesc, find_new_name)
 
     def add_pgrid(self,
                   shape: ShapeType = None,
