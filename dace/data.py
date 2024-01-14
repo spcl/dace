@@ -266,7 +266,7 @@ class Data:
                  rather than a set of strings.
         """
         result = set()
-        if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
+        if (self.transient and not isinstance(self, (IView, Reference))) or all_symbols:
             for s in self.shape:
                 if isinstance(s, sp.Basic):
                     result |= set(s.free_symbols)
@@ -1176,32 +1176,6 @@ class Tensor(Structure):
 
 
 @make_properties
-class StructureView(Structure):
-    """ 
-    Data descriptor that acts as a reference (or view) of another structure.
-    """
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        if json_obj['type'] != 'StructureView':
-            raise TypeError("Invalid data type")
-
-        # Create dummy object
-        ret = StructureView({})
-        serialize.set_properties_from_json(ret, json_obj, context=context)
-
-        return ret
-
-    def validate(self):
-        super().validate()
-
-        # We ensure that allocation lifetime is always set to Scope, since the
-        # view is generated upon "allocation"
-        if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for Views')
-
-
-@make_properties
 class Scalar(Data):
     """ Data descriptor of a scalar value. """
 
@@ -1570,7 +1544,7 @@ class Array(Data):
         for o in self.offset:
             if isinstance(o, sp.Expr):
                 result |= set(o.free_symbols)
-        if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
+        if (self.transient and not isinstance(self, (IView, Reference))) or all_symbols:
             if isinstance(self.total_size, sp.Expr):
                 result |= set(self.total_size.free_symbols)
         return result
@@ -1617,6 +1591,15 @@ class Array(Data):
         self.shape = new_shape
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
+
+    def __getitem__(self, s):
+        """ This is syntactic sugar that allows us to define a container array type
+            with the following syntax: ``dace.float64[N][M]``
+            :return: A ``data.ContainerArray`` data descriptor.
+        """
+        if isinstance(s, list) or isinstance(s, tuple):
+            return ContainerArray(self, tuple(s))
+        return ContainerArray(self, (s, ))
 
 
 @make_properties
@@ -1800,7 +1783,7 @@ class ContainerArray(Array):
                  lifetime=dtypes.AllocationLifetime.Scope,
                  alignment=0,
                  debuginfo=None,
-                 total_size=-1,
+                 total_size=None,
                  start_offset=None,
                  optional=None,
                  pool=False):
@@ -1834,9 +1817,16 @@ class ContainerArray(Array):
 
         return ret
 
+class IView:
+    """
+    Interface that specifies the data container views another data container.
+    That is, it does not need to be separately allocated, and it is dependent
+    on another data container.
+    """
+    pass
 
 @make_properties
-class View(Array):
+class View(Array, IView):
     """ 
     Data descriptor that acts as a reference (or view) of another array. Can
     be used to reshape or reinterpret existing data without copying it.
@@ -1896,6 +1886,54 @@ class Reference(Array):
     def as_array(self):
         copy = cp.deepcopy(self)
         copy.__class__ = Array
+        return copy
+
+
+@make_properties
+class StructureView(Structure, IView):
+    """ 
+    Data descriptor that acts as a reference (or view) of another structure.
+    """
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        if json_obj['type'] != 'StructureView':
+            raise TypeError("Invalid data type")
+
+        # Create dummy object
+        ret = StructureView({})
+        serialize.set_properties_from_json(ret, json_obj, context=context)
+
+        return ret
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
+
+
+
+@make_properties
+class ContainerView(ContainerArray, IView):
+    """ 
+    Data descriptor that acts as a reference (or view) of another container array. Can
+    be used to access nested container types without a copy.
+    """
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for ContainerViews')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = ContainerArray
         return copy
 
 

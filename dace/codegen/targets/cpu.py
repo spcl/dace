@@ -216,7 +216,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         is_write=is_write)
 
         # Test for views of container arrays and structs
-        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray)):
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
             vdesc = sdfg.arrays[viewed_dnode.data]
             ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
             field_name = None
@@ -362,7 +362,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, (data.StructureView, data.View)):
+        if isinstance(nodedesc, data.IView):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -527,7 +527,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
+        if isinstance(nodedesc,
+                      (data.Scalar, data.IView, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):

@@ -402,7 +402,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             # 1. Check for views
             if isinstance(e.src, dace.nodes.AccessNode):
                 desc = e.src.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.IView):
                     vedge = sdutil.get_view_edge(state, e.src)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.src)
@@ -412,7 +412,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                         continue
             if isinstance(e.dst, dace.nodes.AccessNode):
                 desc = e.dst.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.IView):
                     vedge = sdutil.get_view_edge(state, e.dst)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.dst)
