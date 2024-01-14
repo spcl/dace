@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various tests for dead code elimination passes. """
 
+import numpy as np
 import pytest
 import dace
 from dace.transformation.pass_pipeline import Pipeline
@@ -281,7 +282,13 @@ _out = _tmp
     )
     sdfg.simplify()
     assert tasklet.code.as_string.startswith("_tmp: dace.float64")
-    sdfg.compile()
+
+    compiledsdfg = sdfg.compile()
+    cond = np.random.choice(a=[True, False], size=(10,))
+    out = np.zeros((10,))
+    compiledsdfg(cond=cond, out=out)
+    assert np.all(out == np.where(cond, 3.0, 7.0))
+
 
 
 if __name__ == '__main__':
