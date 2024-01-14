@@ -1812,7 +1812,7 @@ class ContainerArray(Array):
             else:
                 dtype = dtypes.pointer(stype.dtype)
         else:
-            dtype = dtypes.pointer(None)  # void*
+            dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
         super(ContainerArray,
               self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
                              lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
