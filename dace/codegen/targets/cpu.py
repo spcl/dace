@@ -362,7 +362,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, data.IView):
+        if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -528,7 +528,7 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc,
-                      (data.Scalar, data.IView, data.Stream, data.Reference)):
+                      (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
