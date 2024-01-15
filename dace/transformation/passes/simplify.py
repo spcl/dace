@@ -15,6 +15,7 @@ from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.reference_reduction import ReferenceToView
+from dace.transformation.passes.lift_struct_views import LiftStructViews
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -28,6 +29,7 @@ SIMPLIFY_PASSES = [
     ReferenceToView,
     ArrayElimination,
     ConsolidateEdges,
+    LiftStructViews,
 ]
 
 _nonrecursive_passes = [

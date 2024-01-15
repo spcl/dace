@@ -17,6 +17,9 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
+from dace.transformation.passes.lift_struct_views import LiftStructViews
+from dace.transformation import pass_pipeline as ppl
+
 
 def test_fortran_frontend_basic_type():
     """
@@ -30,11 +33,6 @@ def test_fortran_frontend_basic_type():
                         REAL:: w(5,5,5),z(5)
                         INTEGER:: a         
                     END TYPE simple_type
-
-                    !TYPE comlex_type
-                    !    TYPE(simple_type):: s
-                    !    INTEGER:: b
-                    !END TYPE comlex_type
 
                     REAL :: d(5,5)
                     CALL type_test_function(d)

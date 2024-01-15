@@ -31,6 +31,9 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         self.state = state
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
+        if not node.value or node.value.id != self.connector:
+            return node
+
         if not node.attr in self.data.members:
             raise RuntimeError('Structure attribute is not a member of the structure type definition')
 
