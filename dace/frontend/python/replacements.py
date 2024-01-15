@@ -83,6 +83,24 @@ def _define_local_scalar(pv: ProgramVisitor,
     return name
 
 
+@oprepo.replaces('dace.define_local_structure')
+def _define_local_structure(pv: ProgramVisitor,
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            dtype: dace.data.Structure,
+                            storage: dtypes.StorageType = dtypes.StorageType.Default,
+                            lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
+    """ Defines a local structure in a DaCe program. """
+    name = sdfg.temp_data_name()
+    desc = copy.deepcopy(dtype)
+    desc.transient = True
+    desc.storage = storage
+    desc.lifetime = lifetime
+    sdfg.add_datadesc(name, desc)
+    pv.variables[name] = name
+    return name
+
+
 @oprepo.replaces('dace.define_stream')
 def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dace.typeclass, buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
@@ -238,9 +256,9 @@ def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
     state.add_mapped_tasklet('eye',
-                             dict(i='0:%s' % N, j='0:%s' % M), {},
-                             'val = 1 if i == (j - %s) else 0' % k,
-                             dict(val=dace.Memlet.simple(name, 'i, j')),
+                             dict(__i0='0:%s' % N, __i1='0:%s' % M), {},
+                             'val = 1 if __i0 == (__i1 - %s) else 0' % k,
+                             dict(val=dace.Memlet.simple(name, '__i0, __i1')),
                              external_edges=True)
 
     return name
@@ -300,16 +318,20 @@ def _numpy_full(pv: ProgramVisitor,
 
     if is_data:
         state.add_mapped_tasklet(
-            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)},
+            '_numpy_full_', {
+                "__i{}".format(i): "0: {}".format(s)
+                for i, s in enumerate(shape)
+            },
             dict(__inp=dace.Memlet(data=fill_value, subset='0')),
             "__out = __inp",
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
             external_edges=True)
     else:
         state.add_mapped_tasklet(
-            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                            for i, s in enumerate(shape)}, {},
+            '_numpy_full_', {
+                "__i{}".format(i): "0: {}".format(s)
+                for i, s in enumerate(shape)
+            }, {},
             "__out = {}".format(fill_value),
             dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
             external_edges=True)
@@ -328,7 +350,7 @@ def _numpy_full_like(pv: ProgramVisitor,
     """ Creates and array of the same shape and dtype as a and initializes it
         with the fill value.
     """
-    if a not in sdfg.arrays.keys():
+    if a not in sdfg.arrays:
         raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
     desc = sdfg.arrays[a]
     dtype = dtype or desc.dtype
@@ -429,8 +451,10 @@ def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
     outidx = ','.join([f'{s} - __i{i} - 1' if a else f'__i{i}' for i, (a, s) in enumerate(zip(axis, desc.shape))])
     state.add_mapped_tasklet(name="_numpy_flip_",
-                             map_ranges={f'__i{i}': f'0:{s}:1'
-                                         for i, s in enumerate(desc.shape)},
+                             map_ranges={
+                                 f'__i{i}': f'0:{s}:1'
+                                 for i, s in enumerate(desc.shape)
+                             },
                              inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
                              code='__out = __inp',
                              outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
@@ -500,8 +524,10 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
 
     outidx = ','.join(out_indices)
     state.add_mapped_tasklet(name="_rot90_",
-                             map_ranges={f'__i{i}': f'0:{s}:1'
-                                         for i, s in enumerate(desc.shape)},
+                             map_ranges={
+                                 f'__i{i}': f'0:{s}:1'
+                                 for i, s in enumerate(desc.shape)
+                             },
                              inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
                              code='__out = __inp',
                              outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
@@ -655,8 +681,10 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     else:
         state.add_mapped_tasklet(
             name=func,
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(inparr.shape)},
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(inparr.shape)
+            },
             inputs={'__inp': Memlet.simple(inpname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
             code='__out = {f}(__inp)'.format(f=func),
             outputs={'__out': Memlet.simple(outname, ','.join(['__i%d' % i for i in range(len(inparr.shape))]))},
@@ -1005,22 +1033,27 @@ def _argminmax(pv: ProgramVisitor,
     code = "__init = _val_and_idx(val={}, idx=-1)".format(
         dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
 
-    nest.add_state().add_mapped_tasklet(
-        name="_arg{}_convert_".format(func),
-        map_ranges={'__i%d' % i: '0:%s' % n
-                    for i, n in enumerate(a_arr.shape) if i != axis},
-        inputs={},
-        code=code,
-        outputs={
-            '__init': Memlet.simple(reduced_structs,
-                                    ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
-        },
-        external_edges=True)
+    nest.add_state().add_mapped_tasklet(name="_arg{}_convert_".format(func),
+                                        map_ranges={
+                                            '__i%d' % i: '0:%s' % n
+                                            for i, n in enumerate(a_arr.shape) if i != axis
+                                        },
+                                        inputs={},
+                                        code=code,
+                                        outputs={
+                                            '__init':
+                                            Memlet.simple(
+                                                reduced_structs,
+                                                ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
+                                        },
+                                        external_edges=True)
 
     nest.add_state().add_mapped_tasklet(
         name="_arg{}_reduce_".format(func),
-        map_ranges={'__i%d' % i: '0:%s' % n
-                    for i, n in enumerate(a_arr.shape)},
+        map_ranges={
+            '__i%d' % i: '0:%s' % n
+            for i, n in enumerate(a_arr.shape)
+        },
         inputs={'__in': Memlet.simple(a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))},
         code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
         outputs={
@@ -1040,8 +1073,10 @@ def _argminmax(pv: ProgramVisitor,
 
         nest.add_state().add_mapped_tasklet(
             name="_arg{}_extract_".format(func),
-            map_ranges={'__i%d' % i: '0:%s' % n
-                        for i, n in enumerate(a_arr.shape) if i != axis},
+            map_ranges={
+                '__i%d' % i: '0:%s' % n
+                for i, n in enumerate(a_arr.shape) if i != axis
+            },
             inputs={
                 '__in': Memlet.simple(reduced_structs,
                                       ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis))
@@ -1164,9 +1199,10 @@ def _unop(sdfg: SDFG, state: SDFGState, op1: str, opcode: str, opname: str):
         opcode = 'not'
 
     name, _ = sdfg.add_temp_transient(arr1.shape, restype, arr1.storage)
-    state.add_mapped_tasklet("_%s_" % opname, {'__i%d' % i: '0:%s' % s
-                                               for i, s in enumerate(arr1.shape)},
-                             {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
+    state.add_mapped_tasklet("_%s_" % opname, {
+        '__i%d' % i: '0:%s' % s
+        for i, s in enumerate(arr1.shape)
+    }, {'__in1': Memlet.simple(op1, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              '__out = %s __in1' % opcode,
                              {'__out': Memlet.simple(name, ','.join(['__i%d' % i for i in range(len(arr1.shape))]))},
                              external_edges=True)
@@ -4720,8 +4756,10 @@ def _cupy_full(pv: ProgramVisitor,
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
 
     state.add_mapped_tasklet(
-        '_cupy_full_', {"__i{}".format(i): "0: {}".format(s)
-                        for i, s in enumerate(shape)}, {},
+        '_cupy_full_', {
+            "__i{}".format(i): "0: {}".format(s)
+            for i, s in enumerate(shape)
+        }, {},
         "__out = {}".format(fill_value),
         dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
         external_edges=True)

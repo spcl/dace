@@ -79,7 +79,14 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = token in desc.members
+            result = hasattr(desc, 'members') and token in desc.members
+        return result
+
+    def keys(self):
+        result = super(NestedDict, self).keys()
+        for k, v in self.items():
+            if isinstance(v, dt.Structure):
+                result |= set(map(lambda x: k + '.' + x, v.keys()))
         return result
 
 
@@ -741,7 +748,7 @@ class SDFG(ControlFlowRegion):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
             for k, v in repldict.items()
         }
 
@@ -1228,22 +1235,35 @@ class SDFG(ControlFlowRegion):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
 
-    def arrays_recursive(self):
+    def arrays_recursive(self, include_nested_data: bool = False):
         """ Iterate over all arrays in this SDFG, including arrays within
-            nested SDFGs. Yields 3-tuples of (sdfg, array name, array)."""
+            nested SDFGs. Yields 3-tuples of (sdfg, array name, array).
+
+            :param include_nested_data: If True, also yields nested data.
+            :return: A generator of (sdfg, array name, array) tuples.
+        """
+
+        def _yield_nested_data(name, arr):
+            for nname, narr in arr.members.items():
+                if isinstance(narr, dt.Structure):
+                    yield from _yield_nested_data(name + '.' + nname, narr)
+                yield self, name + '.' + nname, narr
+
         for aname, arr in self.arrays.items():
+            if isinstance(arr, dt.Structure) and include_nested_data:
+                yield from _yield_nested_data(aname, arr)
             yield self, aname, arr
         for state in self.nodes():
             for node in state.nodes():
                 if isinstance(node, nd.NestedSDFG):
-                    yield from node.sdfg.arrays_recursive()
+                    yield from node.sdfg.arrays_recursive(include_nested_data=include_nested_data)
 
     def _used_symbols_internal(self,
                                all_symbols: bool,
-                               defined_syms: Optional[Set]=None,
-                               free_syms: Optional[Set]=None,
-                               used_before_assignment: Optional[Set]=None,
-                               keep_defined_in_mapping: bool=False) -> Tuple[Set[str], Set[str], Set[str]]:
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
         defined_syms = set() if defined_syms is None else defined_syms
         free_syms = set() if free_syms is None else free_syms
         used_before_assignment = set() if used_before_assignment is None else used_before_assignment
@@ -1260,10 +1280,11 @@ class SDFG(ControlFlowRegion):
         for code in self.exit_code.values():
             free_syms |= symbolic.symbols_in_code(code.as_string, self.symbols.keys())
 
-        return super()._used_symbols_internal(
-            all_symbols=all_symbols, keep_defined_in_mapping=keep_defined_in_mapping,
-            defined_syms=defined_syms, free_syms=free_syms, used_before_assignment=used_before_assignment
-        )
+        return super()._used_symbols_internal(all_symbols=all_symbols,
+                                              keep_defined_in_mapping=keep_defined_in_mapping,
+                                              defined_syms=defined_syms,
+                                              free_syms=free_syms,
+                                              used_before_assignment=used_before_assignment)
 
     def get_all_toplevel_symbols(self) -> Set[str]:
         """
@@ -1468,9 +1489,13 @@ class SDFG(ControlFlowRegion):
 
         return result
 
-    def shared_transients(self, check_toplevel=True) -> List[str]:
-        """ Returns a list of transient data that appears in more than one
-            state. """
+    def shared_transients(self, check_toplevel: bool = True, include_nested_data: bool = False) -> List[str]:
+        """ Returns a list of transient data that appears in more than one state.
+
+            :param check_toplevel: If True, consider the descriptors' toplevel attribute.
+            :param include_nested_data: If True, also include nested data.
+            :return: A list of transient data names.
+        """
         seen = {}
         shared = []
 
@@ -1484,11 +1509,21 @@ class SDFG(ControlFlowRegion):
         # If transient is accessed in more than one state, it is shared
         for state in self.states():
             for node in state.data_nodes():
-                if node.desc(self).transient:
-                    if (check_toplevel and node.desc(self).toplevel) or (node.data in seen
-                                                                         and seen[node.data] != state):
-                        shared.append(node.data)
-                    seen[node.data] = state
+                tokens = node.data.split('.')
+                # NOTE: The following three lines ensure that nested data share transient and toplevel attributes.
+                desc = self.arrays[tokens[0]]
+                is_transient = desc.transient
+                is_toplevel = desc.toplevel
+                if include_nested_data:
+                    datanames = set(['.'.join(tokens[:i + 1]) for i in range(len(tokens))])
+                else:
+                    datanames = set([tokens[0]])
+                for dataname in datanames:
+                    desc = self.arrays[dataname]
+                    if is_transient:
+                        if (check_toplevel and is_toplevel) or (dataname in seen and seen[dataname] != state):
+                            shared.append(dataname)
+                        seen[dataname] = state
 
         return dtypes.deduplicate(shared)
 
@@ -1898,11 +1933,15 @@ class SDFG(ControlFlowRegion):
         if not isinstance(name, str):
             raise TypeError("Data descriptor name must be a string. Got %s" % type(name).__name__)
         # If exists, fail
-        if name in self._arrays:
+        while name in self._arrays:
             if find_new_name:
                 name = self._find_new_name(name)
             else:
                 raise NameError(f'Array or Stream with name "{name}" already exists in SDFG')
+            # NOTE: Remove illegal characters, such as dots. Such characters may be introduced when creating views to
+            # members of Structures.
+            name = name.replace('.', '_')
+        assert name not in self._arrays
         self._arrays[name] = datadesc
 
         def _add_symbols(desc: dt.Data):

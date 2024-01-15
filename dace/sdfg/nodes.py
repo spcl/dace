@@ -258,6 +258,10 @@ class AccessNode(Node):
     @property
     def label(self):
         return self.data
+    
+    @property
+    def root_data(self):
+        return self.data.split('.')[0]
 
     def __label__(self, sdfg, state):
         return self.data
@@ -266,6 +270,12 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
+    
+    def root_desc(self, sdfg):
+        from dace.sdfg import SDFGState, ScopeSubgraphView
+        if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
+            sdfg = sdfg.parent
+        return sdfg.arrays[self.data.split('.')[0]]
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:

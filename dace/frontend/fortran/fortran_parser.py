@@ -1172,22 +1172,10 @@ class AST_translator:
             
             if isinstance(datatype, Structure):
                 datatype.transient = transient
-<<<<<<< HEAD
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [-1 for _ in sizes]
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
-=======
-                if len(sizes)==1:
-                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]])
-                if len(sizes)==2:
-                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]])
-                if len(sizes)==3:
-                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]][sizes[2]])
-                if len(sizes)==4:
-                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]][sizes[2]][sizes[3]])
-                    
->>>>>>> origin/multi_sdfg
             else:    
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
