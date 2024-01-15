@@ -31,6 +31,7 @@ def isnotebook():
 def preamble():
     # Emit javascript headers for SDFG renderer
     sdfv_js_deps = ['sdfv.js']
+    offline_sdfv_js_deps = ['sdfv_jupyter.js']
 
     result = ''
 
@@ -42,7 +43,7 @@ def preamble():
 
     # Load local dependencies
     root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'viewer', 'webclient')
-    for dep in sdfv_js_deps:
+    for dep in offline_sdfv_js_deps:
         file = os.path.join(root_path, 'dist', dep)
         with open(file) as fp:
             result += '<script>%s</script>\n' % fp.read()
