@@ -150,61 +150,85 @@ def test_arange_6():
     return np.arange(2.5, 10, 3)
 
 
-@compare_numpy_output()
+@dace.program
+def program_strides_0():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
+    return A
+
+
 def test_strides_0():
-    A = np.ndarray((2, 2), dtype=np.int32, strides=(8, 4))
-    A[:] = 0
-    A[:] = 1
+    A = program_strides_0()
+    assert A.strides == (8, 4)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_1():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(4, 2))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
     return A
 
 
-@compare_numpy_output()
 def test_strides_1():
-    A = np.ndarray((2, 2), dtype=np.int32, strides=(16, 4))
-    A[:] = 0
-    A[:] = 1
+    A = program_strides_1()
+    assert A.strides == (16, 8)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_2():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(1, 2))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
     return A
 
 
-@compare_numpy_output()
 def test_strides_2():
-    A = np.ndarray((2, 2), dtype=np.int32, strides=(4, 8))
-    A[:] = 0
-    A[:] = 1
+    A = program_strides_2()
+    assert A.strides == (4, 8)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_3():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 4))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
     return A
 
 
-@compare_numpy_output()
 def test_strides_3():
-    A = np.ndarray((2, 2), dtype=np.int32, strides=(4, 16))
-    A[:] = 0
-    A[:] = 1
-    return A
+    A = program_strides_3()
+    assert A.strides == (8, 16)
+    assert np.allclose(A, [[0, 1], [2, 3]])
 
 
 if __name__ == "__main__":
-    test_empty()
-    test_empty_like1()
-    test_empty_like2()
-    test_empty_like3()
-    test_ones()
-    test_ones_like()
-    test_zeros()
-    test_zeros_like()
-    test_full()
-    test_full_like()
-    test_copy()
-    test_identity()
-    test_array()
-    test_array_constant()
-    test_array_literal()
-    test_arange_0()
-    test_arange_1()
-    test_arange_2()
-    test_arange_3()
-    test_arange_4()
-    test_arange_5()
-    test_arange_6()
+    # test_empty()
+    # test_empty_like1()
+    # test_empty_like2()
+    # test_empty_like3()
+    # test_ones()
+    # test_ones_like()
+    # test_zeros()
+    # test_zeros_like()
+    # test_full()
+    # test_full_like()
+    # test_copy()
+    # test_identity()
+    # test_array()
+    # test_array_constant()
+    # test_array_literal()
+    # test_arange_0()
+    # test_arange_1()
+    # test_arange_2()
+    # test_arange_3()
+    # test_arange_4()
+    # test_arange_5()
+    # test_arange_6()
     test_strides_0()
     test_strides_1()
     test_strides_2()
