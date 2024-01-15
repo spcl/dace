@@ -1666,7 +1666,7 @@ class SDFG(ControlFlowRegion):
                  total_size=None,
                  find_new_name=False,
                  alignment=0,
-                 may_alias=False) -> Tuple[str, dt.View]:
+                 may_alias=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1681,18 +1681,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.View(dtype,
-                       shape,
-                       storage=storage,
-                       allow_conflicts=allow_conflicts,
-                       transient=True,
-                       strides=strides,
-                       offset=offset,
-                       lifetime=dtypes.AllocationLifetime.Scope,
-                       alignment=alignment,
-                       debuginfo=debuginfo,
-                       total_size=total_size,
-                       may_alias=may_alias)
+        desc = dt.ArrayView(dtype,
+                            shape,
+                            storage=storage,
+                            allow_conflicts=allow_conflicts,
+                            transient=True,
+                            strides=strides,
+                            offset=offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=total_size,
+                            may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 

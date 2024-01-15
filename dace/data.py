@@ -625,7 +625,7 @@ class TensorIndex(ABC):
         """
         Generates the fields needed for the index.
         
-        :returns: a Dict of fields that need to be present in the struct
+        :return: a Dict of fields that need to be present in the struct
         """
         pass
 
@@ -1809,20 +1809,10 @@ class ContainerArray(Array):
         return ret
 
 
-class IView:
-    """
-    Interface that specifies the data container views another data container.
-    That is, it does not need to be separately allocated, and it is dependent
-    on another data container.
-    """
-    pass
-
-
-@make_properties
-class View(Array, IView):
+class View:
     """ 
-    Data descriptor that acts as a reference (or view) of another array. Can
-    be used to reshape or reinterpret existing data without copying it.
+    Data descriptor that acts as a static reference (or view) of another data container.
+    Can be used to reshape or reinterpret existing data without copying it.
 
     To use a View, it needs to be referenced in an access node that is directly
     connected to another access node. The rules for deciding which access node
@@ -1839,9 +1829,76 @@ class View(Array, IView):
       * If both access nodes reside in the same scope, the input data is viewed.
 
     Other cases are ambiguous and will fail SDFG validation.
+    """
+
+    def __new__(self, viewed_container: Data, debuginfo=None):
+        """
+        Create a new View of the specified data container.
+
+        :param viewed_container: The data container properties of this view
+        :param debuginfo: Specific source line information for this view, if
+                          different from ``viewed_container``.
+        :return: A new subclass of View with the appropriate viewed container
+                 properties, e.g., ``StructureView`` for a ``Structure``.
+        """
+        debuginfo = debuginfo or viewed_container.debuginfo
+        # Construct the right kind of view from the input data container
+        if isinstance(viewed_container, Array):
+            result = ArrayView(dtype=viewed_container.dtype,
+                               shape=viewed_container.shape,
+                               allow_conflicts=viewed_container.allow_conflicts,
+                               storage=viewed_container.storage,
+                               location=viewed_container.location,
+                               strides=viewed_container.strides,
+                               offset=viewed_container.offset,
+                               may_alias=viewed_container.may_alias,
+                               lifetime=viewed_container.lifetime,
+                               alignment=viewed_container.alignment,
+                               debuginfo=debuginfo,
+                               total_size=viewed_container.total_size,
+                               start_offset=viewed_container.start_offset,
+                               optional=viewed_container.optional,
+                               pool=viewed_container.pool)
+        elif isinstance(viewed_container, Structure):
+            result = StructureView(members=cp.deepcopy(viewed_container.members),
+                                   name=viewed_container.name,
+                                   storage=viewed_container.storage,
+                                   location=viewed_container.location,
+                                   lifetime=viewed_container.lifetime,
+                                   debuginfo=debuginfo)
+        elif isinstance(viewed_container, ContainerArray):
+            result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
+                                   shape=viewed_container.shape,
+                                   allow_conflicts=viewed_container.allow_conflicts,
+                                   storage=viewed_container.storage,
+                                   location=viewed_container.location,
+                                   strides=viewed_container.strides,
+                                   offset=viewed_container.offset,
+                                   may_alias=viewed_container.may_alias,
+                                   lifetime=viewed_container.lifetime,
+                                   alignment=viewed_container.alignment,
+                                   debuginfo=debuginfo,
+                                   total_size=viewed_container.total_size,
+                                   start_offset=viewed_container.start_offset,
+                                   optional=viewed_container.optional,
+                                   pool=viewed_container.pool)
+        else:
+            # In undefined cases, make a container array view of size 1
+            result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
+
+        # Views are always transient
+        result.transient = True
+        return result
+
+
+@make_properties
+class ArrayView(Array, View):
+    """ 
+    Data descriptor that acts as a static reference (or view) of another array. Can
+    be used to reshape or reinterpret existing data without copying it.
 
     In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
-    generate Views.
+    generate ArrayViews.
     """
 
     def validate(self):
@@ -1859,33 +1916,9 @@ class View(Array, IView):
 
 
 @make_properties
-class Reference(Array):
+class StructureView(Structure, View):
     """ 
-    Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
-    except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
-    access node to it and use the "set" connector.
-    
-    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
-    """
-
-    def validate(self):
-        super().validate()
-
-        # We ensure that allocation lifetime is always set to Scope, since the
-        # view is generated upon "allocation"
-        if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for References')
-
-    def as_array(self):
-        copy = cp.deepcopy(self)
-        copy.__class__ = Array
-        return copy
-
-
-@make_properties
-class StructureView(Structure, IView):
-    """ 
-    Data descriptor that acts as a reference (or view) of another structure.
+    Data descriptor that acts as a view of another structure.
     """
 
     @staticmethod
@@ -1914,7 +1947,7 @@ class StructureView(Structure, IView):
 
 
 @make_properties
-class ContainerView(ContainerArray, IView):
+class ContainerView(ContainerArray, View):
     """ 
     Data descriptor that acts as a view of another container array. Can
     be used to access nested container types without a copy.
@@ -1952,6 +1985,30 @@ class ContainerView(ContainerArray, IView):
     def as_array(self):
         copy = cp.deepcopy(self)
         copy.__class__ = ContainerArray
+        return copy
+
+
+@make_properties
+class Reference(Array):
+    """ 
+    Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
+    except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
+    access node to it and use the "set" connector.
+    
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for References')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
         return copy
 
 
