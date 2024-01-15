@@ -1723,18 +1723,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Reference(dtype,
-                            shape,
-                            storage=storage,
-                            allow_conflicts=allow_conflicts,
-                            transient=True,
-                            strides=strides,
-                            offset=offset,
-                            lifetime=dtypes.AllocationLifetime.Scope,
-                            alignment=alignment,
-                            debuginfo=debuginfo,
-                            total_size=total_size,
-                            may_alias=may_alias)
+        desc = dt.ArrayReference(dtype,
+                                 shape,
+                                 storage=storage,
+                                 allow_conflicts=allow_conflicts,
+                                 transient=True,
+                                 strides=strides,
+                                 offset=offset,
+                                 lifetime=dtypes.AllocationLifetime.Scope,
+                                 alignment=alignment,
+                                 debuginfo=debuginfo,
+                                 total_size=total_size,
+                                 may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1926,17 +1926,19 @@ class SDFG(ControlFlowRegion):
                                   exists, finds a new name to add.
             :return: Name of the new data descriptor
         """
-        vdesc = copy.deepcopy(datadesc)
-        if isinstance(datadesc, dt.ContainerArray):
-            vdesc.__class__ = dt.ContainerView
-        elif isinstance(datadesc, dt.Structure):
-            vdesc.__class__ = dt.StructureView
-        elif isinstance(datadesc, dt.Array):
-            vdesc.__class__ = dt.ArrayView
-        else:
-            raise TypeError(f'Cannot natively create a view of a {type(vdesc)} data descriptor')
+        vdesc = dt.View.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
 
-        vdesc.transient = True
+    def add_datadesc_reference(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a reference of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.Reference.view(datadesc)
         return self.add_datadesc(name, vdesc, find_new_name)
 
     def add_pgrid(self,

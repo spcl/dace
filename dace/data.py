@@ -1892,6 +1892,48 @@ class View:
         return result
 
 
+class Reference:
+    """ 
+    Data descriptor that acts as a dynamic reference of another data descriptor. It can be used just like a regular
+    data descriptor, except that it could be set to an arbitrary container (or subset thereof) at runtime. To set a
+    reference, connect another access node to it and use the "set" connector.
+    
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+
+    @staticmethod
+    def view(viewed_container: Data, debuginfo=None):
+        """
+        Create a new Reference of the specified data container.
+
+        :param viewed_container: The data container properties of this reference.
+        :param debuginfo: Specific source line information for this reference, if
+                          different from ``viewed_container``.
+        :return: A new subclass of View with the appropriate viewed container
+                 properties, e.g., ``StructureReference`` for a ``Structure``.
+        """
+        result = cp.deepcopy(viewed_container)
+
+        # Assign the right kind of reference from the input data container
+        # NOTE: The class assignment below is OK since the Reference class is a subclass of the instance,
+        # and those should not have additional fields.
+        if isinstance(viewed_container, Array):
+            result.__class__ = ArrayReference
+        elif isinstance(viewed_container, Structure):
+            result.__class__ = StructureReference
+        elif isinstance(viewed_container, ContainerArray):
+            result.__class__ = ContainerArrayReference
+        else:  # In undefined cases, make a container array reference of size 1
+            result = ContainerArrayReference(result, [1], debuginfo=debuginfo)
+
+        if debuginfo is not None:
+            result.debuginfo = debuginfo
+
+        # References are always transient
+        result.transient = True
+        return result
+
+
 @make_properties
 class ArrayView(Array, View):
     """ 
@@ -1990,11 +2032,9 @@ class ContainerView(ContainerArray, View):
 
 
 @make_properties
-class Reference(Array):
+class ArrayReference(Array, Reference):
     """ 
-    Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
-    except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
-    access node to it and use the "set" connector.
+    Data descriptor that acts as a dynamic reference of another array. See ``Reference`` for more information.
     
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
@@ -2010,6 +2050,51 @@ class Reference(Array):
     def as_array(self):
         copy = cp.deepcopy(self)
         copy.__class__ = Array
+        return copy
+
+
+@make_properties
+class StructureReference(Structure, Reference):
+    """ 
+    Data descriptor that acts as a dynamic reference of another Structure. See ``Reference`` for more information.
+    
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for References')
+
+    def as_structure(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Structure
+        return copy
+
+
+@make_properties
+class ContainerArrayReference(ContainerArray, Reference):
+    """ 
+    Data descriptor that acts as a dynamic reference of another data container array. See ``Reference`` for more
+    information.
+    
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for References')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = ContainerArray
         return copy
 
 
