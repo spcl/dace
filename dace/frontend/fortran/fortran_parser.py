@@ -169,11 +169,28 @@ class AST_translator:
         """
         self.globalsdfg = sdfg
         for i in node.modules:
-            for j in i.specification_part.typedecls:
-                self.translate(j, sdfg)
-                if j.__class__.__name__ != "Derived_Type_Def_Node":
-                    for k in j.vardecl:
-                        self.module_vars.append((k.name, i.name))
+            structs_lister=ast_transforms.StructLister()
+            structs_lister.visit(i.specification_part)
+            struct_dep_graph=nx.DiGraph()
+            for ii,name in zip(structs_lister.structs,structs_lister.names):
+                if name not in struct_dep_graph.nodes:
+                    struct_dep_graph.add_node(name)
+                struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+                struct_deps_finder.visit(ii)
+                struct_deps=struct_deps_finder.structs_used
+                #print(struct_deps)
+                for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+                    if j not in struct_dep_graph.nodes:
+                        struct_dep_graph.add_node(j)
+                    struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+            parse_order = list(reversed(list(nx.topological_sort(struct_dep_graph))))        
+            for jj in parse_order:
+              for j in i.specification_part.typedecls:
+                    if j.name.name==jj:
+                        self.translate(j, sdfg)
+                        if j.__class__.__name__ != "Derived_Type_Def_Node":
+                            for k in j.vardecl:
+                                self.module_vars.append((k.name, i.name))
             for j in i.specification_part.symbols:
                 self.translate(j, sdfg)
                 if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
@@ -1152,12 +1169,25 @@ class AST_translator:
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
+            
             if isinstance(datatype, Structure):
                 datatype.transient = transient
+<<<<<<< HEAD
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [-1 for _ in sizes]
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
+=======
+                if len(sizes)==1:
+                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]])
+                if len(sizes)==2:
+                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]])
+                if len(sizes)==3:
+                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]][sizes[2]])
+                if len(sizes)==4:
+                    sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype[sizes[0]][sizes[1]][sizes[2]][sizes[3]])
+                    
+>>>>>>> origin/multi_sdfg
             else:    
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
@@ -1269,7 +1299,40 @@ def create_sdfg_from_string(
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-    
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+    cycles=nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    has_cycles=list(cycles)
+    cycles_we_cannot_ignore=[]
+    for cycle in has_cycles:
+        print(cycle)
+        for i in cycle:
+            is_pointer=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["pointing"]
+            point_name=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["point_name"]
+            print(i,is_pointer)
+            if is_pointer:
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name)
+                actually_used_pointer_node_finder.visit(program)
+                print(actually_used_pointer_node_finder.nodes)
+                if len(actually_used_pointer_node_finder.nodes)==0:
+                    print("We can ignore this cycle")
+                    program=ast_transforms.StructPointerEliminator(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name).visit(program)
+                else:
+                    cycles_we_cannot_ignore.append(cycle)    
+    if len(cycles_we_cannot_ignore)>0:
+        raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
 
     ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
@@ -1676,6 +1739,43 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+    cycles=nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    has_cycles=list(cycles)
+    cycles_we_cannot_ignore=[]
+    for cycle in has_cycles:
+        print(cycle)
+        for i in cycle:
+            is_pointer=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["pointing"]
+            point_name=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["point_name"]
+            print(i,is_pointer)
+            if is_pointer:
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name)
+                actually_used_pointer_node_finder.visit(program)
+                print(actually_used_pointer_node_finder.nodes)
+                if len(actually_used_pointer_node_finder.nodes)==0:
+                    print("We can ignore this cycle")
+                    program=ast_transforms.StructPointerEliminator(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name).visit(program)
+                else:
+                    cycles_we_cannot_ignore.append(cycle)    
+    if len(cycles_we_cannot_ignore)>0:
+        raise NameError("Structs have cyclic dependencies")
+
+
+
     program.tables=partial_ast.symbols
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
     unordered_modules=program.modules

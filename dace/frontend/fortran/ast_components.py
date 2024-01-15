@@ -247,6 +247,7 @@ class InternalFortranAst:
             "Initialization": self.initialization,
             "Procedure_Declaration_Stmt": self.procedure_declaration_stmt,
             "Type_Bound_Procedure_Part": self.type_bound_procedure_part,
+            "Data_Pointer_Object": self.data_pointer_object,
             "Contains_Stmt": self.contains_stmt,
             "Call_Stmt": self.call_stmt,
             "Return_Stmt": self.return_stmt,
@@ -294,6 +295,14 @@ class InternalFortranAst:
     def list_tables(self):
         for i in self.tables._symbol_tables:
             print(i)
+
+    def data_pointer_object(self, node: FASTNode):
+        children = self.create_children(node)
+        if node.children[1] =="%":
+            return ast_internal_classes.Data_Ref_Node(parent_ref=children[0], part_ref=children[2],type="VOID")
+        else:
+            raise NotImplementedError("Data pointer object not supported yet")
+                
 
     def add_name_list_for_module(self, module: str, name_list: List[str]):
         self.name_list[module] = name_list        
@@ -778,13 +787,16 @@ class InternalFortranAst:
         # alloc relates to whether it is statically (False) or dynamically (True) allocated
         # parameter means its a constant, so we should transform it into a symbol
         attributes = get_children(node, "Attr_Spec_List")
+        comp_attributes=get_children(node, "Component_Attr_Spec_List")
+        if len(attributes) != 0 and len(comp_attributes) != 0:
+            raise TypeError("Attributes must be either in Attr_Spec_List or Component_Attr_Spec_List not both")
 
         alloc = False
         symbol = False
         optional = False
         attr_size = None
         attr_offset = None
-        for i in attributes:
+        for i in attributes+comp_attributes:
 
             if i.string.lower() == "allocatable":
                 alloc = True

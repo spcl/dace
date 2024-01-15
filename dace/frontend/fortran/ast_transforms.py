@@ -180,6 +180,126 @@ class FindFunctionCalls(NodeVisitor):
             self.visit(i)
 
 
+class StructLister(NodeVisitor):
+    """
+    Fortran does not differentiate between arrays and functions.
+    We need to go over and convert all function calls to arrays.
+    So, we create a closure of all math and defined functions and 
+    create array expressions for the others.
+    """
+    def __init__(self):
+        
+        self.structs = []
+        self.names= []
+
+    def visit_Derived_Type_Def_Node(self, node: ast_internal_classes.Derived_Type_Def_Node):
+        self.structs.append(node)
+        self.names.append(node.name.name)
+
+class StructDependencyLister(NodeVisitor):
+    def __init__(self, names=None):
+        self.names= names
+        self.structs_used = []
+        self.is_pointer=[]
+        self.pointer_names=[]
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+        if node.type in self.names:
+            self.structs_used.append(node.type)
+            self.is_pointer.append(node.alloc)
+            self.pointer_names.append(node.name)
+
+class FindStructDefs(NodeVisitor):
+    def __init__(self, name=None):
+        self.name= name
+        self.structs= []
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+        if node.type==self.name:
+            self.structs.append(node.name)
+
+class FindStructUses(NodeVisitor):
+    def __init__(self, names=None,target=None):
+        self.names= names
+        self.target=target
+        self.nodes= []
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+        
+        if isinstance(node.parent_ref, ast_internal_classes.Name_Node):
+            parent_name=node.parent_ref.name
+        elif isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
+            parent_name=node.parent_ref.name.name
+        elif isinstance(node.parent_ref, ast_internal_classes.Data_Ref_Node):
+            self.visit(node.parent_ref)
+            parent_name=None
+        else:
+
+            raise NotImplementedError("Data ref node not implemented for not name or array")
+        if isinstance(node.part_ref,ast_internal_classes.Name_Node):
+            part_name=node.part_ref.name
+        elif isinstance(node.part_ref,ast_internal_classes.Array_Subscript_Node):
+            part_name=node.part_ref.name.name
+        elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
+            self.visit(node.part_ref)    
+            part_name=None
+        else:    
+            raise NotImplementedError("Data ref node not implemented for not name or array")
+        if part_name== self.target and parent_name in self.names:
+            self.nodes.append(node)
+
+class StructPointerChecker(NodeVisitor):
+    def __init__(self, parent_struct,pointed_struct,pointer_name):
+        self.parent_struct=parent_struct
+        self.pointed_struct=pointed_struct
+        self.pointer_name=pointer_name
+        self.nodes=[]
+
+    def visit_Main_Program_Node(self, node: ast_internal_classes.Main_Program_Node):
+        finder=FindStructDefs(self.parent_struct)
+        finder.visit(node.specification_part)
+        struct_names=finder.structs
+        use_finder=FindStructUses(struct_names,self.pointer_name)
+        use_finder.visit(node.execution_part)
+        self.nodes+=use_finder.nodes
+
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):        
+        finder=FindStructDefs(self.parent_struct)
+        if node.specification_part is not None:
+            finder.visit(node.specification_part)
+        struct_names=finder.structs
+        use_finder=FindStructUses(struct_names,self.pointer_name)
+        if node.execution_part is not None:
+            use_finder.visit(node.execution_part)
+        self.nodes+=use_finder.nodes
+
+
+class StructPointerEliminator(NodeTransformer):
+    def __init__(self, parent_struct,pointed_struct,pointer_name):
+        self.parent_struct=parent_struct
+        self.pointed_struct=pointed_struct
+        self.pointer_name=pointer_name
+
+    def visit_Derived_Type_Def_Node(self, node: ast_internal_classes.Derived_Type_Def_Node):
+        if node.name.name==self.parent_struct:
+            newnode=ast_internal_classes.Derived_Type_Def_Node(name=node.name,parent=node.parent)
+            component_part=ast_internal_classes.Component_Part_Node(component_def_stmts=[],parent=node.parent)
+            for i in node.component_part.component_def_stmts:
+                
+                    vardecl=[]
+                    for k in i.vars.vardecl:
+                        if k.name==self.pointer_name and k.alloc==True and k.type==self.pointed_struct:
+                            print("Eliminating pointer "+self.pointer_name+" of type "+ k.type +" in struct "+self.parent_struct)
+                            continue
+                        else:
+                            vardecl.append(k)
+                    if vardecl!=[]:        
+                        component_part.component_def_stmts.append(ast_internal_classes.Data_Component_Def_Stmt_Node(vars=ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl,parent=node.parent),parent=node.parent))
+            newnode.component_part=component_part        
+            return newnode
+        else:
+            return node
 class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
