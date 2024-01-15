@@ -1932,7 +1932,10 @@ class SDFG(ControlFlowRegion):
         elif isinstance(datadesc, dt.Structure):
             vdesc.__class__ = dt.StructureView
         elif isinstance(datadesc, dt.Array):
-            vdesc.__class__ = dt.View
+            vdesc.__class__ = dt.ArrayView
+        else:
+            raise TypeError(f'Cannot natively create a view of a {type(vdesc)} data descriptor')
+
         vdesc.transient = True
         return self.add_datadesc(name, vdesc, find_new_name)
 
