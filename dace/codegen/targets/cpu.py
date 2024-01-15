@@ -717,10 +717,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             state_dfg = sdfg.nodes()[state_id]
 
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
-                cpp.memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
-                    self._packed_types)
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = cpp.memlet_copy_to_absolute_strides(
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._packed_types)
 
             # Which numbers to include in the variable argument part
             dynshape, dynsrc, dyndst = 1, 1, 1
@@ -904,7 +902,8 @@ class CPUCodeGen(TargetCodeGenerator):
             _, uconn, v, _, memlet = edge
             if skip_wcr and memlet.wcr is not None:
                 continue
-            dst_node = dfg.memlet_path(edge)[-1].dst
+            dst_edge = dfg.memlet_path(edge)[-1]
+            dst_node = dst_edge.dst
 
             # Target is neither a data nor a tasklet node
             if isinstance(node, nodes.AccessNode) and (not isinstance(dst_node, nodes.AccessNode)
@@ -952,9 +951,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 conntype = node.out_connectors[uconn]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
+                if isinstance(conntype, dtypes.pointer) and sdfg.arrays[memlet.data].dtype == conntype:
+                    is_scalar = True  # Pointer to pointer assignment
                 is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
+                is_refset = isinstance(sdfg.arrays[memlet.data], data.Reference) and dst_edge.dst_conn == 'set'
 
-                if is_scalar and not memlet.dynamic and not is_stream:
+                if (is_scalar and not memlet.dynamic and not is_stream) or is_refset:
                     out_local_name = "    __" + uconn
                     in_local_name = uconn
                     if not locals_defined:
@@ -985,6 +987,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
+                            mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            write_expr = f"{mname} = {in_local_name};"
+                        elif defined_type == DefinedType.Pointer and is_refset:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                             write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
@@ -1473,15 +1478,21 @@ class CPUCodeGen(TargetCodeGenerator):
         cdtype = src_node.out_connectors[edge.src_conn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
-        elif isinstance(cdtype, dtypes.pointer):
-            # If pointer, also point to output
+        elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
             desc = sdfg.arrays[edge.data.data]
-            ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
-            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                                          dtypes.AllocationLifetime.External)
-            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
+
+            # If reference set, do not emit initial assignment
+            is_refset = isinstance(desc, data.Reference) and state_dfg.memlet_path(edge)[-1].dst_conn == 'set'
+
+            if not is_refset and not isinstance(desc.dtype, dtypes.pointer):
+                ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
+                is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
+                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
+            else:
+                callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', sdfg, state_id, src_node)
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg, state_id, src_node)
 

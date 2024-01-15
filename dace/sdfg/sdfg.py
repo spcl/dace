@@ -769,7 +769,7 @@ class SDFG(ControlFlowRegion):
         if name in self.symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
         if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.DTYPE_TO_TYPECLASS[stype]
+            stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
 
     def remove_symbol(self, name):
