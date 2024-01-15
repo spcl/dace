@@ -1844,23 +1844,7 @@ class View:
         """
         debuginfo = debuginfo or viewed_container.debuginfo
         # Construct the right kind of view from the input data container
-        if isinstance(viewed_container, Array):
-            result = ArrayView(dtype=viewed_container.dtype,
-                               shape=viewed_container.shape,
-                               allow_conflicts=viewed_container.allow_conflicts,
-                               storage=viewed_container.storage,
-                               location=viewed_container.location,
-                               strides=viewed_container.strides,
-                               offset=viewed_container.offset,
-                               may_alias=viewed_container.may_alias,
-                               lifetime=viewed_container.lifetime,
-                               alignment=viewed_container.alignment,
-                               debuginfo=debuginfo,
-                               total_size=viewed_container.total_size,
-                               start_offset=viewed_container.start_offset,
-                               optional=viewed_container.optional,
-                               pool=viewed_container.pool)
-        elif isinstance(viewed_container, Structure):
+        if isinstance(viewed_container, Structure):
             result = StructureView(members=cp.deepcopy(viewed_container.members),
                                    name=viewed_container.name,
                                    storage=viewed_container.storage,
@@ -1883,6 +1867,22 @@ class View:
                                    start_offset=viewed_container.start_offset,
                                    optional=viewed_container.optional,
                                    pool=viewed_container.pool)
+        elif isinstance(viewed_container, Array):
+            result = ArrayView(dtype=viewed_container.dtype,
+                               shape=viewed_container.shape,
+                               allow_conflicts=viewed_container.allow_conflicts,
+                               storage=viewed_container.storage,
+                               location=viewed_container.location,
+                               strides=viewed_container.strides,
+                               offset=viewed_container.offset,
+                               may_alias=viewed_container.may_alias,
+                               lifetime=viewed_container.lifetime,
+                               alignment=viewed_container.alignment,
+                               debuginfo=debuginfo,
+                               total_size=viewed_container.total_size,
+                               start_offset=viewed_container.start_offset,
+                               optional=viewed_container.optional,
+                               pool=viewed_container.pool)
         else:
             # In undefined cases, make a container array view of size 1
             result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
