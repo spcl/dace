@@ -100,7 +100,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
                     in_default_scope = False
                     if sdfg.parent_nsdfg_node is not None:
                         if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
-                                    [dtypes.ScheduleType.Default]):
+                                       [dtypes.ScheduleType.Default]):
                             in_default_scope = True
                 if in_default_scope is False:
                     eid = region.edge_id(edge)
@@ -126,9 +126,9 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
     if start_block not in visited:
         if isinstance(start_block, SDFGState):
             validate_state(start_block, region.node_id(start_block), sdfg, symbols, initialized_transients, references,
-                            **context)
+                           **context)
         else:
-                validate_control_flow_region(sdfg, start_block, initialized_transients, symbols, references, **context)
+            validate_control_flow_region(sdfg, start_block, initialized_transients, symbols, references, **context)
 
     # Validate all inter-state edges (including self-loops not found by DFS)
     for eid, edge in enumerate(region.edges()):
@@ -162,7 +162,7 @@ def validate_control_flow_region(sdfg: 'dace.sdfg.SDFG',
                     in_default_scope = False
                     if sdfg.parent_nsdfg_node is not None:
                         if is_in_scope(sdfg.parent_sdfg, sdfg.parent, sdfg.parent_nsdfg_node,
-                                    [dtypes.ScheduleType.Default]):
+                                       [dtypes.ScheduleType.Default]):
                             in_default_scope = True
                 if in_default_scope is False:
                     raise InvalidSDFGInterstateEdgeError(
@@ -453,9 +453,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
             # Find uninitialized transients
             if node.data not in initialized_transients:
-                if (arr.transient and state.in_degree(node) == 0 and state.out_degree(node) > 0
-                        # Streams do not need to be initialized
-                        and not isinstance(arr, dt.Stream)):
+                if isinstance(arr, dt.Reference):  # References are considered more conservatively
+                    if any(e.dst_conn == 'set' for e in state.in_edges(node)):
+                        initialized_transients.add(node.data)
+                    else:
+                        raise InvalidSDFGNodeError(
+                            'Reference data descriptor was used before it was set. Set '
+                            'it with an incoming memlet to the "set" connector', sdfg, state_id, nid)
+                elif (arr.transient and state.in_degree(node) == 0 and state.out_degree(node) > 0
+                      # Streams do not need to be initialized
+                      and not isinstance(arr, dt.Stream)):
                     if node.setzero == False:
                         warnings.warn('WARNING: Use of uninitialized transient "%s" in state %s' %
                                       (node.data, state.label))
