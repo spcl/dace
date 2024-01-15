@@ -6,12 +6,12 @@ import urllib.request
 import urllib.error
 
 
-#def _connected():
-#    try:
-#        urllib.request.urlopen('https://spcl.github.io/dace-webclient/dist/sdfv.js', timeout=1)
-#        return True
-#    except urllib.error.URLError:
-#        return False
+def _connected():
+    try:
+        urllib.request.urlopen('https://spcl.github.io/dace-webclient/dist/sdfv.js', timeout=1)
+        return True
+    except urllib.error.URLError:
+        return False
 
 
 # From https://stackoverflow.com/a/39662359/6489142
@@ -35,16 +35,17 @@ def preamble():
     result = ''
 
     # Try to load dependencies from online sources
-    #if _connected():
-    #    for dep in sdfv_js_deps:
-    #        result += '<script src="https://spcl.github.io/dace-webclient/dist/%s"></script>\n' % dep
-    #    return result
+    if _connected():
+        for dep in sdfv_js_deps:
+            result += '<script src="https://spcl.github.io/dace-webclient/dist/%s"></script>\n' % dep
+        return result
 
     # Load local dependencies
     root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'viewer', 'webclient')
     for dep in sdfv_js_deps:
         file = os.path.join(root_path, 'dist', dep)
-        result += '<script src="%s"></script>\n' % file
+        with open(file) as fp:
+            result += '<script>%s</script>\n' % fp.read()
 
     # Run this code once
     return result
