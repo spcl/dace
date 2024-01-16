@@ -28,13 +28,10 @@ def test_fortran_frontend_basic_type():
                     
                     TYPE simple_type
                         REAL:: w(5,5,5),z(5)
-                        INTEGER:: a         
+                        INTEGER:: a       
+                        REAL :: name  
                     END TYPE simple_type
 
-                    !TYPE comlex_type
-                    !    TYPE(simple_type):: s
-                    !    INTEGER:: b
-                    !END TYPE comlex_type
 
                     REAL :: d(5,5)
                     CALL type_test_function(d)
@@ -159,7 +156,7 @@ def test_fortran_frontend_circular_type():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_basic_type()
+    test_fortran_frontend_basic_type()
     #test_fortran_frontend_basic_type2()
 
-    test_fortran_frontend_circular_type()
+    #test_fortran_frontend_circular_type()
