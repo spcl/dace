@@ -364,6 +364,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
+            if top_desc is not None and isinstance(top_desc, (data.Structure, data.StructureView)):
+                # If this scalar is a field of a structure, there is no need for allocation.
+                return
+
             if node.setzero:
                 declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
             else:
