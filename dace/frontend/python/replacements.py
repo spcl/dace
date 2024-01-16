@@ -64,7 +64,7 @@ def _define_local_ex(pv: ProgramVisitor,
         if not isinstance(strides, (list, tuple)):
             strides = [strides]
         # NOTE: The following is needed because the strides may be of a NumPy dtype, e.g., np.int32
-        #       In such a case, SDFG validation fails because it expectes built-in Python types or symbols.
+        #       In such a case, SDFG validation fails because it expects built-in Python types or symbols.
         # TODO: Discuss if validation should be amended instead.
         strides = [int(s) if isinstance(s, Number) else s for s in strides]
     name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
