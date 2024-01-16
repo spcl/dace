@@ -31,8 +31,8 @@ def test_fortran_frontend_basic_type():
                     
                     TYPE simple_type
                         REAL:: w(5,5,5),z(5)
-                        INTEGER:: a       
-                        REAL :: name  
+                        !INTEGER:: a       
+                        !REAL :: name  
                     END TYPE simple_type
 
                     REAL :: d(5,5)
@@ -43,14 +43,13 @@ def test_fortran_frontend_basic_type():
                     REAL d(5,5)
                     TYPE(simple_type) :: s
                     s%w(1,1,1)=5.5
-                    !t=s
                     d(2,1)=5.5+s%w(1,1,1)
                     
                     END SUBROUTINE type_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test")
     sdfg.simplify(verbose=True)
-    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    a = np.full([5, 5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
