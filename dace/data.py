@@ -434,7 +434,7 @@ class Structure(Data):
         #     else:
         #         fields_and_types[str(s)] = dtypes.int32
 
-        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        dtype = dtypes.pointer(dtypes.struct(name, fields_and_types))
         shape = (1, )
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 

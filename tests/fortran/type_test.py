@@ -31,7 +31,8 @@ def test_fortran_frontend_basic_type():
                     
                     TYPE simple_type
                         REAL:: w(5,5,5),z(5)
-                        INTEGER:: a         
+                        INTEGER:: a       
+                        REAL :: name  
                     END TYPE simple_type
 
                     REAL :: d(5,5)

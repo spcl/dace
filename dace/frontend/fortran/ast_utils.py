@@ -82,6 +82,29 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     if k not in out_names:
                         out_names.append(k)
         actually_used=[]
+        for name in in_names:
+            actually_used.append(name)
+        changed=True
+        if res is not None:
+         while(changed):
+            changed=False 
+            for used_name in actually_used:
+                if used_name in res.list_of_types:
+                    for used_in_type in res.names_in_types[used_name]:
+                        if used_in_type not in actually_used and used_in_type in res.list_of_types:
+                            actually_used.append(used_in_type)
+                            changed=True
+                if used_name in res.list_of_functions:
+                    for used_in_function in res.names_in_functions[used_name]:
+                        if used_in_function not in actually_used and (used_in_function in res.list_of_functions or used_in_function in res.list_of_subroutines):                            
+                            actually_used.append(used_in_function)
+                            changed=True            
+                if used_name in res.list_of_subroutines:
+                    for used_in_subroutine in res.names_in_subroutines[used_name]:
+                        if used_in_subroutine not in actually_used and (used_in_subroutine in res.list_of_functions or used_in_subroutine in res.list_of_subroutines):                            
+                            actually_used.append(used_in_subroutine)
+                            changed=True
+                           
         not_used=[]
         if res is not None:
             for j in out_names:
