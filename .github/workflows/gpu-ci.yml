@@ -7,8 +7,7 @@ on:
     branches: [ master, ci-fix ]
 
 env:
-  CUDA_HOME: /usr/local/cuda
-  CUDACXX: nvcc
+  CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
 
 
