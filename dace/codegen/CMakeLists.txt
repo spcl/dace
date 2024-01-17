@@ -396,8 +396,8 @@ if(DACE_ENABLE_RTL)
 
       # verilate design
       verilate("${RTL_FILE_NAME}" SOURCES ${RTL_FILE} VERILATOR_ARGS "${VERILATOR_FLAGS}")
-      file(GLOB_RECURSE VSRC_FILES "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir"/*.cpp)
-      set(DACE_CPP_FILES "${DACE_CPP_FILES}" ${VSRC_FILES})
+      file(GLOB VSRC_FILES "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir"/*.cpp)
+      set(DACE_CPP_FILES "${DACE_CPP_FILES}" ${VSRC_FILES} "${dace_program_BINARY_DIR}/CMakeFiles/${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.dir/V${RTL_FILE_NAME}.cpp")
 
       # add object library for linking
       set(DACE_LIBS ${DACE_LIBS} ${${RTL_FILE_NAME}})
