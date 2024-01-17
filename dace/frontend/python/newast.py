@@ -3240,7 +3240,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, target, 'Variable "{}" used before definition'.format(name))
 
             new_data, rng = None, None
-            dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
+            dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
             if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
                     (isinstance(result, str) and result in self.sdfg.arrays)):
                 raise DaceSyntaxError(
@@ -4653,14 +4653,14 @@ class ProgramVisitor(ExtNodeVisitor):
         if isinstance(node.n, bool):
             return dace.bool_(node.n)
         if isinstance(node.n, (int, float, complex)):
-            return dtypes.DTYPE_TO_TYPECLASS[type(node.n)](node.n)
+            return dtypes.dtype_to_typeclass(type(node.n))(node.n)
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
         if isinstance(node.value, bool):
             return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
-            return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
+            return dtypes.dtype_to_typeclass(type(node.value))(node.value)
         if isinstance(node.value, (str, bytes)):
             return StringLiteral(node.value)
         return node.value
@@ -4745,7 +4745,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append((operand, type(self.scope_arrays[operand])))
-            elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
+            elif isinstance(operand, tuple(dtypes.dtype_to_typeclass().keys())):
                 if isinstance(operand, (bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
                 else:

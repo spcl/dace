@@ -761,7 +761,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     instances = access_instances[sdfg.sdfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
-                    if isinstance(desc, (data.StructureView, data.View)):
+                    if isinstance(desc, data.View):
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
@@ -897,8 +897,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
             # redefine the symbols in such cases.
-            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping
-                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName]) == str(isvarName)):
+            # Additionally, do not redefine a symbol with its type if it was already defined
+            # as part of the function's arguments
+            if not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping:
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)

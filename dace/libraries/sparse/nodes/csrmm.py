@@ -28,12 +28,12 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
         cast_value = complex(value)
 
         return "dace.{type}({real}, {imag})".format(
-            type=dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
+            type=dace.dtype_to_typeclass(dtype).to_string(),
             real=cast_value.real,
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
+        return "dace.{}({})".format(dace.dtype_to_typeclass(dtype).to_string(), value)
 
 
 def _get_csrmm_operands(node,

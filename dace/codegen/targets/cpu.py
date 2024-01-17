@@ -55,12 +55,12 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
@@ -71,7 +71,7 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(arg_type, data.Structure):
                 desc = sdfg.arrays[name]
                 _visit_structure(arg_type, arglist, name)
-            elif isinstance(arg_type, data.StructArray):
+            elif isinstance(arg_type, data.ContainerArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
                 if isinstance(desc, data.Structure):
@@ -215,8 +215,8 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         ancestor=0,
                                                         is_write=is_write)
 
-        # Test for struct views
-        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.StructArray)):
+        # Test for views of container arrays and structs
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
             vdesc = sdfg.arrays[viewed_dnode.data]
             ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
             field_name = None
@@ -226,12 +226,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 field_name = mpath[0].src_conn
 
             # Plain view into a container array
-            if isinstance(vdesc, data.StructArray) and not isinstance(vdesc.stype, data.Structure):
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
                 offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                 value = f'{ptrname}[{offset}]'
             else:
                 if field_name is not None:
-                    if isinstance(vdesc, data.StructArray):
+                    if isinstance(vdesc, data.ContainerArray):
                         offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                         arrexpr = f'{ptrname}[{offset}]'
                         stype = vdesc.stype
@@ -362,7 +362,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                         declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, (data.StructureView, data.View)):
+        if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -532,7 +532,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             operator = 'delete'
 
-        if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
+        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
