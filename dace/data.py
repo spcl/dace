@@ -1201,7 +1201,7 @@ class Tensor(Structure):
         serialize.set_properties_from_json(tensor, json_obj, context=context)
 
         return tensor
-    
+
 
 @make_properties
 class Scalar(Data):
@@ -1253,6 +1253,10 @@ class Scalar(Data):
 
     @property
     def start_offset(self):
+        return 0
+
+    @property
+    def alignment(self):
         return 0
 
     @property
@@ -1903,7 +1907,7 @@ class View:
                                    start_offset=viewed_container.start_offset,
                                    optional=viewed_container.optional,
                                    pool=viewed_container.pool)
-        elif isinstance(viewed_container, Array):
+        elif isinstance(viewed_container, (Array, Scalar)):
             result = ArrayView(dtype=viewed_container.dtype,
                                shape=viewed_container.shape,
                                allow_conflicts=viewed_container.allow_conflicts,
@@ -1959,6 +1963,18 @@ class Reference:
             result.__class__ = StructureReference
         elif isinstance(viewed_container, ContainerArray):
             result.__class__ = ContainerArrayReference
+        elif isinstance(viewed_container, Scalar):
+            result = ArrayReference(dtype=viewed_container.dtype,
+                                    shape=[1],
+                                    storage=viewed_container.storage,
+                                    lifetime=viewed_container.lifetime,
+                                    alignment=viewed_container.alignment,
+                                    debuginfo=viewed_container.debuginfo,
+                                    total_size=1,
+                                    start_offset=0,
+                                    optional=viewed_container.optional,
+                                    pool=False,
+                                    byval=False)
         else:  # In undefined cases, make a container array reference of size 1
             result = ContainerArrayReference(result, [1], debuginfo=debuginfo)
 
