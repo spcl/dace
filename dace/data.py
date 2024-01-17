@@ -73,9 +73,15 @@ def create_datadescriptor(obj, no_custom_desc=False):
         else:
             dtype = dtypes.typeclass(obj.dtype.type)
         return Array(dtype=dtype, strides=tuple(s // obj.itemsize for s in obj.strides), shape=obj.shape)
-    # special case for torch tensors. Maybe __array__ could be used here for a more
-    # general solution, but torch doesn't support __array__ for cuda tensors.
+    elif type(obj).__module__ == "cupy" and type(obj).__name__ == "ndarray":
+        # special case for CuPy and HIP, which does not support __cuda_array_interface__
+        storage = dtypes.StorageType.GPU_Global
+        dtype = dtypes.typeclass(obj.dtype.type)
+        itemsize = obj.itemsize
+        return Array(dtype=dtype, shape=obj.shape, strides=tuple(s // itemsize for s in obj.strides), storage=storage)
     elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
+        # special case for torch tensors. Maybe __array__ could be used here for a more
+        # general solution, but torch doesn't support __array__ for cuda tensors.
         try:
             # If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
             # conversion happens here in pytorch:

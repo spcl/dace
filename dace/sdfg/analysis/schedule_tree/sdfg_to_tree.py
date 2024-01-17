@@ -424,9 +424,15 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             # 2. Check for reference sets
             if isinstance(e.dst, dace.nodes.AccessNode) and e.dst_conn == 'set':
                 assert isinstance(e.dst.desc(sdfg), dace.data.Reference)
+
+                # Determine source
+                if isinstance(mtree.root().edge.src, dace.nodes.CodeNode):
+                    src_desc = mtree.root().edge.src
+                else:
+                    src_desc = sdfg.arrays[e.data.data]
                 result[e] = tn.RefSetNode(target=e.dst.data,
                                           memlet=e.data,
-                                          src_desc=sdfg.arrays[e.data.data],
+                                          src_desc=src_desc,
                                           ref_desc=sdfg.arrays[e.dst.data])
                 scope = state.entry_node(e.dst if mtree.downwards else e.src)
                 scope_to_edges[scope].append(e)
