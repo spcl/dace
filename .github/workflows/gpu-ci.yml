@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ master, ci-fix ]
 
+env:
+  CUDA_HOME: /usr/local/cuda
+  CUDACXX: nvcc
+  MKLROOT: /opt/intel/oneapi/mkl/latest/
+
+
 jobs:
   test-gpu:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
