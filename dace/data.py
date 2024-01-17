@@ -1957,12 +1957,12 @@ class Reference:
         # Assign the right kind of reference from the input data container
         # NOTE: The class assignment below is OK since the Reference class is a subclass of the instance,
         # and those should not have additional fields.
-        if isinstance(viewed_container, Array):
-            result.__class__ = ArrayReference
+        if isinstance(viewed_container, ContainerArray):
+            result.__class__ = ContainerArrayReference
         elif isinstance(viewed_container, Structure):
             result.__class__ = StructureReference
-        elif isinstance(viewed_container, ContainerArray):
-            result.__class__ = ContainerArrayReference
+        elif isinstance(viewed_container, Array):
+            result.__class__ = ArrayReference
         elif isinstance(viewed_container, Scalar):
             result = ArrayReference(dtype=viewed_container.dtype,
                                     shape=[1],
