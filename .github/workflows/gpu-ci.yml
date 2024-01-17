@@ -38,6 +38,7 @@ jobs:
       run: |
         source ~/.venv/bin/activate # activate venv
         export DACE_cache=single
+        echo "CUDACXX: $CUDACXX"
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
 
     - name: Run extra GPU tests
