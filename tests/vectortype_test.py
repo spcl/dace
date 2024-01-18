@@ -147,12 +147,14 @@ def test_vector_reduction_atomic():
 
 
 @pytest.mark.gpu
-@pytest.mark.skip(reason="timos: no idea why this is failing")
 def test_vector_reduction_gpu():
     """ 
     Tests "horizontal" summation (hadd) of vector types using 
     write-conflicted memlets.
     """
+    # Prerequisite for tests: CUDA compute capability >= 7.0
+    dace.Config.set('compiler', 'cuda', 'cuda_arch', value='70')
+    
     sdfg = dace.SDFG('vectorhadd_gpu')
     sdfg.add_array('A', [1], float4)
     sdfg.add_transient('gA', [1], float4, storage=dace.StorageType.GPU_Global)
