@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
 from __future__ import print_function
-import warnings
 import ctypes
 import aenum
 import inspect
@@ -773,7 +772,6 @@ class struct(typeclass):
         self.ctype_unaligned = name
         self.dtype = self
         self._parse_field_and_types(**fields_and_types)
-        warnings.warn('DaCe struct dtype is deprecated!')
 
     @property
     def fields(self):
