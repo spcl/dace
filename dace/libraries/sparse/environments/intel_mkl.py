@@ -61,6 +61,7 @@ class IntelMKLSparse:
             libfile = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', prefix + 'mkl_rt.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
+
         path = ctypes.util.find_library('mkl_rt')
         if not path:
             path = ctypes.util.find_library('mkl_rt.1')
