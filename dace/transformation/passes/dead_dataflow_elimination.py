@@ -231,6 +231,10 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Check incoming edges
             for e in state.in_edges(node):
+                # A reference set should not be removed
+                if e.dst_conn == 'set':
+                    return False
+
                 for l in state.memlet_tree(e).leaves():
                     # If data is connected to a side-effect tasklet/library node, cannot remove
                     if _has_side_effects(l.src, sdfg):
@@ -243,6 +247,11 @@ class DeadDataflowElimination(ppl.Pass):
 
             # If it is a stream and is read somewhere in the state, it may be popped after pushing
             if isinstance(desc, data.Stream) and node.data in access_set[0]:
+                return False
+
+            # If it is a reference, it may point to other data containers,
+            # be conservative for now
+            if isinstance(desc, data.Reference):
                 return False
 
         # Any other case can be marked as dead

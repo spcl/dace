@@ -205,6 +205,7 @@ def _copy_state(sdfg: SDFG,
 
     state_copy = copy.deepcopy(state)
     state_copy._label += '_copy'
+    state_copy.parent = sdfg
     sdfg.add_node(state_copy)
 
     in_conditions = []
@@ -696,9 +697,9 @@ def _get_internal_subset(internal_memlet: Memlet,
         return internal_memlet.subset
     if use_src_subset and use_dst_subset:
         raise ValueError('Source and destination subsets cannot be specified at the same time')
-    if use_src_subset:
+    if use_src_subset and internal_memlet.src_subset is not None:
         return internal_memlet.src_subset
-    if use_dst_subset:
+    if use_dst_subset and internal_memlet.dst_subset is not None:
         return internal_memlet.dst_subset
     return internal_memlet.subset
 

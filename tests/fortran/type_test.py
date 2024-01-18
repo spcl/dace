@@ -17,38 +17,38 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 
+from dace.transformation.passes.lift_struct_views import LiftStructViews
+from dace.transformation import pass_pipeline as ppl
+
 
 def test_fortran_frontend_basic_type():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
     """
     test_string = """
-                    PROGRAM type_test
-                    implicit none
-                    
-                    TYPE simple_type
-                        REAL:: w(5,5,5),z(5)
-                        INTEGER:: a       
-                        REAL :: name  
-                    END TYPE simple_type
+        PROGRAM type_test
+            implicit none
 
+            TYPE simple_type
+                REAL :: w(5,5,5), z(5)
+                INTEGER :: a
+                REAL :: name
+            END TYPE simple_type
 
-                    REAL :: d(5,5)
-                    CALL type_test_function(d)
-                    end
+            REAL :: d(5,5)
+            CALL type_test_function(d)
+        end
 
-                    SUBROUTINE type_test_function(d)
-                    REAL d(5,5)
-                    TYPE(simple_type) :: s
-                    s%w(1,1,1)=5.5
-                    !t=s
-                    d(2,1)=5.5+s%w(1,1,1)
-                    
-                    END SUBROUTINE type_test_function
-                    """
+        SUBROUTINE type_test_function(d)
+            REAL d(5,5)
+            TYPE(simple_type) :: s
+            s%w(1,1,1) = 5.5
+            d(2,1) = 5.5 + s%w(1,1,1)
+        END SUBROUTINE type_test_function
+    """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test")
     sdfg.simplify(verbose=True)
-    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
@@ -98,7 +98,7 @@ def test_fortran_frontend_basic_type2():
                     
                     END SUBROUTINE type_test2_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test2")
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=a)
