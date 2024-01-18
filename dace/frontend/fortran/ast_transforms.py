@@ -209,6 +209,20 @@ class StructDependencyLister(NodeVisitor):
             self.is_pointer.append(node.alloc)
             self.pointer_names.append(node.name)
 
+
+class StructMemberLister(NodeVisitor):
+    def __init__(self):
+        
+        self.members = []
+        self.is_pointer=[]
+        self.pointer_names=[]
+
+    def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+            self.members.append(node.type)
+            self.is_pointer.append(node.alloc)
+            self.pointer_names.append(node.name)
+
+
 class FindStructDefs(NodeVisitor):
     def __init__(self, name=None):
         self.name= name

@@ -1525,10 +1525,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
       
     parse_list={}
     what_to_parse_list={}
+    type_to_parse_list={}
     for i in parse_order:
         edges=simple_graph.in_edges(i)
         parse_list[i]=[]
         fands_list=[]
+        type_list=[]
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
@@ -1548,6 +1550,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     if jj in res.list_of_subroutines:
                         if jj not in fands_list:
                             fands_list.append(jj)
+                    if jj in res.list_of_types:
+                        if jj not in type_list:
+                            type_list.append(jj)        
         print("Module " + i + " used names: " + str(parse_list[i]))
         if len(fands_list)>0:
             print("Module " + i + " used fands: " + str(fands_list))
@@ -1559,8 +1564,13 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         fands_list.append(j)
                 if j in res.list_of_subroutines:
                     if j not in fands_list:
-                        fands_list.append(j)        
-        what_to_parse_list[i]=fands_list     
+                        fands_list.append(j)  
+                if j in res.list_of_types:
+                    if j not in type_list:
+                        type_list.append(j)        
+
+        what_to_parse_list[i]=fands_list  
+        type_to_parse_list[i]=type_list   
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
@@ -1570,8 +1580,37 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
             print("Module " + i.children[0].children[1].string + " not needing parsing")
         else:
-
+            types=[]
             subroutinesandfunctions=[]
+            new_spec_children=[]
+            for j in i.children[1].children:
+                if j.__class__.__name__=="Type_Declaration_Stmt":
+                    if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                        new_spec_children.append(j)    
+                    else:
+                        entity_decls=[]
+                        for k in j.children[2].children:
+                            if k.__class__.__name__=="Entity_Decl":
+                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                    entity_decls.append(k)
+                        if entity_decls==[]:
+                            continue            
+                        if j.children[2].children.__class__.__name__=="tuple":
+                            print("Assumption failed: Tuple not expected")
+                            new_spec_children.append(j)
+                            continue
+                        j.children[2].children.clear()
+                        for k in entity_decls:
+                            j.children[2].children.append(k)            
+                        new_spec_children.append(j)
+                if j.__class__.__name__=="Derived_Type_Def":
+                    if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                        new_spec_children.append(j)
+                else:
+                    new_spec_children.append(j)
+            i.children[1].children.clear()
+            for j in new_spec_children:
+                i.children[1].children.append(j)        
             if i.children[2].__class__.__name__=="End_Module_Stmt":
                 new_children.append(i)
                 continue
@@ -1658,7 +1697,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         partial_ast.current_ast=i
         
         partial_ast.unsupported_fortran_syntax[i]=[]
-        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "ppm_extents","mo_cdi","iso_fortran_env"]:
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "mo_cdi","iso_fortran_env"]:
             continue
        
         partial_ast.add_name_list_for_module(i, name_dict[i])
@@ -1725,11 +1764,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.function_definitions=[]
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
-
+    print("Before intrinsics")
     for transformation in partial_ast.fortran_intrinsics().transformations():
         transformation.initialize(program)
         program = transformation.visit(program)
-
+    print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program).visit(program)
     structs_lister=ast_transforms.StructLister()
@@ -1767,7 +1806,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     if len(cycles_we_cannot_ignore)>0:
         raise NameError("Structs have cyclic dependencies")
 
-
+    for struct,name in zip(structs_lister.structs,structs_lister.names):
+        struct_member_finder=ast_transforms.StructMemberLister()
+        struct_member_finder.visit(struct)
+        for member,is_pointer,point_name in zip(struct_member_finder.members,struct_member_finder.is_pointer,struct_member_finder.pointer_names):
+            if is_pointer:    
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(name,member,point_name)
+                actually_used_pointer_node_finder.visit(program)
+                print("Struct Name: ",name," Member Name: ",member, " Uses: ", len(actually_used_pointer_node_finder.nodes))
+                if len(actually_used_pointer_node_finder.nodes)==0:
+                    print("We can delete this member")
+                    program=ast_transforms.StructPointerEliminator(name,member,point_name).visit(program)
+                
 
     program.tables=partial_ast.symbols
     program.functions_and_subroutines=partial_ast.functions_and_subroutines

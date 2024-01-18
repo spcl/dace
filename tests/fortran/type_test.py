@@ -74,19 +74,27 @@ def test_fortran_frontend_basic_type2():
                         REAL:: b
                     END TYPE comlex_type
 
+                    TYPE meta_type
+                        TYPE(comlex_type):: cc
+                        REAL:: omega
+                    END TYPE meta_type
+
                     REAL :: d(5,5)
                     CALL type_test2_function(d)
                     end
 
                     SUBROUTINE type_test2_function(d)
                     REAL d(5,5)
-                    TYPE(simple_type) :: s(3)
+                    TYPE(simple_type) :: stype(3)
                     TYPE(comlex_type) :: c
+                    TYPE(meta_type) :: m
                     
-                    c%b=1.0
+                    !c%b=1.0
                     c%s%w(1,1,1)=5.5
-                    s(1)%w(1,1,1)=5.5+c%b
-                    d(2,1)=c%s%w(1,1,1)+s(1)%w(1,1,1)
+                    !m%cc%s%a=17
+                    !s(1)%w(1,1,1)=5.5+c%b
+                    d(2,1)=c%s%w(1,1,1)
+                    !+s(1)%w(1,1,1)
                     
                     END SUBROUTINE type_test2_function
                     """
@@ -156,7 +164,7 @@ def test_fortran_frontend_circular_type():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_basic_type()
-    #test_fortran_frontend_basic_type2()
+    #test_fortran_frontend_basic_type()
+    test_fortran_frontend_basic_type2()
 
     #test_fortran_frontend_circular_type()

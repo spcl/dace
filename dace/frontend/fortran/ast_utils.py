@@ -89,6 +89,21 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
          while(changed):
             changed=False 
             for used_name in actually_used:
+                for var in res.list_of_module_vars:
+                    for ii in var.children:
+                        if ii.__class__.__name__=="Entity_Decl_List":
+                                for iii in ii.children:
+                                    if iii.__class__.__name__=="Entity_Decl":
+                                        if iii.children[0].string==used_name:
+                                            for j in var.children:
+                                                #print("USED: "+ used_name)
+                                                if j.__class__.__name__=="Declaration_Type_Spec":
+                                                    for k in j.children:
+                                                        if k.__class__.__name__=="Type_Name":
+                                                            if k.string not in actually_used:
+                                                                actually_used.append(k.string)
+                                                                changed=True
+
                 if used_name in res.list_of_types:
                     for used_in_type in res.names_in_types[used_name]:
                         if used_in_type not in actually_used and used_in_type in res.list_of_types:
@@ -636,6 +651,7 @@ class FunctionSubroutineLister:
         self.names_in_subroutines={}
         self.list_of_types=[]
         self.names_in_types={}
+        self.list_of_module_vars=[]
         
 
     def get_functions_and_subroutines(self, node):
@@ -654,6 +670,13 @@ class FunctionSubroutineLister:
                         self.names_in_subroutines[j.string] = nl.list_of_names
                         self.names_in_subroutines[j.string] += tnl.list_of_typenames
                         self.list_of_subroutines.append(j.string)
+            elif i.__class__.__name__ == "Type_Declaration_Stmt":
+                if node.__class__.__name__ == "Specification_Part":
+                    if node.parent.__class__.__name__ == "Module":
+                        
+                        self.list_of_module_vars.append(i)
+                        
+
             elif i.__class__.__name__ == "Derived_Type_Def":
                         name=i.children[0].children[1].string
                         nl = NameLister()

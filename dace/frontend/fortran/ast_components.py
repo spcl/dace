@@ -346,9 +346,17 @@ class InternalFortranAst:
     
     def data_ref(self, node: FASTNode):
         children = self.create_children(node)
-        parent = children[0]
-        part_ref = children[1]
-        return ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=part_ref,type="VOID")
+        idx=len(children)-1
+        parent = children[idx-1]
+        part_ref = children[idx]
+        idx=idx-1
+        current=ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=part_ref,type="VOID")
+        
+        while idx>0:
+            parent = children[idx-1]
+            current = ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=current,type="VOID")   
+            idx=idx-1
+        return current
 
     def end_type_stmt(self, node: FASTNode):
         return None
