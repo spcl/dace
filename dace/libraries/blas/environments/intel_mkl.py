@@ -45,7 +45,6 @@ class IntelMKL:
                           'be found. Please install MKL includes with '
                           '"conda install mkl-include" or set the MKLROOT environment '
                           'variable')
-            return []
         else:
             return []
 

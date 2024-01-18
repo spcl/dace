@@ -8,6 +8,11 @@ on:
   merge_group:
     branches: [ master, ci-fix ]
 
+env:
+  CUDACXX: /usr/local/cuda/bin/nvcc
+  MKLROOT: /opt/intel/oneapi/mkl/latest/
+
+
 jobs:
   test-gpu:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
@@ -20,10 +25,12 @@ jobs:
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
-        . /opt/setupenv
+        python -m venv ~/.venv      # create venv so we can use pip
+        source ~/.venv/bin/activate # activate venv
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
         pip install mpi4py
+        pip install cupy
         pip uninstall -y dace
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
@@ -31,27 +38,30 @@ jobs:
 
     - name: Test dependencies
       run: |
+        source ~/.venv/bin/activate # activate venv
         nvidia-smi
 
     - name: Run pytest GPU
       run: |
+        source ~/.venv/bin/activate # activate venv
         export DACE_cache=single
-        . /opt/setupenv
+        export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
+        echo "CUDACXX: $CUDACXX"
         pytest --cov-report=xml --cov=dace --tb=short -m "gpu"
 
     - name: Run extra GPU tests
       run: |
+        source ~/.venv/bin/activate # activate venv
         export NOSTATUSBAR=1
         export DACE_cache=single
         export COVERAGE_RCFILE=`pwd`/.coveragerc
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
-        . /opt/setupenv
         ./tests/cuda_test.sh
 
     - name: Report overall coverage
       run: |
+        source ~/.venv/bin/activate # activate venv
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        . /opt/setupenv
         coverage combine . */; coverage report; coverage xml
         reachable=0
         ping -W 2 -c 1 codecov.io || reachable=$?
