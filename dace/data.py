@@ -1228,6 +1228,10 @@ class Scalar(Data):
         return 0
 
     @property
+    def alignment(self):
+        return 0
+
+    @property
     def optional(self) -> bool:
         return False
 
@@ -1867,7 +1871,7 @@ class View:
                                    start_offset=viewed_container.start_offset,
                                    optional=viewed_container.optional,
                                    pool=viewed_container.pool)
-        elif isinstance(viewed_container, Array):
+        elif isinstance(viewed_container, (Array, Scalar)):
             result = ArrayView(dtype=viewed_container.dtype,
                                shape=viewed_container.shape,
                                allow_conflicts=viewed_container.allow_conflicts,
@@ -1917,12 +1921,24 @@ class Reference:
         # Assign the right kind of reference from the input data container
         # NOTE: The class assignment below is OK since the Reference class is a subclass of the instance,
         # and those should not have additional fields.
-        if isinstance(viewed_container, Array):
-            result.__class__ = ArrayReference
+        if isinstance(viewed_container, ContainerArray):
+            result.__class__ = ContainerArrayReference
         elif isinstance(viewed_container, Structure):
             result.__class__ = StructureReference
-        elif isinstance(viewed_container, ContainerArray):
-            result.__class__ = ContainerArrayReference
+        elif isinstance(viewed_container, Array):
+            result.__class__ = ArrayReference
+        elif isinstance(viewed_container, Scalar):
+            result = ArrayReference(dtype=viewed_container.dtype,
+                                    shape=[1],
+                                    storage=viewed_container.storage,
+                                    lifetime=viewed_container.lifetime,
+                                    alignment=viewed_container.alignment,
+                                    debuginfo=viewed_container.debuginfo,
+                                    total_size=1,
+                                    start_offset=0,
+                                    optional=viewed_container.optional,
+                                    pool=False,
+                                    byval=False)
         else:  # In undefined cases, make a container array reference of size 1
             result = ContainerArrayReference(result, [1], debuginfo=debuginfo)
 
