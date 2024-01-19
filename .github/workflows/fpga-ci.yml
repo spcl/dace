@@ -34,11 +34,11 @@ jobs:
         python -m venv ~/.venv      # create venv so we can use pip
         source ~/.venv/bin/activate # activate venv
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        export PATH=/opt/Xilinx/Vitis/2021.1/bin:/opt/Xilinx/Vitis_HLS/2021.1/bin:/opt/Xilinx/Vivado/2021.1/bin:$PATH
+        export PATH=/opt/Xilinx/Vitis/2022.1/bin:/opt/Xilinx/Vitis_HLS/2022.1/bin:/opt/Xilinx/Vivado/2022.1/bin:$PATH
         export XILINX_XRT=/opt/xilinx/xrt
         export PATH=$XILINX_XRT/bin:$PATH
         export LD_LIBRARY_PATH=$XILINX_XRT/lib:$LD_LIBRARY_PATH
-        export XILINX_VITIS=/opt/Xilinx/Vitis/2021.1
+        export XILINX_VITIS=/opt/Xilinx/Vitis/2022.1
         # Due to an internal bug in the Xilinx tools, where the current datetime is passed as an integer
         # and overflowed in the year 2022, run the FPGA tests pretending like it's January 1st 2021.
         faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
