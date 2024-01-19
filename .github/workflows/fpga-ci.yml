@@ -20,9 +20,10 @@ jobs:
       run: |
         rm -f ~/.dace.conf
         rm -rf .dacecache tests/.dacecache
-        . /opt/setupenv
+        python -m venv ~/.venv      # create venv so we can use pip
+        source ~/.venv/bin/activate # activate venv
         python -m pip install --upgrade pip
-        pip install pytest-xdist flake8 coverage
+        pip install pytest-xdist flake8 coverage click
         pip uninstall -y dace
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
