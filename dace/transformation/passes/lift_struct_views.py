@@ -31,8 +31,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         self.state = state
 
     def visit_Attribute(self, node: ast.Attribute) -> Any:
-        if not node.value or node.value.id != self.connector:
-            return node
+        if not node.value or not isinstance(node.value, ast.Name) or node.value.id != self.connector:
+            return self.generic_visit(node)
 
         if not node.attr in self.data.members:
             raise RuntimeError('Structure attribute is not a member of the structure type definition')
@@ -58,9 +58,14 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             view = self.state.sdfg.arrays[view_name]
         except KeyError:
             member: dt.Data = self.data.members[node.attr]
-            view_name, view = self.state.sdfg.add_view(view_name, member.shape, member.dtype, member.storage,
-                                                       member.strides,
-                                                       member.offset if isinstance(member, dt.Array) else None)
+            if isinstance(member, dt.Structure):
+                view = dt.StructureView(member.members, view_name, member.transient, member.storage, member.location,
+                                        member.lifetime, member.debuginfo)
+                self.state.sdfg.add_datadesc(view_name, view)
+            else:
+                view_name, view = self.state.sdfg.add_view(view_name, member.shape, member.dtype, member.storage,
+                                                           member.strides,
+                                                           member.offset if isinstance(member, dt.Array) else None)
 
         # Add an access node for the view and connect it appropriately.
         view_node = self.state.add_access(view_name)
