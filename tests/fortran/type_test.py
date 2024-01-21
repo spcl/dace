@@ -162,8 +162,6 @@ def test_fortran_frontend_circular_type():
     assert (a[2, 0] == 42)
 
 if __name__ == "__main__":
-
-    #test_fortran_frontend_basic_type()
+    test_fortran_frontend_basic_type()
     test_fortran_frontend_basic_type2()
-
-    #test_fortran_frontend_circular_type()
+    test_fortran_frontend_circular_type()
