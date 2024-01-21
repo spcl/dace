@@ -61,7 +61,7 @@ def test_fortran_frontend_basic_type2():
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
     """
     test_string = """
-                    PROGRAM type_test2
+                    PROGRAM type2_test
                     implicit none
                     
                     TYPE simple_type
@@ -80,25 +80,24 @@ def test_fortran_frontend_basic_type2():
                     END TYPE meta_type
 
                     REAL :: d(5,5)
-                    CALL type_test2_function(d)
+                    CALL type2_test_function(d)
                     end
 
-                    SUBROUTINE type_test2_function(d)
+                    SUBROUTINE type2_test_function(d)
                     REAL d(5,5)
-                    TYPE(simple_type) :: stype(3)
+                    TYPE(simple_type) :: s(3)
                     TYPE(comlex_type) :: c
                     TYPE(meta_type) :: m
                     
                     !c%b=1.0
                     c%s%w(1,1,1)=5.5
-                    !m%cc%s%a=17
-                    !s(1)%w(1,1,1)=5.5+c%b
-                    d(2,1)=c%s%w(1,1,1)
-                    !+s(1)%w(1,1,1)
+                    m%cc%s%a=17
+                    s(1)%w(1,1,1)=5.5+c%b
+                    d(2,1)=c%s%w(1,1,1)+s(1)%w(1,1,1)
                     
-                    END SUBROUTINE type_test2_function
+                    END SUBROUTINE type2_test_function
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test2")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type2_test")
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=a)

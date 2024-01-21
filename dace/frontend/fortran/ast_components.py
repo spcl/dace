@@ -119,6 +119,7 @@ class InternalFortranAst:
         self.current_ast=None
         self.functions_and_subroutines = []
         self.symbols = {}
+        self.intrinsics_list = []
         self.rename_list = {}
         self.types = {
             "LOGICAL": "BOOL",
@@ -325,13 +326,17 @@ class InternalFortranAst:
             try:
                 return self.supported_fortran_syntax[type(node).__name__](node)
             except KeyError:
+                if type(node).__name__=="Intrinsic_Name":
+                    if node not in self.intrinsics_list:
+                        self.intrinsics_list.append(node)
                 if self.unsupported_fortran_syntax.get(self.current_ast) is None:
                     self.unsupported_fortran_syntax[self.current_ast] = []
                 if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]:
-                    self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
+                    if type(node).__name__ not in self.unsupported_fortran_syntax[self.current_ast]: 
+                        self.unsupported_fortran_syntax[self.current_ast].append(type(node).__name__)
                 for i in node.children:
                     self.create_ast(i)
-                print("Unsupported syntax: ", type(node).__name__, node.string)
+                #print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
             except Exception as e:
                 print("Error in create_ast: ", e)
@@ -579,7 +584,7 @@ class InternalFortranAst:
         args = get_child(children, ast_internal_classes.Arg_List_Node)
         
         if name is None:
-            return Name_Node(name="Error!",type='VOID')
+            return Name_Node(name="Error! "+node.children[0].string,type='VOID')
         return self.intrinsic_handler.replace_function_reference(name, args, line,self.symbols)
 
 
@@ -879,6 +884,7 @@ class InternalFortranAst:
                                                             sizes=size,
                                                             offsets=offset,
                                                             kind=kind,
+                                                            init=init,
                                                             optional=optional,
                                                             line_number=node.item.span))
                     else:
@@ -891,6 +897,7 @@ class InternalFortranAst:
                                                             sizes=sizes,
                                                             offsets=offset,
                                                             kind=kind,
+                                                            init=init,
                                                             optional=optional,
                                                             line_number=node.item.span))
                 else:
@@ -901,6 +908,7 @@ class InternalFortranAst:
                                                         sizes=attr_size,
                                                         offsets=attr_offset,
                                                         kind=kind,
+                                                        init=init,
                                                         optional=optional,
                                                         line_number=node.item.span))
             else:
@@ -1370,7 +1378,11 @@ class InternalFortranAst:
         return node
 
     def int_literal_constant(self, node: FASTNode):
-        return ast_internal_classes.Int_Literal_Node(value=node.string,type="INTEGER")
+        value=node.string
+        if value.find("_")!=-1:
+            x=value.split("_")
+            value=x[0]
+        return ast_internal_classes.Int_Literal_Node(value=value,type="INTEGER")
     
     def hex_constant(self, node: FASTNode):
         return ast_internal_classes.Int_Literal_Node(value=str(int(node.string[2:-1],16)),type="INTEGER")
@@ -1383,7 +1395,11 @@ class InternalFortranAst:
         raise ValueError("Unknown logical literal constant")
 
     def real_literal_constant(self, node: FASTNode):
-        return ast_internal_classes.Real_Literal_Node(value=node.children[0].lower(),type="REAL")
+        value=node.children[0].lower()
+        if value.find("_")!=-1:
+            x=value.split("_")
+            value=x[0]
+        return ast_internal_classes.Real_Literal_Node(value=value,type="REAL")
     
     def char_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Char_Literal_Node(value=node.string,type="CHAR")

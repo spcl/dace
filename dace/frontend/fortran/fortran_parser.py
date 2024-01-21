@@ -170,7 +170,8 @@ class AST_translator:
         self.globalsdfg = sdfg
         for i in node.modules:
             structs_lister=ast_transforms.StructLister()
-            structs_lister.visit(i.specification_part)
+            if i.specification_part is not None:
+                structs_lister.visit(i.specification_part)
             struct_dep_graph=nx.DiGraph()
             for ii,name in zip(structs_lister.structs,structs_lister.names):
                 if name not in struct_dep_graph.nodes:
@@ -191,14 +192,15 @@ class AST_translator:
                         if j.__class__.__name__ != "Derived_Type_Def_Node":
                             for k in j.vardecl:
                                 self.module_vars.append((k.name, i.name))
-            for j in i.specification_part.symbols:
+            if i.specification_part is not None:                                
+              for j in i.specification_part.symbols:
                 self.translate(j, sdfg)
                 if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
                     self.module_vars.append((j.name, i.name))
                 else:
                     for k in j.vardecl:
                         self.module_vars.append((k.name, i.name))
-            for j in i.specification_part.specifications:
+              for j in i.specification_part.specifications:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
@@ -709,6 +711,7 @@ class AST_translator:
                 outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
             new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], dtypes.int32, transient=False)
         addedmemlets = []
+        
         globalmemlets = []
         # This handles the case where the function is called with read variables found in a module
         for i in not_found_read_names:
@@ -872,7 +875,7 @@ class AST_translator:
                                             self.name_mapping[new_sdfg][local_name.name], memlet)
 
         for i in addedmemlets:
-
+            local_name=ast_internal_classes.Name_Node(name=i)
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
@@ -881,7 +884,7 @@ class AST_translator:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
                                         self.name_mapping[new_sdfg][i], memlet)
         for i in globalmemlets:
-
+            local_name=ast_internal_classes.Name_Node(name=i)
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
@@ -1190,6 +1193,9 @@ class AST_translator:
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
 
+        if hasattr(node,"init") and node.init is not None:
+            self.translate(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name,type=node.type),op="=",rval=node.init,line_number=node.line_number), sdfg)    
+
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
 
         self.last_loop_breaks[sdfg] = self.last_sdfg_states[sdfg]
@@ -1242,7 +1248,8 @@ def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
     normalize_offsets: bool = False,
-    multiple_sdfgs: bool = False
+    multiple_sdfgs: bool = False,
+    sources: List[str] = None,
 ):
     """
     Creates an SDFG from a fortran file in a string
@@ -1254,6 +1261,166 @@ def create_sdfg_from_string(
     parser = pf().create(std="f2008")
     reader = fsr(source_string)
     ast = parser(reader)
+
+    exclude_list = []
+    missing_modules = []
+    dep_graph = nx.DiGraph()
+    asts = {}
+    actually_used_in_module={}
+    ast = recursive_ast_improver(ast,
+                                 sources,
+                                 [],
+                                 parser,
+                                 exclude_list=exclude_list,
+                                 missing_modules=missing_modules,
+                                 dep_graph=dep_graph,
+                                 asts=asts)
+    
+    print(dep_graph)
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
+    
+    changed=True
+    while changed:
+        
+        simpler_graph=simple_graph.copy()
+        simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
+        if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
+            changed=False
+
+
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
+      
+    parse_list={}
+    what_to_parse_list={}
+    type_to_parse_list={}
+    for i in parse_order:
+        edges=simple_graph.in_edges(i)
+        parse_list[i]=[]
+        fands_list=[]
+        type_list=[]
+        res=simple_graph.nodes.get(i).get("info_list")
+        for j in edges:
+            deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            print(j[0],j[1],deps)
+            if deps is None:   
+                continue
+            for k in deps:
+                if k.string not in parse_list[i]:
+                    parse_list[i].append(k.string)
+            
+            
+            if res is not None:
+                for jj in parse_list[i]:
+                    if jj in res.list_of_functions:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_subroutines:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_types:
+                        if jj not in type_list:
+                            type_list.append(jj)        
+        print("Module " + i + " used names: " + str(parse_list[i]))
+        if len(fands_list)>0:
+            print("Module " + i + " used fands: " + str(fands_list))
+            print("ACtually used: "+str(actually_used_in_module[i]))
+        for j in actually_used_in_module[i]:
+            if res is not None:
+                if j in res.list_of_functions:
+                    if j not in fands_list:
+                        fands_list.append(j)
+                if j in res.list_of_subroutines:
+                    if j not in fands_list:
+                        fands_list.append(j)  
+                if j in res.list_of_types:
+                    if j not in type_list:
+                        type_list.append(j)        
+
+        what_to_parse_list[i]=fands_list  
+        type_to_parse_list[i]=type_list   
+    top_level_ast = parse_order.pop()
+    changes=True
+    new_children=[]
+    
+    for i in ast.children:
+    
+        if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+            print("Module " + i.children[0].children[1].string + " not needing parsing")
+        else:
+            types=[]
+            subroutinesandfunctions=[]
+            new_spec_children=[]
+            for j in i.children[1].children:
+                if j.__class__.__name__=="Type_Declaration_Stmt":
+                    if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                        new_spec_children.append(j) 
+                        continue   
+                    else:
+                        entity_decls=[]
+                        for k in j.children[2].children:
+                            if k.__class__.__name__=="Entity_Decl":
+                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                    entity_decls.append(k)
+                        if entity_decls==[]:
+                            continue            
+                        if j.children[2].children.__class__.__name__=="tuple":
+                            print("Assumption failed: Tuple not expected")
+                            new_spec_children.append(j)
+                            continue
+                        j.children[2].children.clear()
+                        for k in entity_decls:
+                            j.children[2].children.append(k)            
+                        new_spec_children.append(j)
+                elif j.__class__.__name__=="Derived_Type_Def":
+                    if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                        new_spec_children.append(j)
+                else:
+                    new_spec_children.append(j)
+            i.children[1].children.clear()
+            for j in new_spec_children:
+                i.children[1].children.append(j)        
+            if i.children[2].__class__.__name__=="End_Module_Stmt":
+                new_children.append(i)
+                continue
+            if i.children[0].children[1].string!=top_level_ast:
+                for j in i.children[2].children:
+                    if j.__class__.__name__!="Contains_Stmt":
+
+                        if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                            subroutinesandfunctions.append(j)        
+                i.children[2].children.clear()
+                for j in subroutinesandfunctions:
+                    i.children[2].children.append(j)        
+            new_children.append(i)
+
+    ast.children.clear()
+    for i in new_children:
+        ast.children.append(i)  
+    name_dict = {}
+    rename_dict = {}
+    for i in parse_order:
+        local_rename_dict = {}
+        edges = list(simple_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
+        name_dict[i] = names
+    
+                    
+
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
 
@@ -1457,8 +1624,13 @@ def recursive_ast_improver(ast,
                 missing_modules.append(i)
             #raise Exception("Module " + i + " not found in source list")
             continue
-        next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
-        next_ast = parser(next_reader)
+        if isinstance(source_list,dict):
+            reader = fsr(source_list[next_file])
+            next_ast = parser(reader)
+            
+        else:
+            next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+            next_ast = parser(next_reader)
 
         next_ast = recursive_ast_improver(next_ast,
                                           source_list,

@@ -2,6 +2,7 @@
 from abc import abstractmethod
 import copy
 import math
+import sys
 from collections import namedtuple
 from typing import Any, List, Optional, Set, Tuple, Type
 
@@ -200,10 +201,19 @@ class DirectReplacement(IntrinsicTransformation):
         test_var_name = f'__dace_OPTIONAL_{var_name}'
 
         return (ast_internal_classes.Name_Node(name=test_var_name), "BOOL")
+    
+    def replacement_epsilon(args: ast_internal_classes.Arg_List_Node, line, symbols: list):
+
+        #assert len(args) == 1
+        #assert isinstance(args[0], ast_internal_classes.Name_Node)
+
+        ret_val=sys.float_info.epsilon
+        return ast_internal_classes.Real_Literal_Node(value=str(ret_val))
 
     FUNCTIONS = {
         "SELECTED_INT_KIND": Replacement(replace_int_kind),
         "SELECTED_REAL_KIND": Replacement(replace_real_kind),
+        "EPSILON": Replacement(replacement_epsilon),
         "BIT_SIZE": Transformation(replace_bit_size),
         "SIZE": Transformation(replace_size),
         "PRESENT": Transformation(replace_present)
@@ -1197,6 +1207,10 @@ class MathFunctions(IntrinsicTransformation):
         # pack it into parentheses, just to be sure
         return ast_internal_classes.Parenthesis_Expr_Node(expr=mult)
 
+    def generate_epsilon(arg: ast_internal_classes.Call_Expr_Node):
+        ret_val=sys.float_info.epsilon
+        return ast_internal_classes.Real_Literal_Node(value=str(ret_val))
+
     def generate_aint(arg: ast_internal_classes.Call_Expr_Node):
 
         # The call to AINT can contain a second KIND parameter
@@ -1231,6 +1245,7 @@ class MathFunctions(IntrinsicTransformation):
         "SQRT": MathTransformation("sqrt", "FIRST_ARG"),
         "ABS": MathTransformation("abs", "FIRST_ARG"),
         "EXP": MathTransformation("exp", "FIRST_ARG"),
+        "EPSILON": MathReplacement(None, generate_epsilon,"FIRST_ARG"),
         # Documentation states that the return type of LOG is always REAL,
         # but the kind is the same as of the first argument.
         # However, we already replaced kind with types used in DaCe.
