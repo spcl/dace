@@ -1081,7 +1081,12 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     :param node: The AST to be transformed
     :return: The transformed AST
     """
-    spec = node.specification_part.specifications
+    if node is None:
+        return None
+    if hasattr(node,"specification_part"):
+        spec = node.specification_part.specifications
+    else:
+        spec = []    
     exec = node.execution_part.execution
     new_exec = exec.copy()
     to_change = []

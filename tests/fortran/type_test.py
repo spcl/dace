@@ -46,7 +46,9 @@ def test_fortran_frontend_basic_type():
             d(2,1) = 5.5 + s%w(1,1,1)
         END SUBROUTINE type_test_function
     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test")
+    sources={}
+    sources["type_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_test",sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -162,6 +164,6 @@ def test_fortran_frontend_circular_type():
     assert (a[2, 0] == 42)
 
 if __name__ == "__main__":
-    test_fortran_frontend_basic_type()
+    #est_fortran_frontend_basic_type()
     test_fortran_frontend_basic_type2()
-    test_fortran_frontend_circular_type()
+    #test_fortran_frontend_circular_type()

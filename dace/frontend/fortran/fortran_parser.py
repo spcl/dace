@@ -1338,86 +1338,90 @@ def create_sdfg_from_string(
                         type_list.append(j)        
 
         what_to_parse_list[i]=fands_list  
-        type_to_parse_list[i]=type_list   
-    top_level_ast = parse_order.pop()
+        type_to_parse_list[i]=type_list 
+    
+    if len(parse_order)==0:
+        top_level_ast=ast
+    else:
+        top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
-    
-    for i in ast.children:
-    
-        if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
-            print("Module " + i.children[0].children[1].string + " not needing parsing")
-        else:
-            types=[]
-            subroutinesandfunctions=[]
-            new_spec_children=[]
-            for j in i.children[1].children:
-                if j.__class__.__name__=="Type_Declaration_Stmt":
-                    if j.children[0].__class__.__name__!="Declaration_Type_Spec":
-                        new_spec_children.append(j) 
-                        continue   
-                    else:
-                        entity_decls=[]
-                        for k in j.children[2].children:
-                            if k.__class__.__name__=="Entity_Decl":
-                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
-                                    entity_decls.append(k)
-                        if entity_decls==[]:
-                            continue            
-                        if j.children[2].children.__class__.__name__=="tuple":
-                            print("Assumption failed: Tuple not expected")
+    if len(parse_order)>0:
+        for i in ast.children:
+        
+            if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+                print("Module " + i.children[0].children[1].string + " not needing parsing")
+            else:
+                types=[]
+                subroutinesandfunctions=[]
+                new_spec_children=[]
+                for j in i.children[1].children:
+                    if j.__class__.__name__=="Type_Declaration_Stmt":
+                        if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                            new_spec_children.append(j) 
+                            continue   
+                        else:
+                            entity_decls=[]
+                            for k in j.children[2].children:
+                                if k.__class__.__name__=="Entity_Decl":
+                                    if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                        entity_decls.append(k)
+                            if entity_decls==[]:
+                                continue            
+                            if j.children[2].children.__class__.__name__=="tuple":
+                                print("Assumption failed: Tuple not expected")
+                                new_spec_children.append(j)
+                                continue
+                            j.children[2].children.clear()
+                            for k in entity_decls:
+                                j.children[2].children.append(k)            
                             new_spec_children.append(j)
-                            continue
-                        j.children[2].children.clear()
-                        for k in entity_decls:
-                            j.children[2].children.append(k)            
-                        new_spec_children.append(j)
-                elif j.__class__.__name__=="Derived_Type_Def":
-                    if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
-                        new_spec_children.append(j)
-                else:
-                    new_spec_children.append(j)
-            i.children[1].children.clear()
-            for j in new_spec_children:
-                i.children[1].children.append(j)        
-            if i.children[2].__class__.__name__=="End_Module_Stmt":
-                new_children.append(i)
-                continue
-            if i.children[0].children[1].string!=top_level_ast:
-                for j in i.children[2].children:
-                    if j.__class__.__name__!="Contains_Stmt":
-
-                        if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
-                            subroutinesandfunctions.append(j)        
-                i.children[2].children.clear()
-                for j in subroutinesandfunctions:
-                    i.children[2].children.append(j)        
-            new_children.append(i)
-
-    ast.children.clear()
-    for i in new_children:
-        ast.children.append(i)  
-    name_dict = {}
-    rename_dict = {}
-    for i in parse_order:
-        local_rename_dict = {}
-        edges = list(simple_graph.in_edges(i))
-        names = []
-        for j in edges:
-            list_dict = simple_graph.get_edge_data(j[0], j[1])
-            if (list_dict['obj_list'] is not None):
-                for k in list_dict['obj_list']:
-                    if not k.__class__.__name__ == "Name":
-                        if k.__class__.__name__ == "Rename":
-                            if k.children[2].string not in names:
-                                names.append(k.children[2].string)
-                            local_rename_dict[k.children[2].string] = k.children[1].string
-                        #print("Assumption failed: Object list contains non-name node")
+                    elif j.__class__.__name__=="Derived_Type_Def":
+                        if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                            new_spec_children.append(j)
                     else:
-                        if k.string not in names:
-                            names.append(k.string)
-        rename_dict[i] = local_rename_dict
-        name_dict[i] = names
+                        new_spec_children.append(j)
+                i.children[1].children.clear()
+                for j in new_spec_children:
+                    i.children[1].children.append(j)        
+                if i.children[2].__class__.__name__=="End_Module_Stmt":
+                    new_children.append(i)
+                    continue
+                if i.children[0].children[1].string!=top_level_ast:
+                    for j in i.children[2].children:
+                        if j.__class__.__name__!="Contains_Stmt":
+
+                            if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                                subroutinesandfunctions.append(j)        
+                    i.children[2].children.clear()
+                    for j in subroutinesandfunctions:
+                        i.children[2].children.append(j)        
+                new_children.append(i)
+
+        ast.children.clear()
+        for i in new_children:
+            ast.children.append(i)  
+        name_dict = {}
+        rename_dict = {}
+        for i in parse_order:
+            local_rename_dict = {}
+            edges = list(simple_graph.in_edges(i))
+            names = []
+            for j in edges:
+                list_dict = simple_graph.get_edge_data(j[0], j[1])
+                if (list_dict['obj_list'] is not None):
+                    for k in list_dict['obj_list']:
+                        if not k.__class__.__name__ == "Name":
+                            if k.__class__.__name__ == "Rename":
+                                if k.children[2].string not in names:
+                                    names.append(k.children[2].string)
+                                local_rename_dict[k.children[2].string] = k.children[1].string
+                            #print("Assumption failed: Object list contains non-name node")
+                        else:
+                            if k.string not in names:
+                                names.append(k.string)
+            rename_dict[i] = local_rename_dict
+            name_dict[i] = names
     
                     
 
