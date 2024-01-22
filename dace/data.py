@@ -2085,6 +2085,9 @@ class StructureReference(Structure, Reference):
         if self.lifetime != dtypes.AllocationLifetime.Scope:
             raise ValueError('Only Scope allocation lifetime is supported for References')
 
+        if 'set' in self.members:
+            raise NameError('A structure that is referenced may not contain a member called "set" (reserved keyword).')
+
     def as_structure(self):
         copy = cp.deepcopy(self)
         copy.__class__ = Structure
