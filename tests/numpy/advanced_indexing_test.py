@@ -304,6 +304,26 @@ def test_out_index_intarr_multidim():
     assert np.allclose(A, ref)
 
 
+@pytest.mark.parametrize('tuple_index', (False, True))
+def test_advanced_indexing_syntax(tuple_index):
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N]):
+        if tuple_index:
+            A[(1, 2, 3), ] = 2
+        else:
+            A[[1, 2, 3]] = 2
+        A[(1, 2, 3)] = 1
+
+    A = np.random.rand(20, 20, 20)
+    ref = np.copy(A)
+    ref[(1, 2, 3), ] = 2
+    ref[(1, 2, 3)] = 1
+    indexing_test(A)
+
+    assert np.allclose(A, ref)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -326,3 +346,5 @@ if __name__ == '__main__':
     test_out_index_intarr_aug()
     test_out_index_intarr_aug_bcast()
     test_out_index_intarr_multidim()
+    test_advanced_indexing_syntax(False)
+    test_advanced_indexing_syntax(True)
