@@ -872,6 +872,7 @@ class InternalFortranAst:
                 init = self.create_ast(raw_init)
             #if size_later:
             #    size.append(len(init)) 
+            if testtype!="INTEGER": symbol=False    
             if symbol == False:
 
                 if attr_size is None:

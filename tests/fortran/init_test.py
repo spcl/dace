@@ -64,6 +64,50 @@ def test_fortran_frontend_init():
     assert (a[2] == 42)
 
 
+def test_fortran_frontend_init2():
+    """
+    Tests that the Fortran frontend can parse complex initializations.
+    """
+    test_string = """
+                    PROGRAM init2_test
+                    implicit none
+                    USE init2_test_module_subroutine, ONLY: init2_test_function
+                    double precision d(4)
+                    CALL init2_test_function(d)
+                    end
+                    
+
+                    """
+    sources={}
+    sources["init2_test"]=test_string
+    sources["init2_test_module_subroutine.f90"]="""
+                    MODULE init2_test_module_subroutine
+                    CONTAINS
+                    SUBROUTINE init2_test_function(d)
+                    USE init2_test_module, ONLY: TORUS_MAX_LAT
+                    double precision d(4)
+                    
+
+                    d(2)=5.5 + TORUS_MAX_LAT
+                    
+                    END SUBROUTINE init2_test_function
+                    END MODULE init2_test_module_subroutine
+                    """
+    sources["init2_test_module.f90"]="""
+                    MODULE init2_test_module
+                    IMPLICIT NONE
+                    REAL, PARAMETER :: TORUS_MAX_LAT = 4.0 / 18.0 * ATAN(1.0)
+                    END MODULE init2_test_module
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "init2_test",sources=sources)
+    sdfg.simplify(verbose=True)
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0] == 42)
+    assert (a[1] == 5.5)
+    assert (a[2] == 42)
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_init()
+    #test_fortran_frontend_init()
+    test_fortran_frontend_init2()
