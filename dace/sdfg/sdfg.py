@@ -466,6 +466,9 @@ class SDFG(ControlFlowRegion):
                                     desc='Mapping between callback name and its original callback '
                                     '(for when the same callback is used with a different signature)')
 
+    using_experimental_blocks = Property(dtype=bool, default=False,
+                                         desc="Whether the SDFG contains experimental control flow blocks")
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,

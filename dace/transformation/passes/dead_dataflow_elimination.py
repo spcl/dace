@@ -17,6 +17,7 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.

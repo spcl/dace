@@ -11,6 +11,7 @@ from dace.transformation import pass_pipeline as ppl
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).

@@ -485,6 +485,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         if not self.use_experimental_cfg_blocks:
             sdutils.inline_loop_blocks(sdfg)
             sdutils.inline_control_flow_regions(sdfg)
+        sdfg.using_experimental_blocks = self.use_experimental_cfg_blocks
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
@@ -796,7 +797,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
+    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any],
+                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
         """ Generates the parsed AST representation of a DaCe program.
         
             :param args: The given arguments to the program.

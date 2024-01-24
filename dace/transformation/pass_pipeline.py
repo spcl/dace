@@ -9,6 +9,8 @@ from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
+import warnings
+
 
 class Modifies(Flag):
     """
@@ -556,3 +558,68 @@ class FixedPointPipeline(Pipeline):
                 return None
             state.update(newret)
             retval.update(newret)
+
+
+def single_level_sdfg_only(cls: Pass):
+
+    vanilla_apply_pass = cls.apply_pass
+    def blocksafe_apply_pass(obj, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        if not sdfg.using_experimental_blocks:
+            return vanilla_apply_pass(obj, sdfg, pipeline_results)
+        else:
+            warnings.warn('Skipping apply_pass from ' + cls.__name__ +
+                          ' due to incompatibility with experimental control flow blocks')
+    cls.apply_pass = blocksafe_apply_pass
+
+    if hasattr(cls, 'can_be_applied'):
+        vanilla_can_be_applied = cls.can_be_applied
+        def blocksafe_can_be_applied(obj, graph: Union[SDFG, SDFGState], expr_index: int, sdfg: SDFG,
+                                     permissive: bool = False) -> bool:
+            if not sdfg.using_experimental_blocks:
+                return vanilla_can_be_applied(obj, graph, expr_index, sdfg, permissive)
+            else:
+                warnings.warn('Skipping can_be_applied from ' + cls.__name__ +
+                            ' due to incompatibility with experimental control flow blocks')
+        cls.can_be_applied = blocksafe_can_be_applied
+
+    if hasattr(cls, 'apply'):
+        vanilla_apply = cls.apply
+        def blocksafe_apply(obj, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+            if not sdfg.using_experimental_blocks:
+                return vanilla_apply(obj, graph, sdfg)
+            else:
+                warnings.warn('Skipping apply from ' + cls.__name__ +
+                            ' due to incompatibility with experimental control flow blocks')
+        cls.apply = blocksafe_apply
+
+    if hasattr(cls, 'setup_match'):
+        vanilla_setup_match = cls.setup_match
+        def blocksafe_setup_match(obj, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+            if not sdfg.using_experimental_blocks:
+                return vanilla_setup_match(obj, graph, sdfg)
+            else:
+                warnings.warn('Skipping setup_match from ' + cls.__name__ +
+                            ' due to incompatibility with experimental control flow blocks')
+        cls.setup_match = blocksafe_setup_match
+
+    if hasattr(cls, 'apply_pattern'):
+        vanilla_apply_pattern = cls.apply_pattern
+        def blocksafe_apply_pattern(obj, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+            if not sdfg.using_experimental_blocks:
+                return vanilla_apply_pattern(obj, graph, sdfg)
+            else:
+                warnings.warn('Skipping apply_pattern from ' + cls.__name__ +
+                            ' due to incompatibility with experimental control flow blocks')
+        cls.apply_pattern = blocksafe_apply_pattern
+
+    if hasattr(cls, 'apply_to'):
+        vanilla_apply_to = cls.apply_to
+        def blocksafe_apply_to(cls, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
+            if not sdfg.using_experimental_blocks:
+                return vanilla_apply_to(cls, graph, sdfg)
+            else:
+                warnings.warn('Skipping apply_to from ' + cls.__name__ +
+                            ' due to incompatibility with experimental control flow blocks')
+        cls.apply_to = blocksafe_apply_to
+
+    return cls
