@@ -692,11 +692,11 @@ class BitwiseNot(sympy.Function):
     pass
 
 
-class LeftShift(sympy.Function):
+class left_shift(sympy.Function):
     pass
 
 
-class RightShift(sympy.Function):
+class right_shift(sympy.Function):
     pass
 
 
@@ -964,8 +964,8 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.BitOr: 'BitwiseOr',
         ast.BitXor: 'BitwiseXor',
         ast.Invert: 'BitwiseNot',
-        ast.LShift: 'LeftShift',
-        ast.RShift: 'RightShift',
+        ast.LShift: 'left_shift',
+        ast.RShift: 'right_shift',
         ast.FloorDiv: 'int_floor',
     }
 
@@ -1089,8 +1089,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'BitwiseOr': BitwiseOr,
         'BitwiseXor': BitwiseXor,
         'BitwiseNot': BitwiseNot,
-        'LeftShift': LeftShift,
-        'RightShift': RightShift,
+        'LeftShift': left_shift,
+        'RightShift': right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
