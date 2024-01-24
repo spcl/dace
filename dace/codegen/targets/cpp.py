@@ -964,9 +964,10 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
     defined_symbols = state_dfg.symbols_defined_at(node)
 
-    defined_symbols.update(
-        {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-         for k, v in sdfg.constants.items()})
+    defined_symbols.update({
+        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+        for k, v in sdfg.constants.items()
+    })
 
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
@@ -1139,6 +1140,44 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         memlet, nc, wcr, dtype = self.memlets[target]
         value = self.visit(astutils.copy_tree(node.value))
 
+        # Count dereferences in node.value and if types mismatch, prepend the
+        # correct number of references
+        if isinstance(value, ast.Name):
+            src_derefs = 0
+            cur_node = node.value
+            while isinstance(cur_node, ast.Subscript):
+                cur_node = cur_node.value
+                src_derefs += 1
+
+            target_derefs = 0
+            cur_node = node.targets[-1]
+            while isinstance(cur_node, ast.Subscript):
+                cur_node = cur_node.value
+                target_derefs += 1
+
+            source = rname(node.value)
+            if source in self.memlets:
+                src_dtype = self.memlets[source][3]
+                src_ptrs = 0
+                curdtype = src_dtype
+                while isinstance(curdtype, (dace.pointer, dace.fixedlenarray)):
+                    src_ptrs += 1
+                    curdtype = curdtype.base_type
+                target_ptrs = 0
+                curdtype = dtype
+                while isinstance(curdtype, (dace.pointer, dace.fixedlenarray)):
+                    target_ptrs += 1
+                    curdtype = curdtype.base_type
+
+                src_ptrs -= src_derefs
+                target_ptrs -= target_derefs
+                if src_ptrs > target_ptrs:
+                    value.id = '*' * (src_ptrs - target_ptrs) + value.id
+                    node.value = value
+                elif src_ptrs < target_ptrs:
+                    value.id = '&' * (target_ptrs - src_ptrs) + value.id
+                    node.value = value
+
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
             try:
@@ -1260,8 +1299,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             if memlet.data in self.sdfg.arrays and self.sdfg.arrays[memlet.data].dtype == dtype:
                 return self.generic_visit(node)
             return ast.parse(f"{name}[0]").body[0].value
-        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray))
-              and memlet.dynamic):
+        elif (self.allow_casts and (defined_type in (DefinedType.Stream, DefinedType.StreamArray)) and memlet.dynamic):
             return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
@@ -1295,8 +1333,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                 evaluated_constant = symbolic.evaluate(unparsed, self.constants)
                 evaluated = symbolic.symstr(evaluated_constant, cpp_mode=True)
                 value = ast.parse(evaluated).body[0].value
-                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (
-                        value.value if sys.version_info >= (3, 8) else value.n):
+                if isinstance(evaluated_node, numbers.Number) and evaluated_node != (value.value if sys.version_info
+                                                                                     >= (3, 8) else value.n):
                     raise TypeError
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
