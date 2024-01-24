@@ -601,6 +601,8 @@ class int_floor(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return x // y
+        if y.is_Number and y == 1:
+            return x
 
     def _eval_is_integer(self):
         return True
@@ -693,11 +695,34 @@ class BitwiseNot(sympy.Function):
 
 
 class left_shift(sympy.Function):
-    pass
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a left shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x << y
+        return x * (2 ** y)
 
 
 class right_shift(sympy.Function):
-    pass
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a right shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x >> y
+        return int_floor(x, (2 ** y))
 
 
 class ROUND(sympy.Function):
@@ -1090,7 +1115,9 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'BitwiseXor': BitwiseXor,
         'BitwiseNot': BitwiseNot,
         'LeftShift': left_shift,
+        'left_shift': left_shift,
         'RightShift': right_shift,
+        'right_shift': right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
