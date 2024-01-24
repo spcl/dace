@@ -15,6 +15,106 @@ ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, sym
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
+##### MPI Communicators
+# a helper function for getting an access node by argument name
+# creates a scalar if it's a number
+def _get_int_arg_node(pv: ProgramVisitor,
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     argument: Union[str, sp.Expr, Number]
+                    ):
+    if isinstance(argument, str) and argument in sdfg.arrays.keys():
+        arg_name = argument
+        arg_node = state.add_read(arg_name)
+    else:
+        # create a transient scalar and take its name
+        arg_name = _define_local_scalar(pv, sdfg, state, dace.int32)
+        arg_node = state.add_access(arg_name)
+        # every tasklet is in different scope, no need to worry about name confilct
+        color_tasklet = state.add_tasklet(f'_set_{arg_name}_', {}, {'__out'}, f'__out = {argument}')
+        state.add_edge(color_tasklet, '__out', arg_node, None, Memlet.simple(arg_node, '0'))
+
+    return arg_name, arg_node
+
+
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Split')
+@oprepo.replaces('dace.comm.Split')
+def _comm_split(pv: 'ProgramVisitor',
+                sdfg: SDFG,
+                state: SDFGState,
+                color: Union[str, sp.Expr, Number] = 0,
+                key: Union[str, sp.Expr, Number] = 0,
+                grid: str = None):
+    """ Splits communicator
+    """
+    from dace.libraries.mpi.nodes.comm_split import Comm_split
+
+    # fine a new comm world name
+    comm_name = sdfg.add_comm()
+
+    comm_split_node = Comm_split(comm_name, grid)
+
+    _, color_node = _get_int_arg_node(pv, sdfg, state, color)
+    _, key_node = _get_int_arg_node(pv, sdfg, state, key)
+
+    state.add_edge(color_node, None, comm_split_node, '_color', Memlet.simple(color_node, "0:1", num_accesses=1))
+    state.add_edge(key_node, None, comm_split_node, '_key', Memlet.simple(key_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(comm_name, dace.int32, transient=True)
+    wnode = state.add_write(comm_name)
+    state.add_edge(comm_split_node, "_out", wnode, None, Memlet.from_array(comm_name, scal))
+
+    # return value will be the name of this splited communicator
+    return comm_name
+
+
+@oprepo.replaces_method('Cartcomm', 'Split')
+@oprepo.replaces_method('Intracomm', 'Split')
+def _intracomm_comm_split(pv: 'ProgramVisitor',
+                          sdfg: SDFG,
+                          state: SDFGState,
+                          comm: Tuple[str, 'Comm'],
+                          color: Union[str, sp.Expr, Number] = 0,
+                          key: Union[str, sp.Expr, Number] = 0):
+    """ Equivalent to `dace.comm.split(color, key)`. """
+    from mpi4py import MPI
+    comm_name, comm_obj = comm
+    if comm_obj == MPI.COMM_WORLD:
+        return _comm_split(pv, sdfg, state, color, key)
+    raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+
+
+@oprepo.replaces_method('ProcessComm', 'Split')
+def _processcomm_comm_split(pv: 'ProgramVisitor',
+                            sdfg: SDFG,
+                            state: SDFGState,
+                            comm: Tuple[str, 'Comm'],
+                            color: Union[str, sp.Expr, Number] = 0,
+                            key: Union[str, sp.Expr, Number] = 0):
+    """ Equivalent to `dace.comm.split(color, key)`. """
+    return _comm_split(pv, sdfg, state, color, key, grid=comm)
+
+
+@oprepo.replaces_method('ProcessComm', 'Free')
+def _processcomm_comm_free(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     comm: Tuple[str, 'Comm']):
+
+    from dace.libraries.mpi.nodes.comm_free import Comm_free
+
+    comm_free_node = Comm_free("_Comm_free_", comm)
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    comm_node = state.add_read(comm)
+    comm_desc = sdfg.arrays[comm]
+    state.add_edge(comm_node, None, comm_free_node, "_in", Memlet.from_array(comm, comm_desc))
+
+    # return value will be the name of this splited communicator
+    return f"{comm}_free"
+
+
 ##### MPI Cartesian Communicators
 
 
@@ -166,6 +266,11 @@ def _bcast(pv: ProgramVisitor,
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
+    if grid:
+        comm_node = state.add_read(grid)
+        comm_desc = sdfg.arrays[grid]
+        state.add_edge(comm_node, None, libnode, None, Memlet.from_array(grid, comm_desc))
+
     if isinstance(root, str) and root in sdfg.arrays.keys():
         root_node = state.add_read(root)
     else:
@@ -200,6 +305,7 @@ def _intracomm_bcast(pv: 'ProgramVisitor',
     return _bcast(pv, sdfg, state, buffer, root, fcomm=comm_name)
 
 
+@oprepo.replaces_method('ProcessComm', 'Bcast')
 @oprepo.replaces_method('ProcessGrid', 'Bcast')
 def _pgrid_bcast(pv: 'ProgramVisitor',
                  sdfg: SDFG,
@@ -278,6 +384,7 @@ def _intracomm_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icom
     return _alltoall(pv, sdfg, state, inp_buffer, out_buffer)
 
 
+@oprepo.replaces_method('ProcessComm', 'Alltoall')
 @oprepo.replaces_method('ProcessGrid', 'Alltoall')
 def _pgrid_alltoall(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, pgrid: str, inp_buffer: str, out_buffer: str):
     """ Equivalent to `dace.comm.Alltoall(inp_buffer, out_buffer, grid=pgrid)`. """

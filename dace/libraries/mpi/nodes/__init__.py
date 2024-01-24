@@ -13,3 +13,5 @@ from .allgather import Allgather
 from .alltoall import Alltoall
 from .dummy import Dummy
 from .redistribute import Redistribute
+from .comm_split import Comm_split
+from .comm_free import Comm_free

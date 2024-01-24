@@ -13,6 +13,30 @@ RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.symp
 
 
 @make_properties
+class ProcessComm(object):
+    """
+    ProcessComm is the descriptor class for comm world split
+    Real comm creation is implemented in mpi.nodes.comm_split.Comm_split
+    """
+
+    name = Property(dtype=str, desc="The name of new comm world.")
+    def __init__(self,
+                 name: str):
+        self.name = name
+        self._validate()
+
+    def validate(self):
+        """ Validate the correctness of this object.
+            Raises an exception on error. """
+        self._validate()
+
+    # Validation of this class is in a separate function, so that this
+    # class can call `_validate()` without calling the subclasses'
+    # `validate` function.
+    def _validate(self):
+        return True
+
+@make_properties
 class ProcessGrid(object):
     """
     Process-grids implement cartesian topologies similarly to cartesian communicators created with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
