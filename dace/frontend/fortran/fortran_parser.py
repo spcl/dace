@@ -1914,6 +1914,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
+
     count=0
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):

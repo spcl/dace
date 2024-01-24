@@ -978,7 +978,8 @@ class ReplaceFunctionStatementPass(NodeTransformer):
 def optionalArgsHandleFunction(func):
 
     func.optional_args = []
-
+    if func.specification_part is None:
+        return 0
     for spec in func.specification_part.specifications:
         for var in spec.vardecl:
             if var.optional:
