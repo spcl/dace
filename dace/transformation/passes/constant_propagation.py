@@ -18,6 +18,7 @@ class _UnknownValue:
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing

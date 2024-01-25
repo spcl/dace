@@ -13,6 +13,7 @@ from dace.transformation.transformation import SingleStateTransformation
 
 
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,

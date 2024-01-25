@@ -5,12 +5,12 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import data as dt, dtypes, registry, sdfg, subsets, memlet
+from dace import data as dt, sdfg, subsets, memlet
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
-from dace.transformation import transformation
+from dace.transformation import transformation, pass_pipeline as ppl
 
 
 # Helper class for finding connected component correspondences
@@ -31,6 +31,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
+@ppl.single_level_sdfg_only
 class StateFusionExtended(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation extended to fuse states with RAW and WAW dependencies.
         An empty memlet is used to represent a dependency between two subgraphs with RAW and WAW dependencies.

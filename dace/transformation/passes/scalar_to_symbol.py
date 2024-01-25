@@ -645,7 +645,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                 # There is only zero or one incoming edges by definition
                 tasklet_inputs = [e.src for e in state.in_edges(input)]
                 # Step 2.1
-                new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
+                new_state = xfh.state_fission(gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
                 new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
                 # Step 2.2
                 node: nodes.AccessNode = new_state.sink_nodes()[0]

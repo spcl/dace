@@ -17,7 +17,7 @@ from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 import dace.transformation.helpers as helpers
-from dace.transformation import transformation as xf
+from dace.transformation import transformation as xf, pass_pipeline as ppl
 
 
 def _check_range(subset, a, itersym, b, step):
@@ -75,6 +75,7 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 
 
 @make_properties
+@ppl.single_level_sdfg_only
 class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in

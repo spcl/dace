@@ -8,7 +8,7 @@ from dace.sdfg.scope import ScopeTree
 from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
-from dace.transformation import transformation
+from dace.transformation import transformation, pass_pipeline as ppl
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from sympy import diff
 from typing import List, Set, Tuple
@@ -23,6 +23,7 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
+@ppl.single_level_sdfg_only
 class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map

@@ -6,7 +6,7 @@ import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation, helpers as xfh
+from dace.transformation import transformation, helpers as xfh, pass_pipeline as ppl
 
 
 def fpga_update(sdfg, state, depth):
@@ -29,6 +29,7 @@ def fpga_update(sdfg, state, depth):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
+@ppl.single_level_sdfg_only
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 

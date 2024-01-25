@@ -7,6 +7,7 @@ from dace.properties import ShapeProperty, make_properties
 from dace.transformation import transformation
 from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusion, TrivialMapElimination
 
+# TODO: check compatibility
 
 @make_properties
 class BufferTiling(transformation.SingleStateTransformation):

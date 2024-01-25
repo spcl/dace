@@ -5,9 +5,11 @@ import networkx as nx
 
 from dace import properties
 from dace.transformation import transformation
+from dace.transformation import pass_pipeline as ppl
 
 
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class FPGATransformSDFG(transformation.MultiStateTransformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """

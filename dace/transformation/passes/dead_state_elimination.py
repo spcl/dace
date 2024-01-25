@@ -12,6 +12,7 @@ from dace.transformation import pass_pipeline as ppl
 
 
 @properties.make_properties
+@ppl.single_level_sdfg_only
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.

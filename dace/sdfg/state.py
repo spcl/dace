@@ -2531,7 +2531,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         """ Iterate over this and all nested control flow regions. """
         yield self
         for block in self.nodes():
-            if isinstance(block, SDFGState) and recursive:
+            if isinstance(block, SDFGState):
                 for node in block.nodes():
                     if isinstance(node, nd.NestedSDFG):
                         yield from node.sdfg.all_control_flow_regions(recursive=recursive)

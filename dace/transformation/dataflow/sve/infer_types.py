@@ -169,7 +169,7 @@ def infer_connector_types(sdfg: SDFG,
         raise ValueError('No SDFG was provided')
 
     if state is None and graph is None:
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             for node in dfs_topological_sort(state):
                 infer_node_connectors(sdfg, state, node, inferred)
 

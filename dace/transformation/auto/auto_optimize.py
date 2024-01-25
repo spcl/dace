@@ -107,7 +107,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             fusion_condition.allow_tiling = False
             # expand reductions
             if expand_reductions:
-                for graph in sdfg.nodes():
+                for graph in sdfg.states():
                     for node in graph.nodes():
                         if isinstance(node, dace.libraries.standard.nodes.Reduce):
                             try:
@@ -393,7 +393,7 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
 
     # specialized nodes: pre-expand
     for current_sdfg in sdfg.all_sdfgs_recursive():
-        for state in current_sdfg.nodes():
+        for state in current_sdfg.states():
             for node in state.nodes():
                 if isinstance(node, nodes.LibraryNode):
                     if (node.default_implementation == 'specialize'
@@ -461,7 +461,7 @@ def make_transients_persistent(sdfg: SDFG,
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
 
-        for state in nsdfg.nodes():
+        for state in nsdfg.states():
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
                     continue
@@ -507,10 +507,9 @@ def make_transients_persistent(sdfg: SDFG,
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
-        for n, _ in sdfg.all_nodes_recursive():
-            if isinstance(n, SDFGState):
-                for edge in n.edges():
-                    edge.data.wcr_nonatomic = False
+        for state in sdfg.states():
+            for edge in state.edges():
+                edge.data.wcr_nonatomic = False
 
     return result
 
@@ -519,7 +518,7 @@ def apply_gpu_storage(sdfg: SDFG) -> None:
     """ Changes the storage of the SDFG's input and output data to GPU global memory. """
 
     written_scalars = set()
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         for node in state.data_nodes():
             desc = node.desc(sdfg)
             if isinstance(desc, dt.Scalar) and not desc.transient and state.in_degree(node) > 0:

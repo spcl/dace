@@ -3,10 +3,11 @@
 
 from dace import sdfg as sd
 from dace.properties import CodeBlock
-from dace.transformation import helpers, transformation
+from dace.transformation import helpers, transformation, pass_pipeline as ppl
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
+@ppl.single_level_sdfg_only
 class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.

@@ -84,7 +84,7 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return result
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg: SDFG, permissive=False):
         first_map_exit = self.first_map_exit
         first_map_entry = graph.entry_node(first_map_exit)
         second_map_entry = self.second_map_entry
@@ -105,9 +105,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                num_occurrences = len([
-                    n for s in sdfg.nodes() for n in s.nodes() if isinstance(n, nodes.AccessNode) and n.data == dst.data
-                ])
+                num_occurrences = len([n for n in sdfg.data_nodes() if n.data == dst.data])
                 if num_occurrences > 1:
                     return False
             else:
@@ -430,7 +428,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # Fix scope exit to point to the right map
         second_exit.map = first_entry.map
 
-    def fuse_nodes(self, sdfg, graph, edge, new_dst, new_dst_conn, other_edges=None):
+    def fuse_nodes(self, sdfg: SDFG, graph: SDFGState, edge, new_dst, new_dst_conn, other_edges=None):
         """ Fuses two nodes via memlets and possibly transient arrays. """
         other_edges = other_edges or []
         memlet_path = graph.memlet_path(edge)

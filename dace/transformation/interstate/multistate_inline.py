@@ -1,28 +1,23 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Inline multi-state SDFGs. """
 
-import ast
-from collections import defaultdict
 from copy import deepcopy as dc
-from dace.frontend.python.ndloop import ndrange
 import itertools
-import networkx as nx
-from typing import Callable, Dict, Iterable, List, Set, Optional, Tuple, Union
-import warnings
+from typing import Dict, List
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
-from dace.frontend.python import astutils
-from dace.sdfg import nodes, propagation
-from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
+from dace import Memlet, symbolic, dtypes, subsets
+from dace.sdfg import nodes
+from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
-from dace.sdfg import utils as sdutil, infer_types, propagation
+from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names
-from dace.transformation import transformation, helpers
-from dace.properties import make_properties, Property
+from dace.transformation import transformation, pass_pipeline as ppl
+from dace.properties import make_properties
 from dace import data
 
 
 @make_properties
+@ppl.single_level_sdfg_only
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
