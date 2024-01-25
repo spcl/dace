@@ -1134,7 +1134,7 @@ class InternalFortranAst:
         toplevelIf = ast_internal_classes.If_Stmt_Node(cond=cond, line_number=line)
         currentIf = toplevelIf
         for i in children[1:-1]:
-            if i is not None:
+            if i is None:
                 continue
             if isinstance(i, ast_internal_classes.Else_If_Stmt_Node):
                 newif = ast_internal_classes.If_Stmt_Node(cond=i.cond, line_number=i.line_number)
@@ -1268,7 +1268,7 @@ class InternalFortranAst:
         return ast_internal_classes.Call_Expr_Node(
             name=name,
             args=args.list,
-            line=line,
+            line_number=line,
             type="VOID",
         )
 
