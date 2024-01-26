@@ -822,6 +822,11 @@ class InternalFortranAst:
 
             if isinstance(i, f08.Attr_Spec_List):
 
+                specification = get_children(i, "Attr_Spec")
+                for spec in specification:
+                    if spec.string.lower() == "optional":
+                        optional = True
+
                 dimension_spec = get_children(i, "Dimension_Attr_Spec")
                 if len(dimension_spec) == 0:
                     continue

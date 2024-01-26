@@ -997,7 +997,7 @@ def optionalArgsHandleFunction(func):
 
         if found:
 
-            name = f'__dace_OPTIONAL_{var.name}'
+            name = f'__dace_OPTIONAL_{arg.name}'
             var = ast_internal_classes.Var_Decl_Node(name=name,
                                             type='BOOL',
                                             alloc=False,

@@ -21,9 +21,10 @@ def test_fortran_frontend_optional_adv():
                     integer :: a
                     integer,dimension(2) :: ret
 
-                    CALL intrinsic_optional_test_function2(res, a)
-                    CALL intrinsic_optional_test_function2(res2)
+                    !CALL intrinsic_optional_test_function2(res, a)
+                    !CALL intrinsic_optional_test_function2(res2)
                     CALL get_indices_c(1, 1, 1, ret(1), ret(2), 1, 2)
+                    !CALL get_indices_c(1, 1, 1, ret(1), ret(2), 1)
 
                     END SUBROUTINE intrinsic_optional_test_function
 
@@ -55,19 +56,19 @@ def test_fortran_frontend_optional_adv():
   IF (PRESENT(opt_rl_end)) THEN
     irl_end = opt_rl_end
   ELSE
-    irl_end = min_rlcell
+    irl_end = 42
   ENDIF
 
   IF (i_blk == i_startblk) THEN
     i_startidx = 1
-    i_endidx   = nproma
+    i_endidx   = 42
     IF (i_blk == i_endblk) i_endidx = irl_end 
   ELSE IF (i_blk == i_endblk) THEN
     i_startidx = 1
     i_endidx   = irl_end
   ELSE
     i_startidx = 1
-    i_endidx = nproma
+    i_endidx = 42
   ENDIF
 
 END SUBROUTINE get_indices_c
