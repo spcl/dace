@@ -271,28 +271,19 @@ class Literal(FNode):
 
 
 class Int_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Real_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Bool_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class String_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Char_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
+    pass
 
 class Suffix_Node(FNode):
     _attributes = ()
