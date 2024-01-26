@@ -23,25 +23,25 @@ class TimerProvider(InstrumentationProvider):
             self.on_tend('SDFG %s' % sdfg.name, local_stream, sdfg)
 
     def on_tbegin(self, stream: CodeIOStream, sdfg=None, state=None, node=None):
-        idstr = self._idstr(sdfg, state, node)
+        idstr = self._idstr(state.parent_graph, state, node)
 
         stream.write('auto __dace_tbegin_%s = std::chrono::high_resolution_clock::now();' % idstr)
 
     def on_tend(self, timer_name: str, stream: CodeIOStream, sdfg=None, state=None, node=None):
-        idstr = self._idstr(sdfg, state, node)
+        idstr = self._idstr(state.parent_graph, state, node)
 
         state_id = -1
         node_id = -1
         if state is not None:
-            state_id = sdfg.node_id(state)
+            state_id = state.block_id
             if node is not None:
                 node_id = state.node_id(node)
 
         stream.write('''auto __dace_tend_{id} = std::chrono::high_resolution_clock::now();
 unsigned long int __dace_ts_start_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tbegin_{id}.time_since_epoch()).count();
 unsigned long int __dace_ts_end_{id} = std::chrono::duration_cast<std::chrono::microseconds>(__dace_tend_{id}.time_since_epoch()).count();
-__state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {sdfg_id}, {state_id}, {node_id});'''
-                     .format(timer_name=timer_name, id=idstr, sdfg_id=sdfg.sdfg_id, state_id=state_id, node_id=node_id))
+__state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __dace_ts_end_{id}, {cfg_id}, {state_id}, {node_id});'''
+                     .format(timer_name=timer_name, id=idstr, cfg_id=state.parent_graph.cfg_id, state_id=state_id, node_id=node_id))
 
     # Code generation hooks
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
@@ -80,5 +80,5 @@ __state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __
         if not isinstance(node, CodeNode):
             return
         if node.instrument == dtypes.InstrumentationType.Timer:
-            idstr = self._idstr(sdfg, state, node)
+            idstr = self._idstr(state.parent_graph, state, node)
             self.on_tend('%s %s' % (type(node).__name__, idstr), outer_stream, sdfg, state, node)

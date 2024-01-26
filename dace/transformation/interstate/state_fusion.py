@@ -471,7 +471,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(sdfg, first_state, second_state)
             sdfg.remove_node(first_state)
             if sdfg.start_state == first_state:
-                sdfg.start_state = sdfg.node_id(second_state)
+                sdfg.start_state = second_state.block_id
             return
 
         # Special case 2: second state is empty
@@ -480,7 +480,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_dest(sdfg, second_state, first_state)
             sdfg.remove_node(second_state)
             if sdfg.start_state == second_state:
-                sdfg.start_state = sdfg.node_id(first_state)
+                sdfg.start_state = first_state.block_id
             return
 
         # Normal case: both states are not empty
@@ -565,4 +565,4 @@ class StateFusion(transformation.MultiStateTransformation):
         sdutil.change_edge_src(sdfg, second_state, first_state)
         sdfg.remove_node(second_state)
         if sdfg.start_state == second_state:
-            sdfg.start_state = sdfg.node_id(first_state)
+            sdfg.start_state = first_state.block_id

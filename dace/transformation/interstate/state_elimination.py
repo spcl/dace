@@ -481,7 +481,7 @@ class HoistState(transformation.SingleStateTransformation):
         nsdfg.sdfg.remove_node(source_state)
 
         # Set new starting state
-        nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
+        nsdfg.sdfg.start_state = nisedge.dst.block_id
 
 
 class TrueConditionElimination(transformation.MultiStateTransformation):

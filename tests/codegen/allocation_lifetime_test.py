@@ -48,7 +48,7 @@ def _check_alloc(id, name, codegen, scope):
     #     if id == sdfg_id and name == node.data:
     #         return True
     for sdfg, _, node, _, _, _ in codegen.to_allocate[scope]:
-        if sdfg.sdfg_id == id and name == node.data:
+        if sdfg.cfg_id == id and name == node.data:
             return True
     return False
 

@@ -7,7 +7,7 @@ import copy
 from typing import Generator, Dict, List, Tuple
 from collections import Counter
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, SDFGState
 from dace.optimization import cutout_tuner
 from dace.sdfg.analysis.cutout import SDFGCutout
 
@@ -25,7 +25,8 @@ except (ImportError, ModuleNotFoundError):
 
 class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(self, sdfg: SDFG, i, j,
+                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="SubgraphFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
@@ -33,15 +34,14 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         if sdfg is None:
             sdfg = self._sdfg
 
-        for nsdfg_id, nsdfg in enumerate(sdfg.all_sdfgs_recursive()):
-            for state in nsdfg.nodes():
-                state_id = nsdfg.node_id(state)
-
-                try:
-                    cutout = SDFGCutout.singlestate_cutout(state, *(state.nodes()), make_copy=False)
-                    yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
-                except AttributeError:
-                    continue
+        for cfg_id, cfg in enumerate(sdfg.all_control_flow_regions(recursive=True)):
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    try:
+                        cutout = SDFGCutout.singlestate_cutout(block, *(block.nodes()), make_copy=False)
+                        yield cutout, f"{cfg_id}.{block.block_id}.{block.label}"
+                    except AttributeError:
+                        continue
 
     def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
         fusion_id = int(key)
@@ -55,23 +55,23 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         if config[0] == 0:
             return
 
-        nsdfg_id, state_id, _ = label.split(".")
-        sdfg = list(self._sdfg.all_sdfgs_recursive())[int(nsdfg_id)]
+        cfg_id, state_id, _ = label.split(".")
+        cfg = list(self._sdfg.all_control_flow_regions(recursive=True))[int(cfg_id)]
         state_id = int(state_id)
-        state = sdfg.node(state_id)
+        state = cfg.node(state_id)
         nodes = state.nodes()
         cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
         maps_ = list(map(cutout.start_state.node, map_ids))
-        subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
+        subgraph = helpers.subgraph_from_maps(sdfg=cfg, graph=state, map_entries=maps_)
 
         subgraph_fusion = sg.CompositeFusion()
-        subgraph_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
+        subgraph_fusion.setup_match(subgraph, cfg_id, state_id)
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-        if subgraph_fusion.can_be_applied(sdfg, subgraph):
-            subgraph_fusion.apply(sdfg)
+        if subgraph_fusion.can_be_applied(cfg, subgraph):
+            subgraph_fusion.apply(cfg)
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
@@ -117,7 +117,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         subgraph_fusion = sg.CompositeFusion()
-        subgraph_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        subgraph_fusion.setup_match(subgraph, candidate.cfg_id, candidate.start_state.block_id)
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
         if subgraph_fusion.can_be_applied(candidate, subgraph):
@@ -131,10 +131,10 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in best_configs:
-            nsdfg_id, state_id, _ = label.split(".")
-            sdfg = list(self._sdfg.all_sdfgs_recursive())[int(nsdfg_id)]
+            cfg_id, state_id, _ = label.split(".")
+            cfg = list(self._sdfg.all_control_flow_regions(recursive=True))[int(cfg_id)]
             state_id = int(state_id)
-            state = sdfg.node(state_id)
+            state = cfg.node(state_id)
             nodes = state.nodes()
             cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
@@ -260,8 +260,8 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
 
                         subgraph_fusion = sg.CompositeFusion()
-                        subgraph_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
-                                                    experiment_sdfg.node_id(experiment_state))
+                        subgraph_fusion.setup_match(experiment_subgraph, experiment_state.parent_graph.cfg_id,
+                                                    experiment_state.block_id)
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         if subgraph_fusion.can_be_applied(experiment_sdfg, experiment_subgraph):
@@ -295,7 +295,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         subgraph_fusion = sg.CompositeFusion()
-                        subgraph_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        subgraph_fusion.setup_match(subgraph, state.parent_graph.cfg_id, state.block_id)
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         subgraph_fusion.apply(nsdfg)

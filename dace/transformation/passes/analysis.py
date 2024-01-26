@@ -5,7 +5,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
-from dace.sdfg.analysis import cfg
+from dace.sdfg.analysis import cfg as cfg_analysis
 from typing import Dict, Set, Tuple, Any, Optional, Union
 import networkx as nx
 from networkx.algorithms import shortest_paths as nxsp
@@ -35,17 +35,17 @@ class StateReachability(ppl.Pass):
         :return: A dictionary mapping each state to its other reachable states.
         """
         reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             result: Dict[SDFGState, Set[SDFGState]] = {}
 
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
             # tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
 
-            for n, v in reachable_nodes(sdfg.nx):
+            for n, v in reachable_nodes(cfg.nx):
                 result[n] = set(v)
 
-            reachable[sdfg.sdfg_id] = result
+            reachable[cfg.cfg_id] = result
 
         return reachable
 
@@ -119,18 +119,19 @@ class SymbolAccessSets(ppl.Pass):
         :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
         """
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
             adesc = set(sdfg.arrays.keys())
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
-                readset = state.free_symbols
+            for block in cfg.nodes():
+                readset = block.free_symbols
                 # No symbols may be written to inside states.
-                result[state] = (readset, set())
-                for oedge in sdfg.out_edges(state):
+                result[block] = (readset, set())
+                for oedge in cfg.out_edges(block):
                     edge_readset = oedge.data.read_symbols() - adesc
                     edge_writeset = set(oedge.data.assignments.keys())
                     result[oedge] = (edge_readset, edge_writeset)
-            top_result[sdfg.sdfg_id] = result
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -154,27 +155,29 @@ class AccessSets(ppl.Pass):
         :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
         """
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
-            for state in sdfg.nodes():
-                readset, writeset = set(), set()
-                for anode in state.data_nodes():
-                    if state.in_degree(anode) > 0:
-                        writeset.add(anode.data)
-                    if state.out_degree(anode) > 0:
-                        readset.add(anode.data)
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    readset, writeset = set(), set()
+                    for anode in block.data_nodes():
+                        if block.in_degree(anode) > 0:
+                            writeset.add(anode.data)
+                        if block.out_degree(anode) > 0:
+                            readset.add(anode.data)
 
-                result[state] = (readset, writeset)
+                    result[block] = (readset, writeset)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in cfg.edges():
                 fsyms = e.data.free_symbols & anames
                 if fsyms:
                     result[e.src][0].update(fsyms)
                     result[e.dst][0].update(fsyms)
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -199,20 +202,22 @@ class FindAccessStates(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[SDFGState]]] = {}
 
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
             result: Dict[str, Set[SDFGState]] = defaultdict(set)
-            for state in sdfg.nodes():
-                for anode in state.data_nodes():
-                    result[anode.data].add(state)
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    for anode in block.data_nodes():
+                        result[anode.data].add(block)
 
             # Edges that read from arrays add to both ends' access sets
             anames = sdfg.arrays.keys()
-            for e in sdfg.edges():
+            for e in cfg.edges():
                 fsyms = e.data.free_symbols & anames
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -239,16 +244,17 @@ class FindAccessNodes(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[nd.AccessNode]]] = dict()
 
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             result: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = defaultdict(
                 lambda: defaultdict(lambda: [set(), set()]))
-            for state in sdfg.nodes():
-                for anode in state.data_nodes():
-                    if state.in_degree(anode) > 0:
-                        result[anode.data][state][1].add(anode)
-                    if state.out_degree(anode) > 0:
-                        result[anode.data][state][0].add(anode)
-            top_result[sdfg.sdfg_id] = result
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    for anode in block.data_nodes():
+                        if block.in_degree(anode) > 0:
+                            result[anode.data][block][1].add(anode)
+                        if block.out_degree(anode) > 0:
+                            result[anode.data][block][0].add(anode)
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -275,7 +281,7 @@ class SymbolWriteScopes(ppl.Pass):
                                state_idom: Dict[SDFGState, SDFGState]) -> Optional[Edge[InterstateEdge]]:
         last_state: SDFGState = read if isinstance(read, SDFGState) else read.src
 
-        in_edges = last_state.parent.in_edges(last_state)
+        in_edges = last_state.parent_graph.in_edges(last_state)
         deg = len(in_edges)
         if deg == 0:
             return None
@@ -285,7 +291,7 @@ class SymbolWriteScopes(ppl.Pass):
         write_isedge = None
         n_state = state_idom[last_state] if state_idom[last_state] != last_state else None
         while n_state is not None and write_isedge is None:
-            oedges = n_state.parent.out_edges(n_state)
+            oedges = n_state.parent_graph.out_edges(n_state)
             odeg = len(oedges)
             if odeg == 1:
                 if any([sym == k for k in oedges[0].data.assignments.keys()]):
@@ -293,7 +299,7 @@ class SymbolWriteScopes(ppl.Pass):
             else:
                 dom_edge = None
                 for cand in oedges:
-                    if nxsp.has_path(n_state.parent.nx, cand.dst, last_state):
+                    if nxsp.has_path(n_state.parent_graph.nx, cand.dst, last_state):
                         if dom_edge is not None:
                             dom_edge = None
                             break
@@ -306,15 +312,15 @@ class SymbolWriteScopes(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[int, SymbolScopeDict]:
         top_result: Dict[int, SymbolScopeDict] = dict()
 
-        for sdfg in sdfg.all_sdfgs_recursive():
+        for cfg in sdfg.all_control_flow_regions(recursive=True):
             result: SymbolScopeDict = defaultdict(lambda: defaultdict(lambda: set()))
 
-            idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-            all_doms = cfg.all_dominators(sdfg, idom)
+            idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+            all_doms = cfg_analysis.all_dominators(cfg, idom)
             symbol_access_sets: Dict[Union[SDFGState, Edge[InterstateEdge]],
                                      Tuple[Set[str],
-                                           Set[str]]] = pipeline_results[SymbolAccessSets.__name__][sdfg.sdfg_id]
-            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.sdfg_id]
+                                           Set[str]]] = pipeline_results[SymbolAccessSets.__name__][cfg.cfg_id]
+            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][cfg.cfg_id]
 
             for read_loc, (reads, _) in symbol_access_sets.items():
                 for sym in reads:
@@ -331,7 +337,7 @@ class SymbolWriteScopes(ppl.Pass):
                     dominators = all_doms[write.dst]
                     reach = state_reach[write.dst]
                     for dom in dominators:
-                        iedges = dom.parent.in_edges(dom)
+                        iedges = dom.parent_graph.in_edges(dom)
                         if len(iedges) == 1 and iedges[0] in result[sym]:
                             other_accesses = result[sym][iedges[0]]
                             coarsen = False
@@ -352,7 +358,7 @@ class SymbolWriteScopes(ppl.Pass):
             for sym, write in to_remove:
                 del result[sym][write]
 
-            top_result[sdfg.sdfg_id] = result
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -440,15 +446,16 @@ class ScalarWriteShadowScopes(ppl.Pass):
         """
         top_result: Dict[int, WriteScopeDict] = dict()
 
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
             result: WriteScopeDict = defaultdict(lambda: defaultdict(lambda: set()))
-            idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
-            all_doms = cfg.all_dominators(sdfg, idom)
+            idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+            all_doms = cfg_analysis.all_dominators(cfg, idom)
             access_sets: Dict[SDFGState, Tuple[Set[str],
-                                               Set[str]]] = pipeline_results[AccessSets.__name__][sdfg.sdfg_id]
+                                               Set[str]]] = pipeline_results[AccessSets.__name__][cfg.cfg_id]
             access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]]] = pipeline_results[
-                FindAccessNodes.__name__][sdfg.sdfg_id]
-            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][sdfg.sdfg_id]
+                FindAccessNodes.__name__][cfg.cfg_id]
+            state_reach: Dict[SDFGState, Set[SDFGState]] = pipeline_results[StateReachability.__name__][cfg.cfg_id]
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
@@ -460,7 +467,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                 # Ensure accesses to interstate edges are also considered.
                 for state, accesses in access_sets.items():
                     if desc in accesses[0]:
-                        out_edges = sdfg.out_edges(state)
+                        out_edges = cfg.out_edges(state)
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames
                             if desc in syms:
@@ -503,7 +510,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                     result[desc][write] = set()
                 for write in to_remove:
                     del result[desc][write]
-            top_result[sdfg.sdfg_id] = result
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -527,19 +534,20 @@ class AccessRanges(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[Memlet]]] = dict()
 
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             result: Dict[str, Set[Memlet]] = defaultdict(set)
-            for state in sdfg.states():
-                for anode in state.data_nodes():
-                    for e in state.all_edges(anode):
-                        if e.dst is anode and e.dst_conn == 'set':  # Skip reference sets
-                            continue
-                        if e.data.is_empty():  # Skip empty memlets
-                            continue
-                        # Find (hopefully propagated) root memlet
-                        e = state.memlet_tree(e).root().edge
-                        result[anode.data].add(e.data)
-            top_result[sdfg.sdfg_id] = result
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    for anode in block.data_nodes():
+                        for e in block.all_edges(anode):
+                            if e.dst is anode and e.dst_conn == 'set':  # Skip reference sets
+                                continue
+                            if e.data.is_empty():  # Skip empty memlets
+                                continue
+                            # Find (hopefully propagated) root memlet
+                            e = block.memlet_tree(e).root().edge
+                            result[anode.data].add(e.data)
+            top_result[cfg.cfg_id] = result
         return top_result
 
 
@@ -564,22 +572,24 @@ class FindReferenceSources(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[Union[Memlet, nd.CodeNode]]]] = dict()
 
-        for sdfg in top_sdfg.all_sdfgs_recursive():
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
             result: Dict[str, Set[Memlet]] = defaultdict(set)
             reference_descs = set(k for k, v in sdfg.arrays.items() if isinstance(v, dt.Reference))
-            for state in sdfg.states():
-                for anode in state.data_nodes():
-                    if anode.data not in reference_descs:
-                        continue
-                    for e in state.in_edges(anode):
-                        if e.dst_conn != 'set':
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    for anode in block.data_nodes():
+                        if anode.data not in reference_descs:
                             continue
-                        true_src = state.memlet_path(e)[0].src
-                        if isinstance(true_src, nd.CodeNode):
-                            # Code  -> Reference
-                            result[anode.data].add(true_src)
-                        else:
-                            # Array -> Reference
-                            result[anode.data].add(e.data)
-            top_result[sdfg.sdfg_id] = result
+                        for e in block.in_edges(anode):
+                            if e.dst_conn != 'set':
+                                continue
+                            true_src = block.memlet_path(e)[0].src
+                            if isinstance(true_src, nd.CodeNode):
+                                # Code  -> Reference
+                                result[anode.data].add(true_src)
+                            else:
+                                # Array -> Reference
+                                result[anode.data].add(e.data)
+            top_result[cfg.cfg_id] = result
         return top_result

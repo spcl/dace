@@ -143,7 +143,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
     def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
 
-        sid = sdfg.node_id(state)
+        sid = state.block_id
         dbg(f'-- generate state "{state}"')
 
         # analyze memlets for SSR candidates
@@ -180,7 +180,7 @@ class SnitchCodeGen(TargetCodeGenerator):
             for nested_sdfg in [n.sdfg for n in sub_graph.nodes() if isinstance(n, nodes.NestedSDFG)]:
                 nested_shared_transients = set(nested_sdfg.shared_transients())
                 for nested_state in nested_sdfg.nodes():
-                    nested_sid = nested_sdfg.node_id(nested_state)
+                    nested_sid = nested_state.block_id
                     nested_to_allocate = (set(nested_state.top_level_transients()) - nested_shared_transients)
                     nodes_to_allocate = [
                         n for n in nested_state.data_nodes()
@@ -238,7 +238,7 @@ class SnitchCodeGen(TargetCodeGenerator):
                     nested_shared_transients = \
                         set(nested_sdfg.shared_transients())
                     for nested_state in nested_sdfg:
-                        nested_sid = nested_sdfg.node_id(nested_state)
+                        nested_sid = nested_state.block_id
                         nested_to_allocate = (set(nested_state.top_level_transients()) - nested_shared_transients)
                         nodes_to_deallocate = [
                             n for n in nested_state.data_nodes()

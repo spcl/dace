@@ -184,7 +184,7 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         # Setting entry node in nested SDFG if no entry guard was created
         if entry_guard_state is None:
-            kernel_sdfg.start_state = kernel_sdfg.node_id(entry_state_in)
+            kernel_sdfg.start_state = entry_state_in.block_id
 
         for state in subgraph:
             state.parent = kernel_sdfg

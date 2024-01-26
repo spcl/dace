@@ -103,7 +103,7 @@ class PatternMatchAndApply(ppl.Pass):
             except StopIteration:
                 continue
 
-            tsdfg = sdfg.sdfg_list[match.sdfg_id]
+            tsdfg = sdfg.cfg_list[match.cfg_id]
             graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
             # Set previous pipeline results
@@ -156,7 +156,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     # Helper function for applying and validating a transformation
     def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
                             pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
-        tsdfg = sdfg.sdfg_list[match.sdfg_id]
+        tsdfg = sdfg.cfg_list[match.cfg_id]
         graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
         # Set previous pipeline results
@@ -377,7 +377,7 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
-        match.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
+        match.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
@@ -513,19 +513,19 @@ def match_patterns(sdfg: SDFG,
         (interstate_transformations, singlestate_transformations) = get_transformation_metadata(patterns, options)
 
     # Collect SDFG and nested SDFGs
-    sdfgs = sdfg.all_sdfgs_recursive()
+    cfrs = sdfg.all_control_flow_regions(recursive=True)
 
     # Try to find transformations on each SDFG
-    for tsdfg in sdfgs:
+    for cfr in cfrs:
         ###################################
         # Match inter-state transformations
         if len(interstate_transformations) > 0:
             # Collapse multigraph into directed graph in order to use VF2
-            digraph = collapse_multigraph_to_nx(tsdfg)
+            digraph = collapse_multigraph_to_nx(cfr)
 
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                match = _try_to_match_transformation(tsdfg, digraph, subgraph, tsdfg, xform, expr_idx, nxpattern, -1,
+                match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
                                                      permissive, opts)
                 if match is not None:
                     yield match
@@ -534,7 +534,7 @@ def match_patterns(sdfg: SDFG,
         # Match single-state transformations
         if len(singlestate_transformations) == 0:
             continue
-        for state_id, state in enumerate(tsdfg.nodes()):
+        for state_id, state in enumerate(cfr.nodes()):
             if states is not None and state not in states:
                 continue
 
@@ -543,7 +543,7 @@ def match_patterns(sdfg: SDFG,
 
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(state, digraph, subgraph, tsdfg, xform, expr_idx, nxpattern,
+                    match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
                                                          state_id, permissive, opts)
                     if match is not None:
                         yield match

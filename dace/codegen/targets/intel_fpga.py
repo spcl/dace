@@ -469,7 +469,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         """
 
         # In xilinx one of them is not used because part of the code goes in another place (entry_stream)
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         kernel_header_stream = CodeIOStream()
         kernel_body_stream = CodeIOStream()
@@ -517,7 +517,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         seperator = "/" * 59
         host_stream.write(f"\n{seperator}\n// Kernel: {kernel_name}\n{seperator}\n\n")
 
-        host_stream.write(f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg, sdfg.node_id(state))
+        host_stream.write(f"std::vector<hlslib::ocl::Kernel> {kernel_name}_kernels;", sdfg, state.block_id)
 
     def generate_host_function_body(self, sdfg: dace.SDFG, state: dace.SDFGState, host_stream: CodeIOStream,
                                     kernel_name: str, predecessors: list):
@@ -530,7 +530,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         :param kernel_name:
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
         """
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         # Check if this kernel depends from other kernels
         needs_synch = len(predecessors) > 0
@@ -556,8 +556,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
 
     def generate_module(self, sdfg, state, kernel_name, module_name, subgraph, parameters, module_stream,
                         host_header_stream, host_body_stream, instrumentation_stream):
-        state_id = sdfg.node_id(state)
-        dfg = sdfg.nodes()[state_id]
+        state_id = state.block_id
+        dfg = state.parent_graph.nodes()[state_id]
 
         kernel_args_opencl = []
         kernel_args_host = []
@@ -580,7 +580,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + module_name
+        module_function_name = "mod_" + str(state.parent_graph.cfg_id) + "_" + module_name
         # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
@@ -616,7 +616,8 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                         kernel_name, module_function_name,
                         ", ".join([""] + kernel_args_call) if len(kernel_args_call) > 0 else ""), sdfg, state_id)
                 if state.instrument == dtypes.InstrumentationType.FPGA:
-                    self.instrument_opencl_kernel(module_function_name, state_id, sdfg.sdfg_id, instrumentation_stream)
+                    self.instrument_opencl_kernel(module_function_name, state_id, state.parent_graph.cfg_id,
+                                                  instrumentation_stream)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
                 start, stop, skip = unrolled_loop.range.ranges[0]
@@ -639,7 +640,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                             ", ".join([""] + kernel_args_call[:-1]) if len(kernel_args_call) > 1 else ""), sdfg,
                         state_id)
                     if state.instrument == dtypes.InstrumentationType.FPGA:
-                        self.instrument_opencl_kernel(unrolled_module_name, state_id, sdfg.sdfg_id,
+                        self.instrument_opencl_kernel(unrolled_module_name, state_id, state.parent_graph.cfg_id,
                                                       instrumentation_stream)
 
         # ----------------------------------------------------------------------
@@ -663,7 +664,7 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + module_name + "_func"
+            pe_function_name = "pe_" + str(state.parent_graph.cfg_id) + "_" + module_name + "_func"
             module_body_stream.write("inline void {}({}) {{".format(pe_function_name, ", ".join(kernel_args_opencl)),
                                      sdfg, state_id)
 

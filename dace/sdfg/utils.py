@@ -1215,8 +1215,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.sdfg_id
-
         for cfg in sd.all_control_flow_regions():
             while True:
                 edges = list(cfg.nx.edges)
@@ -1232,7 +1230,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         continue
                     candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                     sf = StateFusion()
-                    sf.setup_match(cfg, id, -1, candidate, 0, override=True)
+                    sf.setup_match(cfg, cfg.block_id, -1, candidate, 0, override=True)
                     if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                         sf.apply(cfg, sd)
                         applied += 1
@@ -1258,8 +1256,8 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                                n=len(blocks), progress=progress):
         block: ControlFlowBlock = _block
-        graph: SomeGraphT = _graph
-        id = block.sdfg.sdfg_id
+        graph: GraphT = _graph
+        id = block.sdfg.cfg_id
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
@@ -1298,11 +1296,11 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
 
     for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
-        id = node.sdfg.sdfg_id
-        sd = state.parent
+        id = node.sdfg.cfg_id
+        sd = state.sdfg
 
         # We have to reevaluate every time due to changing IDs
-        state_id = sd.node_id(state)
+        state_id = state.block_id
         if multistate:
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: node,
@@ -1411,7 +1409,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     # Build a unique representation
     sdfg = graph.parent
     state = graph if isinstance(graph, SDFGState) else graph._graph
-    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
+    return str(sdfg.cfg_id) + "_" + str(state.block_id) + "_" + str(state.node_id(node))
 
 
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:

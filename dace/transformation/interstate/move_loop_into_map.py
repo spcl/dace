@@ -253,7 +253,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         from dace.transformation.interstate import RefineNestedAccess
         transformation = RefineNestedAccess()
-        transformation.setup_match(sdfg, 0, sdfg.node_id(body), {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
+        transformation.setup_match(sdfg, 0, body.block_id, {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
         transformation.apply(body, sdfg)
 
         # Second propagation for refined accesses.

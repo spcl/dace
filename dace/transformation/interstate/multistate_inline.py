@@ -364,7 +364,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Modify start state as necessary
         if outer_start_state is outer_state:
-            sdfg.start_state = sdfg.node_id(source)
+            sdfg.start_state = source.block_id
 
         # TODO: Modify memlets by offsetting
         # If both source and sink nodes are inputs/outputs, reconnect once
@@ -420,7 +420,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Remove nested SDFG and state
         sdfg.remove_node(outer_state)
 
-        sdfg._sdfg_list = sdfg.reset_sdfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
         return nsdfg.nodes()
 

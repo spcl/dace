@@ -495,7 +495,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
         return evals
 
     def unique_name(self, node: nodes.RTLTasklet, state, sdfg):
-        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
+        return "{}_{}_{}_{}".format(node.name, state.parent_graph.cfg_id, state.block_id, state.node_id(node))
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                         function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):

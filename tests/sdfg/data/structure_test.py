@@ -108,7 +108,7 @@ def test_write_structure():
                                                loop_end_state=if_after)
     # Make For Loop  for i
     i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
-    sdfg.start_state = sdfg.node_id(i_before)
+    sdfg.start_state = i_before.block_id
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
     B = i_guard.add_access('B')
@@ -193,7 +193,7 @@ def test_local_structure():
                                                loop_end_state=if_after)
     # Make For Loop  for i
     i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
-    sdfg.start_state = sdfg.node_id(i_before)
+    sdfg.start_state = i_before.block_id
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
     tmp = i_guard.add_access('tmp')
@@ -357,7 +357,7 @@ def test_write_nested_structure():
                                                loop_end_state=if_after)
     # Make For Loop  for i
     i_before, i_guard, i_after = sdfg.add_loop(None, j_before, None, 'i', '0', 'i < M', 'i + 1', loop_end_state=j_after)
-    sdfg.start_state = sdfg.node_id(i_before)
+    sdfg.start_state = i_before.block_id
     i_before_guard = sdfg.edges_between(i_before, i_guard)[0]
     i_before_guard.data.assignments['idx'] = '0'
     B = i_guard.add_access('B')

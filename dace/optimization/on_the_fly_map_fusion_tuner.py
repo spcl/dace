@@ -8,7 +8,7 @@ import numpy as np
 from typing import Generator, Dict, List, Tuple
 from collections import Counter
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, SDFGState
 from dace.optimization import cutout_tuner
 from dace.sdfg.analysis.cutout import SDFGCutout
 
@@ -31,16 +31,15 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         self.instrument = measurement
 
     def cutouts(self):
-        for nsdfg_id, nsdfg in enumerate(self._sdfg.all_sdfgs_recursive()):
-            for state in nsdfg.nodes():
-                state_id = nsdfg.node_id(state)
-                nodes = state.nodes()
-
-                try:
-                    cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
-                    yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
-                except AttributeError:
-                    continue
+        for cfg_id, cfg in enumerate(self._sdfg.all_control_flow_regions(recursive=True)):
+            for block in cfg.nodes():
+                if isinstance(block, SDFGState):
+                    nodes = block.nodes()
+                    try:
+                        cutout = SDFGCutout.singlestate_cutout(block, *(nodes), make_copy=False)
+                        yield cutout, f"{cfg_id}.{block.block_id}.{block.label}"
+                    except AttributeError:
+                        continue
 
     def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
         fusion_id = int(key)
@@ -94,7 +93,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        map_fusion.setup_match(subgraph, candidate.cfg_id, candidate.start_state.block_id)
         if map_fusion.can_be_applied(candidate.start_state, candidate):
             fuse_counter = map_fusion.apply(candidate.start_state, candidate)
 
@@ -107,11 +106,12 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         if config[0] == 0:
             return
 
-        nsdfg_id, state_id, state_label = label.split(".")
-        nsdfg_id = int(nsdfg_id)
+        cfg_id, state_id, state_label = label.split(".")
+        cfg_id = int(cfg_id)
         state_id = int(state_id)
-        sdfg = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id]
-        state = sdfg.node(state_id)
+        cfg = list(self._sdfg.all_control_flow_regions(recursive=True))[cfg_id]
+        sdfg = cfg if isinstance(cfg, SDFG) else cfg.sdfg
+        state = cfg.node(state_id)
         nodes = state.nodes()
         cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
@@ -120,8 +120,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
-        if map_fusion.can_be_applied(state, sdfg):
+        map_fusion.setup_match(subgraph, cfg_id, state_id)
+        if map_fusion.can_be_applied(state, cfg):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
 
@@ -129,10 +129,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in configs:
-            nsdfg_id, state_id, _ = label.split(".")
-            nsdfg_id = int(nsdfg_id)
+            cfg_id, state_id, _ = label.split(".")
+            cfg_id = int(cfg_id)
             state_id = int(state_id)
-            state = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id].node(state_id)
+            state = list(self._sdfg.all_control_flow_regions(recursive=True))[cfg_id].node(state_id)
             nodes = state.nodes()
             cutout = SDFGCutout.singlestate_cutout(state, *(nodes), make_copy=False)
 
@@ -255,8 +255,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
 
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
-                                               experiment_sdfg.node_id(experiment_state))
+                        map_fusion.setup_match(experiment_subgraph, experiment_state.parent_graph.cfg_id,
+                                               experiment_state.block_id)
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
                                 experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
@@ -289,7 +289,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        map_fusion.setup_match(subgraph, state.parent_graph.cfg_id, state.block_id)
                         actual_fuse_counter = map_fusion.apply(state, nsdfg)
 
                         best_pattern = None

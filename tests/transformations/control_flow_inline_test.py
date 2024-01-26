@@ -199,8 +199,8 @@ def test_loop_inlining_for_continue_break():
     loop1.add_edge(state3, state4, dace.InterstateEdge(condition='i < 6'))
     loop1.add_edge(state3, state5, dace.InterstateEdge(condition='i >= 6'))
     loop1.add_edge(state5, state6, dace.InterstateEdge())
-    loop1.continue_states = {loop1.node_id(state2)}
-    loop1.break_states = {loop1.node_id(state4)}
+    loop1.continue_states = {state2.block_id}
+    loop1.break_states = {state4.block_id}
     sdfg.add_edge(state0, loop1, dace.InterstateEdge())
     state7 = sdfg.add_state('state7')
     sdfg.add_edge(loop1, state7, dace.InterstateEdge())

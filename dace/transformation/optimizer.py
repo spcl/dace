@@ -10,7 +10,8 @@ from typing import Any, Dict, Iterator, List, Optional, Type
 
 import dace
 from dace.config import Config
-from dace.sdfg import propagation
+from dace.sdfg import propagation, SDFG
+from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.passes import pattern_matching
 from dace.transformation.transformation import PatternTransformation
@@ -102,11 +103,11 @@ class Optimizer(object):
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id].nodes()[match.state_id]
+            graph = sdfg.cfg_list[match.cfg_id].nodes()[match.state_id]
             return get_actions(actions, graph, match)
 
         def get_stateflow_actions(actions, sdfg, match):
-            graph = sdfg.sdfg_list[match.sdfg_id]
+            graph = sdfg.cfg_list[match.cfg_id]
             return get_actions(actions, graph, match)
 
         actions = dict()
@@ -207,7 +208,8 @@ class SDFGOptimizer(Optimizer):
             ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
             for pattern_match in ui_options:
-                sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+                cfg = self.sdfg.cfg_list[pattern_match.cfg_id]
+                sdfg = cfg.sdfg if not isinstance(cfg, SDFG) else cfg
                 pattern_match._sdfg = sdfg
                 print('%d. Transformation %s' % (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
@@ -238,9 +240,9 @@ class SDFGOptimizer(Optimizer):
                 break
 
             match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
-            sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
-            graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
-            pattern_match._sdfg = sdfg
+            cfg: ControlFlowRegion = self.sdfg.cfg_list[pattern_match.cfg_id]
+            graph = cfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else cfg
+            pattern_match._sdfg = cfg.sdfg
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))
 

@@ -690,17 +690,17 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         kernel_stream.write(
             f"""\
   hlslib::ocl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
-  all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
+  all_events.push_back({kernel_name}_event);""", sdfg, state.block_id)
         if state.instrument == dtypes.InstrumentationType.FPGA:
-            self.instrument_opencl_kernel(kernel_name, sdfg.node_id(state), sdfg.sdfg_id, instrumentation_stream)
+            self.instrument_opencl_kernel(kernel_name, state.block_id, state.parent_graph.cfg_id, instrumentation_stream)
 
     def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters, module_stream, entry_stream,
                         host_stream, instrumentation_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
 
-        state_id = sdfg.node_id(state)
-        dfg = sdfg.nodes()[state_id]
+        state_id = state.block_id
+        dfg = state.parent_graph.nodes()[state_id]
 
         kernel_args_call = []
         kernel_args_module = []
@@ -837,12 +837,12 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
                 f"all_events.push_back(program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskAsync());",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
-                self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id, instrumentation_stream)
+                self.instrument_opencl_kernel(rtl_name, state_id, state.parent_graph.cfg_id, instrumentation_stream)
 
             return
 
         # create a unique module name to prevent name clashes
-        module_function_name = f"module_{name}_{sdfg.sdfg_id}"
+        module_function_name = f"module_{name}_{sdfg.cfg_id}"
 
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
@@ -950,7 +950,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         self._dispatcher.defined_vars.exit_scope(subgraph)
 
     def rtl_tasklet_name(self, node: nodes.RTLTasklet, state, sdfg):
-        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
+        return "{}_{}_{}_{}".format(node.name, state.parent_graph.cfg_id, state.block_id, state.node_id(node))
 
     def generate_kernel_internal(self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str, predecessors: list,
                                  subgraphs: list, kernel_stream: CodeIOStream, state_host_header_stream: CodeIOStream,
@@ -1054,7 +1054,7 @@ DACE_EXPORTED int __dace_exit_xilinx({sdfg_state_name} *__state) {{
         module_stream = CodeIOStream()
         entry_stream = CodeIOStream()
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
 
         self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name, global_data_parameters, bank_assignments,
                                              module_stream, entry_stream, external_streams, multi_pumped)

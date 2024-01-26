@@ -119,7 +119,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             condition_preamble = f'if ({cond_string})' + ' {'
             condition_postamble = '}'
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         local_stream.write(condition_preamble, sdfg, state_id)
         defined_symbols = state.defined_symbols()
         for sym, _ in defined_symbols.items():
@@ -159,9 +159,9 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             ptrname = '&' + ptrname
 
         # Create UUID
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         node_id = state.node_id(node)
-        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
+        uuid = f'{state.parent_graph.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
         preamble, postamble = '', ''
@@ -234,7 +234,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             condition_preamble = f'if ({cond_string})' + ' {'
             condition_postamble = '}'
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         local_stream.write(condition_preamble, sdfg, state_id)
         defined_symbols = state.defined_symbols()
         for sym, sym_type in defined_symbols.items():
@@ -275,9 +275,9 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
             ptrname = '&' + ptrname
 
         # Create UUID
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         node_id = state.node_id(node)
-        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
+        uuid = f'{state.parent_graph.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
         preamble, postamble = '', ''

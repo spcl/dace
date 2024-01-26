@@ -107,7 +107,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
         if not self._papi_used:
             return
         if state.instrument == dace.InstrumentationType.PAPI_Counters:
-            uid = _unified_id(-1, sdfg.node_id(state))
+            uid = _unified_id(-1, state.block_id)
             local_stream.write("__perf_store.markSuperSectionStart(%d);" % uid)
 
     def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream, copy_shape, src_strides,
@@ -115,7 +115,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(s
         if not self._papi_used:
             return
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         memlet = edge.data
 
         # For perfcounters, we have to make sure that:
@@ -178,7 +178,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if not self._papi_used:
             return
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         node_id = state.node_id(dst_node)
         if self.perf_should_instrument:
             unique_cpy_id = self._unique_counter
@@ -196,7 +196,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if not self._papi_used:
             return
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         unified_id = _unified_id(state.node_id(node), state_id)
 
         perf_should_instrument = (node.instrument == dace.InstrumentationType.PAPI_Counters
@@ -225,7 +225,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if not self._papi_used:
             return
 
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         node_id = state.node_id(node)
         unified_id = _unified_id(node_id, state_id)
 
@@ -256,7 +256,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
             return
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         entry_node = state.entry_node(node)
         if not self.should_instrument_entry(entry_node):
             return
@@ -269,7 +269,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
     def on_map_entry(self, sdfg, state, node, outer_stream, inner_stream):
         dfg = state.scope_subgraph(node)
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         if node.map.instrument != dace.InstrumentationType.PAPI_Counters:
             return
 
@@ -302,7 +302,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         result.write(self.perf_counter_start_measurement_string(unified_id, map_name), sdfg, state_id, node)
 
     def on_consume_entry(self, sdfg, state, node, outer_stream, inner_stream):
-        state_id = sdfg.node_id(state)
+        state_id = state.block_id
         unified_id = _unified_id(state.node_id(node), state_id)
 
         # Outer part

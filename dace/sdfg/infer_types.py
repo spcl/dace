@@ -276,7 +276,7 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
         raise validation.InvalidSDFGNodeError(
             f'Cannot determine default schedule for node {node}. '
             'Multiple arrays that point to it say that it should be the following schedules: '
-            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+            f'{constraints}', state.parent, state.block_id, state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 

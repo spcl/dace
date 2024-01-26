@@ -351,21 +351,21 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
     """
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
-    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]
+    reachable_states = StateReachability().apply_pass(sdfg, {})
     redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
 
     # Collect redefined symbols
-    for e in sdfg.edges():
+    for e in sdfg.all_interstate_edges():
         redefined = e.data.assignments.keys()
         redefined_symbols[e.dst] |= redefined
-        for reachable in reachable_states[e.dst]:
+        for reachable in reachable_states[e.dst.parent_graph.cfg_id][e.dst]:
             redefined_symbols[reachable] |= redefined
 
     # Replace everything but the redefined symbols
-    for state in sdfg.nodes():
-        per_state_mapping = {k: v for k, v in mapping.items() if k not in redefined_symbols[state]}
-        symbolic.safe_replace(per_state_mapping, state.replace_dict)
-        for e in sdfg.out_edges(state):
+    for block in sdfg.nodes():
+        per_state_mapping = {k: v for k, v in mapping.items() if k not in redefined_symbols[block]}
+        symbolic.safe_replace(per_state_mapping, block.replace_dict)
+        for e in sdfg.out_edges(block):
             symbolic.safe_replace(per_state_mapping, lambda d: e.data.replace_dict(d, replace_keys=False))
 
 

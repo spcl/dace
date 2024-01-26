@@ -1137,6 +1137,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def parent_graph(self, parent: Optional['ControlFlowRegion']):
         self._parent_graph = parent
 
+    @property
+    def block_id(self) -> int:
+        return self.parent_graph.node_id(self)
+
 
 @make_properties
 class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlock, DataflowGraphView):
@@ -1540,7 +1544,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         sdfg.parent = self
         sdfg.parent_sdfg = self.sdfg
 
-        sdfg.update_sdfg_list([])
+        sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -2373,6 +2377,104 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
+        self._cfg_list: List['ControlFlowRegion'] = [self]
+
+    def reset_cfg_list(self):
+        if self._parent_graph is not None:
+            return self._parent_graph.reset_cfg_list()
+        else:
+            # Propagate new CFG list to all children
+            all_cfgs = list(self.all_control_flow_regions(recursive=True))
+            for cfg in all_cfgs:
+                cfg._cfg_list = all_cfgs
+        return self._cfg_list
+
+    def update_cfg_list(self, cfg_list):
+        # TODO: Refactor
+        sub_cfg_list = self._cfg_list
+        for cfg in cfg_list:
+            if cfg not in sub_cfg_list:
+                sub_cfg_list.append(cfg)
+        if self._parent_graph is not None:
+            self._parent_graph.update_cfg_list(sub_cfg_list)
+            self._cfg_list = self._parent_graph.cfg_list
+            for cfg in sub_cfg_list:
+                cfg._cfg_list = self._cfg_list
+        else:
+            self._cfg_list = sub_cfg_list
+
+    @abc.abstractmethod
+    def _used_symbols_internal(self,
+                               all_symbols: bool,
+                               defined_syms: Optional[Set] = None,
+                               free_syms: Optional[Set] = None,
+                               used_before_assignment: Optional[Set] = None,
+                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
+        defined_syms = set() if defined_syms is None else defined_syms
+        free_syms = set() if free_syms is None else free_syms
+        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
+
+        try:
+            ordered_blocks = self.topological_sort(self.start_block)
+        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
+            ordered_blocks = self.nodes()
+
+        for block in ordered_blocks:
+            state_symbols = set()
+            if isinstance(block, ControlFlowRegion):
+                b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols)
+                free_syms |= b_free_syms
+                defined_syms |= b_defined_syms
+                used_before_assignment |= b_used_before_syms
+                state_symbols = b_free_syms
+            else:
+                state_symbols = block.used_symbols(all_symbols)
+                free_syms |= state_symbols
+
+            # Add free inter-state symbols
+            for e in self.out_edges(block):
+                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
+                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
+                # compute the symbols that are used before being assigned.
+                efsyms = e.data.used_symbols(all_symbols)
+                # collect symbols representing data containers
+                dsyms = {sym for sym in efsyms if sym in self.arrays}
+                for d in dsyms:
+                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
+                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
+                used_before_assignment.update(efsyms - defined_syms)
+                free_syms |= efsyms
+
+        # Remove symbols that were used before they were assigned.
+        defined_syms -= used_before_assignment
+
+        if isinstance(self, dace.SDFG):
+            # Remove from defined symbols those that are in the symbol mapping
+            if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
+                defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
+
+            # Add the set of SDFG symbol parameters
+            # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
+            if all_symbols:
+                free_syms |= set(self.symbols.keys())
+
+        # Subtract symbols defined in inter-state edges and constants from the list of free symbols.
+        free_syms -= defined_syms
+
+        return free_syms, defined_syms, used_before_assignment
+
+    def to_json(self, parent=None):
+        graph_json = OrderedDiGraph.to_json(self)
+        block_json = ControlFlowBlock.to_json(self, parent)
+        graph_json.update(block_json)
+
+        graph_json['cfg_list_id'] = int(self.cfg_id)
+        graph_json['start_block'] = self._start_block
+
+        return graph_json
+
+    ###################################################################
+    # Graph manipulation methods
 
     def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
@@ -2459,72 +2561,6 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self.add_edge(state, new_state, dace.sdfg.InterstateEdge())
         return new_state
 
-    @abc.abstractmethod
-    def _used_symbols_internal(self,
-                               all_symbols: bool,
-                               defined_syms: Optional[Set] = None,
-                               free_syms: Optional[Set] = None,
-                               used_before_assignment: Optional[Set] = None,
-                               keep_defined_in_mapping: bool = False) -> Tuple[Set[str], Set[str], Set[str]]:
-        defined_syms = set() if defined_syms is None else defined_syms
-        free_syms = set() if free_syms is None else free_syms
-        used_before_assignment = set() if used_before_assignment is None else used_before_assignment
-
-        try:
-            ordered_blocks = self.topological_sort(self.start_block)
-        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
-            ordered_blocks = self.nodes()
-
-        for block in ordered_blocks:
-            state_symbols = set()
-            if isinstance(block, ControlFlowRegion):
-                b_free_syms, b_defined_syms, b_used_before_syms = block._used_symbols_internal(all_symbols)
-                free_syms |= b_free_syms
-                defined_syms |= b_defined_syms
-                used_before_assignment |= b_used_before_syms
-                state_symbols = b_free_syms
-            else:
-                state_symbols = block.used_symbols(all_symbols)
-                free_syms |= state_symbols
-
-            # Add free inter-state symbols
-            for e in self.out_edges(block):
-                # NOTE: First we get the true InterstateEdge free symbols, then we compute the newly defined symbols by
-                # subracting the (true) free symbols from the edge's assignment keys. This way we can correctly
-                # compute the symbols that are used before being assigned.
-                efsyms = e.data.used_symbols(all_symbols)
-                # collect symbols representing data containers
-                dsyms = {sym for sym in efsyms if sym in self.arrays}
-                for d in dsyms:
-                    efsyms |= {str(sym) for sym in self.arrays[d].used_symbols(all_symbols)}
-                defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
-                used_before_assignment.update(efsyms - defined_syms)
-                free_syms |= efsyms
-
-        # Remove symbols that were used before they were assigned.
-        defined_syms -= used_before_assignment
-
-        if isinstance(self, dace.SDFG):
-            # Remove from defined symbols those that are in the symbol mapping
-            if self.parent_nsdfg_node is not None and keep_defined_in_mapping:
-                defined_syms -= set(self.parent_nsdfg_node.symbol_mapping.keys())
-
-            # Add the set of SDFG symbol parameters
-            # If all_symbols is False, those symbols would only be added in the case of non-Python tasklets
-            if all_symbols:
-                free_syms |= set(self.symbols.keys())
-
-        # Subtract symbols defined in inter-state edges and constants from the list of free symbols.
-        free_syms -= defined_syms
-
-        return free_syms, defined_syms, used_before_assignment
-
-    def to_json(self, parent=None):
-        graph_json = OrderedDiGraph.to_json(self)
-        block_json = ControlFlowBlock.to_json(self, parent)
-        graph_json.update(block_json)
-        return graph_json
-
     ###################################################################
     # Traversal methods
 
@@ -2573,6 +2609,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} ({self.label})'
+
+    @property
+    def cfg_id(self):
+        """
+        Returns the unique index of the current CFG within the current tree of CFGs (top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        """
+        return self.cfg_list.index(self)
+
+    @property
+    def cfg_list(self) -> List['ControlFlowRegion']:
+        return self._cfg_list
 
     @property
     def start_block(self):

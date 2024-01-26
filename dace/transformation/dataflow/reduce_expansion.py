@@ -183,7 +183,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
-            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
             nstate_id = 0
             local_storage = OutLocalStorage()
             local_storage.setup_match(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
@@ -215,7 +215,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
             }
 
-            nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
+            nsdfg_id = nsdfg.sdfg.cfg_list.index(nsdfg.sdfg)
             nstate_id = 0
             local_storage = InLocalStorage()
             local_storage.setup_match(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
@@ -229,8 +229,8 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG()
-        inline_sdfg.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)},
-                                0)
+        inline_sdfg.setup_match(sdfg, graph.parent_graph.cfg_id, graph.block_id,
+                                {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default

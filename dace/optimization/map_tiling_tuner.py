@@ -30,7 +30,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                     continue
 
                 node_id = state.node_id(node)
-                state_id = self._sdfg.node_id(state)
+                state_id = self._state.block_id
                 subgraph_nodes = state.scope_subgraph(node).nodes()
                 cutout = SDFGCutout.singlestate_cutout(state, *subgraph_nodes)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"

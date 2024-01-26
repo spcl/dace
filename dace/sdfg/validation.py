@@ -337,7 +337,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     from dace.sdfg.scope import scope_contains_scope, is_devicelevel_gpu, is_devicelevel_fpga
 
     sdfg = sdfg or state.parent
-    state_id = state_id if state_id is not None else state.parent_graph.node_id(state)
+    state_id = state_id if state_id is not None else state.block_id
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
@@ -827,7 +827,7 @@ class InvalidSDFGError(Exception):
         return f'File "{lineinfo.filename}"'
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id)
 
     def __str__(self):
         if self.state_id is not None:
@@ -860,7 +860,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, isedge_id=self.edge_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, isedge_id=self.edge_id)
 
     def __str__(self):
         if self.edge_id is not None:
@@ -907,7 +907,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, node_id=self.node_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
         state = self.sdfg.node(self.state_id)
@@ -952,7 +952,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, edge_id=self.edge_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
         state = self.sdfg.node(self.state_id)
