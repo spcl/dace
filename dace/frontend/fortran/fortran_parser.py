@@ -450,11 +450,10 @@ class AST_translator:
             elif isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
             else:
+                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
                 if node.init is not None:
-                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
-                
                     text = tw.write_code(node.init)
-                    self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)    
+                    self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)
            
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:

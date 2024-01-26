@@ -345,7 +345,7 @@ class CallToArray(NodeTransformer):
             node.args = processed_args
             return node
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices)
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
 
 class CallExtractorNodeLister(NodeVisitor):
@@ -811,7 +811,7 @@ class IndexExtractor(NodeTransformer):
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices)
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices, line_number=node.line_number)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -836,8 +836,8 @@ class IndexExtractor(NodeTransformer):
                                     ast_internal_classes.Var_Decl_Node(name=tmp_name,
                                                                        type="INTEGER",
                                                                        sizes=None,
-                                                                       line_number=child.line_number,
-                                init=None)
+                                                                       init=None,
+                                                                       line_number=child.line_number)
                                 ],
                                                                     line_number=child.line_number))
                             if self.normalize_offsets:
@@ -1008,7 +1008,7 @@ def optionalArgsHandleFunction(func):
                                             offsets=None,
                                             kind=None,
                                             optional=False,
-                                init=None,
+                                            init=None,
                                             line_number=func.line_number)
             new_args.append(ast_internal_classes.Name_Node(name=name))
             vardecls.append(var)

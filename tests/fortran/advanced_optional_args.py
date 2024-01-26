@@ -21,10 +21,9 @@ def test_fortran_frontend_optional_adv():
                     integer :: a
                     integer,dimension(2) :: ret
 
-                    !CALL intrinsic_optional_test_function2(res, a)
-                    !CALL intrinsic_optional_test_function2(res2)
+                    CALL intrinsic_optional_test_function2(res, a)
+                    CALL intrinsic_optional_test_function2(res2)
                     CALL get_indices_c(1, 1, 1, ret(1), ret(2), 1, 2)
-                    !CALL get_indices_c(1, 1, 1, ret(1), ret(2), 1)
 
                     END SUBROUTINE intrinsic_optional_test_function
 
@@ -77,18 +76,17 @@ END SUBROUTINE get_indices_c
     sources={}
     sources["adv_intrinsic_optional_test_function"]=test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_optional_test_function", False,sources=sources)
-    #sdfg.simplify(verbose=True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 4
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, a=5)
+    print(res)
 
     assert res[0] == 5
     assert res2[0] == 0
-
-
 
 if __name__ == "__main__":
 
