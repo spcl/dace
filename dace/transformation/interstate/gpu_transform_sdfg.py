@@ -4,7 +4,7 @@
 from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic, subsets as sbs, propagate_memlets_sdfg
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation, helpers as xfh, pass_pipeline as ppl
+from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 from collections import defaultdict
 from copy import deepcopy as dc
@@ -83,7 +83,7 @@ def _recursive_in_check(node, state, gpu_scalars):
 
 
 @make_properties
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 

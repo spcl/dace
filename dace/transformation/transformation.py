@@ -27,8 +27,9 @@ from dace.sdfg.state import ControlFlowRegion
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
 from dace.transformation import pass_pipeline as ppl
-from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union
+from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union, Callable
 import pydoc
+import warnings
 
 
 class TransformationBase(ppl.Pass):
@@ -712,7 +713,7 @@ class SubgraphTransformation(TransformationBase):
             if isinstance(subgraph.graph, SDFGState):
                 sdfg = subgraph.graph.parent
                 self.sdfg_id = sdfg.sdfg_id
-                self.state_id = sdfg.node_id(subgraph.graph)
+                self.state_id = subgraph.graph.parent_graph.node_id(subgraph.graph)
             elif isinstance(subgraph.graph, SDFG):
                 self.sdfg_id = subgraph.graph.sdfg_id
                 self.state_id = -1
@@ -872,3 +873,58 @@ class SubgraphTransformation(TransformationBase):
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
+
+
+def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Callable[[Any], Optional[SDFG]]):
+    if hasattr(cls, function_name):
+        vanilla_method = getattr(cls, function_name)
+        def blocksafe_wrapper(tgt, *args, **kwargs):
+            sdfg = get_sdfg_arg(tgt, *args, **kwargs)
+            if sdfg and isinstance(sdfg, SDFG):
+                if not sdfg.using_experimental_blocks:
+                    return vanilla_method(tgt, *args, **kwargs)
+                else:
+                    warnings.warn('Skipping ' + function_name + ' from ' + cls.__name__ +
+                                  ' due to incompatibility with experimental control flow blocks')
+            else:
+                raise ValueError('Expected SDFG as first argument to ' + cls.__name__ + '.' + function_name)
+        setattr(cls, function_name, blocksafe_wrapper)
+
+
+def _subgraph_transformation_extract_sdfg_arg(*args) -> SDFG:
+    subgraph = args[1]
+    if isinstance(subgraph, SDFG):
+        return subgraph
+    elif isinstance(subgraph, SDFGState):
+        return subgraph.sdfg
+    elif isinstance(subgraph, gr.SubgraphView):
+        if isinstance(subgraph.graph, SDFGState):
+            return subgraph.graph.sdfg
+        elif isinstance(subgraph.graph, SDFG):
+            return subgraph.graph
+        raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
+    raise TypeError('Unrecognized graph type "%s"' % type(subgraph).__name__)
+
+
+def single_level_sdfg_only(cls: ppl.Pass):
+
+    for function_name in ['apply_pass', 'apply_to']:
+        _make_function_blocksafe(cls, function_name, lambda *args: args[1])
+
+    if issubclass(cls, SubgraphTransformation):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[1])
+        _make_function_blocksafe(cls, 'can_be_applied', lambda *args: args[1])
+        _make_function_blocksafe(cls, 'setup_match', _subgraph_transformation_extract_sdfg_arg)
+    elif issubclass(cls, ppl.StatePass):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[1].sdfg)
+    elif issubclass(cls, ppl.ScopePass):
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[2].sdfg)
+    else:
+        _make_function_blocksafe(cls, 'apply', lambda *args: args[2])
+        _make_function_blocksafe(cls, 'can_be_applied', lambda *args: args[3])
+        _make_function_blocksafe(cls, 'setup_match', lambda *args: args[1])
+
+    if issubclass(cls, PatternTransformation):
+        _make_function_blocksafe(cls, 'apply_pattern', lambda *args: args[0]._sdfg)
+
+    return cls

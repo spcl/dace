@@ -11,13 +11,13 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names
-from dace.transformation import transformation, pass_pipeline as ppl
+from dace.transformation import transformation
 from dace.properties import make_properties
 from dace import data
 
 
 @make_properties
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens

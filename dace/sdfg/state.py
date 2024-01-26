@@ -2683,7 +2683,7 @@ class LoopRegion(ControlFlowRegion):
         )
         free_syms |= b_free_symbols
         defined_syms |= b_defined_symbols
-        used_before_assignment |= (b_used_before_assignment - self.loop_variable)
+        used_before_assignment |= (b_used_before_assignment - {self.loop_variable})
 
         defined_syms -= used_before_assignment
         free_syms -= defined_syms

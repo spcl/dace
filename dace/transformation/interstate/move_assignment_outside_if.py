@@ -10,10 +10,10 @@ import sympy as sp
 from dace import sdfg as sd
 from dace.sdfg import graph as gr
 from dace.sdfg.nodes import Tasklet, AccessNode
-from dace.transformation import transformation, pass_pipeline as ppl
+from dace.transformation import transformation
 
 
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class MoveAssignmentOutsideIf(transformation.MultiStateTransformation):
 
     if_guard = transformation.PatternNode(sd.SDFGState)

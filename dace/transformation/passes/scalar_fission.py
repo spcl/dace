@@ -4,10 +4,11 @@ from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
+@transformation.single_level_sdfg_only
 class ScalarFission(ppl.Pass):
     """
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.

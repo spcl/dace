@@ -9,7 +9,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes, SDFG, SDFGState
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion
-from dace.transformation import transformation, pass_pipeline as ppl
+from dace.transformation import transformation
 
 
 class EndStateElimination(transformation.MultiStateTransformation):
@@ -227,7 +227,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class SymbolAliasPromotion(transformation.MultiStateTransformation):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
@@ -332,7 +332,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation):
             in_edge.assignments[k] = v
 
 
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class HoistState(transformation.SingleStateTransformation):
     """ Move a state out of a nested SDFG """
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)

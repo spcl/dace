@@ -4,7 +4,7 @@
 import dace
 import sympy
 from dace.sdfg import infer_types
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, ControlFlowRegion
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
 from dace.sdfg.scope import is_devicelevel_gpu_kernel
@@ -29,7 +29,7 @@ from dace.transformation.estimator.enumeration import GreedyEnumerator
 # FPGA AutoOpt
 from dace.transformation.auto import fpga as fpga_auto_opt
 
-GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView]
+GraphViewType = Union[SDFG, SDFGState, gr.SubgraphView, ControlFlowRegion]
 
 
 def greedy_fuse(graph_or_subgraph: GraphViewType,
@@ -53,11 +53,13 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     :param expand_reductions: Expand all reduce nodes before fusion
     """
     debugprint = config.Config.get_bool('debugprint')
-    if isinstance(graph_or_subgraph, SDFG):
-        # If we have an SDFG, recurse into graphs
-        graph_or_subgraph.simplify(validate_all=validate_all)
-        # MapFusion for trivial cases
-        graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+    if isinstance(graph_or_subgraph, ControlFlowRegion):
+        if isinstance(graph_or_subgraph, SDFG):
+            # If we have an SDFG, recurse into graphs
+            graph_or_subgraph.simplify(validate_all=validate_all)
+            # MapFusion for trivial cases
+            graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
 
@@ -190,12 +192,13 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     graph = graph_or_subgraph
     if isinstance(graph_or_subgraph, gr.SubgraphView):
         graph = graph_or_subgraph.graph
-    if isinstance(graph, SDFG):
-        for state in graph_or_subgraph.nodes():
-            tile_wcrs(state, validate_all)
+    if isinstance(graph, ControlFlowRegion):
+        for block in graph_or_subgraph.nodes():
+            tile_wcrs(block, validate_all)
         return
+
     if not isinstance(graph, SDFGState):
-        raise TypeError('Graph must be a state, an SDFG, or a subgraph of either')
+        raise TypeError('Graph must be a state, an SDFG, a control flow region, or a subgraph of either')
     sdfg = graph.parent
 
     edges_to_consider: Set[Tuple[gr.MultiConnectorEdge[Memlet], nodes.MapEntry]] = set()

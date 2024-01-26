@@ -9,6 +9,7 @@ from dace import properties
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
+from dace.sdfg.state import ControlFlowRegion
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union
@@ -350,8 +351,9 @@ def type_or_class_match(node_a, node_b):
     return isinstance(node_a['node'], type(node_b['node']))
 
 
-def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph: nx.DiGraph, subgraph: Dict[int, int],
-                                 sdfg: SDFG, xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], collapsed_graph: nx.DiGraph,
+                                 subgraph: Dict[int, int], sdfg: SDFG,
+                                 xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
                                  expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
                                  options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
     """ 
@@ -513,19 +515,19 @@ def match_patterns(sdfg: SDFG,
         (interstate_transformations, singlestate_transformations) = get_transformation_metadata(patterns, options)
 
     # Collect SDFG and nested SDFGs
-    sdfgs = sdfg.all_sdfgs_recursive()
+    cfrs = sdfg.all_control_flow_regions(recursive=True)
 
     # Try to find transformations on each SDFG
-    for tsdfg in sdfgs:
+    for cfr in cfrs:
         ###################################
         # Match inter-state transformations
         if len(interstate_transformations) > 0:
             # Collapse multigraph into directed graph in order to use VF2
-            digraph = collapse_multigraph_to_nx(tsdfg)
+            digraph = collapse_multigraph_to_nx(cfr)
 
         for xform, expr_idx, nxpattern, matcher, opts in interstate_transformations:
             for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                match = _try_to_match_transformation(tsdfg, digraph, subgraph, tsdfg, xform, expr_idx, nxpattern, -1,
+                match = _try_to_match_transformation(cfr, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern, -1,
                                                      permissive, opts)
                 if match is not None:
                     yield match
@@ -534,7 +536,7 @@ def match_patterns(sdfg: SDFG,
         # Match single-state transformations
         if len(singlestate_transformations) == 0:
             continue
-        for state_id, state in enumerate(tsdfg.nodes()):
+        for state_id, state in enumerate(cfr.nodes()):
             if states is not None and state not in states:
                 continue
 
@@ -543,7 +545,7 @@ def match_patterns(sdfg: SDFG,
 
             for xform, expr_idx, nxpattern, matcher, opts in singlestate_transformations:
                 for subgraph in matcher(digraph, nxpattern, node_match, edge_match):
-                    match = _try_to_match_transformation(state, digraph, subgraph, tsdfg, xform, expr_idx, nxpattern,
+                    match = _try_to_match_transformation(state, digraph, subgraph, cfr.sdfg, xform, expr_idx, nxpattern,
                                                          state_id, permissive, opts)
                     if match is not None:
                         yield match

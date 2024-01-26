@@ -16,13 +16,13 @@ from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
-from dace.transformation import transformation, helpers, pass_pipeline as ppl
+from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
 
 
 @make_properties
-@ppl.single_level_sdfg_only
+@transformation.single_level_sdfg_only
 class InlineSDFG(transformation.SingleStateTransformation):
     """
     Inlines a single-state nested SDFG into a top-level SDFG.
