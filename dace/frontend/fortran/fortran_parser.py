@@ -11,7 +11,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
-from typing import List, Tuple, Set
+from typing import Dict, List, Tuple, Set
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -1423,13 +1423,35 @@ def create_sdfg_from_string(
                                 names.append(k.string)
             rename_dict[i] = local_rename_dict
             name_dict[i] = names
-    
                     
 
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
 
     program = own_ast.create_ast(ast)
+
+    # Repeated!
+    # We need that to know in transformations what structures are used.
+    # The actual structure listing is repeated later to resolve cycles.
+    # Not sure if we can actually do it earlier.
+
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes

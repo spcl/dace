@@ -1558,3 +1558,27 @@ class ElementalFunctionExpander(NodeTransformer):
                 newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
     
+class Structure:
+
+    def __init__(self):
+        self.vars: Dict[str, str] = {}
+
+class Structures:
+
+    def __init__(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
+        self.structures: Dict[str, Structure] = {}
+        self.parse(definitions)
+
+    def parse(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
+
+        for structure in definitions:
+
+            struct = Structure()
+
+            for statement in structure.component_part.component_def_stmts:
+                if isinstance(statement, ast_internal_classes.Data_Component_Def_Stmt_Node):
+                    for var in statement.vars.vardecl:
+                        struct.vars[var.name] = var
+
+            self.structures[structure.name.name] = struct
+
