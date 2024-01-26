@@ -493,15 +493,17 @@ class ProcessedWriter(TaskletWriter):
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Name_Node: self.name2string,
-            ast_internal_classes.Name_Range_Node: self.namerange2string,
+            ast_internal_classes.Name_Range_Node: self.name2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
+            ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,
             ast_internal_classes.Array_Subscript_Node: self.arraysub2string,
             ast_internal_classes.Parenthesis_Expr_Node: self.parenthesis2string,
             ast_internal_classes.Call_Expr_Node: self.call2string,
             ast_internal_classes.ParDecl_Node: self.pardecl2string,
+            ast_internal_classes.Data_Ref_Node: self.dataref2string,
         }
 
     def name2string(self, node: ast_internal_classes.Name_Node):

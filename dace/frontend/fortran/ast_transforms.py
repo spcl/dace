@@ -464,7 +464,8 @@ class ArgumentExtractor(NodeTransformer):
                             ast_internal_classes.Var_Decl_Node(
                                 name="tmp_call_" + str(temp),
                                 type=res[i].type,
-                                sizes=None
+                                sizes=None,
+                                init=None
                             )
                         ]))
                     newbody.append(
@@ -643,7 +644,8 @@ class CallExtractor(NodeTransformer):
                             ast_internal_classes.Var_Decl_Node(
                                 name="tmp_call_" + str(temp),
                                 type=res[i].type,
-                                sizes=None
+                                sizes=None,
+                                init=None
                             )
                         ]))
                     newbody.append(
@@ -834,7 +836,8 @@ class IndexExtractor(NodeTransformer):
                                     ast_internal_classes.Var_Decl_Node(name=tmp_name,
                                                                        type="INTEGER",
                                                                        sizes=None,
-                                                                       line_number=child.line_number)
+                                                                       line_number=child.line_number,
+                                init=None)
                                 ],
                                                                     line_number=child.line_number))
                             if self.normalize_offsets:
@@ -1005,6 +1008,7 @@ def optionalArgsHandleFunction(func):
                                             offsets=None,
                                             kind=None,
                                             optional=False,
+                                init=None,
                                             line_number=func.line_number)
             new_args.append(ast_internal_classes.Name_Node(name=name))
             vardecls.append(var)
