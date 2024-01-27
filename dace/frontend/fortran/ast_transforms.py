@@ -21,11 +21,12 @@ class Structures:
         for structure in definitions:
 
             struct = Structure()
-
-            for statement in structure.component_part.component_def_stmts:
-                if isinstance(statement, ast_internal_classes.Data_Component_Def_Stmt_Node):
-                    for var in statement.vars.vardecl:
-                        struct.vars[var.name] = var
+            if structure.component_part is not None:
+                if structure.component_part.component_def_stmts is not None:
+                    for statement in structure.component_part.component_def_stmts:
+                        if isinstance(statement, ast_internal_classes.Data_Component_Def_Stmt_Node):
+                            for var in statement.vars.vardecl:
+                                struct.vars[var.name] = var
 
             self.structures[structure.name.name] = struct
 

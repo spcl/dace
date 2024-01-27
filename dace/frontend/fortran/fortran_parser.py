@@ -1926,6 +1926,26 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
             #print(partial_ast.unsupported_fortran_syntax["top level"])
     #        return
+
+    
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+
+
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
@@ -1938,7 +1958,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
-
+    
     count=0
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
