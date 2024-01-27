@@ -4,6 +4,31 @@ from dace.frontend.fortran import ast_components, ast_internal_classes
 from typing import Dict, List, Optional, Tuple, Set
 import copy
 
+    
+class Structure:
+
+    def __init__(self):
+        self.vars: Dict[str, str] = {}
+
+class Structures:
+
+    def __init__(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
+        self.structures: Dict[str, Structure] = {}
+        self.parse(definitions)
+
+    def parse(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
+
+        for structure in definitions:
+
+            struct = Structure()
+
+            for statement in structure.component_part.component_def_stmts:
+                if isinstance(statement, ast_internal_classes.Data_Component_Def_Stmt_Node):
+                    for var in statement.vars.vardecl:
+                        struct.vars[var.name] = var
+
+            self.structures[structure.name.name] = struct
+
 
 def iter_fields(node: ast_internal_classes.FNode):
     """
@@ -1118,7 +1143,8 @@ def functionStatementEliminator(node=ast_internal_classes.Program_Node):
     return ast_internal_classes.Program_Node(main_program=main_program,
                                              function_definitions=function_definitions,
                                              subroutine_definitions=subroutine_definitions,
-                                             modules=modules)
+                                             modules=modules,
+                                             structures=node.structures)
 
 
 def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
@@ -1234,6 +1260,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                           count: int,
                           newbody: list,
                           scope_vars: ScopeVarsDeclarations,
+                          structures: Structures,
                           declaration=True):
     """
     Helper function for the transformation of array operations and sums to loops
@@ -1251,7 +1278,35 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
     currentindex = 0
     indices = []
 
-    offsets = scope_vars.get_var(node.parent, node.name.name).offsets
+    if isinstance(node, ast_internal_classes.Data_Ref_Node):
+
+        # we assume starting from the top (left-most) data_ref_node
+        # for struct1 % struct2 % struct3 % var
+        # we find definition of struct1, then we iterate until we find the var
+
+        struct_type = scope_vars.get_var(node.parent, node.parent_ref.name).type
+        struct_def = structures.structures[struct_type]
+        cur_node = node
+
+        while True:
+            cur_node = cur_node.part_ref
+
+            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
+                struct_def = structures.structures[struct_type]
+                offsets = struct_def.vars[cur_node.name.name].offsets
+                node = cur_node
+                break
+
+            elif isinstance(cur_node, ast_internal_classes.Name_Node):
+                struct_def = structures.structures[struct_type]
+                offsets = struct_def.vars[cur_node.name].offsets
+                break
+
+            struct_type = struct_def.vars[cur_node.parent_ref.name].type
+            struct_def = structures.structures[struct_type]
+
+    else:
+        offsets = scope_vars.get_var(node.parent, node.name.name).offsets
 
     for idx, i in enumerate(node.indices):
         if isinstance(i, ast_internal_classes.ParDecl_Node):
@@ -1349,6 +1404,7 @@ class ArrayToLoop(NodeTransformer):
     def __init__(self, ast):
         self.count = 0
 
+        self.ast = ast
         ParentScopeAssigner().visit(ast)
         self.scope_vars = ScopeVarsDeclarations()
         self.scope_vars.visit(ast)
@@ -1366,7 +1422,7 @@ class ArrayToLoop(NodeTransformer):
                 val = child.rval
                 ranges = []
                 rangepos = []
-                par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars, True)
+                par_Decl_Range_Finder(current, ranges, rangepos, [], self.count, newbody, self.scope_vars, self.ast.structures, True)
 
                 if res_range is not None and len(res_range) > 0:
                     rvals = [i for i in mywalk(val) if isinstance(i, ast_internal_classes.Array_Subscript_Node)]
@@ -1374,7 +1430,7 @@ class ArrayToLoop(NodeTransformer):
                         rangeposrval = []
                         rangesrval = []
 
-                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, False)
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval, [], self.count, newbody, self.scope_vars, self.ast.structures, False)
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
@@ -1557,28 +1613,3 @@ class ElementalFunctionExpander(NodeTransformer):
             else:
                 newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
-    
-class Structure:
-
-    def __init__(self):
-        self.vars: Dict[str, str] = {}
-
-class Structures:
-
-    def __init__(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
-        self.structures: Dict[str, Structure] = {}
-        self.parse(definitions)
-
-    def parse(self, definitions: List[ast_internal_classes.Derived_Type_Def_Node]):
-
-        for structure in definitions:
-
-            struct = Structure()
-
-            for statement in structure.component_part.component_def_stmts:
-                if isinstance(statement, ast_internal_classes.Data_Component_Def_Stmt_Node):
-                    for var in statement.vars.vardecl:
-                        struct.vars[var.name] = var
-
-            self.structures[structure.name.name] = struct
-
