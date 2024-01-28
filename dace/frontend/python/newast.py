@@ -2873,20 +2873,34 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if wtarget_subset.num_elements() != 1:
             if op_subset.num_elements() != 1:
+                # We first squeeze both sides, then try to broadcast the remaining shapes together
+                # This mimics numpy's behavior, where first the indices are taken (C[:i, j] -> (i,))
+                # and then the operation is performed.
                 sqz_osub = copy.deepcopy(op_subset)
-                oidx = sqz_osub.squeeze()
+                osqz = sqz_osub.squeeze()
                 sqz_wsub = copy.deepcopy(wtarget_subset)
-                widx = sqz_wsub.squeeze()
+                wsqz = sqz_wsub.squeeze()
                 sqz_rsub = copy.deepcopy(rtarget_subset)
-                ridx = sqz_rsub.squeeze()
-                _, all_idx_tuples, _, out_idx, inp_idx = _broadcast_to(sqz_wsub.size(), op_subset.size())
+                rsqz = sqz_rsub.squeeze()
+                _, all_idx_tuples, _, out_idx, inp_idx = _broadcast_to(sqz_wsub.size(), sqz_osub.size())
+                # Re-add squeezed dimensions from original subset so that memlets match original arrays
+                osqueezed = [i for i in range(len(op_subset)) if i not in osqz]
+                wsqueezed = [i for i in range(len(wtarget_subset)) if i not in wsqz]
+                rsqueezed = [i for i in range(len(rtarget_subset)) if i not in rsqz]
+
 
                 if (boolarr or indirect_indices
                         or (sqz_wsub.size() == sqz_osub.size() and sqz_wsub.size() == sqz_rsub.size())):
                     map_range = {i: rng for i, rng in all_idx_tuples}
                     in1_memlet = Memlet.simple(rtarget_name, out_idx)
+                    in1_memlet.subset.unsqueeze(rsqueezed)
+                    in1_memlet.subset.offset(rtarget_subset, False)
                     in2_memlet = Memlet.simple(op_name, inp_idx)
+                    in2_memlet.subset.unsqueeze(osqueezed)
+                    in2_memlet.subset.offset(op_subset, False)
                     out_memlet = Memlet.simple(wtarget_name, out_idx)
+                    out_memlet.subset.unsqueeze(wsqueezed)
+                    out_memlet.subset.offset(wtarget_subset, False)
                     if boolarr is not None:
                         in1_memlet.dynamic = True
                         out_memlet.dynamic = True
