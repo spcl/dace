@@ -1779,9 +1779,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             new_spec_children=[]
             for j in i.children[1].children:
                 if j.__class__.__name__=="Type_Declaration_Stmt":
-                    if j.children[0].__class__.__name__!="Declaration_Type_Spec":
-                        new_spec_children.append(j)    
-                    else:
+                    #if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                    #    new_spec_children.append(j)    
+                    #else:
                         entity_decls=[]
                         for k in j.children[2].children:
                             if k.__class__.__name__=="Entity_Decl":
@@ -1797,7 +1797,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                         for k in entity_decls:
                             j.children[2].children.append(k)            
                         new_spec_children.append(j)
-                if j.__class__.__name__=="Derived_Type_Def":
+                elif j.__class__.__name__=="Derived_Type_Def":
                     if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
                         new_spec_children.append(j)
                 else:
@@ -2067,9 +2067,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             sdfg.expand_library_nodes()
             sdfg.validate()
-            sdfg.simplify(verbose=True)
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
             try:    
+                sdfg.simplify(verbose=True)
+                
+            
                 sdfg.compile()
             except:
                 print("Compilation failed for ", sdfg.name)

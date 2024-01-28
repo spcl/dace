@@ -97,6 +97,12 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                                         if iii.children[0].string==used_name:
                                             for j in var.children:
                                                 #print("USED: "+ used_name)
+                                                nl = NameLister()
+                                                nl.get_names(iii)
+                                                for nameininit in nl.list_of_names:
+                                                    if nameininit not in actually_used:
+                                                        actually_used.append(nameininit)
+                                                        changed=True
                                                 if j.__class__.__name__=="Declaration_Type_Spec":
                                                     for k in j.children:
                                                         if k.__class__.__name__=="Type_Name":
