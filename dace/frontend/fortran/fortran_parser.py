@@ -2092,10 +2092,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.expand_library_nodes()
             sdfg.validate()
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
-            try:    
-                sdfg.simplify(verbose=True)
-                
-            
+            #try:    
+            sdfg.simplify(verbose=True)
+            #except:
+            #    print("Simplification failed for ", sdfg.name)    
+            try:  
                 sdfg.compile()
             except:
                 print("Compilation failed for ", sdfg.name)

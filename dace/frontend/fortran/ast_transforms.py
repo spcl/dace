@@ -168,6 +168,18 @@ class FindInputs(NodeVisitor):
         for i in node.indices:
             self.visit(i)
 
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+            if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.parent_ref.indices:
+                    self.visit(i)        
+            if isinstance(node.part_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.part_ref.indices:
+                    self.visit(i)
+            elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
+                self.visit(node.part_ref)
+                    
+        
+            
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
             if isinstance(node.lval, ast_internal_classes.Name_Node):
@@ -176,16 +188,36 @@ class FindInputs(NodeVisitor):
                 for i in node.lval.indices:
                     self.visit(i)
             elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
+                #if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
+                #    self.nodes.append(node.lval.parent_ref)    
+                if isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    #self.nodes.append(node.lval.parent_ref.name)
+                    for i in node.lval.parent_ref.indices:
+                        self.visit(i)        
+
+        else:
+            if isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
                 if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
                     self.nodes.append(node.lval.parent_ref)    
                 elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
                         self.visit(i)        
-
+                self.visit(node.lval.part_ref)        
+            else:
+                self.visit(node.lval)
+        if isinstance(node.rval, ast_internal_classes.Data_Ref_Node):
+                if isinstance(node.rval.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(node.rval.parent_ref)    
+                elif isinstance(node.rval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(node.rval.parent_ref.name)
+                    for i in node.rval.parent_ref.indices:
+                        self.visit(i)        
+                self.visit(node.rval.part_ref)        
         else:
-            self.visit(node.lval)
-        self.visit(node.rval)
+            self.visit(node.rval)
+                
+        
 
 
 class FindOutputs(NodeVisitor):
