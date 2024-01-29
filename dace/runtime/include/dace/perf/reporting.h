@@ -113,7 +113,7 @@ namespace perf {
          * @param cat:      Comma separated categories the event belongs to.
          * @param tstart:   Start timestamp of the event.
          * @param tend:     End timestamp of the event.
-         * @param cfg_id:  SDFG ID of the element associated with this event.
+         * @param cfg_id:   Control flow graph ID of the element associated with this event.
          * @param state_id: State ID of the element associated with this event.
          * @param el_id:    ID of the element associated with this event.
          */

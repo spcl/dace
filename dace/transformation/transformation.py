@@ -211,24 +211,21 @@ class PatternTransformation(TransformationBase):
 
     def apply_pattern(self, append: bool = True, annotate: bool = True) -> Union[Any, None]:
         """
-        Applies this transformation on the given SDFG, using the transformation
-        instance to find the right SDFG object (based on SDFG ID), and applying
-        memlet propagation as necessary.
+        Applies this transformation on the given SDFG, using the transformation instance to find the right control flow
+        graph object (based on control flow graph ID), and applying memlet propagation as necessary.
 
-        :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
-                     transformation to.
-        :param append: If True, appends the transformation to the SDFG
-                       transformation history.
-        :return: A transformation-defined return value, which could be used
-                 to pass analysis data out, or nothing.
+        :param append: If True, appends the transformation to the SDFG transformation history.
+        :param annotate: If True, applies memlet propagation as necessary.
+        :return: A transformation-defined return value, which could be used to pass analysis data out, or nothing.
         """
         if append:
             self._sdfg.append_transformation(self)
-        tsdfg: SDFG = self._sdfg.cfg_list[self.cfg_id]
-        tgraph = tsdfg.node(self.state_id) if self.state_id >= 0 else tsdfg
+        tcfg = self._sdfg.cfg_list[self.cfg_id]
+        tsdfg = tcfg.sdfg if not isinstance(tcfg, SDFG) else tcfg
+        tgraph = tcfg.node(self.state_id) if self.state_id >= 0 else tcfg
         retval = self.apply(tgraph, tsdfg)
-        if annotate and not self.annotates_memlets():
-            propagation.propagate_memlets_sdfg(tsdfg)
+        if annotate and not self.annotates_memlets(tsdfg):
+            propagation.propagate_memlets_sdfg()
         return retval
 
     def __lt__(self, other: 'PatternTransformation') -> bool:
@@ -680,9 +677,8 @@ class SubgraphTransformation(TransformationBase):
     class docstring for more information.
     """
 
-    cfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the '
-                        'SDFG')
+    cfg_id = Property(dtype=int, desc='ID of CFG to transform')
+    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
@@ -690,14 +686,13 @@ class SubgraphTransformation(TransformationBase):
         Sets the transformation to a given subgraph.
 
         :param subgraph: A set of node (or state) IDs or a subgraph view object.
-        :param cfg_id: A unique ID of the SDFG.
-        :param state_id: The node ID of the SDFG state, if applicable. If
-                            transformation does not operate on a single state,
-                            the value should be -1.
+        :param cfg_id: A unique ID of the CFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If transformation does not operate on a single
+                         state, the value should be -1.
         """
         if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (cfg_id is None or state_id is None)):
             raise TypeError('Subgraph transformation either expects a SubgraphView or a '
-                            'set of node IDs, SDFG ID and state ID (or -1).')
+                            'set of node IDs, control flow graph ID and state ID (or -1).')
 
         self._pipeline_results = None
 

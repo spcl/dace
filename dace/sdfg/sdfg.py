@@ -561,9 +561,9 @@ class SDFG(ControlFlowRegion):
     @property
     def sdfg_id(self):
         """
-        Returns the unique index of the current SDFG within the current
-        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
-        :note: `sdfg_id` is deprecated, please use `cfg_id` instead.
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        :note: ``sdfg_id`` is deprecated, please use ``cfg_id`` instead.
         """
         return self.cfg_id
 
@@ -1110,10 +1110,25 @@ class SDFG(ControlFlowRegion):
         del self._arrays[name]
 
     def reset_sdfg_list(self):
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+        :note: ``reset_sdfg_list`` is deprecated, please use ``reset_cfg_list`` instead.
+
+        :return: The newly updated CFG list.
+        """
         warnings.warn('reset_sdfg_list is deprecated, use reset_cfg_list instead', DeprecationWarning)
         return self.reset_cfg_list()
 
     def update_sdfg_list(self, sdfg_list):
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+        :note: ``update_sdfg_list`` is deprecated, please use ``update_cfg_list`` instead.
+
+        :param sdfg_list: The collection of CFGs to add to the CFG list.
+        """
         warnings.warn('update_sdfg_list is deprecated, use update_cfg_list instead', DeprecationWarning)
         self.update_cfg_list(sdfg_list)
 

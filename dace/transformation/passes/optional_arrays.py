@@ -41,7 +41,7 @@ class OptionalArrayInference(ppl.Pass):
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
         :param parent_arrays: If not None, contains values of determined arrays from the parent SDFG.
-        :return: A set of the modified array names as a 2-tuple (SDFG ID, name), or None if nothing was changed.
+        :return: A set of the modified array names as a 2-tuple (CFG ID, name), or None if nothing was changed.
         """
         result: Set[Tuple[int, str]] = set()
         parent_arrays = parent_arrays or {}
