@@ -11,7 +11,7 @@ from dace.sdfg import nodes
 from dace.transformation import transformation
 from dace.sdfg.propagation import _propagate_node
 
-from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.map_for_loop import MapToLegacyForLoop
 from dace.transformation.dataflow.map_expansion import MapExpansion
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.strip_mining import StripMining
@@ -565,9 +565,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                     maps.append(map_entry)
 
                 for map in reversed(maps):
-                    # MapToForLoop
-                    subgraph = {MapToForLoop.map_entry: graph.node_id(map)}
-                    trafo_for_loop = MapToForLoop()
+                    # MapToLegacyForLoop
+                    subgraph = {MapToLegacyForLoop.map_entry: graph.node_id(map)}
+                    trafo_for_loop = MapToLegacyForLoop()
                     trafo_for_loop.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(graph), subgraph, 0)
                     trafo_for_loop.apply(graph, sdfg)
                     nsdfg = trafo_for_loop.nsdfg
@@ -584,7 +584,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         DetectLoop.exit_state: nsdfg.node_id(end)
                     }
                     transformation = LoopUnroll()
-                    transformation.setup_match(nsdfg, 0, -1, subgraph, 0)
+                    transformation.setup_match(nsdfg, nsdfg.cfg_id, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)
 
             elif self.unroll_loops:
