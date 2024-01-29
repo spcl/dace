@@ -16,18 +16,19 @@ def test_fortran_struct():
                     end type
 
                     integer, dimension(6) :: res
-                    integer :: start
-                    integer :: end
-                    CALL struct_test_range_test_function(res, start, end)
+                    integer :: startidx
+                    integer :: endidx
+                    CALL struct_test_range_test_function(res, startidx, endidx)
                     end
 
-                    SUBROUTINE struct_test_range_test_function(res, start, end)
+                    SUBROUTINE struct_test_range_test_function(res, startidx, endidx)
                     integer, dimension(6) :: res
-                    integer :: start
-                    integer :: end
+                    integer :: startidx
+                    integer :: endidx
                     type(test_type) :: indices
 
-                    indices = test_type(start, end)
+                    indices%start=startidx
+                    indices%end=endidx
 
                     CALL struct_test_range2_test_function(res, indices)
 
@@ -110,5 +111,5 @@ def test_fortran_struct_lhs():
     print(res)
 
 if __name__ == "__main__":
-    #test_fortran_struct()
-    test_fortran_struct_lhs()
+    test_fortran_struct()
+    #test_fortran_struct_lhs()
