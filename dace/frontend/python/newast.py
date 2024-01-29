@@ -5012,6 +5012,8 @@ class ProgramVisitor(ExtNodeVisitor):
                 res = self.visit(s)
             else:
                 res = self._visit_ast_or_value(s)
+                if isinstance(res, (ast.Constant, NumConstant)):
+                    res = res.value
         elif sys.version_info < (3, 9) and isinstance(s, ast.Index):
             res = self._parse_subscript_slice(s.value)
         elif isinstance(s, ast.Slice):
@@ -5029,7 +5031,10 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 res = ((lower, upper, step), )
         elif isinstance(s, ast.Tuple):
-            res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
+            if multidim:  # Tuple inside the multi-dimensional index (i.e., "A[(1,2,3),]")
+                res = list(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
+            else:
+                res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.elts)
         elif sys.version_info < (3, 9) and isinstance(s, ast.ExtSlice):
             res = tuple(self._parse_subscript_slice(d, multidim=True) for d in s.dims)
         else:
