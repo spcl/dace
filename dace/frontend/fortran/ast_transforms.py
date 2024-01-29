@@ -139,6 +139,18 @@ class FindFunctionAndSubroutines(NodeVisitor):
         ret.elemental=node.elemental
         self.nodes.append(ret)
 
+class FindNames(NodeVisitor):
+    def __init__(self):
+        self.names: List[str] = []
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+        self.names.append(node.name)
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+        self.names.append(node.name.name)
+        for i in node.indices:
+            self.visit(i)    
+
 
 class FindInputs(NodeVisitor):
     """
@@ -163,6 +175,13 @@ class FindInputs(NodeVisitor):
             elif isinstance(node.lval, ast_internal_classes.Array_Subscript_Node):
                 for i in node.lval.indices:
                     self.visit(i)
+            elif isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
+                if isinstance(node.lval.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(node.lval.parent_ref)    
+                elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(node.lval.parent_ref.name)
+                    for i in node.lval.parent_ref.indices:
+                        self.visit(i)        
 
         else:
             self.visit(node.lval)
@@ -188,6 +207,8 @@ class FindOutputs(NodeVisitor):
                     self.nodes.append(node.lval.parent_ref)    
                 elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     self.nodes.append(node.lval.parent_ref.name)
+                    for i in node.lval.parent_ref.indices:
+                        self.visit(i)
 
             self.visit(node.rval)
 
@@ -271,6 +292,7 @@ class FindStructUses(NodeVisitor):
         elif isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
             parent_name=node.parent_ref.name.name
         elif isinstance(node.parent_ref, ast_internal_classes.Data_Ref_Node):
+            raise NotImplementedError("Data ref node not implemented for not name or array")
             self.visit(node.parent_ref)
             parent_name=None
         else:
@@ -282,37 +304,68 @@ class FindStructUses(NodeVisitor):
             part_name=node.part_ref.name.name
         elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
             self.visit(node.part_ref)    
-            part_name=None
+            if isinstance(node.part_ref.parent_ref, ast_internal_classes.Name_Node):
+                part_name=node.part_ref.parent_ref.name
+            elif isinstance(node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):    
+                part_name=node.part_ref.parent_ref.name.name
+
         else:    
             raise NotImplementedError("Data ref node not implemented for not name or array")
         if part_name== self.target and parent_name in self.names:
             self.nodes.append(node)
 
 class StructPointerChecker(NodeVisitor):
-    def __init__(self, parent_struct,pointed_struct,pointer_name):
-        self.parent_struct=parent_struct
-        self.pointed_struct=pointed_struct
-        self.pointer_name=pointer_name
+    def __init__(self, parent_struct,pointed_struct,pointer_name,structs_lister,struct_dep_graph,analysis):
+        self.parent_struct=[parent_struct]
+        self.pointed_struct=[pointed_struct]
+        self.pointer_name=[pointer_name]
         self.nodes=[]
+        self.connection=[]
+        self.structs_lister=structs_lister
+        self.struct_dep_graph=struct_dep_graph
+        if analysis=="full":
+            start_idx=0
+            end_idx=1
+            while start_idx!=end_idx:
+                for i in struct_dep_graph.in_edges(self.parent_struct[start_idx]):
+                    found=False
+                    for parent,child in zip(self.parent_struct,self.pointed_struct):
+                        if i[0]==parent and i[1]==child:
+                            found=True
+                            break
+                    if not found:    
+                        self.parent_struct.append(i[0])
+                        self.pointed_struct.append(i[1])
+                        self.pointer_name.append(struct_dep_graph.get_edge_data(i[0],i[1])["point_name"])
+                        end_idx+=1
+                start_idx+=1    
+                    
+                
+
 
     def visit_Main_Program_Node(self, node: ast_internal_classes.Main_Program_Node):
-        finder=FindStructDefs(self.parent_struct)
-        finder.visit(node.specification_part)
-        struct_names=finder.structs
-        use_finder=FindStructUses(struct_names,self.pointer_name)
-        use_finder.visit(node.execution_part)
-        self.nodes+=use_finder.nodes
+        for parent,pointer in zip(self.parent_struct,self.pointer_name):
+            finder=FindStructDefs(parent)
+            finder.visit(node.specification_part)
+            struct_names=finder.structs
+            use_finder=FindStructUses(struct_names,pointer)
+            use_finder.visit(node.execution_part)
+            self.nodes+=use_finder.nodes
+            self.connection.append([parent,pointer,struct_names,use_finder.nodes])
 
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):        
-        finder=FindStructDefs(self.parent_struct)
-        if node.specification_part is not None:
-            finder.visit(node.specification_part)
-        struct_names=finder.structs
-        use_finder=FindStructUses(struct_names,self.pointer_name)
-        if node.execution_part is not None:
-            use_finder.visit(node.execution_part)
-        self.nodes+=use_finder.nodes
+        for parent,pointer in zip(self.parent_struct,self.pointer_name):
+            
+            finder=FindStructDefs(parent)
+            if node.specification_part is not None:
+                finder.visit(node.specification_part)
+            struct_names=finder.structs
+            use_finder=FindStructUses(struct_names,pointer)
+            if node.execution_part is not None:
+                use_finder.visit(node.execution_part)
+            self.nodes+=use_finder.nodes
+            self.connection.append([parent,pointer,struct_names,use_finder.nodes])
 
 
 class StructPointerEliminator(NodeTransformer):
