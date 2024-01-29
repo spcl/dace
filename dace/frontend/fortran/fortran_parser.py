@@ -1223,6 +1223,23 @@ def create_ast_from_string(
     own_ast = ast_components.InternalFortranAst(ast, tables)
     program = own_ast.create_ast(ast)
 
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     functions_and_subroutines = functions_and_subroutines_builder.nodes
