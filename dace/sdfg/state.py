@@ -2381,6 +2381,12 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._cfg_list: List['ControlFlowRegion'] = [self]
 
     def reset_cfg_list(self) -> List['ControlFlowRegion']:
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+
+        :return: The newly updated CFG list.
+        """
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             return self.parent_sdfg.reset_cfg_list()
         elif self._parent_graph is not None:
@@ -2393,6 +2399,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         return self._cfg_list
 
     def update_cfg_list(self, cfg_list):
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+
+        :param cfg_list: The collection of CFGs to add to the CFG list.
+        """
         # TODO: Refactor
         sub_cfg_list = self._cfg_list
         for g in cfg_list:
