@@ -112,4 +112,4 @@ def test_fortran_struct_lhs():
 
 if __name__ == "__main__":
     test_fortran_struct()
-    #test_fortran_struct_lhs()
+    test_fortran_struct_lhs()

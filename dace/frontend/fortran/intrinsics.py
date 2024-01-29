@@ -357,7 +357,8 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
 
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent)
+            # TODO: missing line number here!
+            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, line_number=42)
             array_node.name = arg
 
             # If we access SUM(arr) where arr has many dimensions,

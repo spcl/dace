@@ -960,6 +960,7 @@ class InternalFortranAst:
                                                               type=testtype,
                                                               alloc=alloc,
                                                               init=init,
+                                                              optional=optional,
                                                               line_number=node.item.span))
                 elif attr_size is not None:
                     vardecls.append(
@@ -970,6 +971,7 @@ class InternalFortranAst:
                                                                     offsets=attr_offset,
                                                                     kind=kind,
                                                                     init=init,
+                                                                    optional=optional,
                                                                     line_number=node.item.span))
                 else:
                     vardecls.append(
@@ -980,6 +982,7 @@ class InternalFortranAst:
                                                                     offsets=offset,
                                                                     kind=kind,
                                                                     init=init,
+                                                                    optional=optional,
                                                                     line_number=node.item.span))
         return ast_internal_classes.Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
