@@ -707,8 +707,11 @@ class InternalFortranAst:
         # to mark its size
         shape = get_children(var, "Assumed_Shape_Spec_List")
 
-        if shape is None:
-            return None
+        if shape is None or len(shape) == 0:
+            shape = get_children(var, "Deferred_Shape_Spec_List")
+
+            if shape is None:
+                return None
 
         # this is based on structures observed in Fortran codes
         # I don't know why the shape is an array
@@ -796,6 +799,7 @@ class InternalFortranAst:
         #get the names out of the name list
         names = get_children(names_list, [f03.Entity_Decl, f03.Component_Decl])
 
+
         #get the attributes of the variables being defined
         # alloc relates to whether it is statically (False) or dynamically (True) allocated
         # parameter means its a constant, so we should transform it into a symbol
@@ -839,8 +843,9 @@ class InternalFortranAst:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
                 else:
-                    sizes = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
-                    if sizes is None:
+                    attr_size = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
+                    attr_offset = [1] * len(attr_size)
+                    if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
             if isinstance(i, f08.Component_Attr_Spec_List):
@@ -857,13 +862,16 @@ class InternalFortranAst:
                 attr_size = []
                 attr_offset = []
                 sizes = get_child(dimension_spec[0], ["Explicit_Shape_Spec_List"])
+                #if sizes is None:
+                #    sizes = get_child(dimension_spec[0], ["Deferred_Shape_Spec_List"])
 
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
                 else:
-                    sizes = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
-                    if sizes is None:
+                    attr_size = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
+                    attr_offset = [1] * len(attr_size)
+                    if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
         vardecls = []
@@ -919,6 +927,7 @@ class InternalFortranAst:
                     else:
 
                         sizes = self.assumed_array_shape(var, actual_name.name, node.item.span)
+                        offset = [1] * len(sizes)
                         vardecls.append(
                             ast_internal_classes.Var_Decl_Node(name=actual_name.name,
                                                             type=testtype,
