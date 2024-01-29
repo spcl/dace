@@ -11,6 +11,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
 
 import dace
+import dace.serialize
 from dace import data as dt
 from dace import dtypes
 from dace import memlet as mm
@@ -2564,6 +2565,36 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         graph_json['start_block'] = self._start_block
 
         return graph_json
+
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
+        nodelist = []
+        for n in nodes:
+            nci = copy.copy(context_info)
+            nci['parent_graph'] = ret
+
+            state = SDFGState.from_json(n, context=nci)
+            ret.add_node(state)
+            nodelist.append(state)
+
+        for e in edges:
+            e = dace.serialize.from_json(e)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+
+        return ret
 
     ###################################################################
     # Traversal methods

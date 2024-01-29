@@ -629,6 +629,9 @@ class SDFG(ControlFlowRegion):
             e = dace.serialize.from_json(e)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
+
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
