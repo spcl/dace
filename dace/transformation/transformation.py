@@ -224,7 +224,7 @@ class PatternTransformation(TransformationBase):
         """
         if append:
             self._sdfg.append_transformation(self)
-        tsdfg: SDFG = self._sdfg.sdfg_list[self.sdfg_id]
+        tsdfg: SDFG = self._sdfg.cfg_list[self.sdfg_id]
         tgraph = tsdfg.node(self.state_id) if self.state_id >= 0 else tsdfg
         retval = self.apply(tgraph, tsdfg)
         if annotate and not self.annotates_memlets():
@@ -616,7 +616,7 @@ class ExpandTransformation(PatternTransformation):
                 nsdfg = expansion.sdfg
                 nsdfg.parent = state
                 nsdfg.parent_sdfg = sdfg
-                nsdfg.update_sdfg_list([])
+                nsdfg.update_cfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
 
                 # Update schedule to match library node schedule
@@ -723,7 +723,7 @@ class SubgraphTransformation(TransformationBase):
             self.state_id = state_id
 
     def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.sdfg_list[self.sdfg_id]
+        sdfg = sdfg.cfg_list[self.sdfg_id]
         if self.state_id == -1:
             return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
         state = sdfg.node(self.state_id)
@@ -748,7 +748,7 @@ class SubgraphTransformation(TransformationBase):
         return result
 
     def subgraph_view(self, sdfg: SDFG) -> gr.SubgraphView:
-        graph = sdfg.sdfg_list[self.sdfg_id]
+        graph = sdfg.cfg_list[self.sdfg_id]
         if self.state_id != -1:
             graph = graph.node(self.state_id)
         return gr.SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])

@@ -82,7 +82,7 @@ class SDFGCutout(SDFG):
                     pass
         elif isinstance(transformation, MultiStateTransformation):
             new_sdfg_id = self._in_translation[transformation.sdfg_id]
-            new_sdfg = self.sdfg_list[new_sdfg_id]
+            new_sdfg = self.cfg_list[new_sdfg_id]
             transformation._sdfg = new_sdfg
             transformation.sdfg_id = new_sdfg_id
             for k in transformation.subgraph.keys():
@@ -140,8 +140,8 @@ class SDFGCutout(SDFG):
             return cut_sdfg
 
         target_sdfg = sdfg
-        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list is not None:
-            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+        if transformation.sdfg_id >= 0 and target_sdfg.cfg_list is not None:
+            target_sdfg = target_sdfg.cfg_list[transformation.sdfg_id]
 
         if (all(isinstance(n, nd.Node) for n in affected_nodes) or
             isinstance(transformation, (SubgraphTransformation, SingleStateTransformation))):
@@ -308,7 +308,7 @@ class SDFGCutout(SDFG):
         cutout._out_translation = out_translation
 
         # Translate in nested SDFG nodes and their SDFGs (their list id, specifically).
-        cutout.reset_sdfg_list()
+        cutout.reset_cfg_list()
         outers = set(in_translation.keys())
         for outer in outers:
             if isinstance(outer, nd.NestedSDFG):
@@ -467,7 +467,7 @@ class SDFGCutout(SDFG):
         cutout._in_translation = in_translation
         cutout._out_translation = out_translation
 
-        cutout.reset_sdfg_list()
+        cutout.reset_cfg_list()
         _recursively_set_nsdfg_parents(cutout)
 
         return cutout
@@ -495,8 +495,8 @@ def _transformation_determine_affected_nodes(
     affected_nodes = set()
 
     if isinstance(transformation, PatternTransformation):
-        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
-            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+        if transformation.sdfg_id >= 0 and target_sdfg.cfg_list:
+            target_sdfg = target_sdfg.cfg_list[transformation.sdfg_id]
 
         for k, _ in transformation._get_pattern_nodes().items():
             try:
@@ -526,8 +526,8 @@ def _transformation_determine_affected_nodes(
             # This is a transformation that affects a nested SDFG node, grab that NSDFG node.
             affected_nodes.add(target_sdfg.parent_nsdfg_node)
     else:
-        if transformation.sdfg_id >= 0 and target_sdfg.sdfg_list:
-            target_sdfg = target_sdfg.sdfg_list[transformation.sdfg_id]
+        if transformation.sdfg_id >= 0 and target_sdfg.cfg_list:
+            target_sdfg = target_sdfg.cfg_list[transformation.sdfg_id]
 
         subgraph = transformation.get_subgraph(target_sdfg)
         for n in subgraph.nodes():
@@ -901,7 +901,7 @@ def _determine_cutout_reachability(
     """
     if state_reach is None:
         original_sdfg_id = out_translation[ct.sdfg_id]
-        state_reachability_dict = StateReachability().apply_pass(sdfg.sdfg_list[original_sdfg_id], None)
+        state_reachability_dict = StateReachability().apply_pass(sdfg.cfg_list[original_sdfg_id], None)
         state_reach = state_reachability_dict[original_sdfg_id]
     inverse_cutout_reach: Set[SDFGState] = set()
     cutout_reach: Set[SDFGState] = set()

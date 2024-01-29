@@ -585,7 +585,7 @@ class NestedSDFG(CodeNode):
 
         ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.update_sdfg_list([])
+        ret.sdfg.update_cfg_list([])
 
         return ret
 

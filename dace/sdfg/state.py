@@ -1544,7 +1544,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         sdfg.parent = self
         sdfg.parent_sdfg = self.sdfg
 
-        sdfg.update_sdfg_list([])
+        sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):

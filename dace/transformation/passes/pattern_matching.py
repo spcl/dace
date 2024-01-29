@@ -103,7 +103,7 @@ class PatternMatchAndApply(ppl.Pass):
             except StopIteration:
                 continue
 
-            tsdfg = sdfg.sdfg_list[match.sdfg_id]
+            tsdfg = sdfg.cfg_list[match.sdfg_id]
             graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
             # Set previous pipeline results
@@ -156,7 +156,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     # Helper function for applying and validating a transformation
     def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
                             pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
-        tsdfg = sdfg.sdfg_list[match.sdfg_id]
+        tsdfg = sdfg.cfg_list[match.sdfg_id]
         graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
         # Set previous pipeline results
