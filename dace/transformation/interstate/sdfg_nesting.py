@@ -589,7 +589,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
 
-        sdfg._sdfg_list = sdfg.reset_sdfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(self,
                                  input_edges: Dict[nodes.Node, MultiConnectorEdge],

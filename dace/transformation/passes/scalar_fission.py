@@ -37,7 +37,7 @@ class ScalarFission(ppl.Pass):
         """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
-        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.sdfg_id]
+        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
 
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]

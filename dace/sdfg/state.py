@@ -11,6 +11,7 @@ import warnings
 from typing import TYPE_CHECKING, Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
 
 import dace
+import dace.serialize
 from dace import data as dt
 from dace import dtypes
 from dace import memlet as mm
@@ -1162,6 +1163,10 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     def parent_graph(self, parent: Optional['ControlFlowRegion']):
         self._parent_graph = parent
 
+    @property
+    def block_id(self) -> int:
+        return self.parent_graph.node_id(self)
+
 
 @make_properties
 class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlock, DataflowGraphView):
@@ -1540,7 +1545,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         sdfg.parent = self
         sdfg.parent_sdfg = self.sdfg
 
-        sdfg.update_sdfg_list([])
+        sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):
@@ -2373,6 +2378,38 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         self._labels: Set[str] = set()
         self._start_block: Optional[int] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
+        self._cfg_list: List['ControlFlowRegion'] = [self]
+
+    def reset_cfg_list(self) -> List['ControlFlowRegion']:
+        if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
+            return self.parent_sdfg.reset_cfg_list()
+        elif self._parent_graph is not None:
+            return self._parent_graph.reset_cfg_list()
+        else:
+            # Propagate new CFG list to all children
+            all_cfgs = list(self.all_control_flow_regions(recursive=True))
+            for g in all_cfgs:
+                g._cfg_list = all_cfgs
+        return self._cfg_list
+
+    def update_cfg_list(self, cfg_list):
+        # TODO: Refactor
+        sub_cfg_list = self._cfg_list
+        for g in cfg_list:
+            if g not in sub_cfg_list:
+                sub_cfg_list.append(g)
+        ptarget = None
+        if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
+            ptarget = self.parent_sdfg
+        elif self._parent_graph is not None:
+            ptarget = self._parent_graph
+        if ptarget is not None:
+            ptarget.update_cfg_list(sub_cfg_list)
+            self._cfg_list = ptarget.cfg_list
+            for g in sub_cfg_list:
+                g._cfg_list = self._cfg_list
+        else:
+            self._cfg_list = sub_cfg_list
 
     def add_edge(self, src: ControlFlowBlock, dst: ControlFlowBlock, data: 'dace.sdfg.InterstateEdge'):
         """ Adds a new edge to the graph. Must be an InterstateEdge or a subclass thereof.
@@ -2522,7 +2559,44 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         graph_json = OrderedDiGraph.to_json(self)
         block_json = ControlFlowBlock.to_json(self, parent)
         graph_json.update(block_json)
+
+        graph_json['cfg_list_id'] = int(self.cfg_id)
+        graph_json['start_block'] = self._start_block
+
         return graph_json
+
+    @classmethod
+    def from_json(cls, json_obj, context_info=None):
+        context_info = context_info or {'sdfg': None, 'parent_graph': None}
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        attrs = json_obj['attributes']
+        nodes = json_obj['nodes']
+        edges = json_obj['edges']
+
+        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
+
+        dace.serialize.set_properties_from_json(ret, json_obj)
+
+        nodelist = []
+        for n in nodes:
+            nci = copy.copy(context_info)
+            nci['parent_graph'] = ret
+
+            state = SDFGState.from_json(n, context=nci)
+            ret.add_node(state)
+            nodelist.append(state)
+
+        for e in edges:
+            e = dace.serialize.from_json(e)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
+
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
+
+        return ret
 
     ###################################################################
     # Traversal methods
@@ -2572,6 +2646,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__} ({self.label})'
+
+    @property
+    def cfg_list(self) -> List['ControlFlowRegion']:
+        return self._cfg_list
+
+    @property
+    def cfg_id(self) -> int:
+        """
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        """
+        return self.cfg_list.index(self)
 
     @property
     def start_block(self):
