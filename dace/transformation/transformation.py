@@ -224,8 +224,8 @@ class PatternTransformation(TransformationBase):
         tsdfg = tcfg.sdfg if not isinstance(tcfg, SDFG) else tcfg
         tgraph = tcfg.node(self.state_id) if self.state_id >= 0 else tcfg
         retval = self.apply(tgraph, tsdfg)
-        if annotate and not self.annotates_memlets(tsdfg):
-            propagation.propagate_memlets_sdfg()
+        if annotate and not self.annotates_memlets():
+            propagation.propagate_memlets_sdfg(tsdfg)
         return retval
 
     def __lt__(self, other: 'PatternTransformation') -> bool:
