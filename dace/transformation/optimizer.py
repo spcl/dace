@@ -102,11 +102,11 @@ class Optimizer(object):
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
-            graph = sdfg.cfg_list[match.sdfg_id].nodes()[match.state_id]
+            graph = sdfg.cfg_list[match.cfg_id].nodes()[match.state_id]
             return get_actions(actions, graph, match)
 
         def get_stateflow_actions(actions, sdfg, match):
-            graph = sdfg.cfg_list[match.sdfg_id]
+            graph = sdfg.cfg_list[match.cfg_id]
             return get_actions(actions, graph, match)
 
         actions = dict()
@@ -207,7 +207,7 @@ class SDFGOptimizer(Optimizer):
             ui_options = sorted(self.get_pattern_matches())
             ui_options_idx = 0
             for pattern_match in ui_options:
-                sdfg = self.sdfg.cfg_list[pattern_match.sdfg_id]
+                sdfg = self.sdfg.cfg_list[pattern_match.cfg_id]
                 pattern_match._sdfg = sdfg
                 print('%d. Transformation %s' % (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
@@ -238,7 +238,7 @@ class SDFGOptimizer(Optimizer):
                 break
 
             match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
-            sdfg = self.sdfg.cfg_list[pattern_match.sdfg_id]
+            sdfg = self.sdfg.cfg_list[pattern_match.cfg_id]
             graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
             pattern_match._sdfg = sdfg
             print('You selected (%s) pattern %s with parameters %s' %

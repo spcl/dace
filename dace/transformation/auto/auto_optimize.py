@@ -503,7 +503,7 @@ def make_transients_persistent(sdfg: SDFG,
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
-        result[nsdfg.sdfg_id] = (persistent - not_persistent)
+        result[nsdfg.cfg_id] = (persistent - not_persistent)
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges

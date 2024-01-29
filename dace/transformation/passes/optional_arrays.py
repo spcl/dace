@@ -46,7 +46,7 @@ class OptionalArrayInference(ppl.Pass):
         result: Set[Tuple[int, str]] = set()
         parent_arrays = parent_arrays or {}
 
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = sdfg.cfg_id
 
         # Set information of arrays based on their transient and parent status
         for aname, arr in sdfg.arrays.items():
@@ -54,11 +54,11 @@ class OptionalArrayInference(ppl.Pass):
                 continue
             if arr.transient:
                 if arr.optional is not False:
-                    result.add((sdfg_id, aname))
+                    result.add((cfg_id, aname))
                 arr.optional = False
             if aname in parent_arrays:
                 if arr.optional is not parent_arrays[aname]:
-                    result.add((sdfg_id, aname))
+                    result.add((cfg_id, aname))
                 arr.optional = parent_arrays[aname]
 
         # Change unconditionally-accessed arrays to non-optional
@@ -67,7 +67,7 @@ class OptionalArrayInference(ppl.Pass):
                 desc = anode.desc(sdfg)
                 if isinstance(desc, data.Array) and desc.optional is None:
                     desc.optional = False
-                    result.add((sdfg_id, anode.data))
+                    result.add((cfg_id, anode.data))
 
         # Propagate information to nested SDFGs
         for state in sdfg.nodes():

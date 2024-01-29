@@ -56,8 +56,8 @@ class DeadDataflowElimination(ppl.Pass):
         # Depends on the following analysis passes:
         #  * State reachability
         #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.cfg_id]
+        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.cfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse SDFG backwards

@@ -103,7 +103,7 @@ class PatternMatchAndApply(ppl.Pass):
             except StopIteration:
                 continue
 
-            tsdfg = sdfg.cfg_list[match.sdfg_id]
+            tsdfg = sdfg.cfg_list[match.cfg_id]
             graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
             # Set previous pipeline results
@@ -156,7 +156,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     # Helper function for applying and validating a transformation
     def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
                             pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
-        tsdfg = sdfg.cfg_list[match.sdfg_id]
+        tsdfg = sdfg.cfg_list[match.cfg_id]
         graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
 
         # Set previous pipeline results
@@ -377,7 +377,7 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
-        match.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
+        match.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
