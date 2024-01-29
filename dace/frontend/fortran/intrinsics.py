@@ -102,6 +102,46 @@ class DirectReplacement(IntrinsicTransformation):
         # get variable declaration for the first argument
         var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
 
+        # one arg to LBOUND/UBOUND? compute the total number of elements
+        if len(var.args) == 1:
+
+            if len(var_decl.sizes) == 1:
+                return (var_decl.sizes[0], "INTEGER")
+
+            ret = ast_internal_classes.BinOp_Node(
+                lval=var_decl.sizes[0],
+                rval=None,
+                op="*"
+            )
+            cur_node = ret
+            for i in range(1, len(var_decl.sizes) - 1):
+
+                cur_node.rval = ast_internal_classes.BinOp_Node(
+                    lval=var_decl.sizes[i],
+                    rval=None,
+                    op="*"
+                )
+                cur_node = cur_node.rval
+
+            cur_node.rval = var_decl.sizes[-1]
+            return (ret, "INTEGER")
+
+        # two arguments? We return number of elements in a given rank
+        rank = var.args[1]
+        # we do not support symbolic argument to DIM - it must be a literal
+        if not isinstance(rank, ast_internal_classes.Int_Literal_Node):
+            raise NotImplementedError()
+        value = int(rank.value)
+        return (var_decl.sizes[value-1], "INTEGER")
+
+    def replace_lbound_ubound(transformer: IntrinsicNodeTransformer, var: ast_internal_classes.Call_Expr_Node, line):
+
+        if len(var.args) not in [1, 2]:
+            raise RuntimeError()
+
+        # get variable declaration for the first argument
+        var_decl = transformer.get_var_declaration(var.parent, var.args[0].name)
+
         # one arg to SIZE? compute the total number of elements
         if len(var.args) == 1:
 
@@ -216,6 +256,8 @@ class DirectReplacement(IntrinsicTransformation):
         "EPSILON": Replacement(replacement_epsilon),
         "BIT_SIZE": Transformation(replace_bit_size),
         "SIZE": Transformation(replace_size),
+        "LBOUND": Transformation(replace_lbound_ubound),
+        "UBOUND": Transformation(replace_lbound_ubound),
         "PRESENT": Transformation(replace_present)
     }
 
@@ -1288,6 +1330,30 @@ class MathFunctions(IntrinsicTransformation):
 
     class TypeTransformer(IntrinsicNodeTransformer):
 
+        def _parse_struct_ref(self, node: ast_internal_classes.Data_Ref_Node):
+
+            # we assume starting from the top (left-most) data_ref_node
+            # for struct1 % struct2 % struct3 % var
+            # we find definition of struct1, then we iterate until we find the var
+
+            struct_type = self.scope_vars.get_var(node.parent, node.parent_ref.name).type
+            struct_def = self.ast.structures.structures[struct_type]
+            cur_node = node
+
+            while True:
+                cur_node = cur_node.part_ref
+
+                if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
+                    struct_def = self.ast.structures.structures[struct_type]
+                    return struct_def.vars[cur_node.name.name].type
+
+                elif isinstance(cur_node, ast_internal_classes.Name_Node):
+                    struct_def = self.ast.structures.structures[struct_type]
+                    return struct_def.vars[cur_node.name].type
+
+                struct_type = struct_def.vars[cur_node.parent_ref.name].type
+                struct_def = self.ast.structures.structures[struct_type]
+
         def func_type(self, node: ast_internal_classes.Call_Expr_Node):
 
             # take the first arg
@@ -1300,6 +1366,8 @@ class MathFunctions(IntrinsicTransformation):
                 return arg.type
             elif isinstance(arg, ast_internal_classes.Name_Node):
                 return self.get_var_declaration(node.parent, arg.name).type
+            elif isinstance(arg, ast_internal_classes.Data_Ref_Node):
+                return self._parse_struct_ref(arg)
             else:
                 return self.get_var_declaration(node.parent, arg.name.name).type
 
