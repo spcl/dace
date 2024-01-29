@@ -3397,11 +3397,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                     raise NotImplementedError('Multi-dimensional index arrays not yet supported')
                                 indirect_indices[i] = arr
                         elif isinstance(arr, (list, tuple)):
+                            carr = numpy.array(arr, dtype=dtypes.typeclass(int).type)
+                            cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
+                            self.sdfg.add_constant(cname, carr)
+                            # Add constant to descriptor repository
+                            self.sdfg.add_array(cname, carr.shape, dtypes.dtype_to_typeclass(carr.dtype.type),
+                                                transient=True)
                             if numpy.array(arr).dtype == numpy.bool_:
-                                carr = numpy.array(arr, dtype=dtypes.typeclass(int).type)
-                                cname = self.sdfg.find_new_constant(f'__ind{i}_{true_name}')
-                                self.sdfg.add_constant(cname, carr)
                                 boolarr = cname
+                            else:
+                                indirect_indices[i] = cname
 
                 if boolarr is not None and indirect_indices:
                     raise IndexError('Boolean array indexing cannot be combined with indirect access')
