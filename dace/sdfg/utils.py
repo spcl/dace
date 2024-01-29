@@ -1257,9 +1257,8 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
 
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                                n=len(blocks), progress=progress):
-        block: ControlFlowBlock = _block
-        graph: GraphT = _graph
-        id = block.sdfg.cfg_id
+        block: LoopRegion = _block
+        graph: ControlFlowRegion = _graph
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
@@ -1268,7 +1267,7 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
             LoopRegionInline.loop: block,
         }
         inliner = LoopRegionInline()
-        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        inliner.setup_match(block.sdfg, graph.cfg_id, block_id, candidate, 0, override=True)
         if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
             inliner.apply(graph, block.sdfg)
             counter += 1
@@ -1286,9 +1285,8 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
 
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
                                                n=len(blocks), progress=progress):
-        block: ControlFlowBlock = _block
-        graph: GraphT = _graph
-        id = block.sdfg.sdfg_id
+        block: ControlFlowRegion = _block
+        graph: ControlFlowRegion = _graph
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
@@ -1297,7 +1295,7 @@ def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: 
             ControlFlowRegionInline.region: block,
         }
         inliner = ControlFlowRegionInline()
-        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        inliner.setup_match(block.sdfg, graph.cfg_id, block_id, candidate, 0, override=True)
         if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
             inliner.apply(graph, block.sdfg)
             counter += 1
