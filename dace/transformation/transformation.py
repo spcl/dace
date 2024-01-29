@@ -876,7 +876,7 @@ def _make_function_blocksafe(cls: ppl.Pass, function_name: str, get_sdfg_arg: Ca
     if hasattr(cls, function_name):
         vanilla_method = getattr(cls, function_name)
         def blocksafe_wrapper(tgt, *args, **kwargs):
-            sdfg = get_sdfg_arg(tgt, *args, **kwargs)
+            sdfg = get_sdfg_arg(tgt, *args)
             if sdfg and isinstance(sdfg, SDFG):
                 if not sdfg.using_experimental_blocks:
                     return vanilla_method(tgt, *args, **kwargs)
