@@ -338,9 +338,9 @@ class InternalFortranAst:
                     self.create_ast(i)
                 #print("Unsupported syntax: ", type(node).__name__, node.string)
                 return None
-            except Exception as e:
-                print("Error in create_ast: ", e)
-                return None
+            #except Exception as e:
+            #    print("Error in create_ast: ", e)
+            #    return None
 
         return None
 
@@ -927,7 +927,10 @@ class InternalFortranAst:
                     else:
 
                         sizes = self.assumed_array_shape(var, actual_name.name, node.item.span)
-                        offset = [1] * len(sizes)
+                        if sizes is None:
+                            offset=None
+                        else:
+                            offset = [1] * len(sizes)
                         vardecls.append(
                             ast_internal_classes.Var_Decl_Node(name=actual_name.name,
                                                             type=testtype,
