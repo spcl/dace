@@ -499,7 +499,7 @@ class ProcessedWriter(TaskletWriter):
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Name_Node: self.name2string,
-            ast_internal_classes.Name_Range_Node: self.name2string,
+            ast_internal_classes.Name_Range_Node: self.namerange2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
