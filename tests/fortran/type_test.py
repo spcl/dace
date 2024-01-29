@@ -91,7 +91,7 @@ def test_fortran_frontend_basic_type2():
                     TYPE(comlex_type) :: c
                     TYPE(meta_type) :: m
                     
-                    !c%b=1.0
+                    c%b=1.0
                     c%s%w(1,1,1)=5.5
                     m%cc%s%a=17
                     s(1)%w(1,1,1)=5.5+c%b
@@ -100,6 +100,7 @@ def test_fortran_frontend_basic_type2():
                     END SUBROUTINE type2_test_function
                     """
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type2_test")
+    sdfg.validate()
     sdfg.simplify(verbose=True)
     a = np.full([4, 5], 42, order="F", dtype=np.float64)
     sdfg(d=a)

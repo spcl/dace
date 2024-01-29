@@ -2028,7 +2028,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             point_name=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["point_name"]
             print(i,is_pointer)
             if is_pointer:
-                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name)
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name,structs_lister,struct_dep_graph,"simple")
                 actually_used_pointer_node_finder.visit(program)
                 print(actually_used_pointer_node_finder.nodes)
                 if len(actually_used_pointer_node_finder.nodes)==0:
@@ -2044,10 +2044,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         struct_member_finder.visit(struct)
         for member,is_pointer,point_name in zip(struct_member_finder.members,struct_member_finder.is_pointer,struct_member_finder.pointer_names):
             if is_pointer:    
-                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(name,member,point_name)
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(name,member,point_name,structs_lister,struct_dep_graph,"full")
                 actually_used_pointer_node_finder.visit(program)
-                print("Struct Name: ",name," Member Name: ",member, " Uses: ", len(actually_used_pointer_node_finder.nodes))
-                if len(actually_used_pointer_node_finder.nodes)==0:
+                found=False
+                for i in actually_used_pointer_node_finder.nodes:
+                    nl=ast_transforms.FindNames()
+                    nl.visit(i)
+                    if point_name in nl.names:
+                        found=True
+                        break
+                print("Struct Name: ",name," Member Name: ",point_name, " Found: ", found)
+                if not found:
                     print("We can delete this member")
                     program=ast_transforms.StructPointerEliminator(name,member,point_name).visit(program)
                 
@@ -2085,10 +2092,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.expand_library_nodes()
             sdfg.validate()
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
-            try:    
-                sdfg.simplify(verbose=True)
-                
-            
+            #try:    
+            sdfg.simplify(verbose=True)
+            #except:
+            #    print("Simplification failed for ", sdfg.name)    
+            try:  
                 sdfg.compile()
             except:
                 print("Compilation failed for ", sdfg.name)
