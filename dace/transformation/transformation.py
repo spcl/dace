@@ -144,7 +144,7 @@ class PatternTransformation(TransformationBase):
         self._pipeline_results = pipeline_results
         return self.apply_pattern()
 
-    def match_to_str(self, graph: Union[SDFG, SDFGState]) -> str:
+    def match_to_str(self, graph: Union[ControlFlowRegion, SDFGState]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
             UI.
@@ -369,16 +369,16 @@ class PatternTransformation(TransformationBase):
     def __str__(self) -> str:
         return type(self).__name__
 
-    def print_match(self, sdfg: SDFG) -> str:
+    def print_match(self, cfg: ControlFlowRegion) -> str:
         """ Returns a string representation of the pattern match on the
-            given SDFG. Used for printing matches in the console UI.
+            given Control Flow Region. Used for printing matches in the console UI.
         """
-        if not isinstance(sdfg, SDFG):
-            raise TypeError("Expected SDFG, got: {}".format(type(sdfg).__name__))
+        if not isinstance(cfg, ControlFlowRegion):
+            raise TypeError("Expected ControlFlowRegion, got: {}".format(type(cfg).__name__))
         if self.state_id == -1:
-            graph = sdfg
+            graph = cfg
         else:
-            graph = sdfg.nodes()[self.state_id]
+            graph = cfg.nodes()[self.state_id]
         string = type(self).__name__ + ' in '
         string += self.match_to_str(graph)
         return string
@@ -558,16 +558,18 @@ class PatternNode(Generic[T]):
         # If an instance is used, we return the matched node
         node_id: int = instance.subgraph[self]
         state_id: int = instance.state_id
+        t_graph: ControlFlowRegion = instance._sdfg.cfg_list[instance.cfg_id]
 
         if not isinstance(node_id, int):  # Node ID is already an object
             return node_id
 
         # Inter-state transformation
         if state_id == -1:
-            return instance._sdfg.node(node_id)
+            return t_graph.node(node_id)
 
         # Single-state transformation
-        return instance._sdfg.node(state_id).node(node_id)
+        state: SDFGState = t_graph.node(state_id)
+        return state.node(node_id)
 
 
 @make_properties

@@ -104,13 +104,13 @@ class PatternMatchAndApply(ppl.Pass):
             except StopIteration:
                 continue
 
-            tsdfg = sdfg.cfg_list[match.cfg_id]
-            graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+            tcfg = sdfg.cfg_list[match.cfg_id]
+            graph = tcfg.node(match.state_id) if match.state_id >= 0 else tcfg
 
             # Set previous pipeline results
             match._pipeline_results = pipeline_results
 
-            result = match.apply(graph, tsdfg)
+            result = match.apply(graph, tcfg.sdfg)
             applied_transformations[type(match).__name__].append(result)
             if self.validate_all:
                 sdfg.validate()
@@ -157,16 +157,16 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     # Helper function for applying and validating a transformation
     def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
                             pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
-        tsdfg = sdfg.cfg_list[match.cfg_id]
-        graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+        tcfg = sdfg.cfg_list[match.cfg_id]
+        graph = tcfg.node(match.state_id) if match.state_id >= 0 else tcfg
 
         # Set previous pipeline results
         match._pipeline_results = pipeline_results
 
         if self.validate_all:
-            match_name = match.print_match(tsdfg)
+            match_name = match.print_match(tcfg)
 
-        applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+        applied_transformations[type(match).__name__].append(match.apply(graph, tcfg.sdfg))
         if self.progress or (self.progress is None and (time.time() - start) > 5):
             print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
                                                     for k, v in applied_transformations.items()])),
@@ -379,7 +379,8 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                 for oname, oval in opts.items():
                     setattr(match, oname, oval)
 
-        match.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_idx, options=options)
+        cfg_id = graph.parent_graph.cfg_id if isinstance(graph, SDFGState) else graph.cfg_id
+        match.setup_match(sdfg, cfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
