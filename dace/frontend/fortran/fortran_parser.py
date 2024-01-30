@@ -1145,6 +1145,7 @@ def create_sdfg_from_string(
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_cfg_list()
+    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
     return sdfg
 
 
@@ -1181,4 +1182,5 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
 
+    sdfg.using_experimental_blocks = use_experimental_cfg_blocks
     return sdfg
