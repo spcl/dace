@@ -11,6 +11,7 @@ import pytest
 import dace
 from dace.sdfg import nodes, propagation
 from dace.transformation.interstate import LoopToMap
+from dace.transformation.interstate.loop_detection import DetectLoop
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
@@ -666,10 +667,24 @@ def test_nested_loops():
 
     sdfg0 = copy.deepcopy(sdfg)
     i_guard, i_begin, i_exit = find_loop(sdfg0, 'i')
-    LoopToMap.apply_to(sdfg0, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
+    l2m1_subgraph = {
+        DetectLoop.loop_guard: i_guard.block_id,
+        DetectLoop.loop_begin: i_begin.block_id,
+        DetectLoop.exit_state: i_exit.block_id,
+    }
+    xf1 = LoopToMap()
+    xf1.setup_match(sdfg0, sdfg0.cfg_id, -1, l2m1_subgraph, 0)
+    xf1.apply(sdfg0, sdfg0)
     nsdfg = next((sd for sd in sdfg0.all_sdfgs_recursive() if sd.parent is not None))
     j_guard, j_begin, j_exit = find_loop(nsdfg, 'j')
-    LoopToMap.apply_to(nsdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    l2m2_subgraph = {
+        DetectLoop.loop_guard: j_guard.block_id,
+        DetectLoop.loop_begin: j_begin.block_id,
+        DetectLoop.exit_state: j_exit.block_id,
+    }
+    xf2 = LoopToMap()
+    xf2.setup_match(nsdfg, nsdfg.cfg_id, -1, l2m2_subgraph, 0)
+    xf2.apply(nsdfg, nsdfg)
 
     val = np.arange(1000, dtype=np.int32).reshape(10, 10, 10).copy()
     sdfg(A=val, l=5)
@@ -677,7 +692,14 @@ def test_nested_loops():
     assert np.allclose(ref, val)
 
     j_guard, j_begin, j_exit = find_loop(sdfg, 'j')
-    LoopToMap.apply_to(sdfg, loop_guard=j_guard, loop_begin=j_begin, exit_state=j_exit)
+    l2m3_subgraph = {
+        DetectLoop.loop_guard: j_guard.block_id,
+        DetectLoop.loop_begin: j_begin.block_id,
+        DetectLoop.exit_state: j_exit.block_id,
+    }
+    xf3 = LoopToMap()
+    xf3.setup_match(sdfg, sdfg.cfg_id, -1, l2m3_subgraph, 0)
+    xf3.apply(sdfg, sdfg)
     # NOTE: The following fails to apply because of subset A[0:i+1], which is overapproximated.
     # i_guard, i_begin, i_exit = find_loop(sdfg, 'i')
     # LoopToMap.apply_to(sdfg, loop_guard=i_guard, loop_begin=i_begin, exit_state=i_exit)
