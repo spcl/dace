@@ -6,11 +6,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from dace import SDFG, SDFGState, data, properties, Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ReferenceToView(ppl.Pass):
     """
     Replaces Reference data descriptors that are only set to one source with views.
@@ -37,9 +38,9 @@ class ReferenceToView(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
-        access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.sdfg_id]
-        reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
+        access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
+        reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
 
         # Early exit if no references exist
         if not reference_sources:

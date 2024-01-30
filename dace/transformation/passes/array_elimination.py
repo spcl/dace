@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
@@ -13,6 +13,7 @@ from dace.transformation.transformation import SingleStateTransformation
 
 
 @properties.make_properties
+@transformation.single_level_sdfg_only
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,
@@ -41,9 +42,9 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.sdfg_id]
+        access_sets: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
 
         # Traverse SDFG backwards
         try:
@@ -138,7 +139,7 @@ class ArrayElimination(ppl.Pass):
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
-                    xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                    xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
 
                     # Try to apply
                     if xform.can_be_applied(state, 0, sdfg):
@@ -183,7 +184,7 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_first:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):
@@ -203,7 +204,7 @@ class ArrayElimination(ppl.Pass):
                             for xform in xforms_second:
                                 # Quick path to setup match
                                 candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                                xform.setup_match(sdfg, sdfg.cfg_id, state_id, candidate, 0, override=True)
 
                                 # Try to apply
                                 if xform.can_be_applied(state, 0, sdfg):

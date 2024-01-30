@@ -86,7 +86,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
-                    ret[sd.sdfg_id] = subret
+                    ret[sd.cfg_id] = subret
             ret = ret or None
         else:
             ret = p.apply_pass(sdfg, state)

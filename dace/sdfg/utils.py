@@ -13,7 +13,7 @@ from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
-from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, GraphT
+from dace.sdfg.state import SDFGState, StateSubgraphView, LoopRegion, ControlFlowBlock, ControlFlowRegion, GraphT
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr, propagation
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
@@ -1215,7 +1215,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.sdfg_id
+        id = sd.cfg_id
 
         for cfg in sd.all_control_flow_regions():
             while True:
@@ -1257,9 +1257,8 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
 
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                                n=len(blocks), progress=progress):
-        block: ControlFlowBlock = _block
-        graph: SomeGraphT = _graph
-        id = block.sdfg.sdfg_id
+        block: LoopRegion = _block
+        graph: ControlFlowRegion = _graph
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
@@ -1268,7 +1267,35 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
             LoopRegionInline.loop: block,
         }
         inliner = LoopRegionInline()
-        inliner.setup_match(graph, id, block_id, candidate, 0, override=True)
+        inliner.setup_match(block.sdfg, graph.cfg_id, block_id, candidate, 0, override=True)
+        if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
+            inliner.apply(graph, block.sdfg)
+            counter += 1
+
+    return counter
+
+
+def inline_control_flow_regions(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
+    # Avoid import loops
+    from dace.transformation.interstate import ControlFlowRegionInline
+
+    counter = 0
+    blocks = [(n, p) for n, p in sdfg.all_nodes_recursive()
+              if isinstance(n, ControlFlowRegion) and not isinstance(n, LoopRegion)]
+
+    for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining control flow blocks',
+                                               n=len(blocks), progress=progress):
+        block: ControlFlowRegion = _block
+        graph: ControlFlowRegion = _graph
+
+        # We have to reevaluate every time due to changing IDs
+        block_id = graph.node_id(block)
+
+        candidate = {
+            ControlFlowRegionInline.region: block,
+        }
+        inliner = ControlFlowRegionInline()
+        inliner.setup_match(block.sdfg, graph.cfg_id, block_id, candidate, 0, override=True)
         if inliner.can_be_applied(graph, 0, block.sdfg, permissive=permissive):
             inliner.apply(graph, block.sdfg)
             counter += 1
@@ -1298,7 +1325,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
 
     for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
-        id = node.sdfg.sdfg_id
+        id = node.sdfg.cfg_id
         sd = state.parent
 
         # We have to reevaluate every time due to changing IDs
@@ -1411,7 +1438,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     # Build a unique representation
     sdfg = graph.parent
     state = graph if isinstance(graph, SDFGState) else graph._graph
-    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
+    return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
@@ -1481,6 +1508,46 @@ def _tswds_state(
     yield from _traverse(None, symbols)
 
 
+def _tswds_cf_region(
+        sdfg: SDFG,
+        region: ControlFlowRegion,
+        symbols: Dict[str, dtypes.typeclass],
+        recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    # Add symbols from inter-state edges along the state machine
+    start_region = region.start_block
+    visited = set()
+    visited_edges = set()
+    for edge in region.dfs_edges(start_region):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            if isinstance(edge.src, SDFGState):
+                yield from _tswds_state(sdfg, edge.src, {}, recursive)
+            elif isinstance(edge.src, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            if isinstance(edge.dst, SDFGState):
+                yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
+            elif isinstance(edge.dst, ControlFlowRegion):
+                yield from _tswds_cf_region(sdfg, edge.dst, symbols, recursive)
+
+    # If there is only one state, the DFS will miss it
+    if start_region not in visited:
+        if isinstance(start_region, SDFGState):
+            yield from _tswds_state(sdfg, start_region, symbols, recursive)
+        elif isinstance(start_region, ControlFlowRegion):
+            yield from _tswds_cf_region(sdfg, start_region, symbols, recursive)
+
+
 def traverse_sdfg_with_defined_symbols(
         sdfg: SDFG,
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
@@ -1495,30 +1562,7 @@ def traverse_sdfg_with_defined_symbols(
     for desc in sdfg.arrays.values():
         symbols.update({str(s): s.dtype for s in desc.free_symbols})
 
-    # Add symbols from inter-state edges along the state machine
-    start_state = sdfg.start_state
-    visited = set()
-    visited_edges = set()
-    for edge in sdfg.dfs_edges(start_state):
-        # Source -> inter-state definition -> Destination
-        visited_edges.add(edge)
-        # Source
-        if edge.src not in visited:
-            visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
-
-        # Add edge symbols into defined symbols
-        issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update({k: v for k, v in issyms.items() if v is not None})
-
-        # Destination
-        if edge.dst not in visited:
-            visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
-
-    # If there is only one state, the DFS will miss it
-    if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols, recursive)
+    yield from _tswds_cf_region(sdfg, sdfg, symbols, recursive)
 
 
 def is_fpga_kernel(sdfg, state):

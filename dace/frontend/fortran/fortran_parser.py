@@ -1549,7 +1549,7 @@ def create_sdfg_from_string(
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
-    sdfg.reset_sdfg_list()
+    sdfg.reset_cfg_list()
 
     sdfg.apply_transformations(IntrinsicSDFGTransformation)
     sdfg.expand_library_nodes()
