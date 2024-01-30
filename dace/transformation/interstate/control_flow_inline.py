@@ -64,6 +64,8 @@ class ControlFlowRegionInline(transformation.MultiStateTransformation):
         # Remove the original loop.
         parent.remove_node(self.region)
 
+        sdfg.reset_cfg_list()
+
 
 class LoopRegionInline(transformation.MultiStateTransformation):
     """
@@ -169,3 +171,5 @@ class LoopRegionInline(transformation.MultiStateTransformation):
 
         # Remove the original loop.
         parent.remove_node(self.loop)
+
+        sdfg.reset_cfg_list()
