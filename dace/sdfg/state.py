@@ -2462,7 +2462,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
         if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
+            self._labels = set(s.label for s in self.all_control_flow_blocks())
         label = label or 'state'
         existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
