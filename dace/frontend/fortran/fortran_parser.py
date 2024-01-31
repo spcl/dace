@@ -35,7 +35,8 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None,sdfg_path=None, use_experimental_cfg_blocks: bool = False):
+    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,
+                 startpoint=None, sdfg_path=None, use_experimental_cfg_blocks: bool = False):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -223,15 +224,16 @@ class AST_translator:
                 #self.startpoint=node.modules[0].subroutine_definitions[0].execution_part.execution
                 self.transient_mode=False
                 for i in self.startpoint.specification_part.typedecls:
-                    self.translate(i, sdfg)
+                    self.translate(i, sdfg, cfg)
                 for i in self.startpoint.specification_part.symbols:
-                    self.translate(i, sdfg)
+                    self.translate(i, sdfg, cfg)
                 for i in self.startpoint.specification_part.specifications:
-                    self.translate(i, sdfg)
-                self.transient_mode=True    
-                self.translate(self.startpoint.execution_part.execution, sdfg)   
+                    self.translate(i, sdfg, cfg)
+                self.transient_mode=True
+                self.translate(self.startpoint.execution_part.execution, sdfg, cfg) 
 
-    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
+    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG,
+                               cfg: ControlFlowRegion):
         """
         This function is responsible for translating Fortran pointer assignments into a SDFG.
         :param node: The node to be translated
@@ -240,7 +242,9 @@ class AST_translator:
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
                 raise ValueError("Unknown variable " + node.name_target.name)
-            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.name]
+            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][
+                node.name_target.parent_ref.name + "_" + node.name_target.part_ref.name
+            ]
 
         else:       
             if node.name_target.name not in self.name_mapping[sdfg]:
@@ -254,7 +258,7 @@ class AST_translator:
                     self.unallocated_arrays.remove(i)
             self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
 
-    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
+    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG, cfg: ControlFlowRegion):
         """
         This function is responsible for registering Fortran derived type declarations into a SDFG as nested data types.
         :param node: The node to be translated
@@ -840,17 +844,17 @@ class AST_translator:
                                            offset=array_in_global.offset)
         if self.multiple_sdfgs==False:
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
-                                                 sdfg,
-                                                 ins_in_new_sdfg,
-                                                 outs_in_new_sdfg,
-                                                 symbol_mapping=sym_dict)
+                                                     sdfg,
+                                                     ins_in_new_sdfg,
+                                                     outs_in_new_sdfg,
+                                                     symbol_mapping=sym_dict)
         else:
             internal_sdfg = substate.add_nested_sdfg(None,
-                                                 sdfg,
-                                                 ins_in_new_sdfg,
-                                                 outs_in_new_sdfg,
-                                                 symbol_mapping=sym_dict,
-                                                 name="External_nested_" + new_sdfg.name)    
+                                                     sdfg,
+                                                     ins_in_new_sdfg,
+                                                     outs_in_new_sdfg,
+                                                     symbol_mapping=sym_dict,
+                                                     name="External_nested_" + new_sdfg.name)    
         #if self.multiple_sdfgs==False:
             # Now adding memlets
 
@@ -1203,9 +1207,12 @@ class AST_translator:
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
                 for i in datatype.members:
-                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype.members[i].shape,datatype.members[i].dtype)
+                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,
+                                  datatype.members[i].shape,datatype.members[i].dtype)
                     self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
-                    self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
+                    self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i] = [
+                        self.name_mapping[sdfg][node.name], i
+                    ]
             else:
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
@@ -1304,7 +1311,7 @@ def create_sdfg_from_string(
     sdfg_name: str,
     normalize_offsets: bool = False,
     multiple_sdfgs: bool = False,
-    sources: List[str] = None,,
+    sources: List[str] = None,
     use_experimental_cfg_blocks: bool = False
 ):
     """
@@ -1572,7 +1579,8 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
 
-    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, use_experimental_cfg_blocks)
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs,
+                              use_experimental_cfg_blocks=use_experimental_cfg_blocks)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -2122,7 +2130,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if j.execution_part is None:
                 continue
             startpoint = j
-            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
+            ast2sdfg = AST_translator(program, __file__,
+                                      multiple_sdfgs=True, startpoint=startpoint, sdfg_path=icon_sdfgs_dir)
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
