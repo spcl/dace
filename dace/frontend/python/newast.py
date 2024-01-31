@@ -2426,7 +2426,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return parsed_node, test_region
 
-    def _visit_test(self, node: ast.Expr) -> Tuple[str, str, bool]:
+    def _visit_test(self, node: ast.Expr) -> Tuple[str, str, Optional[ControlFlowRegion]]:
         is_test_simple = self._is_test_simple(node)
 
         # Visit test-condition
@@ -2467,6 +2467,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
             test_region_copy = copy.deepcopy(test_region)
             loop_region.add_node(test_region_copy)
+
+            # Make sure the entire sub-graph of the test_region copy has proper sdfg references and that each block has
+            # a unique name in the SDFG.
+            loop_region.sdfg._labels = set(s.label for s in loop_region.sdfg.all_control_flow_blocks())
+            for block in test_region_copy.all_control_flow_blocks():
+                block.sdfg = loop_region.sdfg
+                block.label = data.find_new_name(block.label, loop_region.sdfg._labels)
 
             for block in iter_end_blocks:
                 loop_region.add_edge(block, test_region_copy, dace.InterstateEdge())
