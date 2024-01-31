@@ -1246,7 +1246,13 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
         spec = node.specification_part.specifications
     else:
         spec = []    
-    exec = node.execution_part.execution
+    if hasattr(node,"execution_part"):
+        if node.execution_part is not None:
+            exec = node.execution_part.execution
+        else:
+            exec = []    
+    else:
+        exec = []    
     new_exec = exec.copy()
     to_change = []
     for i in exec:
@@ -1303,7 +1309,14 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     final_exec = []
     for i in new_exec:
         final_exec.append(ReplaceFunctionStatementPass(to_change).visit(i))
-    node.execution_part.execution = final_exec
+    if hasattr(node,"execution_part"):
+        if node.execution_part is not None:
+            node.execution_part.execution = final_exec
+        else:
+            node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)    
+    else:
+        node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)    
+    #node.execution_part.execution = final_exec
     node.specification_part.specifications = spec
     return node
 
