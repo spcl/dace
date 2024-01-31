@@ -319,7 +319,7 @@ def test_symbol_dump():
     assert 'i' in dreport.keys()
     assert len(dreport['i']) == 22
     desired = [0] + list(range(0, 20))
-    assert np.allclose(dreport['i'][:21], desired)
+    assert np.allclose(dreport['i'][1:], desired)
 
 
 @pytest.mark.datainstrument
