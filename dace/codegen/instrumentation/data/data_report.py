@@ -66,7 +66,7 @@ class InstrumentedDataReport:
 
             # Sort files numerically
             filenames = os.listdir(os.path.join(folder, aname))
-            filenames = sorted([(int(f.split('.')[0].split('_')[-1]), f) for f in filenames])
+            filenames = sorted([(*(int(s) for s in f.split('.')[0].split('_')), f) for f in filenames])
             for entry in filenames:
                 files.append(os.path.join(folder, aname, entry[-1]))
 

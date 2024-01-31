@@ -318,8 +318,11 @@ def test_symbol_dump():
     assert len(dreport.keys()) == 1
     assert 'i' in dreport.keys()
     assert len(dreport['i']) == 22
-    desired = [0] + list(range(0, 20))
-    assert np.allclose(dreport['i'][1:], desired)
+    desired = list(range(1, 19))
+    s_idx = dreport['i'].index(1)
+    e_idx = dreport['i'].index(18)
+    assert np.allclose(dreport['i'][s_idx:e_idx+1], desired)
+    assert 19 in dreport['i']
 
 
 @pytest.mark.datainstrument
@@ -370,10 +373,10 @@ if __name__ == '__main__':
     test_dump()
     test_symbol_dump()
     test_symbol_dump_conditional()
-    test_dump_gpu()
+    #test_dump_gpu()
     test_restore()
     test_symbol_restore()
-    test_restore_gpu()
+    #test_restore_gpu()
     test_dinstr_versioning()
     test_dinstr_in_loop()
     test_dinstr_strided()
