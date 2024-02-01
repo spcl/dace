@@ -187,9 +187,15 @@ class Data:
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
 
+    def _transient_setter(self, value):
+        self._transient = value
+        if isinstance(self, Structure):
+            for _, v in self.members.items():
+                v.transient = value
+
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
-    transient = Property(dtype=bool, default=False)
+    transient = Property(dtype=bool, default=False, setter=_transient_setter)
     storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
     lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
                             desc='Data allocation span',
