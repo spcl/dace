@@ -565,9 +565,9 @@ def test_read_struct_member_interstate_edge():
     tail = sdfg.add_state('guard')
     sdfg.add_edge(init, init2, dace.InterstateEdge())
     sdfg.add_edge(init2, guard, dace.InterstateEdge(assignments={'i': 'indices.start'}))
-    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i <= indices.end'))
+    sdfg.add_edge(guard, body, dace.InterstateEdge(condition='i <= indices.stop'))
     sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={'i': '(i + 1)'}))
-    sdfg.add_edge(guard, tail, dace.InterstateEdge(condition='not (i <= indices.end)'))
+    sdfg.add_edge(guard, tail, dace.InterstateEdge(condition='not (i <= indices.stop)'))
 
     in_start_access = init.add_access('start_in')
     t1 = init.add_tasklet('t1', {'i1'}, {'o1'}, 'o1 = i1')
@@ -593,8 +593,8 @@ def test_read_struct_member_interstate_edge():
 
     sdfg.validate()
 
-    arr = np.zeros((20,))
-    arr_validate = np.zeros((20,))
+    arr = np.zeros((20,), dtype=np.int32)
+    arr_validate = np.zeros((20,), dtype=np.int32)
     for i in range(11):
         arr_validate[i] = i
 
