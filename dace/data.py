@@ -191,7 +191,8 @@ class Data:
         self._transient = value
         if isinstance(self, Structure):
             for _, v in self.members.items():
-                v.transient = value
+                if isinstance(v, Data):
+                    v.transient = value
 
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
