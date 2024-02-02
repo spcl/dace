@@ -94,6 +94,18 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                         if ii.__class__.__name__=="Entity_Decl_List":
                                 for iii in ii.children:
                                     if iii.__class__.__name__=="Entity_Decl":
+                                        name_to_check=iii.children[0].string
+                                        for type_name in res.list_of_types:
+                                            for used_in_type in res.names_in_types[type_name]:
+                                                if name_to_check==used_in_type:
+                                                    if name_to_check not in actually_used:
+                                                        actually_used.append(name_to_check)
+                                        for type_name in res.list_of_subroutines:
+                                            for used_in_type in res.names_in_subroutines[type_name]:
+                                                if name_to_check==used_in_type:
+                                                    if name_to_check not in actually_used:
+                                                        actually_used.append(name_to_check)
+
                                         if iii.children[0].string==used_name:
                                             for j in var.children:
                                                 #print("USED: "+ used_name)
@@ -563,24 +575,6 @@ class UseModuleLister:
 
             else:
                 self.get_used_modules(i)
-
-
-class DefModuleLister:
-    def __init__(self):
-        self.list_of_modules = []
-
-    def get_defined_modules(self, node):
-        if node is None:
-            return
-        if not hasattr(node, "children"):
-            return
-        for i in node.children:
-            if i.__class__.__name__ == "Module_Stmt":
-                for j in i.children:
-                    if j.__class__.__name__ == "Name":
-                        self.list_of_modules.append(j.string)
-            else:
-                self.get_defined_modules(i)
 
 
 class Context:
