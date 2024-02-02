@@ -38,6 +38,12 @@ jobs:
         export LD_LIBRARY_PATH=$XILINX_XRT/lib:$LD_LIBRARY_PATH
         export XILINX_VITIS=/opt/Xilinx/Vitis/2022.1
         export DACE_compiler_xilinx_platform=xilinx_u250_gen3x16_xdma_4_1_202210_1
+        export INTELFPGAOCLSDKROOT=/opt/intelFPGA_pro/19.1/hld
+        export ALTERAOCLSDKROOT=$INTELFPGAOCLSDKROOT
+        export AOCL_BOARD_PACKAGE_ROOT=/opt/intelFPGA_pro/19.1/hld/board/bittware_pcie/s10
+        export PATH=$INTELFPGAOCLSDKROOT/bin:$PATH
+        export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$AOCL_BOARD_PACKAGE_ROOT/linux64/lib
+        export QUARTUS_ROOTDIR_OVERRIDE=/opt/intelFPGA_pro/19.1/quartus
         # Due to an internal bug in the Xilinx tools, where the current datetime is passed as an integer
         # and overflowed in the year 2022, run the FPGA tests pretending like it's January 1st 2021.
         faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
