@@ -40,6 +40,7 @@ class AST_translator:
         :source: The source file name from which the AST was generated
         """
         self.sdfg_path=sdfg_path
+        self.count_of_struct_symbols_lifted=0
         self.registered_types = {}
         self.transient_mode=True
         self.tables = ast.tables
@@ -236,7 +237,11 @@ class AST_translator:
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
                 raise ValueError("Unknown variable " + node.name_target.name)
-            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.name]
+            if isinstance(node.name_target.part_ref,ast_internal_classes.Data_Ref_Node):
+                self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
+            else:    
+                self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.name]
+
 
         else:       
             if node.name_target.name not in self.name_mapping[sdfg]:
@@ -983,9 +988,9 @@ class AST_translator:
             src= ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
             if self.struct_views.get(sdfg) is not None:
               if self.struct_views[sdfg].get(i) is not None:
-                pair= self.struct_views[sdfg][i]
-                access=substate.add_access(pair[0])
-                substate.add_edge(access, None,src,'views',  Memlet(data=pair[0], subset=memlet_range))
+                chain= self.struct_views[sdfg][i]
+                access=substate.add_access(chain[0])
+                substate.add_edge(access, None,src,'views',  Memlet(data=chain[0], subset=memlet_range))
 
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
@@ -1143,10 +1148,26 @@ class AST_translator:
             offset = []
             offset_value = -1
             for i in node.sizes:
-                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
-                text = tw.write_code(i)
-                sizes.append(sym.pystr_to_symbolic(text))
-                offset.append(offset_value)
+                if isinstance(i, ast_internal_classes.Data_Ref_Node):
+                    count=self.count_of_struct_symbols_lifted
+                    sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                    if sdfg.parent_sdfg is not None:
+                        sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                        sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
+                        for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
+                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
+                            edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
+                            #print(edge)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
+                    sizes.append(sym.pystr_to_symbolic(text))
+                    offset.append(offset_value)
+                    self.count_of_struct_symbols_lifted+=1
+                else:
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    text = tw.write_code(i)
+                    sizes.append(sym.pystr_to_symbolic(text))
+                    offset.append(offset_value)
 
         else:
             sizes = None
@@ -1166,9 +1187,18 @@ class AST_translator:
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
                 for i in datatype.members:
+                    current_dtype=datatype.members[i].dtype
+                    for other_type in self.registered_types:
+                        if current_dtype.dtype==self.registered_types[other_type].dtype:
+                            other_type_obj=self.registered_types[other_type]
+                            for j in other_type_obj.members:
+                                sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
+                                self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
                     sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype.members[i].shape,datatype.members[i].dtype)
                     self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
                     self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
+
             else:
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
@@ -2089,13 +2119,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             ast2sdfg.translate(program, sdfg)
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
-            sdfg.expand_library_nodes()
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            try:
+                sdfg.expand_library_nodes()
+            except:
+                print("Expansion failed for ", sdfg.name)    
+            
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + ".sdfg"))
-            #try:    
-            sdfg.simplify(verbose=True)
-            #except:
-            #    print("Simplification failed for ", sdfg.name)    
+            
+            try:    
+                sdfg.simplify(verbose=True)
+            except:
+                print("Simplification failed for ", sdfg.name)    
             try:  
                 sdfg.compile()
             except:
