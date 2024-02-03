@@ -217,14 +217,14 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
-                #self.startpoint=node.modules[0].subroutine_definitions[0].execution_part.execution
-                self.transient_mode=False
-                for i in self.startpoint.specification_part.typedecls:
-                    self.translate(i, sdfg)
-                for i in self.startpoint.specification_part.symbols:
-                    self.translate(i, sdfg)
-                for i in self.startpoint.specification_part.specifications:
-                    self.translate(i, sdfg)
+                if self.startpoint.specification_part is not None:
+                    self.transient_mode=False
+                    for i in self.startpoint.specification_part.typedecls:
+                        self.translate(i, sdfg)
+                    for i in self.startpoint.specification_part.symbols:
+                        self.translate(i, sdfg)
+                    for i in self.startpoint.specification_part.specifications:
+                        self.translate(i, sdfg)
                 self.transient_mode=True    
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
 
@@ -733,7 +733,7 @@ class AST_translator:
                     array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -753,7 +753,7 @@ class AST_translator:
                     array_in_global = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -778,7 +778,7 @@ class AST_translator:
                     array = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -798,7 +798,7 @@ class AST_translator:
                     array = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -1763,7 +1763,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
-      
+
     parse_list={}
     what_to_parse_list={}
     type_to_parse_list={}

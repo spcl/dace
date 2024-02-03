@@ -356,8 +356,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                         # NOTE: The access node dataname must "navigate" the structure with dots (not arrows).
-                        self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
-                                            function_stream, declaration_stream, allocation_stream)
+                        if isinstance(v, data.Scalar):
+                            # NOTE: Scalar members are already defined in the struct definition.
+                            self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
+                        else:
+                            self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
+                                                    function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, (data.StructureView, data.View)):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
