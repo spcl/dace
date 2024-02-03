@@ -109,6 +109,52 @@ def test_fortran_frontend_basic_type2():
     assert (a[2, 0] == 42)
 
 
+def test_fortran_frontend_type_symbol():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+                    PROGRAM type_symbol_test
+                    implicit none
+                    
+                    TYPE simple_type
+                        REAL:: z(5)
+                        INTEGER:: a         
+                    END TYPE simple_type
+
+                    
+                    REAL :: d(5,5)
+                    CALL type_symbol_test_function(d)
+                    end
+
+                    SUBROUTINE type_symbol_test_function(d)
+                    TYPE(simple_type) :: st 
+                    REAL :: d(5,5)
+                    st%a=10
+                    CALL internal_function(d,st)
+                    
+                    END SUBROUTINE type_symbol_test_function
+
+                    
+                    SUBROUTINE internal_function(d,st)
+                    REAL d(5,5)
+                    TYPE(simple_type) :: st
+                    REAL bob(st%a) 
+                    bob(1)=5.5
+                    d(2,1)=2*bob(1)
+                    
+                    END SUBROUTINE internal_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_symbol_test",sources={"type_symbol_test":test_string})
+    sdfg.validate()
+    sdfg.simplify(verbose=True)
+    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 11)
+    assert (a[2, 0] == 42)
+
+
 def test_fortran_frontend_circular_type():
     """
     Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
@@ -165,6 +211,7 @@ def test_fortran_frontend_circular_type():
     assert (a[2, 0] == 42)
 
 if __name__ == "__main__":
-    #est_fortran_frontend_basic_type()
-    test_fortran_frontend_basic_type2()
+    #test_fortran_frontend_basic_type()
+    #test_fortran_frontend_basic_type2()
+    test_fortran_frontend_type_symbol()
     #test_fortran_frontend_circular_type()
