@@ -40,7 +40,7 @@ jobs:
         export DACE_compiler_xilinx_platform=xilinx_u250_gen3x16_xdma_4_1_202210_1
         export INTELFPGAOCLSDKROOT=/opt/intelFPGA_pro/19.1/hld
         export ALTERAOCLSDKROOT=$INTELFPGAOCLSDKROOT
-        export AOCL_BOARD_PACKAGE_ROOT=/opt/intelFPGA_pro/19.1/hld/board/bittware_pcie/s10
+        export AOCL_BOARD_PACKAGE_ROOT=/opt/intelFPGA_pro/19.1/hld/board/a10_ref
         export PATH=$INTELFPGAOCLSDKROOT/bin:$PATH
         export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$AOCL_BOARD_PACKAGE_ROOT/linux64/lib
         export QUARTUS_ROOTDIR_OVERRIDE=/opt/intelFPGA_pro/19.1/quartus
