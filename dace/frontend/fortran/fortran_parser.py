@@ -539,8 +539,11 @@ class AST_translator:
         for arg_i, variable in enumerate(variables_in_call):
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
+            elif isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
+                varname = variable.arg_name.name
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
+
             if isinstance(variable, ast_internal_classes.Literal) or varname == "LITERAL":
                 literals.append(parameters[arg_i])
                 literal_values.append(variable)
@@ -902,6 +905,7 @@ class AST_translator:
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
 
         if node.execution_part is not None:
+          if node.specification_part is not None:  
             for j in node.specification_part.uses:
                 for k in j.list:
                     if self.contexts.get(new_sdfg.name) is None:
@@ -915,9 +919,9 @@ class AST_translator:
                     pass
             for j in node.specification_part.specifications:
                 self.declstmt2sdfg(j, new_sdfg)
-            for i in assigns:
+          for i in assigns:
                 self.translate(i, new_sdfg)
-            self.translate(node.execution_part, new_sdfg)
+          self.translate(node.execution_part, new_sdfg)
 
         if self.multiple_sdfgs==True:
             internal_sdfg.path=self.sdfg_path+ new_sdfg.name + ".sdfg"
@@ -1182,12 +1186,13 @@ class AST_translator:
 
         if sizes is None:
             if isinstance(datatype, Structure):
-                datatype.transient = transient
-                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype)
+                datatype_to_add=copy.deepcopy(datatype)
+                datatype_to_add.transient = transient
+                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
-                for i in datatype.members:
-                    current_dtype=datatype.members[i].dtype
+                for i in datatype_to_add.members:
+                    current_dtype=datatype_to_add.members[i].dtype
                     for other_type in self.registered_types:
                         if current_dtype.dtype==self.registered_types[other_type].dtype:
                             other_type_obj=self.registered_types[other_type]
@@ -1195,7 +1200,7 @@ class AST_translator:
                                 sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
                                 self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
                                 self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
-                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype.members[i].shape,datatype.members[i].dtype)
+                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
                     self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
                     self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
 
@@ -1503,6 +1508,7 @@ def create_sdfg_from_string(
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
     program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
@@ -1997,7 +2003,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     functions_and_subroutines_builder.visit(program)
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
     #program = ast_transforms.functionStatementEliminator(program)
-
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor().visit(program)

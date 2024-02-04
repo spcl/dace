@@ -425,6 +425,52 @@ class StructPointerEliminator(NodeTransformer):
             return newnode
         else:
             return node
+
+
+class StructConstructorToFunctionCall(NodeTransformer):
+    """
+    Fortran does not differentiate between structure constructors and functions without arguments.
+    We need to go over and convert all structure constructors that are in fact functions and transform them.
+    So, we create a closure of all math and defined functions and 
+    transform if necessary.
+    """
+    def __init__(self, funcs=None):
+        if funcs is None:
+            funcs = []
+        self.funcs = funcs
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        self.excepted_funcs = [
+            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
+            "__dace_epsilon", *FortranIntrinsics.function_names()
+        ]
+
+    def visit_Structure_Constructor_Node(self, node: ast_internal_classes.Structure_Constructor_Node):
+        if isinstance(node.name, str):
+            return node
+        if node.name is None:
+            raise ValueError("Structure name is None")
+            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+        found=False
+        for i in self.funcs:
+            if i.name==node.name.name:
+                found=True
+                break
+        if node.name.name in self.excepted_funcs or found:
+            processed_args = []
+            for i in node.args:
+                arg = StructConstructorToFunctionCall(self.funcs).visit(i)
+                processed_args.append(arg)
+            node.args = processed_args
+            return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name=node.name.name,type="VOID",line_number=node.line_number), args=node.args, line_number=node.line_number,type="VOID")
+
+        else:
+            return node
+        
+        
+
+
+
 class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
@@ -447,7 +493,9 @@ class CallToArray(NodeTransformer):
         if isinstance(node.name, str):
             return node
         if node.name is None:
+            raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+        
         if node.name.name in self.excepted_funcs or node.name in self.funcs:
             processed_args = []
             for i in node.args:
@@ -508,7 +556,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
                 "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):# or isinstance(i, ast_internal_classes.Data_Ref_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -544,7 +592,7 @@ class ArgumentExtractor(NodeTransformer):
                                                    line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node):# or isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 result.args.append(arg)
             else:
                 result.args.append(ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp)))
@@ -1242,7 +1290,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     """
     if node is None:
         return None
-    if hasattr(node,"specification_part"):
+    if hasattr(node,"specification_part") and node.specification_part is not None:
         spec = node.specification_part.specifications
     else:
         spec = []    
@@ -1317,7 +1365,10 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     else:
         node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)    
     #node.execution_part.execution = final_exec
-    node.specification_part.specifications = spec
+    if hasattr(node,"specification_part"):
+        if node.specification_part is not None:
+            node.specification_part.specifications = spec
+    #node.specification_part.specifications = spec
     return node
 
 

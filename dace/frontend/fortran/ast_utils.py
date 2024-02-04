@@ -328,6 +328,7 @@ class TaskletWriter:
 
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
+            ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
             ast_internal_classes.Name_Node: self.name2string,
             ast_internal_classes.Name_Range_Node: self.name2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
@@ -345,6 +346,9 @@ class TaskletWriter:
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
         #At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
         return f"ERROR{node.type}"
+
+    def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
+        return self.write_code(node.arg)
 
     def write_code(self, node: ast_internal_classes.FNode):
         """
@@ -510,6 +514,7 @@ class ProcessedWriter(TaskletWriter):
         self.mapping = mapping
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
+            ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
             ast_internal_classes.Name_Node: self.name2string,
             ast_internal_classes.Name_Range_Node: self.namerange2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
