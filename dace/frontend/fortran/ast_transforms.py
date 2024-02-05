@@ -662,7 +662,6 @@ class ArgumentExtractor(NodeTransformer):
                     else:
                         var_type = res[i].type
 
-                    print('Create', res, "tmp_arg_" + str(temp), res[i].type, child.line_number)
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
