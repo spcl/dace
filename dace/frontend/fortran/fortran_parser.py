@@ -903,29 +903,29 @@ class AST_translator:
                                         self.name_mapping[new_sdfg][i], memlet)
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
+        if self.multiple_sdfgs==False:
+            if node.execution_part is not None:
+                if node.specification_part is not None:  
+                    for j in node.specification_part.uses:
+                        for k in j.list:
+                            if self.contexts.get(new_sdfg.name) is None:
+                                self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
+                            if self.contexts[new_sdfg.name].constants.get(
+                                    ast_utils.get_name(k)) is None and self.contexts[self.globalsdfg.name].constants.get(
+                                        ast_utils.get_name(k)) is not None:
+                                self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
+                                    self.globalsdfg.name].constants[ast_utils.get_name(k)]
 
-        if node.execution_part is not None:
-          if node.specification_part is not None:  
-            for j in node.specification_part.uses:
-                for k in j.list:
-                    if self.contexts.get(new_sdfg.name) is None:
-                        self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
-                    if self.contexts[new_sdfg.name].constants.get(
-                            ast_utils.get_name(k)) is None and self.contexts[self.globalsdfg.name].constants.get(
-                                ast_utils.get_name(k)) is not None:
-                        self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
-                            self.globalsdfg.name].constants[ast_utils.get_name(k)]
-
-                    pass
-            for j in node.specification_part.specifications:
-                self.declstmt2sdfg(j, new_sdfg)
-          for i in assigns:
-                self.translate(i, new_sdfg)
-          self.translate(node.execution_part, new_sdfg)
+                            pass
+                    for j in node.specification_part.specifications:
+                        self.declstmt2sdfg(j, new_sdfg)
+                for i in assigns:
+                        self.translate(i, new_sdfg)
+                self.translate(node.execution_part, new_sdfg)
 
         if self.multiple_sdfgs==True:
             internal_sdfg.path=self.sdfg_path+ new_sdfg.name + ".sdfg"
-            new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))        
+            #new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))        
 
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG):
@@ -1152,7 +1152,8 @@ class AST_translator:
             offset = []
             offset_value = -1
             for i in node.sizes:
-                if isinstance(i, ast_internal_classes.Data_Ref_Node):
+                stuff=[ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
+                if len(stuff)>0:
                     count=self.count_of_struct_symbols_lifted
                     sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
                     if sdfg.parent_sdfg is not None:
@@ -1165,6 +1166,7 @@ class AST_translator:
                     tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
                     text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
                     sizes.append(sym.pystr_to_symbolic(text))
+                    #TODO: shouldn't this use node.offset??
                     offset.append(offset_value)
                     self.count_of_struct_symbols_lifted+=1
                 else:
@@ -2115,6 +2117,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
+            if j.name.name!="solve_nh":
+                continue
             if j.execution_part is None:
                 continue
             startpoint = j
@@ -2124,19 +2128,27 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.apply_transformations(IntrinsicSDFGTransformation)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            try:
+                sdfg.apply_transformations(IntrinsicSDFGTransformation)
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            except:
+                print("Intrinsics failed for ", sdfg.name)    
+                continue
+            
             try:
                 sdfg.expand_library_nodes()
             except:
                 print("Expansion failed for ", sdfg.name)    
+                continue
             
             sdfg.validate()
             
-            #try:    
-            sdfg.simplify(verbose=True)
-            #except:
-            #    print("Simplification failed for ", sdfg.name)    
+            try:    
+                sdfg.simplify(verbose=True)
+            except:
+                print("Simplification failed for ", sdfg.name)    
+                continue
             try:  
                 sdfg.compile()
             except:
