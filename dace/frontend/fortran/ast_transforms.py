@@ -572,8 +572,9 @@ class ArgumentExtractor(NodeTransformer):
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
-    def __init__(self, count=0):
+    def __init__(self, program,count=0):
         self.count = count
+        self.program=program
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 

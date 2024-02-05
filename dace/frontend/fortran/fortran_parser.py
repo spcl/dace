@@ -2006,7 +2006,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
-    program = ast_transforms.ArgumentExtractor().visit(program)
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
