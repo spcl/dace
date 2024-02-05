@@ -2133,10 +2133,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             sdfg.validate()
             
-            try:    
-                sdfg.simplify(verbose=True)
-            except:
-                print("Simplification failed for ", sdfg.name)    
+            #try:    
+            sdfg.simplify(verbose=True)
+            #except:
+            #    print("Simplification failed for ", sdfg.name)    
             try:  
                 sdfg.compile()
             except:

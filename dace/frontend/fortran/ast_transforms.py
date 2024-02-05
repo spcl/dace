@@ -568,7 +568,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
 
 class ArgumentExtractor(NodeTransformer):
     """
-    Uses the CallExtractorNodeLister to find all function calls
+    Uses the ArgumentExtractorNodeLister to find all function calls
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
@@ -595,7 +595,7 @@ class ArgumentExtractor(NodeTransformer):
             if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node):# or isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 result.args.append(arg)
             else:
-                result.args.append(ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp)))
+                result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp)))
                 tmp = tmp + 1    
         self.count = tmp
         return result
@@ -621,7 +621,7 @@ class ArgumentExtractor(NodeTransformer):
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
-                                name="tmp_call_" + str(temp),
+                                name="tmp_arg_" + str(temp),
                                 type=res[i].type,
                                 sizes=None,
                                 init=None
@@ -629,7 +629,7 @@ class ArgumentExtractor(NodeTransformer):
                         ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
-                                                        lval=ast_internal_classes.Name_Node(name="tmp_call_" +
+                                                        lval=ast_internal_classes.Name_Node(name="tmp_arg_" +
                                                                                             str(temp),
                                                                                             type=res[i].type),
                                                         rval=res[i],
@@ -1159,7 +1159,7 @@ def optionalArgsHandleFunction(func):
 
         if found:
 
-            name = f'__dace_OPTIONAL_{arg.name}'
+            name = f'__f2dace_OPTIONAL_{arg.name}'
             var = ast_internal_classes.Var_Decl_Node(name=name,
                                             type='BOOL',
                                             alloc=False,
@@ -1188,6 +1188,8 @@ def optionalArgsHandleFunction(func):
 class OptionalArgsTransformer(NodeTransformer):
     def __init__(self, funcs_with_opt_args):
         self.funcs_with_opt_args = funcs_with_opt_args
+
+    
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 

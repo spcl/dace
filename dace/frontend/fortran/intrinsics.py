@@ -238,7 +238,7 @@ class DirectReplacement(IntrinsicTransformation):
         assert isinstance(call.args[0], ast_internal_classes.Name_Node)
 
         var_name = call.args[0].name
-        test_var_name = f'__dace_OPTIONAL_{var_name}'
+        test_var_name = f'__f2dace_OPTIONAL_{var_name}'
 
         return (ast_internal_classes.Name_Node(name=test_var_name), "BOOL")
     
