@@ -2117,7 +2117,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
@@ -2129,12 +2129,12 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             ast2sdfg.translate(program, sdfg)
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
-            try:
-                sdfg.apply_transformations(IntrinsicSDFGTransformation)
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
-            except:
-                print("Intrinsics failed for ", sdfg.name)    
-                continue
+            #try:
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            #except:
+            #    print("Intrinsics failed for ", sdfg.name)    
+            #    continue
             
             try:
                 sdfg.expand_library_nodes()

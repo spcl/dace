@@ -537,34 +537,6 @@ class CallToArray(NodeTransformer):
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
 
-class CallExtractorNodeLister(NodeVisitor):
-    """
-    Finds all function calls in the AST node and its children that have to be extracted into independent expressions
-    """
-    def __init__(self):
-        self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
-
-    def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
-        return
-
-    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
-        stop = False
-        if hasattr(node, "subroutine"):
-            if node.subroutine is True:
-                stop = True
-
-        from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if not stop and node.name.name not in [
-                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
-        ]:
-            self.nodes.append(node)
-        return self.generic_visit(node)
-
-    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
-        return
-
-
-
 class ArgumentExtractorNodeLister(NodeVisitor):
     """
     Finds all arguments in function calls in the AST node and its children that have to be extracted into independent expressions
@@ -753,6 +725,36 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                                                                 line_number=node.line_number,
                                                                 elemental=node.elemental)
     
+
+
+class CallExtractorNodeLister(NodeVisitor):
+    """
+    Finds all function calls in the AST node and its children that have to be extracted into independent expressions
+    """
+    def __init__(self):
+        self.nodes: List[ast_internal_classes.Call_Expr_Node] = []
+
+    def visit_For_Stmt_Node(self, node: ast_internal_classes.For_Stmt_Node):
+        self.generic_visit(node.init)
+        self.generic_visit(node.cond)
+        return
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        stop = False
+        if hasattr(node, "subroutine"):
+            if node.subroutine is True:
+                stop = True
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        if not stop and node.name.name not in [
+                "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
+        ]:
+            self.nodes.append(node)
+        return self.generic_visit(node)
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        return
+
 
 class CallExtractor(NodeTransformer):
     """
@@ -1474,7 +1476,7 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
 
     currentindex = 0
     indices = []
-
+    name_chain=[]
     if isinstance(node, ast_internal_classes.Data_Ref_Node):
 
         # we assume starting from the top (left-most) data_ref_node
@@ -1484,10 +1486,11 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
         struct_type = scope_vars.get_var(node.parent, node.parent_ref.name).type
         struct_def = structures.structures[struct_type]
         cur_node = node
-
+        name_chain=[cur_node.parent_ref]
         while True:
             cur_node = cur_node.part_ref
-
+            if isinstance(cur_node, ast_internal_classes.Data_Ref_Node):
+                name_chain.append(cur_node.parent_ref)
             if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
                 struct_def = structures.structures[struct_type]
                 offsets = struct_def.vars[cur_node.name.name].offsets
@@ -1519,10 +1522,21 @@ def par_Decl_Range_Finder(node: ast_internal_classes.Array_Subscript_Node,
                         lower_boundary = ast_internal_classes.Int_Literal_Node(value=str(offsets[idx]))
                 else:
                     lower_boundary = ast_internal_classes.Int_Literal_Node(value="1")
-
+                
+                first=True
+                if len (name_chain)>=1:
+                    for i in name_chain:
+                        if first:
+                            first=False
+                            array_name=i.name
+                        else:    
+                            array_name=array_name+"_"+i.name
+                    array_name=array_name+"_"+node.name.name                            
+                else:        
+                    array_name=node.name.name
                 upper_boundary = ast_internal_classes.Name_Range_Node(name="f2dace_MAX",
                                                         type="INTEGER",
-                                                        arrname=node.name,
+                                                        arrname=ast_internal_classes.Name_Node(name=array_name,type="VOID",line_number=node.line_number),
                                                         pos=currentindex)
                 """
                     When there's an offset, we add MAX_RANGE + offset.
