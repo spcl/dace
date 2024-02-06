@@ -2559,8 +2559,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Connect the states
         self.cfg_target.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
-        if not return_stmt:
-            self.cfg_target.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
+        self.cfg_target.add_edge(last_if_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
@@ -2570,8 +2569,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Connect the states
             self.cfg_target.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            if not return_stmt:
-                self.cfg_target.add_edge(last_else_state, end_if_state, dace.InterstateEdge())
+            self.cfg_target.add_edge(last_else_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
         else:
             self.cfg_target.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
         self.last_block = end_if_state
