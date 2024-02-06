@@ -1283,7 +1283,10 @@ class AST_translator:
             self.contexts[sdfg.name].containers.append(node.name)
 
         if hasattr(node,"init") and node.init is not None:
-            self.translate(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name,type=node.type),op="=",rval=node.init,line_number=node.line_number), sdfg)    
+            self.translate(ast_internal_classes.BinOp_Node(
+                lval=ast_internal_classes.Name_Node(name=node.name, type=node.type), op="=", rval=node.init,
+                line_number=node.line_number
+            ), sdfg, cfg)
 
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG, cfg: ControlFlowRegion):
 
