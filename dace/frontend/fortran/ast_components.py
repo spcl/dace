@@ -568,13 +568,14 @@ class InternalFortranAst:
 
     def structure_constructor(self, node: FASTNode):
         children = self.create_children(node)
+        line = get_line(node)
         name = get_child(children, ast_internal_classes.Type_Name_Node)
         args = get_child(children, ast_internal_classes.Component_Spec_List_Node)
         if args==None:
             ret_args = []
         else:
             ret_args = args.args   
-        return ast_internal_classes.Structure_Constructor_Node(name=name, args=ret_args, type=None)
+        return ast_internal_classes.Structure_Constructor_Node(name=name, args=ret_args, type=None,line_number=line)
 
           
     def intrinsic_function_reference(self, node: FASTNode):
@@ -1279,11 +1280,12 @@ class InternalFortranAst:
         if args==None:
             ret_args = []
         else:
-            ret_args = args.args   
-        if node.item is None:
-            line_number = -1
-        else:
-            line_number = node.item.span     
+            ret_args = args.args  
+        line_number = get_line(node)     
+        #if node.item is None:
+        #    line_number = 42
+        #else:
+        #    line_number = node.item.span     
         return ast_internal_classes.Call_Expr_Node(name=name, args=ret_args, type="VOID", line_number=line_number)
 
     def return_stmt(self, node: FASTNode):

@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import ast_components, ast_internal_classes
+from dace.frontend.fortran import ast_components, ast_internal_classes, ast_utils
 from typing import Dict, List, Optional, Tuple, Set
 import copy
 
@@ -29,6 +29,36 @@ class Structures:
                                 struct.vars[var.name] = var
 
             self.structures[structure.name.name] = struct
+
+
+    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node):
+
+        # we assume starting from the top (left-most) data_ref_node
+        # for struct1 % struct2 % struct3 % var
+        # we find definition of struct1, then we iterate until we find the var
+
+        struct_type = scope_vars.get_var(node.parent, ast_utils.get_name(node.parent_ref)).type
+        struct_def = self.structures[struct_type]
+        cur_node = node
+
+        while True:
+            cur_node = cur_node.part_ref
+
+            if isinstance(cur_node, ast_internal_classes.Array_Subscript_Node):
+                struct_def = self.structures[struct_type]
+                cur_var = struct_def.vars[cur_node.name.name]
+                node = cur_node
+                break
+
+            elif isinstance(cur_node, ast_internal_classes.Name_Node):
+                struct_def = self.structures[struct_type]
+                cur_var = struct_def.vars[cur_node.name]
+                break
+
+            struct_type = struct_def.vars[cur_node.parent_ref.name].type
+            struct_def = self.structures[struct_type]
+
+        return struct_def, cur_var
 
 
 def iter_fields(node: ast_internal_classes.FNode):
@@ -425,6 +455,52 @@ class StructPointerEliminator(NodeTransformer):
             return newnode
         else:
             return node
+
+
+class StructConstructorToFunctionCall(NodeTransformer):
+    """
+    Fortran does not differentiate between structure constructors and functions without arguments.
+    We need to go over and convert all structure constructors that are in fact functions and transform them.
+    So, we create a closure of all math and defined functions and 
+    transform if necessary.
+    """
+    def __init__(self, funcs=None):
+        if funcs is None:
+            funcs = []
+        self.funcs = funcs
+
+        from dace.frontend.fortran.intrinsics import FortranIntrinsics
+        self.excepted_funcs = [
+            "malloc", "pow", "cbrt", "__dace_sign", "tanh", "atan2",
+            "__dace_epsilon", *FortranIntrinsics.function_names()
+        ]
+
+    def visit_Structure_Constructor_Node(self, node: ast_internal_classes.Structure_Constructor_Node):
+        if isinstance(node.name, str):
+            return node
+        if node.name is None:
+            raise ValueError("Structure name is None")
+            return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+        found=False
+        for i in self.funcs:
+            if i.name==node.name.name:
+                found=True
+                break
+        if node.name.name in self.excepted_funcs or found:
+            processed_args = []
+            for i in node.args:
+                arg = StructConstructorToFunctionCall(self.funcs).visit(i)
+                processed_args.append(arg)
+            node.args = processed_args
+            return ast_internal_classes.Call_Expr_Node(name=ast_internal_classes.Name_Node(name=node.name.name,type="VOID",line_number=node.line_number), args=node.args, line_number=node.line_number,type="VOID")
+
+        else:
+            return node
+        
+        
+
+
+
 class CallToArray(NodeTransformer):
     """
     Fortran does not differentiate between arrays and functions.
@@ -447,7 +523,9 @@ class CallToArray(NodeTransformer):
         if isinstance(node.name, str):
             return node
         if node.name is None:
+            raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+        
         if node.name.name in self.excepted_funcs or node.name in self.funcs:
             processed_args = []
             for i in node.args:
@@ -508,7 +586,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
                 "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):# or isinstance(i, ast_internal_classes.Data_Ref_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -520,12 +598,17 @@ class ArgumentExtractorNodeLister(NodeVisitor):
 
 class ArgumentExtractor(NodeTransformer):
     """
-    Uses the CallExtractorNodeLister to find all function calls
+    Uses the ArgumentExtractorNodeLister to find all function calls
     in the AST node and its children that have to be extracted into independent expressions
     It then creates a new temporary variable for each of them and replaces the call with the variable.
     """
-    def __init__(self, count=0):
+    def __init__(self, program,count=0):
         self.count = count
+        self.program=program
+
+        ParentScopeAssigner().visit(program)
+        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars.visit(program)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -544,10 +627,10 @@ class ArgumentExtractor(NodeTransformer):
                                                    line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node):# or isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 result.args.append(arg)
             else:
-                result.args.append(ast_internal_classes.Name_Node(name="tmp_call_" + str(tmp)))
+                result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp)))
                 tmp = tmp + 1    
         self.count = tmp
         return result
@@ -562,6 +645,7 @@ class ArgumentExtractor(NodeTransformer):
             for i in res:
                 if i == child:
                     res.pop(res.index(i))
+
             if res is not None:
                 # Variables are counted from 0...end, starting from main node, to all calls nested
                 # in main node arguments.
@@ -570,18 +654,26 @@ class ArgumentExtractor(NodeTransformer):
                 temp = self.count + len(res) - 1
                 for i in reversed(range(0, len(res))):
 
+
+                    if isinstance(res[i], ast_internal_classes.Data_Ref_Node):
+                        struct_def, cur_var = self.program.structures.find_definition(self.scope_vars, res[i])
+
+                        var_type = cur_var.type
+                    else:
+                        var_type = res[i].type
+
                     newbody.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
-                                name="tmp_call_" + str(temp),
-                                type=res[i].type,
+                                name="tmp_arg_" + str(temp),
+                                type=var_type,
                                 sizes=None,
                                 init=None
                             )
                         ]))
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
-                                                        lval=ast_internal_classes.Name_Node(name="tmp_call_" +
+                                                        lval=ast_internal_classes.Name_Node(name="tmp_arg_" +
                                                                                             str(temp),
                                                                                             type=res[i].type),
                                                         rval=res[i],
@@ -1111,7 +1203,7 @@ def optionalArgsHandleFunction(func):
 
         if found:
 
-            name = f'__dace_OPTIONAL_{arg.name}'
+            name = f'__f2dace_OPTIONAL_{arg.name}'
             var = ast_internal_classes.Var_Decl_Node(name=name,
                                             type='BOOL',
                                             alloc=False,
@@ -1140,6 +1232,8 @@ def optionalArgsHandleFunction(func):
 class OptionalArgsTransformer(NodeTransformer):
     def __init__(self, funcs_with_opt_args):
         self.funcs_with_opt_args = funcs_with_opt_args
+
+    
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -1242,7 +1336,7 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     """
     if node is None:
         return None
-    if hasattr(node,"specification_part"):
+    if hasattr(node,"specification_part") and node.specification_part is not None:
         spec = node.specification_part.specifications
     else:
         spec = []    
@@ -1317,7 +1411,10 @@ def localFunctionStatementEliminator(node: ast_internal_classes.FNode):
     else:
         node.execution_part = ast_internal_classes.Execution_Part_Node(execution=final_exec)    
     #node.execution_part.execution = final_exec
-    node.specification_part.specifications = spec
+    if hasattr(node,"specification_part"):
+        if node.specification_part is not None:
+            node.specification_part.specifications = spec
+    #node.specification_part.specifications = spec
     return node
 
 
