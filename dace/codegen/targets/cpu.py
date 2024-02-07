@@ -1000,11 +1000,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         str(edge.src), str(edge.dst)))
 
                 conntype = node.out_connectors[uconn]
+                desc = sdfg.arrays[memlet.data]
                 is_scalar = not isinstance(conntype, dtypes.pointer)
-                if isinstance(conntype, dtypes.pointer) and sdfg.arrays[memlet.data].dtype == conntype:
+                if isinstance(conntype, dtypes.pointer) and desc.dtype == conntype and not isinstance(desc, data.Structure):
                     is_scalar = True  # Pointer to pointer assignment
-                is_stream = isinstance(sdfg.arrays[memlet.data], data.Stream)
-                is_refset = isinstance(sdfg.arrays[memlet.data], data.Reference) and dst_edge.dst_conn == 'set'
+                is_stream = isinstance(desc, data.Stream)
+                is_refset = isinstance(desc, data.Reference) and dst_edge.dst_conn == 'set'
 
                 if (is_scalar and not memlet.dynamic and not is_stream) or is_refset:
                     out_local_name = "    __" + uconn
@@ -1252,6 +1253,10 @@ class CPUCodeGen(TargetCodeGenerator):
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+
+        # If reading one structure and the tasklet connector is a pointer, make a reference
+        if isinstance(desc, data.Structure) and conntype == desc.dtype:
+            expr = ptr
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1532,8 +1537,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
             # If reference set, do not emit initial assignment
             is_refset = isinstance(desc, data.Reference) and state_dfg.memlet_path(edge)[-1].dst_conn == 'set'
-
-            if not is_refset and not isinstance(desc.dtype, dtypes.pointer):
+        
+            if (not is_refset and not isinstance(desc.dtype, dtypes.pointer)) or isinstance(desc, data.Structure) and cdtype == desc.dtype:
                 ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
