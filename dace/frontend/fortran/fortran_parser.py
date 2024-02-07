@@ -624,7 +624,7 @@ class AST_translator:
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                        if array.name in self.registered_types:
+                        if hasattr(array,"name") and array.name in self.registered_types:
                             datatype=self.get_dace_type(array.name)
                             datatype_to_add=copy.deepcopy(datatype)
                             datatype_to_add.transient = False
@@ -2142,7 +2142,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if j.execution_part is None:
                 continue
             startpoint = j
-            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=True,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
