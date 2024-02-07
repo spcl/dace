@@ -185,9 +185,12 @@ def test_fortran_frontend_type_pardecl():
                     REAL d(5,5)
                     TYPE(simple_type) :: st
                     REAL bob(st%a) 
+                    INTEGER, PARAMETER :: n=5
+                    REAL BOB2(n)
                     bob(1)=5.5
+                    bob2(1)=5.5
                     st%z(1,:,2:3)=bob(1)
-                    d(2,1)=bob(1)
+                    d(2,1)=bob(1)+bob2
                     
                     END SUBROUTINE internal_function
                     """
@@ -199,6 +202,56 @@ def test_fortran_frontend_type_pardecl():
     assert (a[0, 0] == 42)
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
+
+def test_fortran_frontend_type_struct():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+                    PROGRAM type_struct_test
+                    implicit none
+                    
+                    TYPE simple_type
+                        REAL:: z(5,5,5)
+                        INTEGER:: a         
+                    END TYPE simple_type
+
+                    
+                    REAL :: d(5,5)
+                    CALL type_struct_test_function(d)
+                    end
+
+                    SUBROUTINE type_struct_test_function(d)
+                    TYPE(simple_type) :: st 
+                    REAL :: d(5,5)
+                    st%a=10
+                    CALL internal_function(d,st)
+                    
+                    END SUBROUTINE type_struct_test_function
+
+                    
+                    SUBROUTINE internal_function(d,st)
+                    REAL d(5,5)
+                    TYPE(simple_type) :: st
+                    REAL bob(st%a) 
+                    INTEGER, PARAMETER :: n=5
+                    REAL BOB2(n)
+                    bob(1)=5.5
+                    bob2(1)=5.5
+                    st%z(1,:,2:3)=bob(1)
+                    d(2,1)=bob(1)+bob2(1)
+                    
+                    END SUBROUTINE internal_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_struct_test",sources={"type_struct_test":test_string})
+    sdfg.validate()
+    sdfg.simplify(verbose=True)
+    a = np.full([4, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 11)
+    assert (a[2, 0] == 42)
+
 
 def test_fortran_frontend_circular_type():
     """
@@ -259,5 +312,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_basic_type()
     #test_fortran_frontend_basic_type2()
     #test_fortran_frontend_type_symbol()
-    test_fortran_frontend_type_pardecl()
+    #test_fortran_frontend_type_pardecl()
+    test_fortran_frontend_type_struct()
     #test_fortran_frontend_circular_type()

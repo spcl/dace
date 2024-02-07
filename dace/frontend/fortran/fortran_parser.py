@@ -624,7 +624,27 @@ class AST_translator:
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
+                        if array.name in self.registered_types:
+                            datatype=self.get_dace_type(array.name)
+                            datatype_to_add=copy.deepcopy(datatype)
+                            datatype_to_add.transient = False
+                            new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                            if self.struct_views.get(new_sdfg) is None:
+                                self.struct_views[new_sdfg] = {}
+                            for i in datatype_to_add.members:
+                                current_dtype=datatype_to_add.members[i].dtype
+                                for other_type in self.registered_types:
+                                    if current_dtype.dtype==self.registered_types[other_type].dtype:
+                                        other_type_obj=self.registered_types[other_type]
+                                        for j in other_type_obj.members:
+                                            new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                            self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
+                                            self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
+                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                                self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
+                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                        else:
+                            new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
                         if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
