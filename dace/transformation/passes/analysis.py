@@ -1,7 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
-from dace.transformation import pass_pipeline as ppl
+from dace.sdfg.state import ControlFlowBlock
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd
@@ -15,6 +16,7 @@ WriteScopeDict = Dict[str, Dict[Optional[Tuple[SDFGState, nd.AccessNode]],
 SymbolScopeDict = Dict[str, Dict[Edge[InterstateEdge], Set[Union[Edge[InterstateEdge], SDFGState]]]]
 
 
+@transformation.single_level_sdfg_only
 @properties.make_properties
 class StateReachability(ppl.Pass):
     """
@@ -47,6 +49,32 @@ class StateReachability(ppl.Pass):
 
             reachable[sdfg.cfg_id] = result
 
+        return reachable
+
+
+class ControlFlowBlockReachability(ppl.Pass):
+    """
+    Evaluates control flow block reachability (which control flow block can be executed after each control flow block)
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.CFG
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]:
+        """
+        :return: For each control flow region, a dictionary mapping each control flow block to its other reachable
+                 control flow blocks in the same region.
+        """
+        reachable: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            for n, v in reachable_nodes(cfg.nx):
+                reachable[cfg.cfg_id][n] = set(v)
         return reachable
 
 
