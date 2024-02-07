@@ -8,7 +8,7 @@ from collections import defaultdict
 import copy
 import itertools
 import warnings
-from typing import Any, Dict, List, Set, Tuple, Type, Union
+from typing import Any, Dict, List, Literal, Set, Tuple, Type, Union, TypedDict
 import sympy
 
 import dace
@@ -689,21 +689,22 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
         return subset_b
 
 
+class UnderapproximateWritesDictT(TypedDict):
+    approximation: Dict[graph.Edge, Memlet]
+    loop_approximation: Dict[SDFGState, Dict[str, Memlet]]
+    loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]
+
+
 class UnderapproximateWrites(ppl.Pass):
 
     def modifies(self) -> Modifies:
-        return ppl.Modifies.Everything
+        return ppl.Modifies.States
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         # If anything was modified, reapply
-        return modified & ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Symbols | ppl.Modifies.Nodes
+        return modified & ppl.Modifies.Everything
 
-    def apply_pass(
-            self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]
-    ) -> Dict[str, Union[
-            Dict[graph.Edge, Memlet],
-            Dict[SDFGState, Dict[str, Memlet]],
-            Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]]]:
+    def apply_pass(self, top_sdfg: dace.SDFG, _) -> Dict[int, UnderapproximateWritesDictT]:
         """
         Applies the pass to the given SDFG.
 
@@ -725,42 +726,46 @@ class UnderapproximateWrites(ppl.Pass):
         :notes: The only modification this pass performs on the SDFG is splitting interstate
                 edges.
         """
-        # clear the global dictionaries
-        approximation_dict.clear()
-        loop_write_dict.clear()
-        loop_dict.clear()
-        iteration_variables.clear()
-        ranges_per_state.clear()
+        result = defaultdict(lambda: {'approximation': dict(), 'loop_approximation': dict(), 'loops': dict()})
 
-        # fill the approximation dictionary with the original edges as keys and the edges with the
-        # approximated memlets as values
-        for (edge, parent) in sdfg.all_edges_recursive():
-            if isinstance(parent, SDFGState):
-                approximation_dict[edge] = copy.deepcopy(edge.data)
-                if not isinstance(approximation_dict[edge].subset,
-                                  subsets.SubsetUnion) and approximation_dict[edge].subset:
-                    approximation_dict[edge].subset = subsets.SubsetUnion(
-                        [approximation_dict[edge].subset])
-                if not isinstance(approximation_dict[edge].dst_subset,
-                                  subsets.SubsetUnion) and approximation_dict[edge].dst_subset:
-                    approximation_dict[edge].dst_subset = subsets.SubsetUnion(
-                        [approximation_dict[edge].dst_subset])
-                if not isinstance(approximation_dict[edge].src_subset,
-                                  subsets.SubsetUnion) and approximation_dict[edge].src_subset:
-                    approximation_dict[edge].src_subset = subsets.SubsetUnion(
-                        [approximation_dict[edge].src_subset])
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            # clear the global dictionaries
+            approximation_dict.clear()
+            loop_write_dict.clear()
+            loop_dict.clear()
+            iteration_variables.clear()
+            ranges_per_state.clear()
 
-        self._underapproximate_writes_sdfg(sdfg)
+            # fill the approximation dictionary with the original edges as keys and the edges with the
+            # approximated memlets as values
+            for (edge, parent) in sdfg.all_edges_recursive():
+                if isinstance(parent, SDFGState):
+                    approximation_dict[edge] = copy.deepcopy(edge.data)
+                    if not isinstance(approximation_dict[edge].subset,
+                                    subsets.SubsetUnion) and approximation_dict[edge].subset:
+                        approximation_dict[edge].subset = subsets.SubsetUnion(
+                            [approximation_dict[edge].subset])
+                    if not isinstance(approximation_dict[edge].dst_subset,
+                                    subsets.SubsetUnion) and approximation_dict[edge].dst_subset:
+                        approximation_dict[edge].dst_subset = subsets.SubsetUnion(
+                            [approximation_dict[edge].dst_subset])
+                    if not isinstance(approximation_dict[edge].src_subset,
+                                    subsets.SubsetUnion) and approximation_dict[edge].src_subset:
+                        approximation_dict[edge].src_subset = subsets.SubsetUnion(
+                            [approximation_dict[edge].src_subset])
 
-        # Replace None with empty SubsetUnion in each Memlet
-        for entry in approximation_dict.values():
-            if entry.subset is None:
-                entry.subset = subsets.SubsetUnion([])
-        return {
-            "approximation": approximation_dict,
-            "loop_approximation": loop_write_dict,
-            "loops": loop_dict
-        }
+            self._underapproximate_writes_sdfg(sdfg)
+
+            # Replace None with empty SubsetUnion in each Memlet
+            for entry in approximation_dict.values():
+                if entry.subset is None:
+                    entry.subset = subsets.SubsetUnion([])
+
+            result[sdfg.cfg_id]['approximation'] = approximation_dict
+            result[sdfg.cfg_id]['loop_approximation'] = loop_write_dict
+            result[sdfg.cfg_id]['loops'] = loop_dict
+
+        return result
 
     def _underapproximate_writes_sdfg(self, sdfg: SDFG):
         """ 
