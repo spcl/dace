@@ -140,16 +140,15 @@ class CFGDataDependence(ppl.Pass):
 
         return not_covered_reads, write_set
 
-    def apply_pass(self, top_sdfg: SDFG,
-                   pipeline_results: Dict[str, Any]) -> Dict[int, Dict[SDFGState, Tuple[Set[Memlet], Set[Memlet]]]]:
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict[str, Any]) -> Dict[int, Tuple[Set[Memlet], Set[Memlet]]]:
         """
         :return: For each SDFG, a dictionary mapping states to sets of their input and output memlets.
         """
 
         results = defaultdict(lambda: [set(), set()])
 
-        state_deps_dict = pipeline_results[StateDataDependence.__name__]
-        cfb_reachability_dict = pipeline_results[ControlFlowBlockReachability.__name__]
+        state_deps_dict = pipeline_res[StateDataDependence.__name__]
+        cfb_reachability_dict = pipeline_res[ControlFlowBlockReachability.__name__]
         for sdfg in top_sdfg.all_sdfgs_recursive():
             self._recursive_get_deps_region(sdfg, results, state_deps_dict, cfb_reachability_dict)
 

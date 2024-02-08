@@ -842,7 +842,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     from dace.sdfg.analysis import cfg
 
     # Get parent states and back-edges
-    ptree = cfg.state_parent_tree(sdfg)
+    ptree = cfg.control_flow_block_parent_tree(sdfg)
     back_edges = cfg.back_edges(sdfg)
 
     # Annotate branches

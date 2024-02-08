@@ -19,7 +19,7 @@ from dace import serialize
 from dace import subsets as sbs
 from dace import symbolic
 from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
-                             CodeProperty, make_properties, ListProperty)
+                             CodeProperty, make_properties)
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView, OrderedDiGraph, Edge
 from dace.sdfg.propagation import propagate_memlet
@@ -1340,7 +1340,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if _type != cls.__name__:
             raise Exception("Class type mismatch")
 
-        attrs = json_obj['attributes']
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
@@ -2653,28 +2652,27 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         return graph_json
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None, 'parent_graph': None}
-        _type = json_obj['type']
-        if _type != cls.__name__:
-            raise TypeError("Class type mismatch")
+    def _deserialize_cf_region(cls, ret: 'ControlFlowRegion', json_obj, context = None, ignore_properties = None,
+                               child_context = None):
+        context = context or {'sdfg': None, 'parent_graph': None}
 
-        attrs = json_obj['attributes']
+        ret.sdfg = context['sdfg']
+        ret.parent_graph = context['parent_graph']
+
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
-        ret = ControlFlowRegion(label=attrs['label'], sdfg=context_info['sdfg'])
-
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties)
 
         nodelist = []
         for n in nodes:
-            nci = copy.copy(context_info)
+            child_context = child_context or context
+            nci = copy.copy(child_context)
             nci['parent_graph'] = ret
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
+            block = dace.serialize.from_json(n, context=nci)
+            ret.add_node(block)
+            nodelist.append(block)
 
         for e in edges:
             e = dace.serialize.from_json(e)
@@ -2682,6 +2680,18 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
         if 'start_block' in json_obj:
             ret._start_block = json_obj['start_block']
+
+        ret.reset_cfg_list()
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        ret = ControlFlowRegion(label=json_obj['label'])
+
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context)
 
         return ret
 
@@ -2810,7 +2820,7 @@ class LoopRegion(ControlFlowRegion):
 
     def __init__(self,
                  label: str,
-                 condition_expr: str,
+                 condition_expr: str = 'True',
                  loop_var: Optional[str] = None,
                  initialize_expr: Optional[str] = None,
                  update_expr: Optional[str] = None,
@@ -2890,6 +2900,18 @@ class LoopRegion(ControlFlowRegion):
         elif is_continue:
             state.__class__ = LoopRegion.ContinueState
         return state
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        _type = json_obj['type']
+        if _type != cls.__name__:
+            raise TypeError("Class type mismatch")
+
+        ret = LoopRegion(label=json_obj['label'])
+
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context)
+
+        return ret
 
 
     class BreakState(SDFGState):

@@ -606,15 +606,14 @@ class SDFG(ControlFlowRegion):
         return tmp
 
     @classmethod
-    def from_json(cls, json_obj, context_info=None):
-        context_info = context_info or {'sdfg': None}
+    def from_json(cls, json_obj, context=None):
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
 
+        context = context or {'sdfg': None, 'parent_graph': None}
+
         attrs = json_obj['attributes']
-        nodes = json_obj['nodes']
-        edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
             constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
@@ -623,27 +622,15 @@ class SDFG(ControlFlowRegion):
 
         ret = SDFG(name=attrs['name'],
                    constants=constants_prop,
-                   parent=context_info['sdfg'])
+                   parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret,
-                                                json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash'})
+        child_context = copy.copy(context)
+        child_context['sdfg'] = ret
+        ignore_props = {'constants_prop', 'name', 'hash'}
 
-        nodelist = []
-        for n in nodes:
-            nci = copy.copy(context_info)
-            nci['sdfg'] = ret
+        ControlFlowRegion._deserialize_cf_region(ret, json_obj, context, ignore_props, child_context)
 
-            state = SDFGState.from_json(n, context=nci)
-            ret.add_node(state)
-            nodelist.append(state)
-
-        for e in edges:
-            e = dace.serialize.from_json(e)
-            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
-
-        if 'start_block' in json_obj:
-            ret._start_block = json_obj['start_block']
+        ret.sdfg = None
 
         return ret
 

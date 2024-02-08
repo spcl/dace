@@ -777,7 +777,7 @@ class UnderapproximateWrites(ppl.Pass):
         loops = self._find_for_loops(sdfg)
         loop_dict.update(loops)
 
-        for state in sdfg.nodes():
+        for state in sdfg.states():
             self._underapproximate_writes_state(sdfg, state)
 
         self._underapproximate_writes_loops(loops, sdfg)
