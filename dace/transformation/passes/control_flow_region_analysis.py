@@ -99,10 +99,11 @@ class CFGDataDependence(ppl.Pass):
     def depends_on(self):
         return {StateDataDependence, ControlFlowBlockReachability}
 
-    def _recursive_get_deps_region(self, cfg: ControlFlowRegion, results: Dict[int, Tuple[Set[Memlet], Set[Memlet]]],
+    def _recursive_get_deps_region(self, cfg: ControlFlowRegion,
+                                   results: Dict[int, Tuple[Dict[str, Set[Memlet]], Dict[str, Set[Memlet]]]],
                                    state_deps: Dict[int, Dict[SDFGState, Tuple[Set[Memlet], Set[Memlet]]]],
                                    cfg_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]]
-                                   ) -> Tuple[Set[Memlet], Set[Memlet]]:
+                                   ) -> Tuple[Dict[str, Set[Memlet]], Dict[str, Set[Memlet]]]:
         # Collect all individual reads and writes happening inside the region.
         region_reads: Dict[str, List[Tuple[Memlet, ControlFlowBlock]]] = defaultdict(list)
         region_writes: Dict[str, List[Tuple[Memlet, ControlFlowBlock]]] = defaultdict(list)
@@ -114,38 +115,43 @@ class CFGDataDependence(ppl.Pass):
                     region_writes[write.data].append([write, node])
             elif isinstance(node, ControlFlowRegion):
                 sub_reads, sub_writes = self._recursive_get_deps_region(node, results, state_deps, cfg_reach)
-                for read in sub_reads:
-                    region_reads[read.data].append([read, node])
-                for write in sub_writes:
-                    region_writes[write.data].append([write, node])
+                for data in sub_reads:
+                    for read in sub_reads[data]:
+                        region_reads[data].append([read, node])
+                for data in sub_writes:
+                    for write in sub_writes[data]:
+                        region_writes[data].append([write, node])
 
         # Through reachability analysis, check which writes cover which reads.
-        not_covered_reads: Set[Memlet] = set()
+        # TODO: make sure this doesn't cover up reads if we have a cycle in the CFG.
+        not_covered_reads: Dict[str, Set[Memlet]] = defaultdict(set)
         for data in region_reads:
             for read, read_block in region_reads[data]:
                 covered = False
                 for write, write_block in region_writes[data]:
-                    if write.subset.covers_precise(read.src_subset) and nx.has_path(cfg.nx, write_block, read_block):
+                    if (write.subset.covers_precise(read.src_subset) and write_block is not read_block and
+                        nx.has_path(cfg.nx, write_block, read_block)):
                         covered = True
                         break
                 if not covered:
-                    not_covered_reads.add(read)
+                    not_covered_reads[data].add(read)
 
-        write_set: Set[Memlet] = set()
+        write_set: Dict[str, Set[Memlet]] = defaultdict(set)
         for data in region_writes:
             for memlet, _ in region_writes[data]:
-                write_set.add(memlet)
+                write_set[data].add(memlet)
 
         results[cfg.cfg_id] = [not_covered_reads, write_set]
 
         return not_covered_reads, write_set
 
-    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict[str, Any]) -> Dict[int, Tuple[Set[Memlet], Set[Memlet]]]:
+    def apply_pass(self, top_sdfg: SDFG,
+                   pipeline_res: Dict[str, Any]) -> Dict[int, Tuple[Dict[str, Set[Memlet]], Dict[str, Set[Memlet]]]]:
         """
         :return: For each SDFG, a dictionary mapping states to sets of their input and output memlets.
         """
 
-        results = defaultdict(lambda: [set(), set()])
+        results = defaultdict(lambda: defaultdict(lambda: [defaultdict(set), defaultdict(set)]))
 
         state_deps_dict = pipeline_res[StateDataDependence.__name__]
         cfb_reachability_dict = pipeline_res[ControlFlowBlockReachability.__name__]
