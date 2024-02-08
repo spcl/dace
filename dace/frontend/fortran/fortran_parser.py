@@ -198,9 +198,10 @@ class AST_translator:
                 self.translate(j, sdfg)
                 if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
                     self.module_vars.append((j.name, i.name))
+                elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                    self.module_vars.append((j.name, i.name))
                 else:
-                    for k in j.vardecl:
-                        self.module_vars.append((k.name, i.name))
+                    raise ValueError("Unknown symbol type")
               for j in i.specification_part.specifications:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
@@ -217,12 +218,18 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
+                #TODO: This is a bandaid
+                #Add a pass over the arguments of the subroutine - and over the closure of used structures
+                # get the additional integer arguments for assumed shapes for arrays and structures and 
+                # get these from either additional fields in the structure of additional arguments for arrays
+
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
                     for i in self.startpoint.specification_part.typedecls:
                         self.translate(i, sdfg)
                     for i in self.startpoint.specification_part.symbols:
                         self.translate(i, sdfg)
+
                     for i in self.startpoint.specification_part.specifications:
                         self.translate(i, sdfg)
                 self.transient_mode=True    
@@ -2137,7 +2144,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="div_avg":
                 continue
             if j.execution_part is None:
                 continue
@@ -2163,7 +2170,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
             except:
