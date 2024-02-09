@@ -40,7 +40,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     _visit_structure(v, args, f'{prefix}->{k}')
                 elif isinstance(v, data.StructArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
-                elif isinstance(v, data.Data):
+                if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
 
         # Keeps track of generated connectors, so we know how to access them in nested scopes
