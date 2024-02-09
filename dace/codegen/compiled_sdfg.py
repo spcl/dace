@@ -146,7 +146,7 @@ class ReloadableDLL(object):
         self.unload()
 
 
-def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
+def _array_interface_ptr(array: Any, storage: dtypes.StorageType, aname: Optional[str] = None) -> int:
     """
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
@@ -155,20 +155,31 @@ def _array_interface_ptr(array: Any, storage: dtypes.StorageType) -> int:
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Storage location of the array, used to determine whether
                        it is a host or device pointer (e.g. GPU).
+    :param aname: The name of the argument.
     :return: A pointer to the base location of the allocated buffer.
     """
-    if hasattr(array, 'data_ptr'):
-        return array.data_ptr()
+    try:
+        if hasattr(array, 'data_ptr'):
+            return array.data_ptr()
+    except Exception as e:
+        if aname is not None:
+            raise TypeError(f'Could not extract the base pointer of "{aname}" using data_ptr().') from e
+        raise
 
     if storage == dtypes.StorageType.GPU_Global:
-        try:
+        if hasattr(array, '__cuda_array_interface__'):
             return array.__cuda_array_interface__['data'][0]
-        except AttributeError:
-            # Special case for CuPy with HIP
-            if hasattr(array, 'data') and hasattr(array.data, 'ptr'):
-                return array.data.ptr
-            raise
+        elif hasattr(array, 'data') and hasattr(array.data, 'ptr'):
+            return array.data.ptr           # Special case for CuPy with HIP
+        elif hasattr(array, '__array_interface__'):
+            raise TypeError('Failed to extract the device pointer' + (f' of argument "{aname}"' if aname else ',')
+                            + ' but the argument has an __array_interface__ attribute.')
+        else:
+            raise TypeError('Failed to extract the device pointer' + (f' of argument "{aname}".' if aname else '.'))
 
+    if not hasattr(array, '__array_interface__'):
+        raise TypeError('Does not know how to get the base pointer on the host'
+                        + (f' of argument "{aname}".' if aname else '.'))
     return array.__array_interface__['data'][0]
 
 
@@ -318,7 +329,10 @@ class CompiledSDFG(object):
             raise ValueError(f'Compiled SDFG does not specify external memory of {storage}')
 
         func = self._lib.get_symbol(f'__dace_set_external_memory_{storage.name}', None)
-        ptr = _array_interface_ptr(workspace, storage)
+        try:
+            ptr = _array_interface_ptr(workspace, storage)
+        except AttributeError:
+            raise TypeError(f'Failed to extract the interface pointer of the passed workspace.')
         func(self._libhandle, ctypes.c_void_p(ptr), *self._lastargs[1])
 
     @property
@@ -590,19 +604,16 @@ class CompiledSDFG(object):
             if aname in symbols
         )
 
-        try:
-            # Replace arrays with their base host/device pointers
-            newargs = [None] * len(callparams)
-            for i, (arg, actype, atype, _) in enumerate(callparams):
-                if dtypes.is_array(arg):
-                    newargs[i] = ctypes.c_void_p(_array_interface_ptr(arg, atype.storage))  # `c_void_p` is subclass of `ctypes._SimpleCData`.
-                elif not isinstance(arg, (ctypes._SimpleCData)):
-                    newargs[i] = actype(arg)
-                else:
-                    newargs[i] = arg
-
-        except TypeError as ex:
-            raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
+        # Replace arrays with their base host/device pointers
+        newargs = [None] * len(callparams)
+        for i, (arg, actype, atype, aname) in enumerate(callparams):
+            if dtypes.is_array(arg):
+                newargs[i] = ctypes.c_void_p(_array_interface_ptr(arg, atype.storage, aname=aname))
+            elif not isinstance(arg, (ctypes._SimpleCData)):
+                try:                        newargs[i] = actype(arg)
+                except TypeError as ex:     raise TypeError(f'Invalid type for scalar argument "{aname}": {ex}')
+            else:
+                newargs[i] = arg
 
         self._lastargs = newargs, initargs
         return self._lastargs
