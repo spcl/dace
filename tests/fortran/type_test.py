@@ -213,7 +213,9 @@ def test_fortran_frontend_type_struct():
                     
                     TYPE simple_type
                         REAL:: z(5,5,5)
-                        INTEGER:: a         
+                        INTEGER:: a   
+                        REAL :: unkown(:)      
+                        !INTEGER :: unkown_size
                     END TYPE simple_type
 
                     
@@ -231,6 +233,7 @@ def test_fortran_frontend_type_struct():
 
                     
                     SUBROUTINE internal_function(d,st)
+                    st.a.shape=[st.a_size]
                     REAL d(5,5)
                     TYPE(simple_type) :: st
                     REAL bob(st%a) 

@@ -88,6 +88,60 @@ def test_fortran_frontend_sqrt():
     for f_res, p_res in zip(res, py_res):
         assert abs(f_res - p_res) < 10**-9
 
+def test_fortran_frontend_sqrt_structure():
+    test_string = """
+                    PROGRAM intrinsic_math_test_sqrt
+                    implicit none
+
+                    type test_type
+                        double precision, dimension(2), pointer :: input_data
+                    end type
+
+                    type test_type2
+                        type(test_type) :: var
+                    end type
+
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    CALL intrinsic_math_test_function(d, res)
+                    end
+
+                    SUBROUTINE intrinsic_math_test_function(d, res)
+                    double precision, dimension(2) :: d
+                    double precision, dimension(2) :: res
+                    type(test_type2) :: data
+
+                    data%var%input_data=>d
+
+                    CALL intrinsic_math_test_function2(res, data)
+
+                    END SUBROUTINE intrinsic_math_test_function
+
+                    SUBROUTINE intrinsic_math_test_function2(res, data)
+                    double precision, dimension(2) :: res
+                    type(test_type2) :: data
+
+                    res(1) = MOD(data%var%input_data(1), 5)
+                    res(2) = MOD(data%var%input_data(2), 5)
+
+                    END SUBROUTINE intrinsic_math_test_function2
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_math_test_sqrt", False)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    size = 2
+    d = np.full([size], 42, order="F", dtype=np.float64)
+    d[0] = 2
+    d[1] = 5
+    res = np.full([2], 42, order="F", dtype=np.float64)
+    sdfg(d=d, res=res)
+    py_res = np.sqrt(d)
+
+    for f_res, p_res in zip(res, py_res):
+        assert abs(f_res - p_res) < 10**-9
+
 def test_fortran_frontend_abs():
     test_string = """
                     PROGRAM intrinsic_math_test_abs
@@ -826,20 +880,21 @@ def test_fortran_frontend_trig_inverse():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_min_max()
-    test_fortran_frontend_sqrt()
-    test_fortran_frontend_abs()
-    test_fortran_frontend_exp()
-    test_fortran_frontend_log()
-    test_fortran_frontend_mod_float()
-    test_fortran_frontend_mod_integer()
-    test_fortran_frontend_modulo_float()
-    test_fortran_frontend_modulo_integer()
-    test_fortran_frontend_floor()
-    test_fortran_frontend_scale()
-    test_fortran_frontend_exponent()
-    test_fortran_frontend_int()
-    test_fortran_frontend_real()
-    test_fortran_frontend_trig()
-    test_fortran_frontend_hyperbolic()
-    test_fortran_frontend_trig_inverse()
+    #test_fortran_frontend_min_max()
+    #test_fortran_frontend_sqrt()
+    test_fortran_frontend_sqrt_structure()
+    #test_fortran_frontend_abs()
+    #test_fortran_frontend_exp()
+    #test_fortran_frontend_log()
+    #test_fortran_frontend_mod_float()
+    #test_fortran_frontend_mod_integer()
+    #test_fortran_frontend_modulo_float()
+    #test_fortran_frontend_modulo_integer()
+    #test_fortran_frontend_floor()
+    #test_fortran_frontend_scale()
+    #test_fortran_frontend_exponent()
+    #test_fortran_frontend_int()
+    #test_fortran_frontend_real()
+    #test_fortran_frontend_trig()
+    #test_fortran_frontend_hyperbolic()
+    #test_fortran_frontend_trig_inverse()
