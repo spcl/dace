@@ -66,7 +66,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         except KeyError:
             member: dt.Data = self.data.members[node.attr]
             if isinstance(member, dt.Structure):
-                view = dt.StructureView(member.members, view_name, True, member.storage, member.location,
+                view = dt.StructureView(member.members, member.name, True, member.storage, member.location,
                                         member.lifetime, member.debuginfo)
                 self.state.sdfg.add_datadesc(view_name, view)
             else:
