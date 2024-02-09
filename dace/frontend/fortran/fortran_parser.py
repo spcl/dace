@@ -206,6 +206,11 @@ class AST_translator:
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
         if node.main_program is not None:
+
+            if node.main_program.specification_part is not None:
+                for i in node.main_program.specification_part.specifications:
+                    print('type', i)
+
             for i in node.main_program.specification_part.typedecls:
                 self.translate(i, sdfg)
             for i in node.main_program.specification_part.symbols:
@@ -217,6 +222,38 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
+
+                if self.startpoint.specification_part is not None:
+                    for i in self.startpoint.specification_part.specifications:
+                        print('type', i)
+
+                #sizes = []
+                #offset = []
+                #offset_value = -1
+                #for i in node.sizes:
+                #    stuff=[ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
+                #    if len(stuff)>0:
+                #        count=self.count_of_struct_symbols_lifted
+                #        sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                #        if sdfg.parent_sdfg is not None:
+                #            sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                #            sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
+                #            for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
+                #                assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
+                #                edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
+                #                #print(edge)
+                #        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                #        text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
+                #        sizes.append(sym.pystr_to_symbolic(text))
+                #        #TODO: shouldn't this use node.offset??
+                #        offset.append(offset_value)
+                #        self.count_of_struct_symbols_lifted+=1
+                #    else:
+                #        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                #        text = tw.write_code(i)
+                #        sizes.append(sym.pystr_to_symbolic(text))
+                #        offset.append(offset_value)
+
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
                     for i in self.startpoint.specification_part.typedecls:
@@ -2137,7 +2174,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="div_avg":
                 continue
             if j.execution_part is None:
                 continue
@@ -2148,7 +2185,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
             #try:
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
