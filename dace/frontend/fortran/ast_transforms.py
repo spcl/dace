@@ -1,14 +1,14 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_components, ast_internal_classes, ast_utils
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 import copy
 
     
 class Structure:
 
     def __init__(self):
-        self.vars: Dict[str, str] = {}
+        self.vars: Dict[str, Union[ast_internal_classes.Symbol_Decl_Node, ast_internal_classes.Var_Decl_Node]] = {}
 
 class Structures:
 
@@ -30,6 +30,11 @@ class Structures:
 
             self.structures[structure.name.name] = struct
 
+    def is_struct(self, type_name: str):
+        return type_name in self.structures
+
+    def get_definition(self, type_name: str):
+        return self.structures[type_name]
 
     def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node):
 
