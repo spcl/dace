@@ -64,6 +64,7 @@ class AST_translator:
         self.libraries = {}
         self.struct_views={}
         self.last_call_expression = {}
+        self.structures = ast.structures
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -208,10 +209,6 @@ class AST_translator:
                     self.module_vars.append((k.name, i.name))
         if node.main_program is not None:
 
-            if node.main_program.specification_part is not None:
-                for i in node.main_program.specification_part.specifications:
-                    print('type', i)
-
             for i in node.main_program.specification_part.typedecls:
                 self.translate(i, sdfg)
             for i in node.main_program.specification_part.symbols:
@@ -223,41 +220,6 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
-
-                if self.startpoint.specification_part is not None:
-                    for i in self.startpoint.specification_part.specifications:
-                        print('type', i)
-
-                #sizes = []
-                #offset = []
-                #offset_value = -1
-                #for i in node.sizes:
-                #    stuff=[ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
-                #    if len(stuff)>0:
-                #        count=self.count_of_struct_symbols_lifted
-                #        sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
-                #        if sdfg.parent_sdfg is not None:
-                #            sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
-                #            sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
-                #            for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
-                #                assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
-                #                edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
-                #                #print(edge)
-                #        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
-                #        text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
-                #        sizes.append(sym.pystr_to_symbolic(text))
-                #        #TODO: shouldn't this use node.offset??
-                #        offset.append(offset_value)
-                #        self.count_of_struct_symbols_lifted+=1
-                #    else:
-                #        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
-                #        text = tw.write_code(i)
-                #        sizes.append(sym.pystr_to_symbolic(text))
-                #        offset.append(offset_value)
-                #TODO: This is a bandaid
-                #Add a pass over the arguments of the subroutine - and over the closure of used structures
-                # get the additional integer arguments for assumed shapes for arrays and structures and 
-                # get these from either additional fields in the structure of additional arguments for arrays
 
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
@@ -548,6 +510,36 @@ class AST_translator:
 
         new_sdfg = SDFG(node.name.name)
         substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + node.name.name)
+
+        # TODO: This is a bandaid
+        #Add a pass over the arguments of the subroutine - and over the closure of used structures
+        # get the additional integer arguments for assumed shapes for arrays and structures and 
+        # get these from either additional fields in the structure of additional arguments for arrays
+        if node.specification_part is not None:
+            for i in node.specification_part.specifications:
+
+                ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
+                assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
+
+                for decl in i.vardecl:
+                    if not self.structures.is_struct(decl.type):
+                        continue
+
+                    struct_type = self.structures.get_definition(decl.type)
+
+                    for var, var_type in struct_type.vars.items():
+
+                        if var_type.sizes is None or len(var_type.sizes) == 0:
+                            continue
+
+                        # for assumed shape, all vars starts with the same prefix
+                        if not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                            continue
+
+                        for edge in new_sdfg.in_edges(assign_state):
+                            for size in var_type.sizes:
+                                edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
             variables_in_call = self.last_call_expression[sdfg]
@@ -1568,6 +1560,7 @@ def create_sdfg_from_string(
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
     program.structures = ast_transforms.Structures(structs_lister.structs)
+    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
@@ -2209,13 +2202,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
-            except:
+            except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
+                print(e)
                 continue
             try:  
                 sdfg.compile()
-            except:
+            except Exception as e:
                 print("Compilation failed for ", sdfg.name)
+                print(e)
                 continue
 
     #return sdfg
