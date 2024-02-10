@@ -2144,7 +2144,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="div_avg":
+            if j.name.name!="solve_nh":
                 continue
             if j.execution_part is None:
                 continue
