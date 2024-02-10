@@ -11,7 +11,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -34,7 +34,15 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None,sdfg_path=None):
+    def __init__(
+        self,
+        ast: ast_components.InternalFortranAst,
+        source: str,
+        multiple_sdfgs: bool = False,
+        startpoint=None,
+        sdfg_path=None,
+        toplevel_subroutine: Optional[str] = None
+    ):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -65,6 +73,7 @@ class AST_translator:
         self.struct_views={}
         self.last_call_expression = {}
         self.structures = ast.structures
+        self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -515,7 +524,7 @@ class AST_translator:
         #Add a pass over the arguments of the subroutine - and over the closure of used structures
         # get the additional integer arguments for assumed shapes for arrays and structures and 
         # get these from either additional fields in the structure of additional arguments for arrays
-        if node.specification_part is not None:
+        if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
             for i in node.specification_part.specifications:
 
                 ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
@@ -533,7 +542,7 @@ class AST_translator:
                             continue
 
                         # for assumed shape, all vars starts with the same prefix
-                        if not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                        if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
                             continue
 
                         for edge in new_sdfg.in_edges(assign_state):
@@ -1628,7 +1637,7 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
 
-    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
