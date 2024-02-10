@@ -542,7 +542,7 @@ class AST_translator:
                             continue
 
                         # for assumed shape, all vars starts with the same prefix
-                        if not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                        if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
                             continue
 
                         for edge in new_sdfg.in_edges(assign_state):
