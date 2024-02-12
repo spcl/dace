@@ -16,7 +16,7 @@ def test_mapped_dependency_edge(reverse):
     sdfg.add_transient("tmp_A", shape=[1], dtype=dace.int32)
     sdfg.add_transient("tmp_B", shape=[1], dtype=dace.int32)
 
-    map_entry, map_exit = state.add_map("map", {"i": "0:2"})
+    map_entry, map_exit = state.add_map("map", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
     map_entry.add_in_connector("IN_A")
     map_entry.add_in_connector("IN_B")
     map_entry.add_out_connector("OUT_A")
