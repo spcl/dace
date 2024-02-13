@@ -1798,7 +1798,7 @@ def recursive_ast_improver(ast,
         asts[i.children[0].children[1].string.lower()] = i
     return ast
 
-def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir):
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir, normalize_offsets: bool = False):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -2078,6 +2078,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+
     
     count=0
     for i in program.function_definitions:
@@ -2106,7 +2107,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         program = transformation.visit(program)
     print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor(program).visit(program)
+    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     structs_lister=ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph=nx.DiGraph()
@@ -2215,6 +2216,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 print("Simplification failed for ", sdfg.name)    
                 print(e)
                 continue
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
             try:  
                 sdfg.compile()
             except Exception as e:
