@@ -524,7 +524,8 @@ class AST_translator:
         #Add a pass over the arguments of the subroutine - and over the closure of used structures
         # get the additional integer arguments for assumed shapes for arrays and structures and 
         # get these from either additional fields in the structure of additional arguments for arrays
-        if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
+        #if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
+        if node.specification_part is not None:
             for i in node.specification_part.specifications:
 
                 ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
@@ -547,7 +548,8 @@ class AST_translator:
 
                         for edge in new_sdfg.in_edges(assign_state):
                             for size in var_type.sizes:
-                                edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+                                if hasattr(size, "name"):
+                                    edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
 
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
@@ -2182,7 +2184,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            if j.name.name!="div_avg":
                 continue
             if j.execution_part is None:
                 continue
@@ -2193,7 +2195,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfg"))
             #try:
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
@@ -2211,15 +2213,16 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
             except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
                 print(e)
                 continue
-            try:  
-                sdfg.compile()
-            except Exception as e:
-                print("Compilation failed for ", sdfg.name)
-                print(e)
-                continue
+            #try:  
+            sdfg.compile()
+            #except Exception as e:
+            #    print("Compilation failed for ", sdfg.name)
+            #    print(e)
+            #    continue
 
     #return sdfg
