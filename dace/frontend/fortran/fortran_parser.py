@@ -11,7 +11,7 @@ import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
-from typing import Dict, List, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -34,7 +34,15 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,startpoint=None,sdfg_path=None):
+    def __init__(
+        self,
+        ast: ast_components.InternalFortranAst,
+        source: str,
+        multiple_sdfgs: bool = False,
+        startpoint=None,
+        sdfg_path=None,
+        toplevel_subroutine: Optional[str] = None
+    ):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -64,6 +72,8 @@ class AST_translator:
         self.libraries = {}
         self.struct_views={}
         self.last_call_expression = {}
+        self.structures = ast.structures
+        self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -207,6 +217,7 @@ class AST_translator:
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
         if node.main_program is not None:
+
             for i in node.main_program.specification_part.typedecls:
                 self.translate(i, sdfg)
             for i in node.main_program.specification_part.symbols:
@@ -218,10 +229,6 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
-                #TODO: This is a bandaid
-                #Add a pass over the arguments of the subroutine - and over the closure of used structures
-                # get the additional integer arguments for assumed shapes for arrays and structures and 
-                # get these from either additional fields in the structure of additional arguments for arrays
 
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
@@ -512,6 +519,36 @@ class AST_translator:
 
         new_sdfg = SDFG(node.name.name)
         substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + node.name.name)
+
+        # TODO: This is a bandaid
+        #Add a pass over the arguments of the subroutine - and over the closure of used structures
+        # get the additional integer arguments for assumed shapes for arrays and structures and 
+        # get these from either additional fields in the structure of additional arguments for arrays
+        if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
+            for i in node.specification_part.specifications:
+
+                ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
+                assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
+
+                for decl in i.vardecl:
+                    if not self.structures.is_struct(decl.type):
+                        continue
+
+                    struct_type = self.structures.get_definition(decl.type)
+
+                    for var, var_type in struct_type.vars.items():
+
+                        if var_type.sizes is None or len(var_type.sizes) == 0:
+                            continue
+
+                        # for assumed shape, all vars starts with the same prefix
+                        if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                            continue
+
+                        for edge in new_sdfg.in_edges(assign_state):
+                            for size in var_type.sizes:
+                                edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
             variables_in_call = self.last_call_expression[sdfg]
@@ -1532,6 +1569,7 @@ def create_sdfg_from_string(
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
     program.structures = ast_transforms.Structures(structs_lister.structs)
+    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
@@ -1599,7 +1637,7 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
 
-    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs)
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -2155,7 +2193,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
             #try:
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
@@ -2173,13 +2211,15 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
-            except:
+            except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
+                print(e)
                 continue
             try:  
                 sdfg.compile()
-            except:
+            except Exception as e:
                 print("Compilation failed for ", sdfg.name)
+                print(e)
                 continue
 
     #return sdfg
