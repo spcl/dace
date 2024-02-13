@@ -7,8 +7,9 @@ import copy
     
 class Structure:
 
-    def __init__(self):
+    def __init__(self, name: str):
         self.vars: Dict[str, Union[ast_internal_classes.Symbol_Decl_Node, ast_internal_classes.Var_Decl_Node]] = {}
+        self.name = name
 
 class Structures:
 
@@ -20,7 +21,7 @@ class Structures:
 
         for structure in definitions:
 
-            struct = Structure()
+            struct = Structure(name = structure.name.name)
             if structure.component_part is not None:
                 if structure.component_part.component_def_stmts is not None:
                     for statement in structure.component_part.component_def_stmts:
@@ -968,6 +969,7 @@ class IndexExtractorNodeLister(NodeVisitor):
     """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
+        self.current_parent: Optional[ast_internal_classes.Data_Ref_Node] = None
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -977,7 +979,21 @@ class IndexExtractorNodeLister(NodeVisitor):
             return
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
-        self.nodes.append(node)
+        self.nodes.append((node, self.current_parent))
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        set_node = False
+        if self.current_parent is None:
+            self.current_parent = node
+            set_node = True
+
+        self.generic_visit(node.parent_ref)
+        self.generic_visit(node.part_ref)
+
+        if set_node:
+            set_node = False
+            self.current_parent = None
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         return
@@ -997,11 +1013,13 @@ class IndexExtractor(NodeTransformer):
 
         self.count = count
         self.normalize_offsets = normalize_offsets
+        self.program = ast
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
             self.scope_vars = ScopeVarsDeclarations()
             self.scope_vars.visit(ast)
+            self.structures = ast.structures
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -1034,8 +1052,9 @@ class IndexExtractor(NodeTransformer):
 
 
             if res is not None:
-                for j in res:
+                for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
+
                         if isinstance(i, ast_internal_classes.ParDecl_Node):
                             continue
                         else:
@@ -1056,9 +1075,15 @@ class IndexExtractor(NodeTransformer):
                                 var_name = ""
                                 if isinstance(j, ast_internal_classes.Name_Node):
                                     var_name = j.name
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
+                                elif parent_node is not None:
+                                    struct, variable = self.structures.find_definition(
+                                        self.scope_vars, parent_node
+                                    )
+                                    var_name = j.name.name
                                 else:
                                     var_name = j.name.name
-                                variable = self.scope_vars.get_var(child.parent, var_name)
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]
 
                                 # it can be a symbol - Name_Node - or a value
