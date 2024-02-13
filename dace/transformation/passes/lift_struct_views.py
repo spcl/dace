@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from typing import Any, Dict, Optional, Set, Literal
+from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, Memlet, SDFGState
 from dace.sdfg import nodes as nd
@@ -10,18 +10,25 @@ from dace import data as dt
 from dace import dtypes
 
 
+import sys
+if sys.version_info >= (3, 8):
+    from typing import Literal
+    dirtype = Literal['in', 'out']
+else:
+    dirtype = "Literal['in', 'out']"
+
 class RecodeAttributeNodes(ast.NodeTransformer):
 
     connector: str
     data: dt.Structure
     tasklet: nd.Tasklet
-    direction: Literal['in', 'out']
+    direction: dirtype
     memlet: Memlet
     data_node: nd.AccessNode
     state: SDFGState
 
     def __init__(self, state: SDFGState, data_node: nd.AccessNode, connector: str, data: dt.Structure,
-                 tasklet: nd.Tasklet, memlet: Memlet, direction: Literal['in', 'out']):
+                 tasklet: nd.Tasklet, memlet: Memlet, direction: dirtype):
         self.connector = connector
         self.data = data
         self.tasklet = tasklet
@@ -59,7 +66,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         except KeyError:
             member: dt.Data = self.data.members[node.attr]
             if isinstance(member, dt.Structure):
-                view = dt.StructureView(member.members, view_name, True, member.storage, member.location,
+                view = dt.StructureView(member.members, member.name, True, member.storage, member.location,
                                         member.lifetime, member.debuginfo)
                 self.state.sdfg.add_datadesc(view_name, view)
             else:
@@ -103,7 +110,7 @@ class LiftStructViews(ppl.Pass):
 
     def _lift_tasklet_accesses(self, state: SDFGState, data_node: nd.AccessNode, tasklet: nd.Tasklet,
                                edge: MultiConnectorEdge[Memlet], data: dt.Structure, connector: str,
-                               direction: Literal['in', 'out']):
+                               direction: dirtype):
         # Only handle Python at the moment.
         if not tasklet.language == dtypes.Language.Python:
             return
