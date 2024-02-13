@@ -1080,7 +1080,6 @@ class IndexExtractor(NodeTransformer):
                                     struct, variable = self.structures.find_definition(
                                         self.scope_vars, parent_node
                                     )
-                                    print(struct, struct.name, variable, variable.name)
                                     var_name = j.name.name
                                 else:
                                     var_name = j.name.name
