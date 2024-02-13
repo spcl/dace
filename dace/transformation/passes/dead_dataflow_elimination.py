@@ -9,7 +9,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg import infer_types
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
@@ -17,7 +17,6 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 @dataclass(unsafe_hash=True)
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.
@@ -63,7 +62,7 @@ class DeadDataflowElimination(ppl.Pass):
 
         # Traverse SDFG backwards
         try:
-            state_order = list(cfg.stateorder_topological_sort(sdfg))
+            state_order: List[SDFGState] = list(cfg.stateorder_topological_sort(sdfg, produce_nonstate_blocks=False))
         except KeyError:
             return None
         for state in reversed(state_order):

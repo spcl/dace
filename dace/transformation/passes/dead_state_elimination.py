@@ -7,12 +7,12 @@ from typing import Optional, Set, Tuple, Union
 from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError
-from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation import pass_pipeline as ppl
 
 
 @properties.make_properties
-@transformation.single_level_sdfg_only
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
@@ -38,42 +38,56 @@ class DeadStateElimination(ppl.Pass):
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A set of the removed states, or None if nothing was changed.
         """
-        # Mark dead states and remove them
-        dead_states, dead_edges, annotated = self.find_dead_states(sdfg, set_unconditional_edges=True)
+        result = set()
 
-        for e in dead_edges:
-            sdfg.remove_edge(e)
-        sdfg.remove_nodes_from(dead_states)
+        cfgs = list(sdfg.all_control_flow_regions())
+        removed_regions: Set[ControlFlowRegion] = set()
+        for cfg in cfgs:
+            if cfg in removed_regions:
+                continue
 
-        result = dead_states | dead_edges
+            # Mark dead states and remove them
+            dead_blocks, dead_edges, annotated = self.find_dead_blocks(sdfg, cfg, set_unconditional_edges=True)
+
+            for e in dead_edges:
+                cfg.remove_edge(e)
+
+            for block in dead_blocks:
+                cfg.remove_node(block)
+                if isinstance(block, ControlFlowRegion):
+                    for child_region in block.all_control_flow_regions():
+                        removed_regions.add(child_region)
+
+            result |= dead_blocks | dead_edges
 
         if not annotated:
             return result or None
         else:
             return result or set()  # Return an empty set if edges were annotated
 
-    def find_dead_states(
+    def find_dead_blocks(
             self,
             sdfg: SDFG,
-            set_unconditional_edges: bool = True) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]], bool]:
+            cfg: ControlFlowRegion,
+            set_unconditional_edges: bool = True) -> Tuple[Set[ControlFlowBlock], Set[Edge[InterstateEdge]], bool]:
         """
-        Finds "dead" (unreachable) states in an SDFG. A state is deemed unreachable if it is:
+        Finds "dead" (unreachable) control flow blocks in an SDFG. A block is deemed unreachable if it is:
         
-            * Unreachable from the starting state
+            * Unreachable from the starting block
             * Conditions leading to it will always evaluate to False
-            * There is another unconditional (always True) inter-state edge that leads to another state
+            * There is another unconditional (always True) inter-state edge that leads to another block
 
         :param sdfg: The SDFG to traverse.
         :param set_unconditional_edges: If True, conditions of edges evaluated as unconditional are removed.
-        :return: A 3-tuple of (unreachable states, unreachable edges, were edges annotated).
+        :return: A 3-tuple of (unreachable blocks, unreachable edges, were edges annotated).
         """
-        visited: Set[SDFGState] = set()
+        visited: Set[ControlFlowBlock] = set()
         dead_edges: Set[Edge[InterstateEdge]] = set()
         edges_annotated = False
 
         # Run a modified BFS where definitely False edges are not traversed, or if there is an
         # unconditional edge the rest are not. The inverse of the visited states is the dead set.
-        queue = collections.deque([sdfg.start_state])
+        queue = collections.deque([cfg.start_block])
         while len(queue) > 0:
             node = queue.popleft()
             if node in visited:
@@ -82,13 +96,13 @@ class DeadStateElimination(ppl.Pass):
 
             # First, check for unconditional edges
             unconditional = None
-            for e in sdfg.out_edges(node):
+            for e in cfg.out_edges(node):
                 # If an unconditional edge is found, ignore all other outgoing edges
                 if self.is_definitely_taken(e.data, sdfg):
                     # If more than one unconditional outgoing edge exist, fail with Invalid SDFG
                     if unconditional is not None:
-                        raise InvalidSDFGInterstateEdgeError('Multiple unconditional edges leave the same state', sdfg,
-                                                             sdfg.edge_id(e))
+                        raise InvalidSDFGInterstateEdgeError('Multiple unconditional edges leave the same state',
+                                                             cfg, cfg.edge_id(e))
                     unconditional = e
                     if set_unconditional_edges and not e.data.is_unconditional():
                         # Annotate edge as unconditional
@@ -101,7 +115,7 @@ class DeadStateElimination(ppl.Pass):
                         continue
             if unconditional is not None:  # Unconditional edge exists, skip traversal
                 # Remove other (now never taken) edges from graph
-                for e in sdfg.out_edges(node):
+                for e in cfg.out_edges(node):
                     if e is not unconditional:
                         dead_edges.add(e)
 
@@ -109,7 +123,7 @@ class DeadStateElimination(ppl.Pass):
             # End of unconditional check
 
             # Check outgoing edges normally
-            for e in sdfg.out_edges(node):
+            for e in cfg.out_edges(node):
                 next_node = e.dst
 
                 # Test for edges that definitely evaluate to False
@@ -122,7 +136,7 @@ class DeadStateElimination(ppl.Pass):
                     queue.append(next_node)
 
         # Dead states are states that are not live (i.e., visited)
-        return set(sdfg.nodes()) - visited, dead_edges, edges_annotated
+        return set(cfg.nodes()) - visited, dead_edges, edges_annotated
 
     def report(self, pass_retval: Set[Union[SDFGState, Edge[InterstateEdge]]]) -> str:
         if pass_retval is not None and not pass_retval:
