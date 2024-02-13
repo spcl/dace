@@ -588,7 +588,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
             raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
-        elif uconn == None and vconn == None and memlet.data == None and dst_schedule is dtypes.ScheduleType.Sequential:
+        elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
             # Sequential dependency edge
             return
         else:
