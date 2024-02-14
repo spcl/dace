@@ -1213,6 +1213,13 @@ class Tensor(Structure):
     def may_alias(self) -> bool:
         return False
 
+    def keys(self):
+        result = self.members.keys()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+        return result
+
 
 @make_properties
 class Scalar(Data):
