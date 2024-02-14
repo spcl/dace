@@ -640,7 +640,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif isinstance(src_node, nodes.Tasklet):
             uconn = self._maybe_rename_connector(sdfg, uconn, src_node, dst_node.out_connectors)
-            edge.src_conn = vconn
+            edge.src_conn = uconn
 
             # Copy out of tasklet
             stream.write(
@@ -676,8 +676,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
                 srcptr = cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
+                src_expr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type)
                 stream.write(
-                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type)),
+                    f"{vconn} = {src_expr};",
                     sdfg,
                     state_id,
                     [src_node, dst_node],
@@ -1064,7 +1065,10 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = f"{mname} = {in_local_name};"
                         elif defined_type == DefinedType.Pointer and is_refset:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                            write_expr = f"{mname} = {in_local_name};"
+                            if isinstance(desc, data.ContainerArray) and desc.dtype == conntype:
+                                write_expr = f"*{mname} = {in_local_name};"
+                            else:
+                                write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
                             # array interfaces going out
