@@ -2657,7 +2657,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         context = context or {'sdfg': None, 'parent_graph': None}
 
         ret.sdfg = context['sdfg']
-        ret.parent_graph = context['parent_graph']
+        ret.parent_graph = context['parent_graph'] if 'parent_graph' in context else None
 
         nodes = json_obj['nodes']
         edges = json_obj['edges']
