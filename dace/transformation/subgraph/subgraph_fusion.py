@@ -102,7 +102,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
         # 1.2 check whether all maps are the same
         base_map = maps[0]
-        for map in maps:
+        for map in maps[1:]:
             if map.get_param_num() != base_map.get_param_num():
                 return False
             if not all([p1 == p2 for (p1, p2) in zip(map.params, base_map.params)]):
@@ -455,8 +455,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                  map_entries: List[nodes.MapEntry], map_exits: List[nodes.MapExit],
                                  node: nodes.AccessNode):
         """
-        For a given intermediate access node, return a set of indices that correspond to array / subset dimensions in which no change is observed 
-        upon propagation through the corresponding map nodes in map_entries / map_exits.
+        For a given intermediate access node, return a set of indices that correspond to array / subset dimensions
+        in which no change is observed upon propagation through the corresponding map nodes in map_entries / map_exits.
 
         :param map_entries: List of outermost scoped map entries 
         :param map_exits: List of corresponding exit nodes to map_entries, in order 

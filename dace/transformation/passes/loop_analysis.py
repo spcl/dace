@@ -84,7 +84,7 @@ class LoopCarryDependencyAnalysis(ppl.Pass):
                             for output in loop_outputs[data]:
                                 # Get and cache the update assignment for the loop.
                                 if update_assignment is None and not cfg in self._non_analyzable_loops:
-                                    update_assignment = _get_update_assignment(cfg)
+                                    update_assignment = get_update_assignment(cfg)
                                     if update_assignment is None:
                                         self._non_analyzable_loops(cfg)
 
@@ -127,7 +127,59 @@ class FindAssignment(ast.NodeVisitor):
         return self.generic_visit(node)
 
 
-def _get_update_assignment(loop: LoopRegion) -> Optional[sympy.Basic]:
+def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+    """
+    Parse a loop region to identify the end value of the iteration variable under normal loop termination (no break).
+    """
+    end: Optional[symbolic.SymbolicType] = None
+    a = sympy.Wild('a')
+    condition = symbolic.pystr_to_symbolic(loop.loop_condition.as_string)
+    itersym = symbolic.pystr_to_symbolic(loop.loop_variable)
+    match = condition.match(itersym < a)
+    if match:
+        end = match[a] - 1
+    if end is None:
+        match = condition.match(itersym <= a)
+        if match:
+            end = match[a]
+    if end is None:
+        match = condition.match(itersym > a)
+        if match:
+            end = match[a] + 1
+    if end is None:
+        match = condition.match(itersym >= a)
+        if match:
+            end = match[a]
+    return end
+
+
+def get_init_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+    """
+    Parse a loop region's init statement to identify the exact init assignment expression.
+    """
+    init_stmt = loop.init_statement
+    if init_stmt is None:
+        return None
+
+    init_codes_list = init_stmt.code if isinstance(init_stmt.code, list) else [init_stmt.code]
+    assignments: Dict[str, str] = {}
+    for code in init_codes_list:
+        visitor = FindAssignment()
+        visitor.visit(code)
+        if visitor.multiple:
+            return None
+        for assign in visitor.assignments:
+            if assign in assignments:
+                return None
+            assignments[assign] = visitor.assignments[assign]
+
+    if loop.loop_variable in assignments:
+        return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
+
+    return None
+
+
+def get_update_assignment(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     """
     Parse a loop region's update statement to identify the exact update assignment expression.
     """
@@ -150,4 +202,11 @@ def _get_update_assignment(loop: LoopRegion) -> Optional[sympy.Basic]:
     if loop.loop_variable in assignments:
         return symbolic.pystr_to_symbolic(assignments[loop.loop_variable])
 
+    return None
+
+
+def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
+    update_assignment = get_update_assignment(loop)
+    if update_assignment:
+        return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)
     return None

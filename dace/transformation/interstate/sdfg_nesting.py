@@ -314,7 +314,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
         # Access nodes that need to be reshaped
-        reshapes: Set(str) = set()
+        reshapes: Set[str] = set()
         for aname, array in nsdfg.arrays.items():
             if array.transient:
                 continue
@@ -612,7 +612,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """
         Deals with access->access edges where both sides are non-transient.
         """
-        nsdfg_node = nstate.parent.parent_nsdfg_node
+        nsdfg_node = nstate.sdfg.parent_nsdfg_node
         edges_to_ignore = edges_to_ignore or set()
         result = set()
         edges = input_edges
@@ -951,7 +951,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         ignore = set()
-        for nstate in nsdfg.sdfg.nodes():
+        for nstate in nsdfg.sdfg.states():
             for dnode in nstate.data_nodes():
                 if nsdfg.sdfg.arrays[dnode.data].transient:
                     continue
@@ -998,7 +998,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     in_candidates[e.data.data] = (e.data, nstate, set(range(len(e.data.subset))))
 
         # Check read memlets in interstate edges for candidates
-        for e in nsdfg.sdfg.edges():
+        for e in nsdfg.sdfg.all_interstate_edges():
             for m in e.data.get_read_memlets(nsdfg.sdfg.arrays):
                 # If more than one unique element detected, remove from candidates
                 if m.data in in_candidates:

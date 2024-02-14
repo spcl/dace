@@ -105,7 +105,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 intermediate_data.add(dst.data)
 
                 # If array is used anywhere else in this state.
-                num_occurrences = len([n for n in sdfg.data_nodes() if n.data == dst.data])
+                num_occurrences = len([n for n in graph.data_nodes() if n.data == dst.data])
                 if num_occurrences > 1:
                     return False
             else:

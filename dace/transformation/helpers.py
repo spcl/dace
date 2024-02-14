@@ -3,6 +3,7 @@
 import copy
 import itertools
 from networkx import MultiDiGraph
+from dace.sdfg.state import ControlFlowRegion
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
@@ -377,7 +378,7 @@ def nest_state_subgraph(sdfg: SDFG,
                          SDFG.
         :raise ValueError: The subgraph is contained in more than one scope.
     """
-    if state.parent != sdfg:
+    if state.sdfg != sdfg:
         raise KeyError('State does not belong to given SDFG')
     if subgraph is not state and subgraph.graph is not state:
         raise KeyError('Subgraph does not belong to given state')
@@ -431,7 +432,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # top-level graph)
     data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG
-    other_nodes = set(n.data for s in sdfg.nodes() for n in s.nodes()
+    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
                       if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
     subgraph_transients = set()
     for data in data_in_subgraph:
@@ -875,7 +876,7 @@ def offset_map(state: SDFGState,
         subgraph.replace(param, f'({param} - {offset})')
 
 
-def split_interstate_edges(sdfg: SDFG) -> None:
+def split_interstate_edges(cfg: ControlFlowRegion) -> None:
     """
     Splits all inter-state edges into edges with conditions and edges with
     assignments. This procedure helps in nested loop detection.
@@ -883,12 +884,12 @@ def split_interstate_edges(sdfg: SDFG) -> None:
     :param sdfg: The SDFG to split
     :note: Operates in-place on the SDFG.
     """
-    for e in sdfg.edges():
+    for e in cfg.edges():
         if e.data.assignments and not e.data.is_unconditional():
-            tmpstate = sdfg.add_state()
-            sdfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
-            sdfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
-            sdfg.remove_edge(e)
+            tmpstate = cfg.add_state()
+            cfg.add_edge(e.src, tmpstate, InterstateEdge(condition=e.data.condition))
+            cfg.add_edge(tmpstate, e.dst, InterstateEdge(assignments=e.data.assignments))
+            cfg.remove_edge(e)
 
 
 def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
