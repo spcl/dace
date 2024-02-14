@@ -116,7 +116,7 @@ class TacoTIN(transformation.ExpandTransformation):
                     f"// deinit dense input tensor {t_name}\n"
                     f"deinit_taco_tensor_t({t});\n"
                 )
-            
+
             tensor_init_code += "\n"
             tensor_deinit_code += "\n"
 
@@ -134,7 +134,7 @@ class TacoTIN(transformation.ExpandTransformation):
         for e in parent_state.out_edges(node):
             desc = parent_sdfg.arrays[e.data.data]
             print(f"DEBUG output {e.src_conn} of type {desc}")
-            
+
             t_name = str(e.src_conn)[4:]
             t = f"{t_name}_tensor"
 
@@ -171,6 +171,15 @@ class TacoTIN(transformation.ExpandTransformation):
                         )
                 tensor_deinit_code += (
                     f"// deinit potentially sparse output tensor {t_name}\n"
+                    f"tin_{t_name}_task->values = ({desc.value_dtype.ctype} *) {t}->vals;\n"
+                )
+                for i, idx in enumerate(desc.indices):
+                    if type(idx) is TensorIndexCompressed:
+                        tensor_deinit_code += (
+                            f"tin_{t_name}_task->idx{i}_pos = (int *) {t}->indices[{i}][0];\n"
+                            f"tin_{t_name}_task->idx{i}_crd = (int *) {t}->indices[{i}][1];\n"
+                        )
+                tensor_deinit_code += (
                     f"deinit_taco_tensor_t({t});\n"
                 )
             else:
@@ -185,9 +194,10 @@ class TacoTIN(transformation.ExpandTransformation):
                 )
                 tensor_deinit_code += (
                     f"// deinit dense output tensor {t_name}\n"
+                    f"tin_{t_name}_task->values = {t}->vals;\n"
                     f"deinit_taco_tensor_t({t});\n"
                 )
-            
+
             tensor_init_code += "\n"
             tensor_deinit_code += "\n"
 
@@ -223,7 +233,7 @@ class TacoTIN(transformation.ExpandTransformation):
         tensor_order = tensor_order.split(',')
         tensor_order = [f"{t.split('*')[1]}_tensor" for t in tensor_order]
 
-        code = f'''{tensor_init_code}{node.name}_compute({', '.join(tensor_order)});
+        code = f'''{tensor_init_code}{node.name}_evaluate({', '.join(tensor_order)});
         
         {tensor_deinit_code}'''
 
