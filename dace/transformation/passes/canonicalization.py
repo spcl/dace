@@ -37,6 +37,8 @@ class SeparateRefsets(ppl.Pass):
                 if 'set' in anode.in_connectors and state.out_degree(anode) > 0:
                     if state.entry_node(anode) is not None:
                         continue
+                    if 'views' in anode.out_connectors:
+                        continue  # Skip refset to a substructure view
                     edge = next(iter(state.in_edges_by_connector(anode, 'set')))
 
                     # Move reference set and all ancestors to a prior state

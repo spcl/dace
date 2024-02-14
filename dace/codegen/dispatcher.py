@@ -110,6 +110,15 @@ class DefinedMemlets:
 
         self._scopes[0][1][name] = (dtype, ctype)
 
+    def get_all_names(self, ancestor: int = 0) -> Set[str]:
+        global_vars = self._scopes[0][1].keys()
+        result = set(global_vars)
+        for _, scope, can_access_parent in self._scopes[1:len(self._scopes) - ancestor]:
+            if not can_access_parent:
+                result = set(global_vars)
+            result |= scope.keys()
+        return result
+
     def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
         last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):

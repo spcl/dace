@@ -182,7 +182,7 @@ class CPUCodeGen(TargetCodeGenerator):
         ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
 
         # Check if array is already declared
-        declared = self._dispatcher.declared_arrays.has(ptrname)
+        declared = False # self._dispatcher.declared_arrays.has(ptrname)
 
         # Check directionality of view (referencing dst or src)
         edge = sdutils.get_view_edge(dfg, node)
@@ -627,6 +627,9 @@ class CPUCodeGen(TargetCodeGenerator):
             raise LookupError("Memlet does not point to any of the nodes")
 
         if isinstance(dst_node, nodes.Tasklet):
+            vconn = self._maybe_rename_connector(sdfg, vconn, dst_node, dst_node.in_connectors)
+            edge.dst_conn = vconn
+
             # Copy into tasklet
             stream.write(
                 "    " + self.memlet_definition(sdfg, memlet, False, vconn, dst_node.in_connectors[vconn]),
@@ -636,6 +639,9 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             return
         elif isinstance(src_node, nodes.Tasklet):
+            uconn = self._maybe_rename_connector(sdfg, uconn, src_node, dst_node.out_connectors)
+            edge.src_conn = vconn
+
             # Copy out of tasklet
             stream.write(
                 "    " + self.memlet_definition(sdfg, memlet, True, uconn, src_node.out_connectors[uconn]),
@@ -677,6 +683,20 @@ class CPUCodeGen(TargetCodeGenerator):
                     [src_node, dst_node],
                 )
                 return
+
+            # Setting a reference to a struct field
+            if (isinstance(src_nodedesc, data.Reference) and 'set' in src_node.in_connectors and 
+                    isinstance(dst_nodedesc, data.Structure) and orig_vconn):
+                srcptr = cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)
+                defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
+                stream.write(
+                    f'{cpp.cpp_ptr_expr(sdfg, memlet, defined_type)}->{orig_vconn} = {srcptr};',
+                    sdfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+                return
+
 
             # Writing from/to a stream
             if isinstance(sdfg.arrays[memlet.data], data.Stream) or (isinstance(src_node, nodes.AccessNode)
@@ -876,6 +896,24 @@ class CPUCodeGen(TargetCodeGenerator):
 
     ###########################################################################
     # Memlet handling
+
+    def _maybe_rename_connector(self, sdfg, conn, node: nodes.Tasklet, connector_dict):
+        """
+        Handles name conflicts in tasklet connectors.
+        """
+        from dace.sdfg.replace import replace_properties  # Avoid import loop
+
+        names = self._dispatcher.defined_vars.get_all_names()
+        names |= (node.in_connectors.keys() | node.out_connectors.keys()) - {conn}
+        if conn not in names:
+            return conn
+
+        new_conn = data.find_new_name(conn, names)
+        connector_dict[new_conn] = connector_dict[conn]
+        del connector_dict[conn]
+        replace_properties(node, None, conn, new_conn)
+
+        return new_conn
 
     def write_and_resolve_expr(self, sdfg, memlet, nc, outname, inname, indices=None, dtype=None):
         """
@@ -1510,7 +1548,12 @@ class CPUCodeGen(TargetCodeGenerator):
                             self)
 
     def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
-        cdtype = src_node.out_connectors[edge.src_conn]
+        uconn = edge.src_conn
+        if isinstance(src_node, nodes.Tasklet):
+            uconn = self._maybe_rename_connector(sdfg, uconn, src_node, src_node.out_connectors)
+            edge.src_conn = uconn
+
+        cdtype = src_node.out_connectors[uconn]
         if isinstance(sdfg.arrays[edge.data.data], data.Stream):
             pass
         elif isinstance(cdtype, dtypes.pointer):  # If pointer, also point to output
@@ -1525,11 +1568,11 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
                 defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
-                callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
+                callsite_stream.write(f'{cdtype.ctype} {uconn} = {base_ptr};', sdfg, state_id, src_node)
             else:
-                callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', sdfg, state_id, src_node)
+                callsite_stream.write(f'{cdtype.as_arg(uconn)};', sdfg, state_id, src_node)
         else:
-            callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg, state_id, src_node)
+            callsite_stream.write(f'{cdtype.ctype} {uconn};', sdfg, state_id, src_node)
 
     def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label, state_struct=True):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
