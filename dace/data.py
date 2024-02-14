@@ -1178,7 +1178,7 @@ class Tensor(Structure):
         fields = dict(
             order=Scalar(dtypes.int32),
             dim_sizes=dtypes.int32[num_dims],
-            value_count=value_count,
+            # value_count=value_count,
             values=dtypes.float32[value_count],
         )
 
@@ -1200,6 +1200,18 @@ class Tensor(Structure):
         serialize.set_properties_from_json(tensor, json_obj, context=context)
 
         return tensor
+
+    @property
+    def free_symbols(self) -> Set[symbolic.SymbolicType]:
+        symbols = super(Tensor, self).free_symbols
+        for sym in self.tensor_shape:
+            symbols.add(sym)
+        
+        return symbols
+
+    @property
+    def may_alias(self) -> bool:
+        return False
 
 
 @make_properties
