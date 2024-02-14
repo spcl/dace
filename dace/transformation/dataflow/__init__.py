@@ -30,6 +30,7 @@ from .local_storage import InLocalStorage, OutLocalStorage
 from .double_buffering import DoubleBuffering
 from .streaming_memory import StreamingMemory, StreamingComposition
 from .reduce_expansion import ReduceExpansion
+from .tin_switch_format import SwitchTensorFormat
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
