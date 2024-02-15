@@ -981,7 +981,7 @@ class IndexExtractorNodeLister(NodeVisitor):
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         self.nodes.append((node, self.current_parent))
         for i in node.indices:
-            self.generic_visit(i)
+            self.visit(i)
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 

@@ -2185,7 +2185,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="rot_vertex_ri":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
