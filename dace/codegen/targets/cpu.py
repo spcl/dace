@@ -679,9 +679,16 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
                 srcptr = cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)
                 defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
-                src_expr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type)
+                if src_node.data == memlet.data:
+                    src_expr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type)
+                else:
+                    src_expr = srcptr
+
+                if dst_nodedesc.dtype == dtypes.pointer(src_nodedesc.dtype):
+                    src_expr = '&' + src_expr
+
                 stream.write(
-                    f"{vconn} = {src_expr};",
+                    f"{dst_node.data} = {src_expr};",
                     sdfg,
                     state_id,
                     [src_node, dst_node],
