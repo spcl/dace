@@ -2185,7 +2185,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="div_avg":
+            if j.name.name!="rot_vertex_ri":
                 continue
             if j.execution_part is None:
                 continue
@@ -2220,11 +2220,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 print(e)
                 continue
             #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
-            try:  
-                sdfg.compile()
-            except Exception as e:
-                print("Compilation failed for ", sdfg.name)
-                print(e)
-                continue
+            #try:  
+            sdfg.compile()
+            #except Exception as e:
+            #    print("Compilation failed for ", sdfg.name)
+            #    print(e)
+            #    continue
 
     #return sdfg
