@@ -242,6 +242,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     value = f'{arrexpr}->{field_name}'
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
+                    if getattr(stype.members[field_name], 'byval', False):
+                        # Corner case: cast by-value arrays
+                        value = f'({atype}){value}'
 
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
