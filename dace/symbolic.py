@@ -601,6 +601,8 @@ class int_floor(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return x // y
+        if y.is_Number and y == 1:
+            return x
 
     def _eval_is_integer(self):
         return True
@@ -692,12 +694,35 @@ class BitwiseNot(sympy.Function):
     pass
 
 
-class LeftShift(sympy.Function):
-    pass
+class left_shift(sympy.Function):
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a left shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x << y
+        return x * (2 ** y)
 
 
-class RightShift(sympy.Function):
-    pass
+class right_shift(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a right shift.
+
+        :param x: Value to shift.
+        :param y: Value to shift by.
+        :return: Return value (literal or symbolic).
+        """
+        if x.is_Number and y.is_Number:
+            return x >> y
+        return int_floor(x, (2 ** y))
 
 
 class ROUND(sympy.Function):
@@ -964,8 +989,8 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         ast.BitOr: 'BitwiseOr',
         ast.BitXor: 'BitwiseXor',
         ast.Invert: 'BitwiseNot',
-        ast.LShift: 'LeftShift',
-        ast.RShift: 'RightShift',
+        ast.LShift: 'left_shift',
+        ast.RShift: 'right_shift',
         ast.FloorDiv: 'int_floor',
     }
 
@@ -1089,8 +1114,10 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'BitwiseOr': BitwiseOr,
         'BitwiseXor': BitwiseXor,
         'BitwiseNot': BitwiseNot,
-        'LeftShift': LeftShift,
-        'RightShift': RightShift,
+        'LeftShift': left_shift,
+        'left_shift': left_shift,
+        'RightShift': right_shift,
+        'right_shift': right_shift,
         'int_floor': int_floor,
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,

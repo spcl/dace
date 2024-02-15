@@ -161,6 +161,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
         # Set previous pipeline results
         match._pipeline_results = pipeline_results
+        match.permissive = self.permissive
 
         if self.validate_all:
             match_name = match.print_match(tsdfg)

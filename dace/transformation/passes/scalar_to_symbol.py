@@ -5,7 +5,7 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, Set, Tuple
+from typing import Any, DefaultDict, Dict, List, Set, Tuple
 
 import dace
 from dace import data as dt
@@ -85,6 +85,8 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
+        if isinstance(desc, (dt.View, dt.StructureView)):
+            continue
         if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
@@ -313,21 +315,24 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
         """
         self.in_edges = in_edges
         self.out_edges = out_edges
+        self.arrays = {k: sdfg.arrays[v.data] for k, v in in_edges.items() if k is not None}
+        self.arrays.update({k: sdfg.arrays[v.data] for k, v in out_edges.items() if k is not None})
         self.sdfg = sdfg
         self.defined = defined_syms
+        self.connector_names = set(in_edges.keys()) | set(out_edges.keys())
         self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.out_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
         self.do_not_remove: Set[str] = set()
-        self.latest: DefaultDict[str, int] = collections.defaultdict(int)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
         node_name = astutils.rname(node)
         if node_name in self.in_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -335,10 +340,11 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             else:
                 self.do_not_remove.add(node_name)
         elif node_name in self.out_edges:
-            self.latest[node_name] += 1
-            new_name = f'{node_name}_{self.latest[node_name]}'
+            new_name = dt.find_new_name(node_name, self.connector_names)
+            self.connector_names.add(new_name)
+
             orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
@@ -461,6 +467,7 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
     :param sdfg: The SDFG to run the pass on.
     :note: Operates in-place.
     """
+    nodes_to_remove: List[Tuple[sd.SDFGState, nodes.Tasklet]] = []
     for state, node, defined_syms in sdutils.traverse_sdfg_with_defined_symbols(sdfg):
         if not isinstance(node, nodes.Tasklet):
             continue
@@ -494,6 +501,27 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             # Handle input/output connectors
             _handle_connectors(state, node, in_mapping, do_not_remove, True)
             _handle_connectors(state, node, out_mapping, do_not_remove, False)
+
+            # If we are left with a tasklet that contains one assignment (i.e., trivial),
+            # and has one access node output - remove it
+            if node.code.language == dtypes.Language.Python and len(node.code.code) == 1:
+                if isinstance(node.code.code[0], ast.Assign) and isinstance(node.code.code[0].value, ast.Name):
+                    if [type(n) for n in state.successors(node)] == [nodes.AccessNode] and state.in_degree(node) == 1:
+                        ie, = state.in_edges(node)
+                        oe, = state.out_edges(node)
+                        if len(in_mapping) == 1 and len(out_mapping) == 0:
+                            new_memlet = ie.data
+                        elif len(in_mapping) == 0 and len(out_mapping) == 1:
+                            new_memlet = oe.data
+                        else:
+                            new_memlet = None
+
+                        if new_memlet is not None:
+                            state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn, new_memlet)
+                            nodes_to_remove.append((state, node))
+
+    for s, n in nodes_to_remove:
+        s.remove_node(n)
 
 
 def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):

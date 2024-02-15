@@ -110,6 +110,15 @@ class DefinedMemlets:
 
         self._scopes[0][1][name] = (dtype, ctype)
 
+    def get_all_names(self, ancestor: int = 0) -> Set[str]:
+        global_vars = self._scopes[0][1].keys()
+        result = set(global_vars)
+        for _, scope, can_access_parent in self._scopes[1:len(self._scopes) - ancestor]:
+            if not can_access_parent:
+                result = set(global_vars)
+            result |= scope.keys()
+        return result
+
     def remove(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
         last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
@@ -505,11 +514,11 @@ class TargetDispatcher(object):
             dst_is_data = True
 
         # Skip copies to/from views where edge matches
-        if src_is_data and isinstance(src_node.desc(sdfg), (dt.StructureView, dt.View)):
+        if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
             e = sdutil.get_view_edge(state, src_node)
             if e is edge:
                 return None
-        if dst_is_data and isinstance(dst_node.desc(sdfg), (dt.StructureView, dt.View)):
+        if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
             e = sdutil.get_view_edge(state, dst_node)
             if e is edge:
                 return None
@@ -562,6 +571,8 @@ class TargetDispatcher(object):
 
     def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
         """ Dispatches a code generator for a memory copy operation. """
+        if edge.data.is_empty():
+            return
         state = sdfg.node(state_id)
         target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:

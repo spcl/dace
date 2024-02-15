@@ -94,7 +94,7 @@ def test_write_slice2():
 @pytest.mark.parametrize('with_subset', (False, True))
 def test_view_slice_detect_simple(with_subset):
     adesc = dace.float64[1, 1]
-    vdesc = dace.data.View(dace.float64, [1])
+    vdesc = dace.data.View.view(dace.float64[1])
 
     if with_subset:
         subset = dace.Memlet('A[0, 0]').subset
@@ -115,7 +115,8 @@ def test_view_slice_detect_complex(with_subset):
 
     adesc = dace.float64[2, 2, 1, 1, N]
     adesc.strides = [5 * M * N * K, M * N * K, M * N, 1, N]
-    vdesc = dace.data.View(dace.float64, [2, 1, 2, 1, N, 1], strides=[5 * M * N * K, M * N * K, M * N * K, M * N, N, N])
+    vdesc = dace.data.View.view(
+        dace.data.Array(dace.float64, [2, 1, 2, 1, N, 1], strides=[5 * M * N * K, M * N * K, M * N * K, M * N, N, N]))
 
     if with_subset:
         subset = dace.Memlet('A[0:2, 3:5, i, j, 0:M]').subset

@@ -334,6 +334,7 @@ class Tasklet(CodeNode):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+
     side_effects = Property(dtype=bool,
                             allow_none=True,
                             default=None,
@@ -672,7 +673,7 @@ class NestedSDFG(CodeNode):
                                  f"output ({outputs}) arrays")
 
         # Validate undefined symbols
-        symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+        symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
@@ -763,10 +764,18 @@ class MapEntry(EntryNode):
     def __str__(self):
         return str(self.map)
 
-    @property
-    def free_symbols(self) -> Set[str]:
+    def used_symbols(self, all_symbols: bool) -> Set[str]:
+        if not all_symbols and self.schedule in (dtypes.ScheduleType.CPU_Persistent,
+                                                 dtypes.ScheduleType.GPU_Persistent):
+            # Range elements in persistent maps are not used in code generation
+            return set()
+
         dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        return self.used_symbols(all_symbols=True)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
         from dace.codegen.tools.type_inference import infer_expr_type
