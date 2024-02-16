@@ -659,6 +659,7 @@ class FunctionSubroutineLister:
         self.list_of_types=[]
         self.names_in_types={}
         self.list_of_module_vars=[]
+        self.interface_blocks = {}
         
 
     def get_functions_and_subroutines(self, node):
@@ -703,6 +704,26 @@ class FunctionSubroutineLister:
                         self.names_in_functions[j.string] = nl.list_of_names
                         self.names_in_functions[j.string] += tnl.list_of_typenames
                         self.list_of_functions.append(j.string)
+            elif i.__class__.__name__ == "Interface_Block":
+                name = None
+                functions = []
+                for j in i.children:
+
+                    if j.__class__.__name__ == "Interface_Stmt":
+                        nl = NameLister()
+                        nl.get_names(j)
+                        if len(nl.list_of_names) == 1:
+                            name = nl.list_of_names[0]
+
+                    if j.__class__.__name__ == "Procedure_Stmt":
+                        for k in j.children:
+                            if k.__class__.__name__ == "Procedure_Name_List":
+                                nl = NameLister()
+                                nl.get_names(k)
+                                functions.extend(nl.list_of_names)
+
+                if name is not None and len(functions) > 0:
+                    self.interface_blocks[name] = functions
                 
             else:
                 self.get_functions_and_subroutines(i)

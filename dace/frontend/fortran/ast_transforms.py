@@ -166,17 +166,26 @@ class FindFunctionAndSubroutines(NodeVisitor):
     :return: List of names
     """
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.names: List[ast_internal_classes.Name_Node] = []
+        self.nodes: Dict[str, ast_internal_classes.FNode] = {}
+        self.iblocks: Dict[str, List[str]] = {}
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         ret=node.name
         ret.elemental=node.elemental
-        self.nodes.append(ret)
+        self.names.append(ret)
+        self.nodes[ret.name] = node
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         ret=node.name
         ret.elemental=node.elemental
-        self.nodes.append(ret)
+        self.names.append(ret)
+        self.nodes[ret.name] = node
+
+    def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
+        self.iblocks.update(node.interface_blocks)
+
+        self.generic_visit(node)
 
 class FindNames(NodeVisitor):
     def __init__(self):
@@ -517,9 +526,7 @@ class CallToArray(NodeTransformer):
     So, we create a closure of all math and defined functions and 
     create array expressions for the others.
     """
-    def __init__(self, funcs=None):
-        if funcs is None:
-            funcs = []
+    def __init__(self, funcs: FindFunctionAndSubroutines):
         self.funcs = funcs
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -534,14 +541,26 @@ class CallToArray(NodeTransformer):
         if node.name is None:
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+
+        is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
+        is_interface_func = not is_func and node.name.name in self.funcs.iblocks
         
-        if node.name.name in self.excepted_funcs or node.name in self.funcs:
+        if is_func or is_interface_func:
+
+            if is_interface_func:
+
+                available_names = self.funcs.iblocks[node.name.name].copy()
+                print("Invoke", node.name.name, available_names)
+                for name in available_names:
+                    print(name, self.funcs.nodes[name].args)
+
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
                 processed_args.append(arg)
             node.args = processed_args
             return node
+
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
