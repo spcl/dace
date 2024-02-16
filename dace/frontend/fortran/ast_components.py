@@ -327,6 +327,7 @@ class InternalFortranAst:
                 return [self.create_ast(child) for child in node]
             try:
                 return self.supported_fortran_syntax[type(node).__name__](node)
+            
             except KeyError:
                 if type(node).__name__=="Intrinsic_Name":
                     if node not in self.intrinsics_list:
@@ -1463,7 +1464,10 @@ class InternalFortranAst:
             for i in decls:
                 names_filtered.extend(ii.name for ii in i.vardecl if j.name == ii.name)
         decl_filtered = []
+        
         for i in decls:
+            if i is None:
+                continue
             # NOTE: Assignment/named expressions (walrus operator) works with Python 3.8 and later.
             # if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
             vardecl_filtered = [ii for ii in i.vardecl if ii.name not in names_filtered]
