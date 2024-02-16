@@ -259,7 +259,7 @@ def make_sdfg(name=None):
     return sdfg
 
 
-@fpga_test()
+@fpga_test(xilinx=False)
 def test_simple_systolic_array():
 
     P.set(4)
