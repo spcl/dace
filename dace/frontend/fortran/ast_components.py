@@ -231,6 +231,8 @@ class InternalFortranAst:
             "End_Do_Stmt": self.end_do_stmt,
             "Interface_Block": self.interface_block,
             "Interface_Stmt": self.interface_stmt,
+            "Procedure_Name_List": self.procedure_name_list,
+            "Procedure_Stmt": self.procedure_stmt,
             "End_Interface_Stmt": self.end_interface_stmt,
             "Generic_Spec": self.generic_spec,
             "Name": self.name,
@@ -605,8 +607,27 @@ class InternalFortranAst:
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
         return ast_internal_classes.Module_Subprogram_Part_Node(function_definitions=function_definitions,
                                                                  subroutine_definitions=subroutine_definitions)
+    def interface_block(self, node: FASTNode):
+        children = self.create_children(node)
+
+        name = get_child(children, ast_internal_classes.Interface_Stmt_Node)
+        stmts = get_children(children, ast_internal_classes.Procedure_Statement_Node)
+        subroutines = []
+
+        for i in stmts:
+
+            for child in i.namelists:
+                subroutines.extend(child.subroutines)
+
+        # Ignore other implementations the an interface block with overloaded procedures
+        if name is None or len(subroutines) == 0:
+            return node
+
+        return ast_internal_classes.Interface_Block_Node(name=name.name, subroutines=subroutines)
+
     def module(self, node: FASTNode):
         children = self.create_children(node)
+
         name = get_child(children, ast_internal_classes.Module_Stmt_Node)
         module_subprogram_part=get_child(children, ast_internal_classes.Module_Subprogram_Part_Node)
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
@@ -614,16 +635,24 @@ class InternalFortranAst:
         function_definitions = [i for i in children if isinstance(i, ast_internal_classes.Function_Subprogram_Node)]
         
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
+
+        interface_blocks = {}
+        for iblock in specification_part.interface_blocks:
+            interface_blocks[iblock.name] = [x.name for x in iblock.subroutines]
+
+        # add here to definitions
         if module_subprogram_part is not None:
             for i in module_subprogram_part.function_definitions:
                 function_definitions.append(i)
             for i in module_subprogram_part.subroutine_definitions:
                 subroutine_definitions.append(i)
+
         return ast_internal_classes.Module_Node(
             name=name.name,
             specification_part=specification_part,
             function_definitions=function_definitions,
             subroutine_definitions=subroutine_definitions,
+            interface_blocks=interface_blocks,
             line_number=name.line_number,
         )
 
@@ -1257,16 +1286,32 @@ class InternalFortranAst:
     def end_do_stmt(self, node: FASTNode):
         return node
 
-    def interface_block(self, node: FASTNode):
-        return node
-
     def interface_stmt(self, node: FASTNode):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, ast_internal_classes.Name_Node)
+        if name is not None:
+            return ast_internal_classes.Interface_Stmt_Node(name=name.name)
+        else:
+            return node
 
     def end_interface_stmt(self, node: FASTNode):
         return node
 
+    def procedure_name_list(self, node: FASTNode):
+        children = self.create_children(node)
+        return ast_internal_classes.Procedure_Name_List_Node(subroutines=children)
+
+    def procedure_stmt(self, node: FASTNode):
+        # ignore the procedure statement - just return the name list
+        children = self.create_children(node)
+        namelists = get_children(children, ast_internal_classes.Procedure_Name_List_Node)
+        if namelists is not None:
+            return ast_internal_classes.Procedure_Statement_Node(namelists=namelists)
+        else:
+            return node
+
     def generic_spec(self, node: FASTNode):
+        children = self.create_children(node)
         return node
 
     def procedure_declaration_stmt(self, node: FASTNode):
@@ -1396,11 +1441,15 @@ class InternalFortranAst:
             or isinstance(i, ast_internal_classes.Derived_Type_Def_Node)
         ]
         symbols = []
+        iblocks = []
         for i in others:
             if isinstance(i, list):
                 symbols.extend(j for j in i if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node))
             if isinstance(i, ast_internal_classes.Decl_Stmt_Node):
                 symbols.extend(j for j in i.vardecl if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node))
+            if isinstance(i, ast_internal_classes.Interface_Block_Node):
+                iblocks.append(i)
+
         for i in decls:
             if isinstance(i, list):
                 symbols.extend(j for j in i if isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node))
@@ -1421,6 +1470,7 @@ class InternalFortranAst:
                 decl_filtered.append(ast_internal_classes.Decl_Stmt_Node(vardecl=vardecl_filtered))
         return ast_internal_classes.Specification_Part_Node(specifications=decl_filtered,
                                                             symbols=symbols,
+                                                            interface_blocks=iblocks,
                                                             uses=uses,
                                                             typedecls=typedecls)
 
