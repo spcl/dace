@@ -61,7 +61,10 @@ class Structures:
                 cur_var = struct_def.vars[cur_node.name]
                 break
 
-            struct_type = struct_def.vars[cur_node.parent_ref.name].type
+            if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
+                struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
+            else:
+                struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
         return struct_def, cur_var
@@ -585,7 +588,7 @@ class ArgumentExtractor(NodeTransformer):
         self.program=program
 
         ParentScopeAssigner().visit(program)
-        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars = ScopeVarsDeclarations(program)
         self.scope_vars.visit(program)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -941,12 +944,19 @@ class ScopeVarsDeclarations(NodeVisitor):
         The visitor is used to access information on variable dimension, sizes, and offsets.
     """
 
-    def __init__(self):
+    def __init__(self, ast):
 
         self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+        self.module_declarations = ast.module_declarations
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
-        return self.scope_vars[(self._scope_name(scope), variable_name)]
+
+        if self.contains_var(scope, variable_name):
+            return self.scope_vars[(self._scope_name(scope), variable_name)]
+        elif variable_name in self.module_declarations:
+            return self.module_declarations[variable_name]
+        else:
+            raise RuntimeError(f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope)}!")
 
     def contains_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> bool:
         return (self._scope_name(scope), variable_name) in self.scope_vars
@@ -1019,7 +1029,7 @@ class IndexExtractor(NodeTransformer):
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
-            self.scope_vars = ScopeVarsDeclarations()
+            self.scope_vars = ScopeVarsDeclarations(ast)
             self.scope_vars.visit(ast)
             self.structures = ast.structures
 
@@ -1650,7 +1660,7 @@ class ArrayToLoop(NodeTransformer):
 
         self.ast = ast
         ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
