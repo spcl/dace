@@ -1,91 +1,41 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
 import dace
 import numpy as np
 
-@dace.program
-def powii(A: dace.int64[1], B: dace.int64[1], R: dace.int64[1]):
-    @dace.tasklet('Python')
-    def powii():
-        a << A[0]
-        b << B[0]
-        r >> R[0]
-        """r = a ** b"""
+types = [dace.float32, dace.float64, dace.int8, dace.int16, dace.int32, dace.int64]
 
-@dace.program
-def powff(A: dace.float64[1], B: dace.float64[1], R: dace.float64[1]):
-    @dace.tasklet('Python')
-    def powff():
-        a << A[0]
-        b << B[0]
-        r >> R[0]
-        """r = a ** b"""
-
-@dace.program
-def powfi(A: dace.float64[1], B: dace.int64[1], R: dace.float64[1]):
-    @dace.tasklet('Python')
-    def powfi():
-        a << A[0]
-        b << B[0]
-        r >> R[0]
-        """r = a ** b"""
-
-@dace.program
-def powif(A: dace.int64[1], B: dace.float64[1], R: dace.float64[1]):
-    @dace.tasklet('Python')
-    def powif():
-        a << A[0]
-        b << B[0]
-        r >> R[0]
-        """r = a ** b"""
-
-def test_powii():
+@pytest.mark.parametrize("a_type", types)
+@pytest.mark.parametrize("b_type", types)
+def test_tasklet_pow(a_type, b_type):
     """ Tests tasklets containing power operations """
-    sdfg = powii.to_sdfg()
+
+    @dace.program
+    def pow(A: a_type[1], B: b_type[1], R: dace.float64[1]):
+        @dace.tasklet('Python')
+        def pow():
+            a << A[0]
+            b << B[0]
+            r >> R[0]
+            """r = a ** b"""
+
+    sdfg = pow.to_sdfg()
     sdfg.validate()
 
-    a = np.random.randint(0, 10, 1).astype(np.int64)
-    b = np.random.randint(0, 10, 1).astype(np.int64)
-    r = np.random.randint(0, 10, 1).astype(np.int64)
-    sdfg(A=a, B=b, R=r)
-    assert r[0] == a[0] ** b[0]
-
-def test_powff():
-    """ Tests tasklets containing power operations """
-    sdfg = powff.to_sdfg()
-    sdfg.validate()
-
-    a = np.random.rand(1).astype(np.float64)
-    b = np.random.rand(1).astype(np.float64)
+    # a ** b needs to fit into the smallest type (int8)
+    a = np.random.rand(1) * 4
+    b = np.random.rand(1) * 4
     r = np.random.rand(1).astype(np.float64)
+
+    a = a.astype(a_type.as_numpy_dtype())
+    b = b.astype(b_type.as_numpy_dtype())
+
     sdfg(A=a, B=b, R=r)
-    assert r[0] == a[0] ** b[0]
-
-def test_powfi():
-    """ Tests tasklets containing power operations """
-    sdfg = powfi.to_sdfg()
-    sdfg.validate()
-
-    a = np.random.rand(1).astype(np.float64)
-    b = np.random.randint(0, 10, 1).astype(np.int64)
-    r = np.random.rand(1).astype(np.float64)
-    sdfg(A=a, B=b, R=r)
-    assert r[0] == a[0] ** b[0]
-
-def test_powif():
-    """ Tests tasklets containing power operations """
-    sdfg = powif.to_sdfg()
-    sdfg.validate()
-
-    a = np.random.randint(0, 10, 1).astype(np.int64)
-    b = np.random.rand(1).astype(np.float64)
-    r = np.random.rand(1).astype(np.float64)
-    sdfg(A=a, B=b, R=r)
-    assert r[0] == a[0] ** b[0]
+    assert np.allclose(r, a ** b)
 
 
 if __name__ == "__main__":
-    test_powii()
-    test_powff()
-    test_powfi()
-    test_powif()
+    for a_type in types:
+        for b_type in types:
+          test_tasklet_pow(a_type, b_type)
