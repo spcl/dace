@@ -39,7 +39,7 @@ class IntrinsicNodeTransformer(NodeTransformer):
         # We need to rerun the assignment because transformations could have created
         # new AST nodes
         ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
         self.ast = ast
 
