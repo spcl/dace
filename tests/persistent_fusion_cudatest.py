@@ -302,7 +302,7 @@ def test_persistent_fusion():
     E = E * 2
 
     # Extract adjacency matrix
-    M = nx.to_scipy_sparse_matrix(graph, dtype=vtype).tocsr()
+    M = nx.to_scipy_sparse_array(graph, dtype=vtype).tocsr()
     assert M.nnz == E
 
     G_row = np.ndarray([V + 1], dtype=vtype)
