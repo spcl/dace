@@ -637,8 +637,9 @@ class InternalFortranAst:
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
 
         interface_blocks = {}
-        for iblock in specification_part.interface_blocks:
-            interface_blocks[iblock.name] = [x.name for x in iblock.subroutines]
+        if specification_part is not None:
+            for iblock in specification_part.interface_blocks:
+                interface_blocks[iblock.name] = [x.name for x in iblock.subroutines]
 
         # add here to definitions
         if module_subprogram_part is not None:
