@@ -718,9 +718,11 @@ class FunctionSubroutineLister:
                     if j.__class__.__name__ == "Procedure_Stmt":
                         for k in j.children:
                             if k.__class__.__name__ == "Procedure_Name_List":
-                                nl = NameLister()
-                                nl.get_names(k)
-                                functions.extend(nl.list_of_names)
+
+                                for n in k.children:
+                                    if n.__class__.__name__ == "Name":
+                                        if n not in functions:
+                                            functions.append(n)
 
                 if name is not None and len(functions) > 0:
                     self.interface_blocks[name] = functions
