@@ -203,9 +203,10 @@ class AST_translator:
                 self.translate(j, sdfg, cfg)
                 if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
                     self.module_vars.append((j.name, i.name))
+                elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                    self.module_vars.append((j.name, i.name))
                 else:
-                    for k in j.vardecl:
-                        self.module_vars.append((k.name, i.name))
+                    raise ValueError("Unknown symbol type")
               for j in i.specification_part.specifications:
                 self.translate(j, sdfg, cfg)
                 for k in j.vardecl:
@@ -222,6 +223,11 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
+                #TODO: This is a bandaid
+                #Add a pass over the arguments of the subroutine - and over the closure of used structures
+                # get the additional integer arguments for assumed shapes for arrays and structures and 
+                # get these from either additional fields in the structure of additional arguments for arrays
+
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
                     for i in self.startpoint.specification_part.typedecls:
@@ -668,7 +674,27 @@ class AST_translator:
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
+                        if hasattr(array,"name") and array.name in self.registered_types:
+                            datatype=self.get_dace_type(array.name)
+                            datatype_to_add=copy.deepcopy(datatype)
+                            datatype_to_add.transient = False
+                            new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                            if self.struct_views.get(new_sdfg) is None:
+                                self.struct_views[new_sdfg] = {}
+                            for i in datatype_to_add.members:
+                                current_dtype=datatype_to_add.members[i].dtype
+                                for other_type in self.registered_types:
+                                    if current_dtype.dtype==self.registered_types[other_type].dtype:
+                                        other_type_obj=self.registered_types[other_type]
+                                        for j in other_type_obj.members:
+                                            new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                            self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
+                                            self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
+                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                                self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
+                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                        else:
+                            new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
                         if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
@@ -2175,25 +2201,25 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            if j.name.name!="div_avg":
                 continue
             if j.execution_part is None:
                 continue
             startpoint = j
             ast2sdfg = AST_translator(program, __file__,
-                                      multiple_sdfgs=True, startpoint=startpoint, sdfg_path=icon_sdfgs_dir)
+                                      multiple_sdfgs=False, startpoint=startpoint, sdfg_path=icon_sdfgs_dir)
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
-            try:
-                sdfg.apply_transformations(IntrinsicSDFGTransformation)
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
-            except:
-                print("Intrinsics failed for ", sdfg.name)    
-                continue
+            #try:
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            #except:
+            #    print("Intrinsics failed for ", sdfg.name)    
+            #    continue
             
             try:
                 sdfg.expand_library_nodes()
@@ -2202,7 +2228,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
             except:

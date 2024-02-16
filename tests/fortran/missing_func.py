@@ -101,8 +101,45 @@ def test_fortran_frontend_missing_func():
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+def test_fortran_frontend_missing_extraction():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+        PROGRAM missing_extraction_test
+            implicit none
 
+
+            REAL :: d(5,5)
+
+            CALL missing_extraction_test_function(d)            
+        end
+
+        
+    SUBROUTINE missing_extraction_test_function(d)
+                    REAL d(5,5)
+                    REAL z(5)
+                    integer :: jk = 5
+                    integer :: nrdmax_jg = 3
+                    DO jk = MAX(0,nrdmax_jg-2), 2
+                      d(jk,jk) = 17
+                    ENDDO
+                    d(2,1) = 5.5
+
+    END SUBROUTINE missing_extraction_test_function     
+       
+    """
+    sources={}
+    sources["missing_extraction_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "missing_extraction_test",sources=sources)
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    assert (a[0, 0] == 17)
+    assert (a[1, 0] == 5.5)
+    assert (a[2, 0] == 42)
 
 if __name__ == "__main__":
-    test_fortran_frontend_missing_func()
+    #test_fortran_frontend_missing_func()
+    test_fortran_frontend_missing_extraction()
     
