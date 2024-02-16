@@ -81,6 +81,7 @@ class Module_Node(FNode):
         'specification_part',
         'subroutine_definitions',
         'function_definitions',
+        'interface_blocks'
     )
 
 class Module_Subprogram_Part_Node(FNode):
@@ -113,11 +114,27 @@ class Subroutine_Subprogram_Node(FNode):
         'execution_part',
     )
 
+class Interface_Block_Node(FNode):
+    _attributes = ('name')
+    _fields = (
+        'subroutines',
+    )
 
-class Module_Stmt_Node(FNode):
-    _attributes = ('name', )
+class Interface_Stmt_Node(FNode):
+    _attributes = ()
     _fields = ()
 
+class Procedure_Name_List_Node(FNode):
+    _attributes = ()
+    _fields = ('subroutines')
+
+class Procedure_Statement_Node(FNode):
+    _attributes = ()
+    _fields = ('namelists')
+
+class Module_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('functions')
 
 class Program_Stmt_Node(FNode):
     _attributes = ('name', )
@@ -153,7 +170,7 @@ class Type_Name_Node(FNode):
 
 
 class Specification_Part_Node(FNode):
-    _fields = ('specifications', 'symbols', 'typedecls')
+    _fields = ('specifications', 'symbols', 'interface_blocks', 'typedecls')
 
 
 class Execution_Part_Node(FNode):

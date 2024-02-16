@@ -1,14 +1,15 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace.frontend.fortran import ast_components, ast_internal_classes, ast_utils
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple, Set, Union
 import copy
 
     
 class Structure:
 
-    def __init__(self):
-        self.vars: Dict[str, str] = {}
+    def __init__(self, name: str):
+        self.vars: Dict[str, Union[ast_internal_classes.Symbol_Decl_Node, ast_internal_classes.Var_Decl_Node]] = {}
+        self.name = name
 
 class Structures:
 
@@ -20,7 +21,7 @@ class Structures:
 
         for structure in definitions:
 
-            struct = Structure()
+            struct = Structure(name = structure.name.name)
             if structure.component_part is not None:
                 if structure.component_part.component_def_stmts is not None:
                     for statement in structure.component_part.component_def_stmts:
@@ -30,6 +31,11 @@ class Structures:
 
             self.structures[structure.name.name] = struct
 
+    def is_struct(self, type_name: str):
+        return type_name in self.structures
+
+    def get_definition(self, type_name: str):
+        return self.structures[type_name]
 
     def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node):
 
@@ -55,7 +61,10 @@ class Structures:
                 cur_var = struct_def.vars[cur_node.name]
                 break
 
-            struct_type = struct_def.vars[cur_node.parent_ref.name].type
+            if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
+                struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
+            else:
+                struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
         return struct_def, cur_var
@@ -579,7 +588,7 @@ class ArgumentExtractor(NodeTransformer):
         self.program=program
 
         ParentScopeAssigner().visit(program)
-        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars = ScopeVarsDeclarations(program)
         self.scope_vars.visit(program)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
@@ -935,12 +944,19 @@ class ScopeVarsDeclarations(NodeVisitor):
         The visitor is used to access information on variable dimension, sizes, and offsets.
     """
 
-    def __init__(self):
+    def __init__(self, ast):
 
         self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
+        self.module_declarations = ast.module_declarations
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
-        return self.scope_vars[(self._scope_name(scope), variable_name)]
+
+        if self.contains_var(scope, variable_name):
+            return self.scope_vars[(self._scope_name(scope), variable_name)]
+        elif variable_name in self.module_declarations:
+            return self.module_declarations[variable_name]
+        else:
+            raise RuntimeError(f"Couldn't find the declaration of variable {variable_name} in function {self._scope_name(scope)}!")
 
     def contains_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> bool:
         return (self._scope_name(scope), variable_name) in self.scope_vars
@@ -963,6 +979,7 @@ class IndexExtractorNodeLister(NodeVisitor):
     """
     def __init__(self):
         self.nodes: List[ast_internal_classes.Array_Subscript_Node] = []
+        self.current_parent: Optional[ast_internal_classes.Data_Ref_Node] = None
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -972,7 +989,23 @@ class IndexExtractorNodeLister(NodeVisitor):
             return
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
-        self.nodes.append(node)
+        self.nodes.append((node, self.current_parent))
+        for i in node.indices:
+            self.visit(i)
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        set_node = False
+        if self.current_parent is None:
+            self.current_parent = node
+            set_node = True
+
+        self.visit(node.parent_ref)
+        self.visit(node.part_ref)
+
+        if set_node:
+            set_node = False
+            self.current_parent = None
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         return
@@ -992,11 +1025,13 @@ class IndexExtractor(NodeTransformer):
 
         self.count = count
         self.normalize_offsets = normalize_offsets
+        self.program = ast
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
-            self.scope_vars = ScopeVarsDeclarations()
+            self.scope_vars = ScopeVarsDeclarations(ast)
             self.scope_vars.visit(ast)
+            self.structures = ast.structures
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -1013,6 +1048,7 @@ class IndexExtractor(NodeTransformer):
             if isinstance(i, ast_internal_classes.ParDecl_Node):
                 new_indices.append(i)
             else:
+                
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
@@ -1029,8 +1065,9 @@ class IndexExtractor(NodeTransformer):
 
 
             if res is not None:
-                for j in res:
+                for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
+
                         if isinstance(i, ast_internal_classes.ParDecl_Node):
                             continue
                         else:
@@ -1051,9 +1088,15 @@ class IndexExtractor(NodeTransformer):
                                 var_name = ""
                                 if isinstance(j, ast_internal_classes.Name_Node):
                                     var_name = j.name
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
+                                elif parent_node is not None:
+                                    struct, variable = self.structures.find_definition(
+                                        self.scope_vars, parent_node
+                                    )
+                                    var_name = j.name.name
                                 else:
                                     var_name = j.name.name
-                                variable = self.scope_vars.get_var(child.parent, var_name)
+                                    variable = self.scope_vars.get_var(child.parent, var_name)
                                 offset = variable.offsets[idx]
 
                                 # it can be a symbol - Name_Node - or a value
@@ -1617,7 +1660,7 @@ class ArrayToLoop(NodeTransformer):
 
         self.ast = ast
         ParentScopeAssigner().visit(ast)
-        self.scope_vars = ScopeVarsDeclarations()
+        self.scope_vars = ScopeVarsDeclarations(ast)
         self.scope_vars.visit(ast)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):

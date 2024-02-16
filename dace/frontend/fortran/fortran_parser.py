@@ -35,8 +35,16 @@ class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str, multiple_sdfgs: bool = False,
-                 startpoint=None, sdfg_path=None, use_experimental_cfg_blocks: bool = False):
+    def __init__(
+        self,
+        ast: ast_components.InternalFortranAst,
+        source: str,
+        multiple_sdfgs: bool = False,
+        startpoint=None, 
+        sdfg_path=None,
+        use_experimental_cfg_blocks: bool = False,
+        toplevel_subroutine: Optional[str] = None
+    ):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
@@ -66,6 +74,8 @@ class AST_translator:
         self.libraries = {}
         self.struct_views={}
         self.last_call_expression = {}
+        self.structures = ast.structures
+        self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -212,6 +222,7 @@ class AST_translator:
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
         if node.main_program is not None:
+
             for i in node.main_program.specification_part.typedecls:
                 self.translate(i, sdfg, cfg)
             for i in node.main_program.specification_part.symbols:
@@ -223,10 +234,6 @@ class AST_translator:
             if self.startpoint is None:
                 raise ValueError("No main program or start point found")
             else:
-                #TODO: This is a bandaid
-                #Add a pass over the arguments of the subroutine - and over the closure of used structures
-                # get the additional integer arguments for assumed shapes for arrays and structures and 
-                # get these from either additional fields in the structure of additional arguments for arrays
 
                 if self.startpoint.specification_part is not None:
                     self.transient_mode=False
@@ -259,7 +266,9 @@ class AST_translator:
                     node.name_target.parent_ref.name + "_" + node.name_target.part_ref.name
                 ]
 
-
+        elif isinstance(node.name_pointer, ast_internal_classes.Data_Ref_Node):
+            raise ValueError("Not imlemented yet")
+           
         else:       
             if node.name_target.name not in self.name_mapping[sdfg]:
                 raise ValueError("Unknown variable " + node.name_target.name)
@@ -964,13 +973,49 @@ class AST_translator:
                                         self.name_mapping[new_sdfg][i], memlet)
         for i in globalmemlets:
             local_name=ast_internal_classes.Name_Node(name=i)
-            memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
-            if local_name.name in write_names:
-                ast_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                        self.name_mapping[new_sdfg][i], memlet)
-            if local_name.name in read_names:
-                ast_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                        self.name_mapping[new_sdfg][i], memlet)
+            found=False
+            parent_sdfg=sdfg
+            nested_sdfg=new_sdfg
+            first=True
+            while not found and parent_sdfg is not None:
+                if self.name_mapping.get(parent_sdfg).get(i) is not None:
+                    found=True
+                else:
+                    self.name_mapping[parent_sdfg][i] = parent_sdfg._find_new_name(i)
+                    self.all_array_names.append(self.name_mapping[parent_sdfg][i])
+                    array_in_global = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
+                    if isinstance(array_in_global, Scalar):
+                        parent_sdfg.add_scalar(self.name_mapping[parent_sdfg][i], array_in_global.dtype, transient=False)
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
+                        parent_sdfg.add_array(self.name_mapping[parent_sdfg][i],
+                                           array_in_global.shape,
+                                           array_in_global.dtype,
+                                           array_in_global.storage,
+                                           transient=False,
+                                           strides=array_in_global.strides,
+                                           offset=array_in_global.offset)
+
+                if first:
+                    first=False
+                else:
+                    if local_name.name in write_names:
+                        nested_sdfg.parent_nsdfg_node.add_out_connector(self.name_mapping[parent_sdfg][i])
+                    if local_name.name in read_names:
+                        nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i])
+
+                memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), parent_sdfg, self)
+                if local_name.name in write_names:
+                    ast_utils.add_memlet_write(nested_sdfg.parent, self.name_mapping[parent_sdfg][i], nested_sdfg.parent_nsdfg_node,
+                                            self.name_mapping[nested_sdfg][i], memlet)
+                if local_name.name in read_names:
+                    ast_utils.add_memlet_read(nested_sdfg.parent, self.name_mapping[parent_sdfg][i], nested_sdfg.parent_nsdfg_node,
+                                            self.name_mapping[nested_sdfg][i], memlet)
+                if not found:
+                    nested_sdfg=parent_sdfg    
+                    parent_sdfg=parent_sdfg.parent_sdfg
+                    
+            
+                
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
         if self.multiple_sdfgs==False:
@@ -989,6 +1034,37 @@ class AST_translator:
                             pass
                     for j in node.specification_part.specifications:
                         self.declstmt2sdfg(j, new_sdfg, new_sdfg)
+                    # TODO: This is a bandaid
+                    #Add a pass over the arguments of the subroutine - and over the closure of used structures
+                    # get the additional integer arguments for assumed shapes for arrays and structures and 
+                    # get these from either additional fields in the structure of additional arguments for arrays
+                    #if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
+                    #if node.specification_part is not None:
+                    for i in node.specification_part.specifications:
+
+                        ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
+                        assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
+
+                        for decl in i.vardecl:
+                            if not self.structures.is_struct(decl.type):
+                                continue
+
+                            struct_type = self.structures.get_definition(decl.type)
+
+                            for var, var_type in struct_type.vars.items():
+
+                                if var_type.sizes is None or len(var_type.sizes) == 0:
+                                    continue
+
+                                # for assumed shape, all vars starts with the same prefix
+                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                                    continue
+
+                                for edge in new_sdfg.in_edges(assign_state):
+                                    for size in var_type.sizes:
+                                        if hasattr(size, "name"):
+                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+    
                 for i in assigns:
                         self.translate(i, new_sdfg, new_sdfg)
                 self.translate(node.execution_part, new_sdfg, new_sdfg)
@@ -1586,6 +1662,7 @@ def create_sdfg_from_string(
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
     program.structures = ast_transforms.Structures(structs_lister.structs)
+    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
@@ -1594,6 +1671,8 @@ def create_sdfg_from_string(
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
+
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
@@ -1654,7 +1733,7 @@ def create_sdfg_from_string(
     own_ast.tables = own_ast.symbols
 
     ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs,
-                              use_experimental_cfg_blocks=use_experimental_cfg_blocks)
+                              use_experimental_cfg_blocks=use_experimental_cfg_blocks, toplevel_subroutine=sdfg_name)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1817,7 +1896,7 @@ def recursive_ast_improver(ast,
         asts[i.children[0].children[1].string.lower()] = i
     return ast
 
-def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir):
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir, normalize_offsets: bool = False):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -2097,6 +2176,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+
     
     count=0
     for i in program.function_definitions:
@@ -2125,7 +2205,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         program = transformation.visit(program)
     print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor(program).visit(program)
+    program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     structs_lister=ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph=nx.DiGraph()
@@ -2201,7 +2281,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="div_avg":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
@@ -2213,7 +2293,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfg"))
             #try:
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
@@ -2231,13 +2311,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
             try:    
                 sdfg.simplify(verbose=True)
-            except:
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
+            except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
+                print(e)
                 continue
-            try:  
-                sdfg.compile()
-            except:
-                print("Compilation failed for ", sdfg.name)
-                continue
+            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
+            #try:  
+            sdfg.compile()
+            #except Exception as e:
+            #    print("Compilation failed for ", sdfg.name)
+            #    print(e)
+            #    continue
 
     #return sdfg
