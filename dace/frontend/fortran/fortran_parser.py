@@ -2217,7 +2217,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     for j in unordered_modules:
         if j.name.name==top_level_ast:
             program.modules.append(j)            
-
+    for i in program.modules:
+        print(i.name.name)
     for i in program.modules:
         for path in source_list:
             
@@ -2226,7 +2227,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="solve_nh":
                 continue
             if j.execution_part is None:
                 continue

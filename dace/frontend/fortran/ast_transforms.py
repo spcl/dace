@@ -947,7 +947,10 @@ class ScopeVarsDeclarations(NodeVisitor):
     def __init__(self, ast):
 
         self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
-        self.module_declarations = ast.module_declarations
+        if hasattr(ast, "module_declarations"):
+            self.module_declarations = ast.module_declarations
+        else:
+            self.module_declarations = {}    
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
 
