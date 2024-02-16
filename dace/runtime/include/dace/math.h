@@ -514,16 +514,13 @@ namespace dace
             return result;
         }
 
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
-        {
-            return (T)std::pow(a, (T)b);
+        template<typename T, typename U>
+        DACE_CONSTEXPR DACE_HDFI typename std::common_type<T, U>::type pow(const T& a, const U& b)
+        {   
+            using c_type = typename std::common_type<T, U>::type;
+            return (c_type)std::pow((c_type)a, (c_type)b);
         }
-        template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const unsigned int& b)
-        {
-            return (T)std::pow(a, (T)b);
-        }
+
 
         template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)
