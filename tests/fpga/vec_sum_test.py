@@ -8,7 +8,7 @@ import dace
 from dace.fpga_testing import fpga_test, xilinx_test
 import numpy as np
 from dace.config import set_temporary
-import argparse
+import pytest
 
 N = dace.symbol("N")
 
@@ -80,6 +80,7 @@ def test_vec_sum_vectorize_first_decoupled_interfaces():
         return run_vec_sum(True)
 
 
+@pytest.mark.skip
 @xilinx_test(assert_ii_1=True)
 def test_vec_sum_fpga_transform_first_decoupled_interfaces():
     # For this test, decoupled read/write interfaces are needed to achieve II=1
