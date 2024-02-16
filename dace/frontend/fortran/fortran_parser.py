@@ -20,6 +20,7 @@ from dace import symbolic as sym
 from copy import deepcopy as dpcp
 
 from dace.properties import CodeBlock
+from fparser.two import Fortran2003 as f03
 from fparser.two.parser import ParserFactory as pf
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
@@ -1345,11 +1346,11 @@ def create_ast_from_string(
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    functions_and_subroutines = functions_and_subroutines_builder.nodes
+    functions_and_subroutines = functions_and_subroutines_builder.names
 
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
-        program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+        program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
         program = ast_transforms.CallExtractor().visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
@@ -1575,14 +1576,14 @@ def create_sdfg_from_string(
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     
     count=0
     for i in program.function_definitions:
@@ -1677,9 +1678,9 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = own_ast.create_ast(ast)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop().visit(program)
@@ -1701,6 +1702,7 @@ def recursive_ast_improver(ast,
                            source_list,
                            include_list,
                            parser,
+                           interface_blocks,
                            exclude_list=[],
                            missing_modules=[],
                            dep_graph=nx.DiGraph(),
@@ -1721,7 +1723,9 @@ def recursive_ast_improver(ast,
     
     fandsl=ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
-    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
+    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines #+ list(fandsl.interface_blocks.keys())
+    if len(fandsl.interface_blocks) > 0:
+        interface_blocks[ast.children[0].children[0].children[1].string.lower()] = fandsl.interface_blocks
 
     #print("Functions and subroutines: ", functions_and_subroutines)
     if not main_program_mode:
@@ -1742,6 +1746,7 @@ def recursive_ast_improver(ast,
 
             for j in objects_in_modules[i].children:
                 weight.append(j)
+
         dep_graph.add_edge(parent_module, i, obj_list=weight)
 
     #print("It's turtles all the way down: ", len(exclude_list))
@@ -1787,6 +1792,7 @@ def recursive_ast_improver(ast,
                                           parser,
                                           exclude_list=exclude_list,
                                           missing_modules=missing_modules,
+                                          interface_blocks=interface_blocks,
                                           dep_graph=dep_graph,
                                           asts=asts)
         for mod in next_ast.children:
@@ -1815,14 +1821,30 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     dep_graph = nx.DiGraph()
     asts = {}
     actually_used_in_module={}
+    interface_blocks = {}
     ast = recursive_ast_improver(ast,
                                  source_list,
                                  include_list,
                                  parser,
+                                 interface_blocks,
                                  exclude_list=exclude_list,
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+
+    for mod, blocks in interface_blocks.items():
+
+        # get incoming edges
+        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
+
+            weights = data.get('obj_list')
+            if weights is None:
+                continue
+
+            for weight in weights:
+                name = weight.string
+                if name in blocks:
+                    dep_graph[in_mod][mod]['obj_list'] = blocks[name]
     
     print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
@@ -1835,7 +1857,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
         if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
             changed=False
-
 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
@@ -2067,18 +2088,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     program.structures = ast_transforms.Structures(structs_lister.structs)
 
-
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     #program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
 
     
