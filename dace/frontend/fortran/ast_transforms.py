@@ -990,6 +990,8 @@ class IndexExtractorNodeLister(NodeVisitor):
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
         self.nodes.append((node, self.current_parent))
+        for i in node.indices:
+            self.visit(i)
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
@@ -998,8 +1000,8 @@ class IndexExtractorNodeLister(NodeVisitor):
             self.current_parent = node
             set_node = True
 
-        self.generic_visit(node.parent_ref)
-        self.generic_visit(node.part_ref)
+        self.visit(node.parent_ref)
+        self.visit(node.part_ref)
 
         if set_node:
             set_node = False
@@ -1046,6 +1048,7 @@ class IndexExtractor(NodeTransformer):
             if isinstance(i, ast_internal_classes.ParDecl_Node):
                 new_indices.append(i)
             else:
+                
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
