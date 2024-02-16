@@ -45,10 +45,10 @@ class TacoTIN(transformation.ExpandTransformation):
         sdfg = SDFG("tensor_index_notation")
         state = sdfg.add_state()
 
-        print(f"DEBUG Tensor index expression: {node.tensor_index_notation}")
+        # print(f"DEBUG Tensor index expression: {node.tensor_index_notation}")
 
         args = [
-            "/home/jan/master-thesis/taco/build/bin/taco",
+            "taco",
             node.tensor_index_notation,
             "-print-kernels",
             "-print-nocolor",
@@ -57,12 +57,14 @@ class TacoTIN(transformation.ExpandTransformation):
         inputs = {}
         outputs = {}
 
+        output_dense = False
+
         tensor_init_code = "// INIT\n"
         tensor_deinit_code = "// DE-INIT\n"
 
         for e in parent_state.in_edges(node):
             desc = parent_sdfg.arrays[e.data.data]
-            print(f"DEBUG input {e.dst_conn} of type {desc} {type(desc)}")
+            # print(f"DEBUG input {e.dst_conn} of type {desc} {type(desc)}")
 
             t_name = str(e.dst_conn)[4:]
             t = f"{t_name}_tensor"
@@ -133,7 +135,7 @@ class TacoTIN(transformation.ExpandTransformation):
 
         for e in parent_state.out_edges(node):
             desc = parent_sdfg.arrays[e.data.data]
-            print(f"DEBUG output {e.src_conn} of type {desc}")
+            # print(f"DEBUG output {e.src_conn} of type {desc}")
 
             t_name = str(e.src_conn)[4:]
             t = f"{t_name}_tensor"
@@ -183,6 +185,7 @@ class TacoTIN(transformation.ExpandTransformation):
                     f"deinit_taco_tensor_t({t});\n"
                 )
             else:
+                output_dense = True
                 order = len(desc.shape)
                 tensor_init_code += (
                     f"// init dense output tensor {t_name}\n"
@@ -194,7 +197,6 @@ class TacoTIN(transformation.ExpandTransformation):
                 )
                 tensor_deinit_code += (
                     f"// deinit dense output tensor {t_name}\n"
-                    f"tin_{t_name}_task->values = {t}->vals;\n"
                     f"deinit_taco_tensor_t({t});\n"
                 )
 
@@ -233,7 +235,7 @@ class TacoTIN(transformation.ExpandTransformation):
         tensor_order = tensor_order.split(',')
         tensor_order = [f"{t.split('*')[1]}_tensor" for t in tensor_order]
 
-        code = f'''{tensor_init_code}{node.name}_evaluate({', '.join(tensor_order)});
+        code = f'''{tensor_init_code}{node.name}_{"compute" if output_dense else "evaluate"}({', '.join(tensor_order)});
         
         {tensor_deinit_code}'''
 
@@ -244,7 +246,6 @@ class TacoTIN(transformation.ExpandTransformation):
             code=code,
             language=dtypes.Language.CPP,
             code_global=glob_code,
-
         )
 
         for name, input in inputs.items():

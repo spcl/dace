@@ -1,4 +1,5 @@
 import pytest
+import ctypes
 import dace
 import numpy as np
 
@@ -20,7 +21,7 @@ def csr(M, N, nnz):
 def csr_data(rng, M, N):
     desc = csr(M, N, 1)
 
-    m = sparse.random(M, N, density=0.1, format='csr', dtype=np.float32, random_state=rng)
+    m = sparse.random(M, N, density=0.5, format='csr', dtype=np.float32, random_state=rng)
 
     sparse_m = desc.dtype._typeclass.as_ctypes()(
         order=2,
@@ -45,7 +46,7 @@ def csc(M, N, nnz):
 def csc_data(rng, M, N):
     desc = csc(M, N, 1)
 
-    m = sparse.random(M, N, density=0.1, format='csc', dtype=np.float32, random_state=rng)
+    m = sparse.random(M, N, density=0.5, format='csc', dtype=np.float32, random_state=rng)
 
     sparse_m = desc.dtype._typeclass.as_ctypes()(
         order=2,
@@ -69,6 +70,40 @@ def gen_data(rng, M, N, format):
     else:
         assert False
 
+
+def parse_csr(data, M, N):
+    pos_ptr = ctypes.cast(data.idx1_pos, ctypes.POINTER(ctypes.c_int))
+    crd_ptr = ctypes.cast(data.idx1_crd, ctypes.POINTER(ctypes.c_int))
+    val_ptr = ctypes.cast(data.values, ctypes.POINTER(ctypes.c_float))
+
+    pos = np.ctypeslib.as_array(pos_ptr, shape=(M + 1,))
+    crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
+    val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
+
+    return sparse.csr_matrix((val,crd,pos)).toarray(order='C')
+
+
+def parse_csc(data, M, N):
+    pos_ptr = ctypes.cast(data.idx1_pos, ctypes.POINTER(ctypes.c_int))
+    crd_ptr = ctypes.cast(data.idx1_crd, ctypes.POINTER(ctypes.c_int))
+    val_ptr = ctypes.cast(data.values, ctypes.POINTER(ctypes.c_float))
+
+    pos = np.ctypeslib.as_array(pos_ptr, shape=(N + 1,))
+    crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
+    val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
+
+    return sparse.csc_matrix((val,crd,pos)).toarray(order='C')
+
+
+def parse_data(data, M, N, format):
+    if format == 'dense':
+        return data
+    elif format == 'csr':
+        return parse_csr(data, M, N)
+    elif format == 'csc':
+        return parse_csc(data, M, N)
+    else:
+        assert False
 
 
 def build_mm(data: dict[str, str]):
@@ -116,6 +151,7 @@ def build_mm(data: dict[str, str]):
 
 def test_mm(data: dict[str, str]):
     sizes = [
+        (3, 5, 7),
         (20, 20, 20),
         (40, 20, 30),
         (30, 40, 20),
@@ -132,12 +168,9 @@ def test_mm(data: dict[str, str]):
         B, BB, B_keep_alive = gen_data(rng, M, K, data['B'])
         C, CC, C_keep_alive = gen_data(rng, K, N, data['C'])
 
-        # print(f"{AA=}")
-        # print(f"{B=}")
-        # print(f"{C=}")
-
         func(A=AA, B=BB, C=CC, M=M, K=K, N=N, nnz=1)
 
+        AA = parse_data(AA, M, N, data['A'])
         A = B @ C
     
         if not np.allclose(A, AA):
@@ -482,10 +515,10 @@ if __name__ == "__main__":
     # test_mm({'B': 'csr', 'C': 'csc', 'A': 'dense'})
     # test_mm({'B': 'csr', 'C': 'csc', 'A': 'csr'})
     # test_mm({'B': 'csr', 'C': 'csc', 'A': 'csc'})
-    test_mm({'B': 'csc', 'C': 'csr', 'A': 'dense'})
-    # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csr'})
-    # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csc'})
-    # test_multiple_mm_fix()
+    # test_mm({'B': 'csc', 'C': 'csr', 'A': 'dense'})
+    # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csr'}) # taco generates incorrect code
+    # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csc'}) # taco generates incorrect code
+    test_multiple_mm_fix()
     # test_multiple_mm_tranform()
     # test_mttkrp()
 
