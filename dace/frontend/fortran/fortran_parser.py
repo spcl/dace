@@ -1463,7 +1463,6 @@ def create_sdfg_from_string(
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
-            print(j[0],j[1],deps)
             if deps is None:   
                 continue
             for k in deps:
@@ -1882,10 +1881,39 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if weights is None:
                 continue
 
+            new_weights = []
             for weight in weights:
                 name = weight.string
                 if name in blocks:
-                    dep_graph[in_mod][mod]['obj_list'] = blocks[name]
+                    new_weights.extend(blocks[name])
+                else:
+                    new_weights.append(weight)
+
+            dep_graph[in_mod][mod]['obj_list'] = new_weights
+
+    complete_interface_blocks = {}
+    for mod, blocks in interface_blocks.items():
+        complete_interface_blocks.update(blocks)
+
+    for node, node_data in dep_graph.nodes(data=True):
+
+        objects = node_data.get('info_list')
+
+        if objects is None:
+            continue
+
+        new_names_in_subroutines = {}
+        for subroutine, names in objects.names_in_subroutines.items():
+
+            new_names_list = []
+            for name in names:
+                if name in complete_interface_blocks:
+                    for replacement in complete_interface_blocks[name]:
+                        new_names_list.append(replacement.string)
+                else:
+                    new_names_list.append(name)
+            new_names_in_subroutines[subroutine] = new_names_list
+        objects.names_in_subroutines = new_names_in_subroutines
     
     print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
@@ -1912,7 +1940,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
-            print(j[0],j[1],deps)
             if deps is None:   
                 continue
             for k in deps:
@@ -1922,6 +1949,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             if res is not None:
                 for jj in parse_list[i]:
+
                     if jj in res.list_of_functions:
                         if jj not in fands_list:
                             fands_list.append(jj)
@@ -1938,8 +1966,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         for j in actually_used_in_module[i]:
             if res is not None:
                 if j in res.list_of_functions:
+
                     if j not in fands_list:
                         fands_list.append(j)
+
                 if j in res.list_of_subroutines:
                     if j not in fands_list:
                         fands_list.append(j)  
