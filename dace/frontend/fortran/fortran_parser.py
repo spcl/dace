@@ -562,6 +562,8 @@ class AST_translator:
                 varname = variable.arg_name.name
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
+            elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
+                varname = ast_utils.get_name(variable)
 
             if isinstance(variable, ast_internal_classes.Literal) or varname == "LITERAL":
                 literals.append(parameters[arg_i])
