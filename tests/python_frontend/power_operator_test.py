@@ -44,8 +44,7 @@ in_types = [dace.float32, dace.float64, dace.int8, dace.int16, dace.int32, dace.
 def test_pow_types(a_type, b_type):
     @dace.program
     def pow_types(A: a_type[1], B: b_type[1], R: dace.float64[1]):
-        @dace.tasklet('Python')
-        def pow_tasklet():
+        with dace.tasklet(dace.Language.Python):
             a << A[0]
             b << B[0]
             r >> R[0]
