@@ -586,7 +586,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
                 "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):# or isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -627,7 +627,7 @@ class ArgumentExtractor(NodeTransformer):
                                                    line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node):# or isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 result.args.append(arg)
             else:
                 result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp)))

@@ -301,6 +301,14 @@ def get_name(node: ast_internal_classes.FNode):
         return node.name
     elif isinstance(node, ast_internal_classes.Array_Subscript_Node):
         return node.name.name
+    elif isinstance(node, ast_internal_classes.Data_Ref_Node):
+        view_name=node.parent_ref.name
+        while isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
+            view_name=view_name+"_"+node.part_ref.parent_ref.name
+            node=node.part_ref
+        view_name=view_name+"_"+get_name(node.part_ref)
+        return view_name            
+        
     else:
         raise NameError("Name not found")
 
@@ -485,6 +493,7 @@ class TaskletWriter:
 
 
 def generate_memlet(op, top_sdfg, state):
+
     if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
     elif state.name_mapping.get(state.globalsdfg).get(get_name(op)) is not None:

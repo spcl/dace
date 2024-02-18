@@ -598,7 +598,7 @@ class AST_translator:
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         for variable_in_call in variables_in_call:
             all_arrays = self.get_arrays_in_context(sdfg)
-
+            
             sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
             matched = False
@@ -639,7 +639,7 @@ class AST_translator:
                                 changed_indices += 1
                             indices = indices + 1
 
-                    if isinstance(variable_in_call, ast_internal_classes.Name_Node):
+                    if isinstance(variable_in_call, ast_internal_classes.Name_Node) or isinstance(variable_in_call,ast_internal_classes.Data_Ref_Node):
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
@@ -666,7 +666,7 @@ class AST_translator:
                             new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
-                        if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
+                        if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
                             offsets_zero = []
                             for index in offsets:
                                 offsets_zero.append(0)
@@ -2328,7 +2328,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
