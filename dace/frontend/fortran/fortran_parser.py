@@ -1428,10 +1428,12 @@ def create_sdfg_from_string(
     dep_graph = nx.DiGraph()
     asts = {}
     actually_used_in_module={}
+    interface_blocks = {}
     ast = recursive_ast_improver(ast,
                                  sources,
                                  [],
                                  parser,
+                                 interface_blocks,
                                  exclude_list=exclude_list,
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
@@ -1586,7 +1588,32 @@ def create_sdfg_from_string(
 
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
-
+    functions_to_rename={}
+    for i in parse_order:
+        own_ast.current_ast=i
+        
+        own_ast.unsupported_fortran_syntax[i]=[]
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "mo_cdi","iso_fortran_env"]:
+            continue
+       
+        own_ast.add_name_list_for_module(i, name_dict[i])
+        try:
+            partial_module = own_ast.create_ast(asts[i])
+        except:
+            print("Module " + i + " could not be parsed ",own_ast.unsupported_fortran_syntax[i])
+            print(own_ast.unsupported_fortran_syntax[i])
+            continue
+        tmp_rename=rename_dict[i]
+        for j in tmp_rename:
+            #print(j)
+            if own_ast.symbols.get(j) is None:
+                #raise NameError("Symbol " + j + " not found in partial ast")
+                if functions_to_rename.get(i) is None:
+                    functions_to_rename[i]=[j]
+                else:
+                    functions_to_rename[i].append(j)    
+            else:
+                own_ast.symbols[tmp_rename[j]]=own_ast.symbols[j]
     program = own_ast.create_ast(ast)
 
     # Repeated!
@@ -1982,7 +2009,29 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
-    
+    name_dict = {}
+    rename_dict = {}
+    for i in parse_order:
+        local_rename_dict = {}
+        edges = list(simple_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
+        name_dict[i] = names
+    rename_dict["mo_solve_nonhydro"] = {}
+
     for i in ast.children:
     
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
@@ -2001,6 +2050,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             if k.__class__.__name__=="Entity_Decl":
                                 if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
                                     entity_decls.append(k)
+                                elif rename_dict[i.children[0].children[1].string].get(k.children[0].string) in actually_used_in_module[i.children[0].children[1].string]:
+                                    entity_decls.append(k)    
                         if entity_decls==[]:
                             continue            
                         if j.children[2].children.__class__.__name__=="tuple":

@@ -62,6 +62,7 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     if k.__class__.__name__=="Name":
                         in_names_local.append(k.string)
                     elif k.__class__.__name__=="Rename":
+                        in_names_local.append(k.children[2].string)    
                         in_names_local.append(k.children[1].string)    
             if in_names_local is not None:
                 for k in in_names_local:
@@ -75,7 +76,8 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     if k.__class__.__name__=="Name":
                         out_names_local.append(k.string)
                     elif k.__class__.__name__=="Rename":
-                        out_names_local.append(k.children[1].string)        
+                        out_names_local.append(k.children[1].string)    
+                        out_names_local.append(k.children[2].string)    
             
             if out_names_local is not None:
                 for k in out_names_local:
@@ -217,7 +219,9 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     if k.__class__.__name__=="Name":
                         out_names_local.append(k.string)
                     elif k.__class__.__name__=="Rename":
+                        
                         out_names_local.append(k.children[1].string)   
+                        out_names_local.append(k.children[2].string)   
                     
             new_out_names_local=[]
             if len(out_names_local)==0:
