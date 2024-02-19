@@ -41,7 +41,9 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
     # Construct arrays from tuple arguments
     for i, arg in enumerate(args):
         if isinstance(arg, tuple):
-            args[i] = dace.ndarray(*arg)
+            shape, dtype = arg
+            shape = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]
+            args[i] = dace.ndarray(shape, dtype)
 
     if FLAGS.simulate == False:
         if isinstance(func, dace.SDFG):
