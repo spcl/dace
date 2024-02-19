@@ -892,6 +892,9 @@ class InternalFortranAst:
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                    # we expect a list of lists, where each element correspond to list of symbols for each array name
+                    attr_size = [attr_size]
+                    attr_offset = [attr_offset]
                 else:
                     attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
                     attr_offset = []
@@ -920,6 +923,9 @@ class InternalFortranAst:
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                    # we expect a list of lists, where each element correspond to list of symbols for each array name
+                    attr_size = [attr_size]
+                    attr_offset = [attr_offset]
                 else:
                     attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
                     attr_offset = []
