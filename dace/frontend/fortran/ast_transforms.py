@@ -217,6 +217,10 @@ class FindInputs(NodeVisitor):
             self.visit(i)
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+            if isinstance(node.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(node.parent_ref)    
+            elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(node.parent_ref.name)
             if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
                 for i in node.parent_ref.indices:
                     self.visit(i)        
@@ -224,9 +228,20 @@ class FindInputs(NodeVisitor):
                 for i in node.part_ref.indices:
                     self.visit(i)
             elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-                self.visit(node.part_ref)
+                self.visit_Blunt_Data_Ref_Node(node.part_ref)
                     
-        
+    
+    def visit_Blunt_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+            if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.parent_ref.indices:
+                    self.visit(i)        
+            if isinstance(node.part_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.part_ref.indices:
+                    self.visit(i)
+            elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
+                self.visit_Blunt_Data_Ref_Node(node.part_ref)
+                    
+            
             
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
