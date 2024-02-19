@@ -334,8 +334,10 @@ def test_fortran_frontend_type_in_call():
         SUBROUTINE type_in_call_test_function(d)
             REAL d(5,5)
             TYPE(simple_type) :: s
-            s%w(1,1,1) = 11.0
-            d(2,1) = max(1.0, s%w(1,1,1))
+            REAL,POINTER :: tmp(:,:,:)
+            tmp=>s%w
+            tmp(1,1,1) = 11.0
+            d(2,1) = max(1.0, tmp(1,1,1))
         END SUBROUTINE type_in_call_test_function
     """
     sources={}
@@ -349,6 +351,43 @@ def test_fortran_frontend_type_in_call():
     assert (a[2, 0] == 42)
 
 
+def test_fortran_frontend_type_pointer():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+        PROGRAM type_pointer_test
+            implicit none
+
+            TYPE simple_type
+                REAL :: w(5,5,5), z(5)
+                INTEGER :: a
+                REAL :: name
+            END TYPE simple_type
+
+            REAL :: d(5,5)
+            CALL type_pointer_test_function(d)
+        end
+
+        SUBROUTINE type_pointer_test_function(d)
+            REAL d(5,5)
+            TYPE(simple_type) :: s
+            REAL, DIMENSION(:,:,:), POINTER :: tmp
+            tmp=>s%w
+            tmp(1,1,1) = 11.0
+            d(2,1) = max(1.0, tmp(1,1,1))
+        END SUBROUTINE type_pointer_test_function
+    """
+    sources={}
+    sources["type_pointer_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_pointer_test",sources=sources)
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 11)
+    assert (a[2, 0] == 42)
+
 if __name__ == "__main__":
     #test_fortran_frontend_basic_type()
     #test_fortran_frontend_basic_type2()
@@ -356,4 +395,5 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_pardecl()
     #test_fortran_frontend_type_struct()
     #test_fortran_frontend_circular_type()
-    test_fortran_frontend_type_in_call()
+    #test_fortran_frontend_type_in_call()
+    test_fortran_frontend_type_pointer()

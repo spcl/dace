@@ -253,10 +253,11 @@ class AST_translator:
         if self.name_mapping[sdfg][node.name_pointer.name] in sdfg.arrays:
             shapenames = [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))]
             for i in shapenames:
-                if i in sdfg.symbols:
-                    sdfg.symbols.pop(i)
-                if i in sdfg.parent_nsdfg_node.symbol_mapping:
-                    sdfg.parent_nsdfg_node.symbol_mapping.pop(i)    
+                if str(i) in sdfg.symbols:
+                    sdfg.symbols.pop(str(i))
+                if sdfg.parent_nsdfg_node is not None:     
+                    if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
+                        sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))    
             sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
