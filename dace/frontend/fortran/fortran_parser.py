@@ -250,6 +250,14 @@ class AST_translator:
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
         """
+        if self.name_mapping[sdfg][node.name_pointer.name] in sdfg.arrays:
+            shapenames = [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))]
+            for i in shapenames:
+                if i in sdfg.symbols:
+                    sdfg.symbols.pop(i)
+                if i in sdfg.parent_nsdfg_node.symbol_mapping:
+                    sdfg.parent_nsdfg_node.symbol_mapping.pop(i)    
+            sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
                 raise ValueError("Unknown variable " + node.name_target.name)
@@ -2311,6 +2319,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 
 
     program.tables=partial_ast.symbols
+    program.placeholders=partial_ast.placeholders
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
     unordered_modules=program.modules
     program.modules=[]
