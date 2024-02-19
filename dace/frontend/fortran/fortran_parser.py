@@ -74,6 +74,7 @@ class AST_translator:
         self.struct_views={}
         self.last_call_expression = {}
         self.structures = ast.structures
+        self.placeholders = ast.placeholders
         self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -296,7 +297,7 @@ class AST_translator:
                     offset = []
                     offset_value = -1
                     for i in k.sizes:
-                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                         text = tw.write_code(i)
                         sizes.append(sym.pystr_to_symbolic(text))
                         offset.append(offset_value)
@@ -347,7 +348,7 @@ class AST_translator:
                     sizes = []
                     offset = []
                     for j in i.shape.shape_list:
-                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                         text = tw.write_code(j)
                         sizes.append(sym.pystr_to_symbolic(text))
                         offset.append(offset_value)
@@ -382,7 +383,7 @@ class AST_translator:
         guard_substate = sdfg.add_state(f"Guard{name}")
         sdfg.add_edge(begin_state, guard_substate, InterstateEdge())
 
-        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.cond)
+        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,self.placeholders).write_code(node.cond)
 
         body_ifstart_state = sdfg.add_state(f"BodyIfStart{name}")
         self.last_sdfg_states[sdfg] = body_ifstart_state
@@ -433,15 +434,15 @@ class AST_translator:
                 iter_name = self.name_mapping[sdfg][decl_node.lval.name]
             else:
                 raise ValueError("Unknown variable " + decl_node.lval.name)
-            entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(decl_node.rval)
+            entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(decl_node.rval)
 
         sdfg.add_edge(begin_state, guard_substate, InterstateEdge(assignments=entry))
 
-        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.cond)
+        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.cond)
 
         increment = "i+0+1"
         if isinstance(node.iter, ast_internal_classes.BinOp_Node):
-            increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.iter.rval)
+            increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.iter.rval)
         entry = {iter_name: increment}
 
         begin_loop_state = sdfg.add_state("BeginLoop" + name)
@@ -472,7 +473,7 @@ class AST_translator:
             elif isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
             else:
-                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                 if node.init is not None:
                     text = tw.write_code(node.init)
                     self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)
@@ -485,7 +486,7 @@ class AST_translator:
                 self.last_sdfg_states[sdfg] = bstate
             if node.init is not None:
                 substate = sdfg.add_state(f"Dummystate_{node.name}")
-                increment = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping).write_code(node.init)
+                increment = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.init)
 
                 entry = {node.name: increment}
                 sdfg.add_edge(self.last_sdfg_states[sdfg], substate, InterstateEdge(assignments=entry))
@@ -634,7 +635,7 @@ class AST_translator:
                                 else:
                                     raise NotImplementedError("Index in ParDecl should be ALL")
                             else:
-                                text = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(i)
+                                text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
                                 index_list.append(sym.pystr_to_symbolic(text))
                                 strides.pop(indices - changed_indices)
                                 offsets.pop(indices - changed_indices)
@@ -1110,7 +1111,7 @@ class AST_translator:
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
             ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
         tw = ast_utils.TaskletWriter(output_names, output_names_changed, sdfg, self.name_mapping, input_names,
-                                     input_names_tasklet)
+                                     input_names_tasklet,placeholders=self.placeholders)
 
         text = tw.write_code(node)
         tasklet.code = CodeBlock(text, lang.Python)
@@ -1191,7 +1192,7 @@ class AST_translator:
                 output_names_changed.append(o_t + "_out")
 
             tw = ast_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
-                                         self.name_mapping)
+                                         self.name_mapping,placeholders=self.placeholders)
             if not isinstance(rettype, ast_internal_classes.Void) and hasret:
                 special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
                 special_list_out.append(retval.name + "_out")
@@ -1268,17 +1269,17 @@ class AST_translator:
                         sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
                         sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
                         for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
-                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
+                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
                             edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
                             #print(edge)
-                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                     text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
                     sizes.append(sym.pystr_to_symbolic(text))
                     #TODO: shouldn't this use node.offset??
                     offset.append(offset_value)
                     self.count_of_struct_symbols_lifted+=1
                 else:
-                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                     text = tw.write_code(i)
                     sizes.append(sym.pystr_to_symbolic(text))
                     offset.append(offset_value)

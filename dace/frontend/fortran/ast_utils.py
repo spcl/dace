@@ -330,10 +330,11 @@ class TaskletWriter:
                  sdfg: SDFG = None,
                  name_mapping=None,
                  input: List[str] = None,
-                 input_changes: List[str] = None):
+                 input_changes: List[str] = None,placeholders=None):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
+        self.placeholders=placeholders
         self.mapping = name_mapping
         self.input = input
         self.input_changes = input_changes
@@ -395,11 +396,22 @@ class TaskletWriter:
         return str_to_return
 
     def name2string(self, node):
+
         if isinstance(node, str):
             return node
 
         return_value = node.name
         name = node.name
+        if self.placeholders.get(name) is not None:
+            location=self.placeholders.get(name)
+            #print(location)
+            sdfg_name = self.mapping.get(self.sdfg).get(location[0])
+            if sdfg_name is None:
+                return name
+            else:
+                #print(sdfg_name)
+                size=self.sdfg.arrays[sdfg_name].shape[location[1]]
+                return str(size)
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
@@ -522,9 +534,10 @@ class ProcessedWriter(TaskletWriter):
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
     :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
     """
-    def __init__(self, sdfg: SDFG, mapping):
+    def __init__(self, sdfg: SDFG, mapping,placeholders):
         self.sdfg = sdfg
         self.mapping = mapping
+        self.placeholders = placeholders
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
