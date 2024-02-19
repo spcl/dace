@@ -341,14 +341,60 @@ def test_fortran_frontend_array_arbitrary_attribute():
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2
 
+
+def test_fortran_frontend_array_arbitrary_attribute2():
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision :: d(arrsize, arrsize2)
+                    double precision :: d2(arrsize, arrsize2)
+                    CALL index_test_function(d, d2, arrsize, arrsize2)
+                    end
+
+                    SUBROUTINE index_test_function(d, d2, arrsize, arrsize2)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision, dimension(arrsize,arrsize2) :: d, d2
+
+                    d(1,2) = 1 !SIZE(d,1)
+                    CALL index_test_function_second(d,d2,arrsize,arrsize2)
+
+                    END SUBROUTINE index_test_function
+
+                    SUBROUTINE index_test_function_second(d, d2, arrsize, arrsize2)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    double precision, dimension(:,:) :: d, d2
+
+                    d(1,1) = SIZE(d,1)
+
+                    END SUBROUTINE index_test_function_second
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    #sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    arrsize=5
+    arrsize2=10
+    a = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
+    b = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
+    sdfg(d=a,d2=b,arrsize=arrsize,arrsize2=arrsize2)
+    #for i in range(arrsize):
+    #    # offset -1 is already added
+    #    assert a[i, 0] == (i + 1) * 2
+    print(a)
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_offset()
-    test_fortran_frontend_array_attribute_no_offset()
-    test_fortran_frontend_array_attribute_offset()
-    test_fortran_frontend_array_attribute_no_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol2()
-    test_fortran_frontend_array_offset_symbol()
-    test_fortran_frontend_array_arbitrary()
-    test_fortran_frontend_array_arbitrary_attribute()
+    #test_fortran_frontend_array_offset()
+    #test_fortran_frontend_array_attribute_no_offset()
+    #test_fortran_frontend_array_attribute_offset()
+    #test_fortran_frontend_array_attribute_no_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol2()
+    #test_fortran_frontend_array_offset_symbol()
+    #test_fortran_frontend_array_arbitrary()
+    #test_fortran_frontend_array_arbitrary_attribute()
+    test_fortran_frontend_array_arbitrary_attribute2()
