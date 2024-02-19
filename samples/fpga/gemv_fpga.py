@@ -154,9 +154,9 @@ def run_gemv(n: int, m: int, specialize: bool):
 
     print("Running GEMV {}x{} ({}specialized)".format(n, m, ("" if specialize else "not ")))
 
-    A = dace.ndarray([M, N], dtype=dtype)
-    x = dace.ndarray([M], dtype=dtype)
-    y = dace.ndarray([N], dtype=dtype)
+    A = dace.ndarray([m, n], dtype=dtype)
+    x = dace.ndarray([m], dtype=dtype)
+    y = dace.ndarray([n], dtype=dtype)
 
     # Intialize: randomize A, x and y
     # A[:, :] = np.random.rand(M, N).astype(dtype.type)

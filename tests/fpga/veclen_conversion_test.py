@@ -160,7 +160,7 @@ def test_veclen_conversion():
     A = np.arange(size, dtype=np.float64)
     B = np.zeros((size, ), dtype=np.float64)
 
-    sdfg(A=A, B=B, N=SIZE)
+    sdfg(A=A, B=B, N=size)
 
     mid = vector_length // 2
 

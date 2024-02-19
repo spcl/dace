@@ -670,7 +670,7 @@ end''',
     state.add_memlet_path(B, mentry, tasklet, memlet=dace.Memlet('B[k,0:N]'), dst_conn='b')
     state.add_memlet_path(tasklet, mexit, C, memlet=dace.Memlet('C[k,0:N]'), src_conn='c')
 
-    sdfg.specialize({'M': M, 'N': N, 'W': W})
+    sdfg.specialize({'M': m, 'N': n, 'W': w})
     sdfg.validate()
 
     # init data structures

@@ -262,8 +262,6 @@ def run_matmul_systolic(m, n, k, p, specialize):
     print("==== Program start ====")
 
     if not specialize:
-        P.set(p)
-        M.set(m)
         # M must always be specialized, as it's used for the static buffer size
         sdfg = make_sdfg(False, p, n, k, m)
         sdfg.specialize(dict(P=p, M=m))
