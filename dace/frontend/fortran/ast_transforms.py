@@ -37,7 +37,7 @@ class Structures:
     def get_definition(self, type_name: str):
         return self.structures[type_name]
 
-    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node):
+    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node, variable_name: Optional[ast_internal_classes.Name_Node] = None):
 
         # we assume starting from the top (left-most) data_ref_node
         # for struct1 % struct2 % struct3 % var
@@ -62,8 +62,16 @@ class Structures:
                 break
 
             if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
+
+                if variable_name is not None and cur_node.parent_ref.name.name == variable_name.name:
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name]
+
                 struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
             else:
+
+                if variable_name is not None and cur_node.parent_ref.name == variable_name.name:
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name]
+
                 struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
@@ -1128,7 +1136,7 @@ class IndexExtractor(NodeTransformer):
                                     variable = self.scope_vars.get_var(child.parent, var_name)
                                 elif parent_node is not None:
                                     struct, variable = self.structures.find_definition(
-                                        self.scope_vars, parent_node
+                                        self.scope_vars, parent_node, j.name
                                     )
                                     var_name = j.name.name
                                 else:
