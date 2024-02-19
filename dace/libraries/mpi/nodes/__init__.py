@@ -13,3 +13,12 @@ from .allgather import Allgather
 from .alltoall import Alltoall
 from .dummy import Dummy
 from .redistribute import Redistribute
+from .win_create import Win_create
+from .win_fence import Win_fence
+from .win_put import Win_put
+from .win_get import Win_get
+from .win_accumulate import Win_accumulate
+from .win_lock import Win_lock
+from .win_unlock import Win_unlock
+from .win_flush import Win_flush
+from .win_free import Win_free

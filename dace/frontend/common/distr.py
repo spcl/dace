@@ -15,6 +15,27 @@ ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, sym
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
+# a helper function for getting an access node by argument name
+# creates a scalar if it's a number
+def _get_int_arg_node(pv: ProgramVisitor,
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     argument: Union[str, sp.Expr, Number]
+                    ):
+    if isinstance(argument, str) and argument in sdfg.arrays.keys():
+        arg_name = argument
+        arg_node = state.add_read(arg_name)
+    else:
+        # create a transient scalar and take its name
+        arg_name = _define_local_scalar(pv, sdfg, state, dace.int32)
+        arg_node = state.add_access(arg_name)
+        # every tasklet is in different scope, no need to worry about name confilct
+        color_tasklet = state.add_tasklet(f'_set_{arg_name}_', {}, {'__out'}, f'__out = {argument}')
+        state.add_edge(color_tasklet, '__out', arg_node, None, Memlet.simple(arg_node, '0'))
+
+    return arg_name, arg_node
+
+
 ##### MPI Cartesian Communicators
 
 
@@ -892,6 +913,554 @@ def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
     state.add_edge(req_node, None, libnode, '_request', req_mem)
 
     return None
+
+
+def _get_last_rma_op(sdfg: SDFG,
+                     cur_op_name: str,
+                     window_name: str,
+                     is_trans: bool = False):
+    """ Get last RMA operation name of a window from the SDFG.
+        And do some logical checks if is_trans is True.
+
+        :param sdfg: The sdfg for searching.
+        :param cur_op_name: current operation in the window.
+        :param window_name: The RMA window name for searching.
+        :param is_trans: check RMA sync is exist before op if this param is true
+        :return: Name of the last RMA operation.
+    """
+
+    all_rma_ops_name = list(sdfg._rma_ops.keys())
+    cur_window_rma_ops = [rma_op for rma_op in all_rma_ops_name
+                           if f"{window_name}_" in rma_op]
+    if len(cur_window_rma_ops) == 1:
+        last_rma_op_name = window_name
+    else:
+        last_rma_op_name = cur_window_rma_ops[cur_window_rma_ops.index(cur_op_name) - 1]
+
+    if is_trans:
+        # if only odd number of fences or locks,
+        # that means we're in a ongoing epoch
+        # if even number,
+        # that means this operation might have corrupted sync
+        cur_window_fences = [rma_op for rma_op in cur_window_rma_ops
+                            if f"{window_name}_fence" in rma_op]
+        cur_window_passive_syncs = [rma_op for rma_op in cur_window_rma_ops
+                                    if "lock" in rma_op]
+        if len(cur_window_fences) % 2 == 0 and len(cur_window_passive_syncs) % 2 == 0:
+            # if we don't have even number of syncs, give user a warning
+            print("You might have a bad synchronization of RMA calls!")
+
+    return last_rma_op_name
+
+
+@oprepo.replaces('mpi4py.MPI.Win.Create')
+@oprepo.replaces('dace.Win.Create')
+def _rma_window_create(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              buffer: str,
+              comm: Union[str, ShapeType],
+              grid: str = None):
+    """ Adds a RMA window to the DaCe Program.
+
+        :param buffer: The name of window buffer.
+        :param comm: The comm world name of this window
+        :process_grid: Name of the process-grid for collective scatter/gather operations.
+        :return: Name of the window.
+    """
+
+    from dace.libraries.mpi.nodes.win_create import Win_create
+
+    # if 'comm' is not a 'str' means it's using mpi4py objects
+    # which can only be deafult the comm world
+    if not isinstance(comm, str):
+        comm = None
+
+    # fine a new window name
+    window_name = sdfg.add_window()
+
+    window_node = Win_create(window_name, comm)
+
+    buf_desc = sdfg.arrays[buffer]
+    buf_node = state.add_read(buffer)
+    state.add_edge(buf_node,
+                   None,
+                   window_node,
+                   '_win_buffer',
+                   Memlet.from_array(buffer, buf_desc))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(window_name, dace.int32, transient=True)
+    wnode = state.add_write(window_name)
+    state.add_edge(window_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(window_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Fence')
+def _rma_fence(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              window_name: str,
+              assertion: Union[str, sp.Expr, Number] = 0):
+    """ Adds a RMA fence to the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param assertion: A value or scalar for fence assertion.
+        :return: Name of the fence.
+    """
+
+    from dace.libraries.mpi.nodes.win_fence import Win_fence
+
+    # fine a new fence name
+    fence_name = sdfg.add_rma_ops(window_name, "fence")
+
+    _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
+
+    fence_node = Win_fence(fence_name, window_name)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, fence_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for window fence ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   fence_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(assertion_node,
+                   None,
+                   fence_node,
+                   '_assertion',
+                   Memlet.simple(assertion_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(fence_name, dace.int32, transient=True)
+    wnode = state.add_write(fence_name)
+    state.add_edge(fence_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(fence_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Flush')
+def _rma_flush(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               window_name: str,
+               rank: Union[str, sp.Expr, Number]):
+    """ Adds a RMA flush to the DaCe Program.
+        flush will completes all outdtanding RMA operations
+
+        :param window_name: The name of the window to be sychronized.
+        :param rank: A value or scalar to specify the target rank.
+        :return: Name of the flush.
+    """
+
+    from dace.libraries.mpi.nodes.win_flush import Win_flush
+
+    # fine a new flush name
+    flush_name = sdfg.add_rma_ops(window_name, "flush")
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+
+    flush_node = Win_flush(flush_name, window_name)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, flush_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   flush_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   flush_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(flush_name, dace.int32, transient=True)
+    wnode = state.add_write(flush_name)
+    state.add_edge(flush_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(flush_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Free')
+def _rma_free(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              window_name: str,
+              assertion: Union[str, sp.Expr, Number] = 0):
+    """ Adds a RMA free to the DaCe Program.
+
+        :param window_name: The name of the window to be freed.
+        :return: Name of the free.
+    """
+
+    from dace.libraries.mpi.nodes.win_free import Win_free
+
+    # fine a new free name
+    free_name = sdfg.add_rma_ops(window_name, "free")
+
+    _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
+
+    free_node = Win_free(free_name, window_name)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, free_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for window free ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   free_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(free_name, dace.int32, transient=True)
+    wnode = state.add_write(free_name)
+    state.add_edge(free_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(free_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Lock')
+def _rma_lock(pv: ProgramVisitor,
+              sdfg: SDFG,
+              state: SDFGState,
+              window_name: str,
+              rank: Union[str, sp.Expr, Number],
+              lock_type: Union[str, sp.Expr, Number] = 234, # in intel MPI MPI.LOCK_EXCLUSIVE = 234
+              assertion: Union[str, sp.Expr, Number] = 0):
+    """ Adds a RMA lock to the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param assertion: A value or scalar for lock assertion.
+        :return: Name of the lock.
+    """
+
+    from dace.libraries.mpi.nodes.win_lock import Win_lock
+
+    # fine a new lock name
+    lock_name = sdfg.add_rma_ops(window_name, "lock")
+    lock_node = Win_lock(lock_name, window_name)
+
+    # different MPI might get other value
+    if lock_type == 234:
+        from mpi4py import MPI
+        lock_type = MPI.LOCK_EXCLUSIVE
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+    _, lock_type_node = _get_int_arg_node(pv, sdfg, state, lock_type)
+    _, assertion_node = _get_int_arg_node(pv, sdfg, state, assertion)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, lock_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for window lock ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   lock_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   lock_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    state.add_edge(lock_type_node,
+                   None,
+                   lock_node,
+                   '_lock_type',
+                   Memlet.simple(lock_type_node, "0:1", num_accesses=1))
+
+    state.add_edge(assertion_node,
+                   None,
+                   lock_node,
+                   '_assertion',
+                   Memlet.simple(assertion_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(lock_name, dace.int32, transient=True)
+    wnode = state.add_write(lock_name)
+    state.add_edge(lock_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(lock_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Unlock')
+def _rma_unlock(pv: ProgramVisitor,
+               sdfg: SDFG,
+               state: SDFGState,
+               window_name: str,
+               rank: Union[str, sp.Expr, Number]):
+    """ Adds a RMA unlock to the DaCe Program.
+        Completes an RMA access epoch at the target process
+
+        :param window_name: The name of the window to be sychronized.
+        :param rank: A value or scalar to specify the target rank.
+        :return: Name of the Unlock.
+    """
+
+    from dace.libraries.mpi.nodes.win_unlock import Win_unlock
+
+    # fine a new unlock name
+    unlock_name = sdfg.add_rma_ops(window_name, "unlock")
+
+    _, rank_node = _get_int_arg_node(pv, sdfg, state, rank)
+
+    unlock_node = Win_unlock(unlock_name, window_name)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, unlock_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+
+    # for ordering
+    state.add_edge(last_rma_op_node,
+                   None,
+                   unlock_node,
+                   None,
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    state.add_edge(rank_node,
+                   None,
+                   unlock_node,
+                   '_rank',
+                   Memlet.simple(rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(unlock_name, dace.int32, transient=True)
+    wnode = state.add_write(unlock_name)
+    state.add_edge(unlock_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(unlock_name, scal))
+
+    return window_name
+
+
+@oprepo.replaces_method('RMA_window', 'Put')
+def _rma_put(pv: ProgramVisitor,
+             sdfg: SDFG,
+             state: SDFGState,
+             window_name: str,
+             origin: str,
+             target_rank: Union[str, sp.Expr, Number]):
+    """ Initiate a RMA put for the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param origin: The name of origin buffer.
+        :target_rank: A value or scalar of the target rank.
+        :return: Name of the new RMA put descriptor.
+    """
+
+    from dace.libraries.mpi.nodes.win_put import Win_put
+
+    put_name = sdfg.add_rma_ops(window_name, "put")
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, put_name, window_name, is_trans=True)
+
+    put_node = Win_put(put_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+    state.add_edge(last_rma_op_node,
+                   None,
+                   put_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    origin_node = state.add_read(origin)
+    origin_desc = sdfg.arrays[origin]
+    state.add_edge(origin_node,
+                   None,
+                   put_node,
+                   '_inbuffer',
+                   Memlet.from_array(origin, origin_desc))
+
+    _, target_rank_node = _get_int_arg_node(pv, sdfg, state, target_rank)
+    state.add_edge(target_rank_node,
+                   None,
+                   put_node,
+                   '_target_rank',
+                   Memlet.simple(target_rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(put_name, dace.int32, transient=True)
+    wnode = state.add_write(put_name)
+    state.add_edge(put_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(put_name, scal))
+
+    return put_name
+
+
+@oprepo.replaces_method('RMA_window', 'Get')
+def _rma_get(pv: ProgramVisitor,
+             sdfg: SDFG,
+             state: SDFGState,
+             window_name: str,
+             origin: str,
+             target_rank: Union[str, sp.Expr, Number]):
+    """ Initiate a RMA get for the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param origin: The name of origin buffer.
+        :target_rank: A value or scalar of the target rank.
+        :return: Name of the new RMA get descriptor.
+    """
+
+    from dace.libraries.mpi.nodes.win_get import Win_get
+
+    get_name = sdfg.add_rma_ops(window_name, "get")
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, get_name, window_name, is_trans=True)
+
+    get_node = Win_get(get_name, window_name)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+    state.add_edge(last_rma_op_node,
+                   None,
+                   get_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    _, target_rank_node = _get_int_arg_node(pv, sdfg, state, target_rank)
+    state.add_edge(target_rank_node,
+                   None,
+                   get_node,
+                   '_target_rank',
+                   Memlet.simple(target_rank_node, "0:1", num_accesses=1))
+
+    origin_node = state.add_write(origin)
+    origin_desc = sdfg.arrays[origin]
+    state.add_edge(get_node,
+                   '_outbuffer',
+                   origin_node,
+                   None,
+                   Memlet.from_array(origin, origin_desc))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(get_name, dace.int32, transient=True)
+    wnode = state.add_write(get_name)
+    state.add_edge(get_node,
+                   '_out',
+                   wnode,
+                   None,
+                   Memlet.from_array(get_name, scal))
+    
+    return get_name
+
+
+@oprepo.replaces_method('RMA_window', 'Accumulate')
+def _rma_accumulate(pv: ProgramVisitor,
+             sdfg: SDFG,
+             state: SDFGState,
+             window_name: str,
+             origin: str,
+             target_rank: Union[str, sp.Expr, Number],
+             op: str = "MPI_SUM"):
+    """ Initiate a RMA accumulate for the DaCe Program.
+
+        :param window_name: The name of the window to be sychronized.
+        :param origin: The name of origin buffer.
+        :target_rank: A value or scalar of the target rank.
+        :op: The name of MPI reduction
+        :return: Name of the new RMA accumulate descriptor.
+    """
+    from mpi4py import MPI
+    from dace.libraries.mpi.nodes.win_accumulate import Win_accumulate
+
+    accumulate_name = sdfg.add_rma_ops(window_name, "accumulate")
+
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+
+    # check for the last RMA operation
+    last_rma_op_name = _get_last_rma_op(sdfg, accumulate_name, window_name, is_trans=True)
+
+    accumulate_node = Win_accumulate(accumulate_name, window_name, op)
+
+    last_rma_op_node = state.add_read(last_rma_op_name)
+    last_rma_op_desc = sdfg.arrays[last_rma_op_name]
+    state.add_edge(last_rma_op_node,
+                   None,
+                   accumulate_node,
+                   "_in",
+                   Memlet.from_array(last_rma_op_name, last_rma_op_desc))
+
+    origin_node = state.add_read(origin)
+    origin_desc = sdfg.arrays[origin]
+    state.add_edge(origin_node,
+                   None,
+                   accumulate_node,
+                   '_inbuffer',
+                   Memlet.from_array(origin, origin_desc))
+
+    _, target_rank_node = _get_int_arg_node(pv, sdfg, state, target_rank)
+    state.add_edge(target_rank_node,
+                   None,
+                   accumulate_node,
+                   '_target_rank',
+                   Memlet.simple(target_rank_node, "0:1", num_accesses=1))
+
+    # Pseudo-writing for newast.py #3195 check and complete Processcomm creation
+    _, scal = sdfg.add_scalar(accumulate_name, dace.int32, transient=True)
+    wnode = state.add_write(accumulate_name)
+    state.add_edge(accumulate_node,
+                   "_out",
+                   wnode,
+                   None,
+                   Memlet.from_array(accumulate_name, scal))
+
+    return accumulate_name
 
 
 @oprepo.replaces('dace.comm.Subarray')

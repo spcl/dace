@@ -598,3 +598,27 @@ class RedistrArray(object):
             delete[] __state->{self.name}_self_dst;
             delete[] __state->{self.name}_self_size;
         """
+
+@make_properties
+class RMA_window(object):
+    """
+    RMA_window is the descriptor class for MPI Remote Memory Access window
+    Real window creation is implemented in mpi.nodes.win_create.Win_create
+    """
+
+    name = Property(dtype=str, desc="The name of new window.")
+    def __init__(self,
+                 name: str):
+        self.name = name
+        self._validate()
+
+    def validate(self):
+        """ Validate the correctness of this object.
+            Raises an exception on error. """
+        self._validate()
+
+    # Validation of this class is in a separate function, so that this
+    # class can call `_validate()` without calling the subclasses'
+    # `validate` function.
+    def _validate(self):
+        return True
