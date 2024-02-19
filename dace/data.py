@@ -37,6 +37,38 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return obj.__descriptor__()
     elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
+    elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
+        # special case for torch tensors. Maybe __array__ could be used here for a more
+        # general solution, but torch doesn't support __array__ for cuda tensors.
+        try:
+            # If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
+            # conversion happens here in pytorch:
+            # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
+            import torch
+            TYPECLASS_TO_TORCH_DTYPE = {
+                dtypes.bool_: torch.bool,
+                dtypes.int8: torch.int8,
+                dtypes.int16: torch.int16,
+                dtypes.int32: torch.int32,
+                dtypes.int64: torch.int64,
+                dtypes.uint8: torch.uint8,
+                dtypes.float16: torch.float16,
+                dtypes.float32: torch.float32,
+                dtypes.float64: torch.float64,
+                dtypes.complex64: torch.complex64,
+                dtypes.complex128: torch.complex128,
+            }
+
+            TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
+
+            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
+
+            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
+                         strides=obj.stride(),
+                         shape=tuple(obj.shape),
+                         storage=storage)
+        except ImportError:
+            raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
         if dtypes.is_gpu_array(obj):
             interface = obj.__cuda_array_interface__
@@ -79,38 +111,6 @@ def create_datadescriptor(obj, no_custom_desc=False):
         dtype = dtypes.typeclass(obj.dtype.type)
         itemsize = obj.itemsize
         return Array(dtype=dtype, shape=obj.shape, strides=tuple(s // itemsize for s in obj.strides), storage=storage)
-    elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
-        # special case for torch tensors. Maybe __array__ could be used here for a more
-        # general solution, but torch doesn't support __array__ for cuda tensors.
-        try:
-            # If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
-            # conversion happens here in pytorch:
-            # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
-            import torch
-            TYPECLASS_TO_TORCH_DTYPE = {
-                dtypes.bool_: torch.bool,
-                dtypes.int8: torch.int8,
-                dtypes.int16: torch.int16,
-                dtypes.int32: torch.int32,
-                dtypes.int64: torch.int64,
-                dtypes.uint8: torch.uint8,
-                dtypes.float16: torch.float16,
-                dtypes.float32: torch.float32,
-                dtypes.float64: torch.float64,
-                dtypes.complex64: torch.complex64,
-                dtypes.complex128: torch.complex128,
-            }
-
-            TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
-
-            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
-
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
-                         strides=obj.stride(),
-                         shape=tuple(obj.shape),
-                         storage=storage)
-        except ImportError:
-            raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
