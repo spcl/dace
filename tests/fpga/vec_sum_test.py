@@ -28,12 +28,12 @@ def vec_sum(x: dace.float32[N], y: dace.float32[N], z: dace.float32[N]):
 
 def run_vec_sum(vectorize_first: bool):
 
-    N.set(24)
+    N = 24
 
     # Initialize arrays: X, Y and Z
-    X = np.random.rand(N.get()).astype(dace.float32.type)
-    Y = np.random.rand(N.get()).astype(dace.float32.type)
-    Z = np.random.rand(N.get()).astype(dace.float32.type)
+    X = np.random.rand(N).astype(dace.float32.type)
+    Y = np.random.rand(N).astype(dace.float32.type)
+    Z = np.random.rand(N).astype(dace.float32.type)
 
     Z_exp = X + Y + Z
 
@@ -56,7 +56,7 @@ def run_vec_sum(vectorize_first: bool):
 
     sdfg(x=X, y=Y, z=Z, N=N)
 
-    diff = np.linalg.norm(Z_exp - Z) / N.get()
+    diff = np.linalg.norm(Z_exp - Z) / N
     if diff > 1e-5:
         raise ValueError("Difference: {}".format(diff))
 

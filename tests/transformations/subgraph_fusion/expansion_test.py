@@ -12,9 +12,6 @@ from dace.transformation.subgraph import SubgraphFusion
 from util import expand_maps, expand_reduce, fusion
 
 N, M, O = [dace.symbol(s) for s in ['N', 'M', 'O']]
-N.set(50)
-M.set(60)
-O.set(70)
 
 
 @dace.program
@@ -72,10 +69,10 @@ def test_expansion2():
     sdfg = expansion2.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
-        'A': np.random.rand(M.get(), N.get()).astype(np.float64),
-        'B': np.random.rand(M.get(), O.get()).astype(np.float64),
-        'out1': np.ndarray((M.get(), N.get()), dtype=np.float64),
-        'out2': np.ndarray((M.get(), O.get()), dtype=np.float64),
+        'A': np.random.rand(60, 50).astype(np.float64),
+        'B': np.random.rand(60, 70).astype(np.float64),
+        'out1': np.ndarray((60, 50), dtype=np.float64),
+        'out2': np.ndarray((60, 70), dtype=np.float64),
         'N': N,
         'M': M,
         'O': O
@@ -101,10 +98,10 @@ def test_expansion1():
     sdfg = expansion1.to_sdfg()
     graph = sdfg.nodes()[0]
     kwargs = {
-        'A': np.random.rand(M.get(), N.get(), O.get()).astype(np.float64),
-        'B': np.random.rand(M.get(), N.get(), O.get()).astype(np.float64),
-        'C': np.random.rand(M.get(), N.get(), O.get()).astype(np.float64),
-        'out1': np.ndarray((M.get(), N.get(), O.get()), dtype=np.float64),
+        'A': np.random.rand(60, 50, 70).astype(np.float64),
+        'B': np.random.rand(60, 50, 70).astype(np.float64),
+        'C': np.random.rand(60, 50, 70).astype(np.float64),
+        'out1': np.ndarray((60, 50, 70), dtype=np.float64),
         'N': N,
         'M': M,
         'O': O

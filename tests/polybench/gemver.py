@@ -17,9 +17,7 @@ args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), (
 outputs = [(5, 'w')]
 
 
-def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta):
-    n = N.get()
-
+def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta, n):
     alpha[0] = datatype(1.5)
     beta[0] = datatype(1.2)
 

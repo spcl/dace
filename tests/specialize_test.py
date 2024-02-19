@@ -12,14 +12,14 @@ def test():
 
     N = dp.symbol('N')
     M = dp.symbol('M')
-    N.set(20)
-    M.set(30)
+    n = 20
+    m = 30
     fullrange = '1:N-1,0:M'
     irange = '1:N-1'
     jrange = '0:M'
 
-    input = np.random.rand(N.get(), M.get()).astype(np.float32)
-    output = dp.ndarray([N, M], dtype=dp.float32)
+    input = np.random.rand(n, m).astype(np.float32)
+    output = dp.ndarray([n, m], dtype=dp.float32)
     output[:] = dp.float32(0)
 
     ##########################################################################
@@ -52,7 +52,7 @@ def test():
     func = spec_sdfg.compile()
     func(A=input, B=output, N=N, M=M)
 
-    diff = np.linalg.norm(np.exp(input[1:(N.get() - 1), 0:M.get()]) - output[1:-1, :]) / N.get()
+    diff = np.linalg.norm(np.exp(input[1:(n - 1), 0:m]) - output[1:-1, :]) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 
