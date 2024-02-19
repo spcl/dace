@@ -390,13 +390,13 @@ def test_fortran_frontend_array_arbitrary_attribute2():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_array_offset()
-    #test_fortran_frontend_array_attribute_no_offset()
-    #test_fortran_frontend_array_attribute_offset()
-    #test_fortran_frontend_array_attribute_no_offset_symbol()
-    #test_fortran_frontend_array_attribute_offset_symbol()
-    #test_fortran_frontend_array_attribute_offset_symbol2()
-    #test_fortran_frontend_array_offset_symbol()
-    #test_fortran_frontend_array_arbitrary()
-    #test_fortran_frontend_array_arbitrary_attribute()
+    test_fortran_frontend_array_offset()
+    test_fortran_frontend_array_attribute_no_offset()
+    test_fortran_frontend_array_attribute_offset()
+    test_fortran_frontend_array_attribute_no_offset_symbol()
+    test_fortran_frontend_array_attribute_offset_symbol()
+    test_fortran_frontend_array_attribute_offset_symbol2()
+    test_fortran_frontend_array_offset_symbol()
+    test_fortran_frontend_array_arbitrary()
+    test_fortran_frontend_array_arbitrary_attribute()
     test_fortran_frontend_array_arbitrary_attribute2()

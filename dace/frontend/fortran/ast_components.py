@@ -979,9 +979,9 @@ class InternalFortranAst:
                         if size is None:
                             offset = None
                         else:
-                            offset = []
-                            for s in size:
-                                offset.append([1] * len(s))
+                            # only one array
+                            size = size[0]
+                            offset = [1] * len(size)
                         vardecls.extend(assumed_vardecls)
 
                     vardecls.append(
