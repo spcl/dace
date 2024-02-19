@@ -265,6 +265,8 @@ endif()
 
 # Create HIP object files
 if(DACE_ENABLE_HIP)
+  enable_language(HIP)
+
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
     # Compile and run a test program
@@ -304,8 +306,8 @@ if(DACE_ENABLE_HIP)
   set(DACE_LIBS ${DACE_LIBS} hip::host)
 
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
-  hip_prepare_target_commands(${DACE_PROGRAM_NAME} OBJ DACE_HIP_OBJECTS DACE_HIP_SOURCES ${DACE_HIP_FILES})
-  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_OBJECTS})
+  set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
+  set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
 
 # create verilator RTL simulation objects
