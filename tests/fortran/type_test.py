@@ -433,6 +433,51 @@ def test_fortran_frontend_type_pointer():
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+
+def test_fortran_frontend_type_arg():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+        PROGRAM type_arg_test
+            implicit none
+
+          
+            TYPE simple_type
+                REAL :: w(5,5)
+            END TYPE simple_type
+
+             TYPE simple_type2
+                type(simple_type) :: pprog(10)
+            END TYPE simple_type2
+
+            REAL :: d(5,5)
+            CALL type_arg_test_function(d)
+            print *, d(1,1)
+        end
+
+        SUBROUTINE type_arg_test_function(d)
+            REAL :: d(5,5)
+            TYPE(simple_type2) :: p_prog
+
+            CALL type_arg_test_f2(p_prog%pprog(1))
+            d(1,1) = p_prog%pprog(1)%w(1,1)
+        END SUBROUTINE type_arg_test_function
+
+        SUBROUTINE type_arg_test_f2(stuff)
+            TYPE(simple_type) :: stuff
+
+            stuff%w(1,1) = 42
+        END SUBROUTINE type_arg_test_f2
+    """
+    sources={}
+    sources["type_arg_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg_test",sources=sources, normalize_offsets=True)
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    print(a)
+
 if __name__ == "__main__":
     #test_fortran_frontend_basic_type()
     #test_fortran_frontend_basic_type2()
@@ -441,5 +486,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_struct()
     #test_fortran_frontend_circular_type()
     #test_fortran_frontend_type_in_call()
-    test_fortran_frontend_type_pointer()
-    test_fortran_frontend_type_array()
+    #test_fortran_frontend_type_pointer()
+    #test_fortran_frontend_type_array()
+    test_fortran_frontend_type_arg()
