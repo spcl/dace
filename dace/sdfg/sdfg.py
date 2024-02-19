@@ -115,19 +115,6 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def _assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited
-        string of expressions. """
-
-    result = {}
-    for aitem in astr.split(';'):
-        aitem = aitem.strip()
-        m = re.search(r'([^=\s]+)\s*=\s*([^=]+)', aitem)
-        result[m.group(1)] = m.group(2)
-
-    return result
-
-
 def _assignments_to_string(assdict):
     """ Returns a semicolon-delimited string from a dictionary of assignment
         expressions. """
@@ -193,7 +180,6 @@ class InterstateEdge(object):
 
     assignments = Property(dtype=dict,
                            desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
                            to_string=_assignments_to_string)
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 

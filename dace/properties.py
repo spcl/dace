@@ -74,7 +74,6 @@ class Property(Generic[T]):
             setter=None,
             dtype: Type[T] = None,
             default=None,
-            from_string=None,
             to_string=None,
             from_json=None,
             to_json=None,
@@ -114,13 +113,6 @@ class Property(Generic[T]):
                 if not isinstance(choice, dtype):
                     raise TypeError("All choices must be an instance of dtype")
 
-        if from_string is not None:
-            self._from_string = from_string
-        elif choices is not None:
-            self._from_string = lambda s: choices[s]
-        else:
-            self._from_string = self.dtype
-
         if to_string is not None:
             self._to_string = to_string
         elif choices is not None:
@@ -129,20 +121,7 @@ class Property(Generic[T]):
             self._to_string = str
 
         if from_json is None:
-            if self._from_string is not None:
-
-                def fs(obj, *args, **kwargs):
-                    if isinstance(obj, str):
-                        # The serializer does not know about this property, so if
-                        # we can convert using our to_string method, do that here
-                        return self._from_string(obj)
-                    # Otherwise ship off to the serializer, telling it which type
-                    # it's dealing with as a sanity check
-                    return dace.serialize.from_json(obj, *args, known_type=dtype, **kwargs)
-
-                self._from_json = fs
-            else:
-                self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
+            self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
         else:
             self._from_json = from_json
             if self.from_json != from_json:
@@ -295,10 +274,6 @@ class Property(Generic[T]):
     @property
     def desc(self):
         return self._desc
-
-    @property
-    def from_string(self):
-        return self._from_string
 
     @property
     def to_string(self):
@@ -867,7 +842,6 @@ class SetProperty(Property):
                                           setter=setter,
                                           dtype=set,
                                           default=default,
-                                          from_string=from_string,
                                           to_string=to_string,
                                           from_json=from_json,
                                           to_json=to_json,
