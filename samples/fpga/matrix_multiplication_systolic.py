@@ -290,7 +290,7 @@ def run_matmul_systolic(m, n, k, p, specialize):
     if specialize:
         sdfg(A=A, B=B, C=C)
     else:
-        sdfg(A=A, B=B, C=C, N=N, K=K)
+        sdfg(A=A, B=B, C=C, N=n, K=k)
 
     diff = np.linalg.norm((A @ B) - C) / float(m * k)
     if diff > 1e-6:
