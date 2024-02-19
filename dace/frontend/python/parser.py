@@ -86,14 +86,15 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', []))
+            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
                 # NumPy arrays use bytes in strides
                 factor = getattr(arg_val, 'itemsize', 1)
                 given_strides = [s // factor for s in arg_val.strides]
-            given_values += given_strides
+            given_offset = [o for o in arg_val.offset] if hasattr(arg_val, 'offset') else []
+            given_values += given_strides + given_offset
 
             for sym_dim, real_dim in zip(symbolic_values, given_values):
                 repldict = {}
