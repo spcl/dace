@@ -44,13 +44,13 @@ def test():
 
     assert 'Dynamic' in code_nonspec[0].code
 
-    spec_sdfg.specialize(dict(N=N, M=M))
+    spec_sdfg.specialize(dict(N=n, M=m))
     code_spec = spec_sdfg.generate_code()
 
     assert 'Dynamic' not in code_spec[0].code
 
     func = spec_sdfg.compile()
-    func(A=input, B=output, N=N, M=M)
+    func(A=input, B=output, N=n, M=m)
 
     diff = np.linalg.norm(np.exp(input[1:(n - 1), 0:m]) - output[1:-1, :]) / n
     print("Difference:", diff)

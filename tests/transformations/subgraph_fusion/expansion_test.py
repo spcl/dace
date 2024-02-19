@@ -73,9 +73,9 @@ def test_expansion2():
         'B': np.random.rand(60, 70).astype(np.float64),
         'out1': np.ndarray((60, 50), dtype=np.float64),
         'out2': np.ndarray((60, 70), dtype=np.float64),
-        'N': N,
-        'M': M,
-        'O': O
+        'N': 50,
+        'M': 60,
+        'O': 70
     }
 
     run(sdfg, graph, kwargs)
@@ -102,9 +102,9 @@ def test_expansion1():
         'B': np.random.rand(60, 50, 70).astype(np.float64),
         'C': np.random.rand(60, 50, 70).astype(np.float64),
         'out1': np.ndarray((60, 50, 70), dtype=np.float64),
-        'N': N,
-        'M': M,
-        'O': O
+        'N': 50,
+        'M': 60,
+        'O': 70
     }
     run(sdfg, graph, kwargs)
     out1 = kwargs['out1'].copy()

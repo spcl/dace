@@ -56,7 +56,7 @@ def test_p3(in_transient, out_transient):
     expand_maps(sdfg, state)
     fusion(sdfg, state)
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C3, N=N, M=M)
+    csdfg(A=A, B=B, C=C3, N=20, M=30)
     del csdfg
 
     assert np.linalg.norm(C1) > 0.01
@@ -65,6 +65,6 @@ def test_p3(in_transient, out_transient):
 
 
 if __name__ == "__main__":
-    test_p3()
-    test_p3(in_transient=True)
-    test_p3(out_transient=True)
+    test_p3(False, False)
+    test_p3(True, False)
+    test_p3(False, True)
