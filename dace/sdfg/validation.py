@@ -589,7 +589,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 f'Duplicate memlet detected: "{e}". Please copy objects '
                 'rather than using multiple references to the same one', sdfg, state_id, eid)
         references.add(id(e))
-        if id(e.data) in references:
+        if(e.data.is_empty()):
+            pass
+        elif id(e.data) in references:
             raise InvalidSDFGEdgeError(
                 f'Duplicate memlet detected: "{e.data}". Please copy objects '
                 'rather than using multiple references to the same one', sdfg, state_id, eid)
