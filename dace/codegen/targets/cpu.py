@@ -349,7 +349,8 @@ class CPUCodeGen(TargetCodeGenerator):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
-            declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
+            if not declared:
+                declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
             if allocate_nested_data:
                 for k, v in nodedesc.members.items():

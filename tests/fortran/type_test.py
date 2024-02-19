@@ -350,6 +350,51 @@ def test_fortran_frontend_type_in_call():
     assert (a[1, 0] == 11)
     assert (a[2, 0] == 42)
 
+def test_fortran_frontend_type_array():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+        PROGRAM type_in_call_test
+            implicit none
+
+            TYPE simple_type3
+                INTEGER :: a
+            END TYPE simple_type3
+
+            TYPE simple_type2
+                type(simple_type3) :: w(7:12,8:13)
+            END TYPE simple_type2
+
+            TYPE simple_type
+                type(simple_type2) :: name
+            END TYPE simple_type
+
+            REAL :: d(5,5)
+            CALL type_in_call_test_function(d)
+        end
+
+        SUBROUTINE type_in_call_test_function(d)
+            REAL :: d(5,5)
+            TYPE(simple_type) :: s
+
+            CALL type_in_call_test_function2(s)
+            d(1,1) = s%name%w(8,10)%a
+        END SUBROUTINE type_in_call_test_function
+
+        SUBROUTINE type_in_call_test_function2(s)
+            TYPE(simple_type) :: s
+
+            s%name%w(8,10)%a = 42
+        END SUBROUTINE type_in_call_test_function2
+    """
+    sources={}
+    sources["type_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_in_call_test",sources=sources, normalize_offsets=True)
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    print(a)
 
 def test_fortran_frontend_type_pointer():
     """
@@ -397,3 +442,4 @@ if __name__ == "__main__":
     #test_fortran_frontend_circular_type()
     #test_fortran_frontend_type_in_call()
     test_fortran_frontend_type_pointer()
+    test_fortran_frontend_type_array()
