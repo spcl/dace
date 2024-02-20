@@ -74,7 +74,6 @@ class Property(Generic[T]):
             setter=None,
             dtype: Type[T] = None,
             default=None,
-            to_string=None,
             from_json=None,
             to_json=None,
             meta_to_json=None,
@@ -112,13 +111,6 @@ class Property(Generic[T]):
                     dtype = type(choice)
                 if not isinstance(choice, dtype):
                     raise TypeError("All choices must be an instance of dtype")
-
-        if to_string is not None:
-            self._to_string = to_string
-        elif choices is not None:
-            self._to_string = lambda val: val.__name__
-        else:
-            self._to_string = str
 
         if from_json is None:
             self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
@@ -274,10 +266,6 @@ class Property(Generic[T]):
     @property
     def desc(self):
         return self._desc
-
-    @property
-    def to_string(self):
-        return self._to_string
 
     @property
     def from_json(self):
@@ -842,7 +830,6 @@ class SetProperty(Property):
                                           setter=setter,
                                           dtype=set,
                                           default=default,
-                                          to_string=to_string,
                                           from_json=from_json,
                                           to_json=to_json,
                                           choices=None,

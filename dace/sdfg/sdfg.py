@@ -115,12 +115,6 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def _assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment
-        expressions. """
-    return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
-
-
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
@@ -179,8 +173,7 @@ class InterstateEdge(object):
     """
 
     assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           to_string=_assignments_to_string)
+                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
