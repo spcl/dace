@@ -11,7 +11,7 @@ def test():
     print('Copy ND tests')
 
     N = dace.symbol('N')
-    N.set(20)
+    n = 20
 
     sdfg = dace.SDFG('copynd')
     state = sdfg.add_state()
@@ -80,15 +80,15 @@ def test():
                    dace.memlet.Memlet.simple(arrays[-2], '10:30, 20', other_subset_str='10, 10:30'))
 
     array_data = [
-        np.random.rand(*[dace.symbolic.evaluate(s, {N: N.get()})
+        np.random.rand(*[dace.symbolic.evaluate(s, {N: n})
                          for s in a.desc(sdfg).shape]).astype(a.desc(sdfg).dtype.type) for a in arrays
     ]
 
     args = {anode.label: adata for anode, adata in zip(arrays, array_data)}
-    args['N'] = N.get()
+    args['N'] = n
     sdfg(**args)
 
-    N = N.get()
+    N = n
 
     diffs = [
         np.linalg.norm(array_data[1] - array_data[0][5:10, N - 7:N]) / 5.0 * 7.0,
@@ -116,7 +116,7 @@ def test_gpu():
     print('Copy ND tests')
 
     N = dace.symbol('N')
-    N.set(20)
+    n = 20
 
     sdfg = dace.SDFG('copynd_gpu')
     state = sdfg.add_state()
@@ -194,16 +194,16 @@ def test_gpu():
                    dace.memlet.Memlet.simple(arrays[-2], '0:5, 0:6, 0:7 , 0:8', other_subset_str='0:5, 1:7, 1:8, 0:8'))
 
     array_data = [
-        np.random.rand(*[dace.symbolic.evaluate(s, {N: N.get()})
+        np.random.rand(*[dace.symbolic.evaluate(s, {N: n})
                          for s in a.desc(sdfg).shape]).astype(a.desc(sdfg).dtype.type) for a in arrays
     ]
 
     args = {anode.label: adata for anode, adata in zip(arrays, array_data)}
-    args['N'] = N.get()
+    args['N'] = n
     sdfg.apply_gpu_transformations()
     sdfg(**args)
 
-    N = N.get()
+    N = n
 
     diffs = [
         np.linalg.norm(array_data[1] - array_data[0][5:10, N - 7:N]) / 5.0 * 7.0,
