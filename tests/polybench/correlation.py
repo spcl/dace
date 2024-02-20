@@ -15,9 +15,7 @@ sizes = [{M: 28, N: 32}, {M: 80, N: 100}, {M: 240, N: 260}, {M: 1200, N: 1400}, 
 args = [([N, M], datatype), ([M, M], datatype), ([M], datatype), ([M], datatype)]
 
 
-def init_array(data, corr, mean, stddev):
-    n = N.get()
-    m = M.get()
+def init_array(data, corr, mean, stddev, n, m):
     for i in range(n):
         for j in range(m):
             data[i, j] = datatype(i * j) / m + i

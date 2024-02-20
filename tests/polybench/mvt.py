@@ -24,9 +24,7 @@ sizes = [{
 args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N, N], datatype)]
 
 
-def init_array(x1, x2, y_1, y_2, A):
-    n = N.get()
-
+def init_array(x1, x2, y_1, y_2, A, n):
     for i in range(n):
         x1[i] = datatype(i % n) / n
         x2[i] = datatype((i + 1) % n) / n

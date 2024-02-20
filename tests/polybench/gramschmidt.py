@@ -16,10 +16,7 @@ sizes = [{M: 20, N: 30}, {M: 60, N: 180}, {M: 200, N: 240}, {M: 1000, N: 1200}, 
 args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 
 
-def init_array(A, R, Q):
-    m = M.get()
-    n = N.get()
-
+def init_array(A, R, Q, m, n):
     for i in range(0, m, 1):
         for j in range(0, n, 1):
             A[i, j] = ((datatype((i * j) % m) / m) * 100) + 10
