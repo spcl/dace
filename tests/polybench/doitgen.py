@@ -36,11 +36,7 @@ sizes = [{
 args = [([NR, NQ, NP], datatype), ([NP, NP], datatype)]
 
 
-def init_array(A, C4):
-    nr = NR.get()
-    nq = NQ.get()
-    np = NP.get()
-
+def init_array(A, C4, nr, nq, np):
     for i in range(nr):
         for j in range(nq):
             for k in range(np):
