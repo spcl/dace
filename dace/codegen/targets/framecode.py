@@ -14,12 +14,13 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.frontend.python import wrappers
-from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
+from dace.sdfg.analysis.cfg import stateorder_topological_sort
 from dace.transformation.passes.analysis import StateReachability
 
 
@@ -34,19 +35,31 @@ class DaCeCodeGenerator(object):
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
 
+    targets: Set[TargetCodeGenerator]
+    statestruct: List[str]
+    environments: List[Any]
+    to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode], List[Tuple[int, int, nodes.AccessNode]]]
+    where_allocated: Dict[Tuple[SDFG, str], SDFG]
+    fsyms: Dict[int, Set[str]]
+    arglist: Dict[str, data.Data]
+
+    _symbols_and_constants: Dict[int, Set[str]]
+    _initcode: CodeIOStream
+    _exitcode: CodeIOStream
+    _dispatcher: disp.TargetDispatcher
+
     def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
-        self.statestruct: List[str] = []
-        self.environments: List[Any] = []
-        self.targets: Set[TargetCodeGenerator] = set()
-        self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
-                                      List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
-        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
-        self.fsyms: Dict[int, Set[str]] = {}
-        self._symbols_and_constants: Dict[int, Set[str]] = {}
+        self.statestruct = []
+        self.environments = []
+        self.targets = set()
+        self.to_allocate = collections.defaultdict(list)
+        self.where_allocated = {}
+        self.fsyms = {}
+        self._symbols_and_constants = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -402,9 +415,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # Footer
             callsite_stream.write('}', sdfg)
 
-    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
+    def generate_state(self, sdfg: SDFG, state: SDFGState, global_stream: CodeIOStream, callsite_stream: CodeIOStream,
+                       generate_state_footer: bool = True):
 
-        sid = sdfg.node_id(state)
+        sid = state.block_id
 
         # Emit internal transient array allocation
         self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
@@ -451,10 +465,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
-    def generate_states(self, sdfg, global_stream, callsite_stream):
+    def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.cfg_id})')
+        opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -561,7 +575,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 # Look in the surrounding edges for usage
                 edge_fsyms: Set[str] = set()
-                for e in sdfg.all_edges(state):
+                for e in state.parent_graph.all_edges(state):
                     edge_fsyms |= e.data.free_symbols
                 for edge_array in edge_fsyms & array_names:
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
@@ -671,11 +685,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 multistate = False
 
                 # Does the array appear in inter-state edges?
-                for isedge in sdfg.edges():
+                for isedge in sdfg.all_interstate_edges():
                     if name in self.free_symbols(isedge.data):
                         multistate = True
 
-                for state in sdfg.nodes():
+                for state in sdfg.states():
                     if multistate:
                         break
                     sdict = state.scope_dict()
@@ -802,7 +816,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         """ Dispatches allocation of all arrays in the given scope. """
         for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
             if state is not None:
-                state_id = tsdfg.node_id(state)
+                state_id = state.block_id
             else:
                 state_id = -1
 
