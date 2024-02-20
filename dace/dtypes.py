@@ -207,7 +207,7 @@ SCOPEDEFAULT_SCHEDULE = {
     None: ScheduleType.CPU_Multicore,
     ScheduleType.Sequential: ScheduleType.Sequential,
     ScheduleType.MPI: ScheduleType.CPU_Multicore,
-    ScheduleType.CPU_Multicore: ScheduleType.CPU_Multicore,
+    ScheduleType.CPU_Multicore: ScheduleType.Sequential,
     ScheduleType.CPU_Persistent: ScheduleType.CPU_Multicore,
     ScheduleType.Unrolled: ScheduleType.CPU_Multicore,
     ScheduleType.GPU_Default: ScheduleType.GPU_Device,
