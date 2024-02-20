@@ -11,17 +11,13 @@ def test_read_struct_array():
     L, M, N, nnz = (dace.symbol(s) for s in ('L', 'M', 'N', 'nnz'))
     csr_obj = dace.data.Structure(dict(indptr=dace.int32[M + 1], indices=dace.int32[nnz], data=dace.float32[nnz]),
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
-                                            ('data', dace.float32[nnz])],
-                                           name='CSRMatrix',
-                                           transient=True)
 
     sdfg = dace.SDFG('array_of_csr_to_dense')
 
     sdfg.add_datadesc('A', csr_obj[L])
     sdfg.add_array('B', [L, M, N], dace.float32)
 
-    sdfg.add_datadesc('vcsr', csr_obj_view)
+    sdfg.add_datadesc_view('vcsr', csr_obj)
     sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
     sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
     sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
@@ -96,18 +92,13 @@ def test_write_struct_array():
     csr_obj = dace.data.Structure([('indptr', dace.int32[M + 1]), ('indices', dace.int32[nnz]),
                                    ('data', dace.float32[nnz])],
                                   name='CSRMatrix')
-    csr_obj_view = dace.data.StructureView(dict(indptr=dace.int32[M + 1],
-                                                indices=dace.int32[nnz],
-                                                data=dace.float32[nnz]),
-                                           name='CSRMatrix',
-                                           transient=True)
 
     sdfg = dace.SDFG('array_dense_to_csr')
 
     sdfg.add_array('A', [L, M, N], dace.float32)
     sdfg.add_datadesc('B', csr_obj[L])
 
-    sdfg.add_datadesc('vcsr', csr_obj_view)
+    sdfg.add_datadesc_view('vcsr', csr_obj)
     sdfg.add_view('vindptr', csr_obj.members['indptr'].shape, csr_obj.members['indptr'].dtype)
     sdfg.add_view('vindices', csr_obj.members['indices'].shape, csr_obj.members['indices'].dtype)
     sdfg.add_view('vdata', csr_obj.members['data'].shape, csr_obj.members['data'].dtype)
@@ -224,7 +215,51 @@ def test_jagged_container_array():
     assert np.allclose(ref, B[0])
 
 
+def test_two_levels():
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+    K = dace.symbol('K')
+    sdfg = dace.SDFG('tester')
+    desc = dace.data.ContainerArray(dace.data.ContainerArray(dace.float64[N], [M]), [K])
+    sdfg.add_datadesc('A', desc)
+    sdfg.add_datadesc_view('v', desc.stype)
+    sdfg.add_view('vv', [N], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+
+    # Make a state where the container is viewed twice in a row
+    state = sdfg.add_state()
+    r = state.add_read('A')
+    v = state.add_access('v')
+    v.add_in_connector('views')
+    vv = state.add_access('vv')
+    vv.add_in_connector('views')
+    w = state.add_write('B')
+    state.add_edge(r, None, v, 'views', dace.Memlet('A[1]'))
+    state.add_edge(v, None, vv, 'views', dace.Memlet('v[2]'))
+    state.add_edge(vv, None, w, None, dace.Memlet('vv[3]'))
+
+    # Create a ctypes array of arrays
+    jagged_array = (ctypes.POINTER(ctypes.POINTER(ctypes.c_double)) * 5)(
+        *[
+            #
+            (ctypes.POINTER(ctypes.c_double) * 5)(
+                *[
+                    #
+                    (ctypes.c_double * 5)(*np.random.rand(5)) for _ in range(5)
+                    #
+                ]) for _ in range(5)
+            #
+        ])
+
+    ref = jagged_array[1][2][3]
+
+    B = np.zeros([1])
+    sdfg(A=jagged_array, B=B)
+    assert np.allclose(ref, B[0])
+
+
 if __name__ == '__main__':
     test_read_struct_array()
     test_write_struct_array()
     test_jagged_container_array()
+    test_two_levels()
