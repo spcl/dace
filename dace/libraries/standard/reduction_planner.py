@@ -4,7 +4,7 @@
 from dace.data import Array
 from typing import List
 import dataclasses
-from dace.frontend.python.replacements import Size
+from dace.frontend.python.replacements.utils import Size
 from sympy import Expr
 from dace import symbolic
 
