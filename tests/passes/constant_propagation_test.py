@@ -358,13 +358,13 @@ def test_for_with_external_init_nested():
 
     sdfg = dace.SDFG('for_with_external_init_nested')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': 'N-1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    ninit = nsdfg.add_state('nested_init', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    ninit = nsdfg.add_state('nested_init', is_start_block=True)
     nguard = nsdfg.add_state('nested_guard')
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
@@ -403,13 +403,13 @@ def test_for_with_external_init_nested_start_with_guard():
 
     sdfg = dace.SDFG('for_with_external_init_nested_start_with_guard')
     sdfg.add_array('A', (N, ), dace.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': '1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', (N,), dace.int32)
-    nguard = nsdfg.add_state('nested_guard', is_start_state=True)
+    nsdfg.add_array('inner_A', (N, ), dace.int32)
+    nguard = nsdfg.add_state('nested_guard', is_start_block=True)
     nbody = nsdfg.add_state('nested_body')
     nexit = nsdfg.add_state('nested_exit')
     nsdfg.add_edge(nguard, nbody, dace.InterstateEdge(condition='i <= N'))

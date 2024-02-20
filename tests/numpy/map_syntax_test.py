@@ -16,12 +16,12 @@ def copy3d(A: dace.float32[M, N, K], B: dace.float32[M, N, K]):
 
 
 def test_copy3d():
-    [sym.set(24) for sym in [M, N, K]]
-    A = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
-    B = np.random.rand(M.get(), N.get(), K.get()).astype(np.float32)
+    N = M = K = 24
+    A = np.random.rand(M, N, K).astype(np.float32)
+    B = np.random.rand(M, N, K).astype(np.float32)
     copy3d(A, B)
 
-    diff = np.linalg.norm(B - A) / (M.get() * N.get())
+    diff = np.linalg.norm(B - A) / (M * N)
     print('Difference:', diff)
     assert diff < 1e-5
 

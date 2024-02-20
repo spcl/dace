@@ -67,19 +67,19 @@ def create_sdfg():
 
 
 def test():
-    W.set(1024)
-    H.set(1024)
-    MAXITER.set(30)
+    W = 1024
+    H = 1024
+    MAXITER = 30
 
-    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W.get(), H.get(), MAXITER.get()))
+    print('Jacobi 5-point Stencil %dx%d (%d steps)' % (W, H, MAXITER))
 
-    A = np.ndarray((H.get(), W.get()), dtype=np.float32)
+    A = np.ndarray((H, W), dtype=np.float32)
 
     # Initialize arrays: Randomize A, zero B
     A[:] = dace.float32(0)
-    A[1:H.get() - 1, 1:W.get() - 1] = np.random.rand((H.get() - 2), (W.get() - 2)).astype(dace.float32.type)
-    regression = np.ndarray([H.get() - 2, W.get() - 2], dtype=np.float32)
-    regression[:] = A[1:H.get() - 1, 1:W.get() - 1]
+    A[1:H - 1, 1:W - 1] = np.random.rand((H - 2), (W - 2)).astype(dace.float32.type)
+    regression = np.ndarray([H - 2, W - 2], dtype=np.float32)
+    regression[:] = A[1:H - 1, 1:W - 1]
 
     #print(A.view(type=np.ndarray))
 
@@ -93,14 +93,14 @@ def test():
         if (isinstance(node, dace.sdfg.nodes.MapEntry) and node.label[:-2] == 'stencil'):
             assert len(body.in_edges(node)) <= 1
 
-    sdfg(A=A, H=H.get(), W=W.get(), MAXITER=MAXITER.get())
+    sdfg(A=A, H=H, W=W, MAXITER=MAXITER)
 
     # Regression
     kernel = np.array([[0, 0.2, 0], [0.2, 0.2, 0.2], [0, 0.2, 0]], dtype=np.float32)
-    for i in range(2 * MAXITER.get()):
+    for i in range(2 * MAXITER):
         regression = ndimage.convolve(regression, kernel, mode='constant', cval=0.0)
 
-    residual = np.linalg.norm(A[1:H.get() - 1, 1:W.get() - 1] - regression) / (H.get() * W.get())
+    residual = np.linalg.norm(A[1:H - 1, 1:W - 1] - regression) / (H * W)
     print("Residual:", residual)
 
     assert residual <= 0.05
