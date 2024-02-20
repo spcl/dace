@@ -15,13 +15,13 @@ def nested_name_accesses(a: dc.float32, x: dc.float32[N, N, N], w: dc.float32[N,
 
 
 def test_nested_name_accesses():
-    N.set(10)
+    N = 10
     a = np.random.rand(1).astype(np.float32)[0]
-    x = np.random.rand(N.get(), N.get(), N.get()).astype(np.float32)
-    w = np.random.rand(N.get(), N.get()).astype(np.float32)
+    x = np.random.rand(N, N, N).astype(np.float32)
+    w = np.random.rand(N, N).astype(np.float32)
     dc_out = nested_name_accesses(a, x, w)
     np_out = np.empty(x.shape, x.dtype)
-    for i in range(N.get()):
+    for i in range(N):
         np_out[i] = a * x[i] @ w
     diff_norm = np.linalg.norm(dc_out - np_out)
     ref_norm = np.linalg.norm(np_out)
