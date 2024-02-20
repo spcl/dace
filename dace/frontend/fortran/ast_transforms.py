@@ -1034,9 +1034,15 @@ class IndexExtractorNodeLister(NodeVisitor):
             return
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
         self.nodes.append((node, self.current_parent))
+
+        # disable structure parent node for array indices
+        old_current_parent = self.current_parent
+        self.current_parent = None
         for i in node.indices:
             self.visit(i)
+        self.current_parent = old_current_parent
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
@@ -1087,6 +1093,9 @@ class IndexExtractor(NodeTransformer):
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
+        for i in node.indices:
+            self.visit(i)
+
         tmp = self.count
         new_indices = []
         for i in node.indices:
@@ -1097,6 +1106,7 @@ class IndexExtractor(NodeTransformer):
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 tmp = tmp + 1
         self.count = tmp
+
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices, line_number=node.line_number)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
