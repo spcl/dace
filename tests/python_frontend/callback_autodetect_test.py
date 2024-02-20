@@ -142,7 +142,6 @@ def modcallback(A: dace.float64[N, N], B: dace.float64[N]):
 
 
 def test_callback_from_module():
-    N.set(24)
     A = np.random.rand(24, 24)
     B = np.random.rand(24)
     modcallback(A, B)
