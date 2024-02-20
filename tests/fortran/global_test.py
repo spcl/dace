@@ -109,8 +109,9 @@ def test_fortran_frontend_global():
                     END MODULE nested_two
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "global_test",sources=sources)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "global_test",sources=sources,normalize_offsets=True)
     sdfg.simplify(verbose=True)
+    sdfg.save('test.sdfg')
     a = np.full([4], 42, order="F", dtype=np.float64)
     a2 = np.full([4,4,4], 42, order="F", dtype=np.float64)
     sdfg(d=a,a=a2)

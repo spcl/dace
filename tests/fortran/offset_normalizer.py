@@ -353,11 +353,73 @@ def test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol():
         for j in range(0,3):
             assert a[i, j] == (50 + i) * 2
 
+def test_fortran_frontend_offset_normalizer_struct():
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+
+                    TYPE simple_type
+                        double precision :: d(:, :)
+                    END TYPE simple_type
+
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer :: arrsize3
+                    integer :: arrsize4
+                    double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
+                    CALL index_test_function(d, arrsize, arrsize2, arrsize3, arrsize4)
+                    end
+
+                    SUBROUTINE index_test_function(d, arrsize, arrsize2, arrsize3, arrsize4)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer :: arrsize3
+                    integer :: arrsize4
+                    double precision, dimension(arrsize:arrsize2,arrsize3:arrsize4) :: d
+                    type(simple_type) :: struct_data
+
+                    struct_data%arrsize = arrsize
+                    struct_data%arrsize2 = arrsize2
+                    struct_data%arrsize3 = arrsize3
+                    struct_data%arrsize4 = arrsize4
+                    !struct_data%d = d
+
+                    do i=struct_data%arrsize,struct_data%arrsize2
+                        struct_data%d(i, 1) = i * 2.0
+                    end do
+
+                    END SUBROUTINE index_test_function
+                    """
+
+    # Now test to verify it executes correctly with no normalization
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", True)
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    from dace.symbolic import evaluate
+    values = {
+        'arrsize': 50,
+        'arrsize2': 54,
+        'arrsize3': 7,
+        'arrsize4': 9
+    }
+    assert len(sdfg.data('d').shape) == 2
+    assert evaluate(sdfg.data('d').shape[0], values) == 5
+    assert evaluate(sdfg.data('d').shape[1], values) == 3
+
+    a = np.full([5,3], 42, order="F", dtype=np.float64)
+    sdfg(d=a, **values)
+    for i in range(0,5):
+        for j in range(0,3):
+            assert a[i, j] == (50 + i) * 2
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_offset_normalizer_1d()
-    test_fortran_frontend_offset_normalizer_2d()
-    test_fortran_frontend_offset_normalizer_2d_arr2loop()
-    test_fortran_frontend_offset_normalizer_1d_symbol()
-    test_fortran_frontend_offset_normalizer_2d_symbol()
-    test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
+    #test_fortran_frontend_offset_normalizer_1d()
+    #test_fortran_frontend_offset_normalizer_2d()
+    #test_fortran_frontend_offset_normalizer_2d_arr2loop()
+    #test_fortran_frontend_offset_normalizer_1d_symbol()
+    #test_fortran_frontend_offset_normalizer_2d_symbol()
+    #test_fortran_frontend_offset_normalizer_2d_arr2loop_symbol()
+    test_fortran_frontend_offset_normalizer_struct()

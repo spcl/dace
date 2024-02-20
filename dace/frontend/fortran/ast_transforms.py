@@ -227,7 +227,7 @@ class FindInputs(NodeVisitor):
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
             if isinstance(node.parent_ref, ast_internal_classes.Name_Node):
                     self.nodes.append(node.parent_ref)    
-            elif isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
+            elif isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     self.nodes.append(node.parent_ref.name)
             if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
                 for i in node.parent_ref.indices:
