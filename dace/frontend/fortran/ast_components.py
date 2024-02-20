@@ -121,6 +121,7 @@ class InternalFortranAst:
         self.symbols = {}
         self.intrinsics_list = []
         self.rename_list = {}
+        self.placeholders = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -327,6 +328,7 @@ class InternalFortranAst:
                 return [self.create_ast(child) for child in node]
             try:
                 return self.supported_fortran_syntax[type(node).__name__](node)
+            
             except KeyError:
                 if type(node).__name__=="Intrinsic_Name":
                     if node not in self.intrinsics_list:
@@ -637,8 +639,9 @@ class InternalFortranAst:
         subroutine_definitions = [i for i in children if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node)]
 
         interface_blocks = {}
-        for iblock in specification_part.interface_blocks:
-            interface_blocks[iblock.name] = [x.name for x in iblock.subroutines]
+        if specification_part is not None:
+            for iblock in specification_part.interface_blocks:
+                interface_blocks[iblock.name] = [x.name for x in iblock.subroutines]
 
         # add here to definitions
         if module_subprogram_part is not None:
@@ -749,27 +752,40 @@ class InternalFortranAst:
             dims_count = len(shape[0].items)
             size = []
             vardecls = []
-            for i in range(dims_count):
 
-                if array_name is not None:
-                    name = f'__f2dace_ARRAY_{array_name}_dim_{i}_size'
+            processed_array_names = []
+            if array_name is not None:
+                if isinstance(array_name, str):
+                    processed_array_names = [array_name]
                 else:
-                    name = f'__f2dace_ARRAY_{self.type_arbitrary_array_variable_count}_dim_{i}_size'
+                    processed_array_names = [j.children[0].string for j in array_name]
+            else:
+                raise NotImplementedError("Assumed array shape not supported yet if array name missing")
+
+            sizes = []
+            for actual_array in processed_array_names:
+
+                size = []
+                for i in range(dims_count):
+
+                    name = f'__f2dace_ARRAY_{actual_array}_dim_{i}_size_{self.type_arbitrary_array_variable_count}'
                     self.type_arbitrary_array_variable_count += 1
+                    self.placeholders[name] = [actual_array, i, self.type_arbitrary_array_variable_count]
 
-                var = ast_internal_classes.Symbol_Decl_Node(name=name,
-                                                type='INTEGER',
-                                                alloc=False,
-                                                sizes=None,
-                                                offsets=None,
-                                                init=None,
-                                                kind=None,
-                                                line_number=linenumber)
-                size.append(ast_internal_classes.Name_Node(name=name))
-                self.symbols[name] = None
-                vardecls.append(var)
+                    var = ast_internal_classes.Symbol_Decl_Node(name=name,
+                                                    type='INTEGER',
+                                                    alloc=False,
+                                                    sizes=None,
+                                                    offsets=None,
+                                                    init=None,
+                                                    kind=None,
+                                                    line_number=linenumber)
+                    size.append(ast_internal_classes.Name_Node(name=name))
+                    self.symbols[name] = None
+                    vardecls.append(var)
+                sizes.append(size)
 
-            return size, vardecls
+            return sizes, vardecls
         else:
             return None, []
 
@@ -876,9 +892,14 @@ class InternalFortranAst:
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                    # we expect a list of lists, where each element correspond to list of symbols for each array name
+                    attr_size = [attr_size] * len(names)
+                    attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
-                    attr_offset = [1] * len(attr_size)
+                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
+                    attr_offset = []
+                    for size in attr_size:
+                        attr_offset.append([1] * len(size))
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
@@ -902,15 +923,20 @@ class InternalFortranAst:
                 if sizes is not None:
                     for shape_spec in get_children(sizes, [f03.Explicit_Shape_Spec]):
                         self.parse_shape_specification(shape_spec, attr_size, attr_offset)
+                    # we expect a list of lists, where each element correspond to list of symbols for each array name
+                    attr_size = [attr_size] * len(names)
+                    attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], None, node.item.span)
-                    attr_offset = [1] * len(attr_size)
+                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
+                    attr_offset = []
+                    for size in attr_size:
+                        attr_offset.append([1] * len(size))
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
         vardecls = [*assumed_vardecls]
 
-        for var in names:
+        for idx, var in enumerate(names):
             #print(self.name_list)
             #first handle dimensions
             size = None
@@ -947,42 +973,34 @@ class InternalFortranAst:
 
                 if attr_size is None:
 
-                    if size is not None:
-                        vardecls.append(
-                            ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                            type=testtype,
-                                                            alloc=alloc,
-                                                            sizes=size,
-                                                            offsets=offset,
-                                                            kind=kind,
-                                                            init=init,
-                                                            optional=optional,
-                                                            line_number=node.item.span))
-                    else:
+                    if size is None:
 
-                        sizes, assumed_vardecls = self.assumed_array_shape(var, actual_name.name, node.item.span)
-                        if sizes is None:
-                            offset=None
+                        size, assumed_vardecls = self.assumed_array_shape(var, actual_name.name, node.item.span)
+                        if size is None:
+                            offset = None
                         else:
-                            offset = [1] * len(sizes)
+                            # only one array
+                            size = size[0]
+                            offset = [1] * len(size)
                         vardecls.extend(assumed_vardecls)
-                        vardecls.append(
-                            ast_internal_classes.Var_Decl_Node(name=actual_name.name,
-                                                            type=testtype,
-                                                            alloc=alloc,
-                                                            sizes=sizes,
-                                                            offsets=offset,
-                                                            kind=kind,
-                                                            init=init,
-                                                            optional=optional,
-                                                            line_number=node.item.span))
+
+                    vardecls.append(
+                        ast_internal_classes.Var_Decl_Node(name=actual_name.name,
+                                                        type=testtype,
+                                                        alloc=alloc,
+                                                        sizes=size,
+                                                        offsets=offset,
+                                                        kind=kind,
+                                                        init=init,
+                                                        optional=optional,
+                                                        line_number=node.item.span))
                 else:
                     vardecls.append(
                         ast_internal_classes.Var_Decl_Node(name=actual_name.name,
                                                         type=testtype,
                                                         alloc=alloc,
-                                                        sizes=attr_size,
-                                                        offsets=attr_offset,
+                                                        sizes=attr_size[idx],
+                                                        offsets=attr_offset[idx],
                                                         kind=kind,
                                                         init=init,
                                                         optional=optional,
@@ -1462,7 +1480,10 @@ class InternalFortranAst:
             for i in decls:
                 names_filtered.extend(ii.name for ii in i.vardecl if j.name == ii.name)
         decl_filtered = []
+        
         for i in decls:
+            if i is None:
+                continue
             # NOTE: Assignment/named expressions (walrus operator) works with Python 3.8 and later.
             # if vardecl_filtered := [ii for ii in i.vardecl if ii.name not in names_filtered]:
             vardecl_filtered = [ii for ii in i.vardecl if ii.name not in names_filtered]

@@ -37,7 +37,7 @@ class Structures:
     def get_definition(self, type_name: str):
         return self.structures[type_name]
 
-    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node):
+    def find_definition(self, scope_vars, node: ast_internal_classes.Data_Ref_Node, variable_name: Optional[ast_internal_classes.Name_Node] = None):
 
         # we assume starting from the top (left-most) data_ref_node
         # for struct1 % struct2 % struct3 % var
@@ -62,8 +62,16 @@ class Structures:
                 break
 
             if isinstance(cur_node.parent_ref.name, ast_internal_classes.Name_Node):
+
+                if variable_name is not None and cur_node.parent_ref.name.name == variable_name.name:
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name.name]
+
                 struct_type = struct_def.vars[cur_node.parent_ref.name.name].type
             else:
+
+                if variable_name is not None and cur_node.parent_ref.name == variable_name.name:
+                    return struct_def, struct_def.vars[cur_node.parent_ref.name]
+
                 struct_type = struct_def.vars[cur_node.parent_ref.name].type
             struct_def = self.structures[struct_type]
 
@@ -166,17 +174,26 @@ class FindFunctionAndSubroutines(NodeVisitor):
     :return: List of names
     """
     def __init__(self):
-        self.nodes: List[ast_internal_classes.Name_Node] = []
+        self.names: List[ast_internal_classes.Name_Node] = []
+        self.nodes: Dict[str, ast_internal_classes.FNode] = {}
+        self.iblocks: Dict[str, List[str]] = {}
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
         ret=node.name
         ret.elemental=node.elemental
-        self.nodes.append(ret)
+        self.names.append(ret)
+        self.nodes[ret.name] = node
 
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
         ret=node.name
         ret.elemental=node.elemental
-        self.nodes.append(ret)
+        self.names.append(ret)
+        self.nodes[ret.name] = node
+
+    def visit_Module_Node(self, node: ast_internal_classes.Module_Node):
+        self.iblocks.update(node.interface_blocks)
+
+        self.generic_visit(node)
 
 class FindNames(NodeVisitor):
     def __init__(self):
@@ -208,6 +225,10 @@ class FindInputs(NodeVisitor):
             self.visit(i)
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+            if isinstance(node.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(node.parent_ref)    
+            elif isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(node.parent_ref.name)
             if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
                 for i in node.parent_ref.indices:
                     self.visit(i)        
@@ -215,9 +236,20 @@ class FindInputs(NodeVisitor):
                 for i in node.part_ref.indices:
                     self.visit(i)
             elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-                self.visit(node.part_ref)
+                self.visit_Blunt_Data_Ref_Node(node.part_ref)
                     
-        
+    
+    def visit_Blunt_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+            if isinstance(node.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.parent_ref.indices:
+                    self.visit(i)        
+            if isinstance(node.part_ref, ast_internal_classes.Array_Subscript_Node):
+                for i in node.part_ref.indices:
+                    self.visit(i)
+            elif isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
+                self.visit_Blunt_Data_Ref_Node(node.part_ref)
+                    
+            
             
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
@@ -517,9 +549,7 @@ class CallToArray(NodeTransformer):
     So, we create a closure of all math and defined functions and 
     create array expressions for the others.
     """
-    def __init__(self, funcs=None):
-        if funcs is None:
-            funcs = []
+    def __init__(self, funcs: FindFunctionAndSubroutines):
         self.funcs = funcs
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
@@ -534,14 +564,26 @@ class CallToArray(NodeTransformer):
         if node.name is None:
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
+
+        is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
+        is_interface_func = not is_func and node.name.name in self.funcs.iblocks
         
-        if node.name.name in self.excepted_funcs or node.name in self.funcs:
+        if is_func or is_interface_func:
+
+            if is_interface_func:
+
+                available_names = self.funcs.iblocks[node.name.name].copy()
+                print("Invoke", node.name.name, available_names)
+                for name in available_names:
+                    print(name, self.funcs.nodes[name].args)
+
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
                 processed_args.append(arg)
             node.args = processed_args
             return node
+
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
@@ -567,7 +609,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
                 "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node):# or isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -608,7 +650,7 @@ class ArgumentExtractor(NodeTransformer):
                                                    line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node):# or isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node):
                 result.args.append(arg)
             else:
                 result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp)))
@@ -947,7 +989,10 @@ class ScopeVarsDeclarations(NodeVisitor):
     def __init__(self, ast):
 
         self.scope_vars: Dict[Tuple[str, str], ast_internal_classes.FNode] = {}
-        self.module_declarations = ast.module_declarations
+        if hasattr(ast, "module_declarations"):
+            self.module_declarations = ast.module_declarations
+        else:
+            self.module_declarations = {}    
 
     def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
 
@@ -1091,7 +1136,7 @@ class IndexExtractor(NodeTransformer):
                                     variable = self.scope_vars.get_var(child.parent, var_name)
                                 elif parent_node is not None:
                                     struct, variable = self.structures.find_definition(
-                                        self.scope_vars, parent_node
+                                        self.scope_vars, parent_node, j.name
                                     )
                                     var_name = j.name.name
                                 else:

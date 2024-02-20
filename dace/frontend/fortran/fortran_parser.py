@@ -21,6 +21,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from copy import deepcopy as dpcp
 
 from dace.properties import CodeBlock
+from fparser.two import Fortran2003 as f03
 from fparser.two.parser import ParserFactory as pf
 from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
@@ -75,6 +76,7 @@ class AST_translator:
         self.struct_views={}
         self.last_call_expression = {}
         self.structures = ast.structures
+        self.placeholders = ast.placeholders
         self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
@@ -253,6 +255,15 @@ class AST_translator:
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
         """
+        if self.name_mapping[sdfg][node.name_pointer.name] in sdfg.arrays:
+            shapenames = [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))]
+            for i in shapenames:
+                if str(i) in sdfg.symbols:
+                    sdfg.symbols.pop(str(i))
+                if sdfg.parent_nsdfg_node is not None:     
+                    if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
+                        sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))    
+            sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
                 raise ValueError("Unknown variable " + node.name_target.name)
@@ -305,7 +316,7 @@ class AST_translator:
                     offset = []
                     offset_value = -1
                     for i in k.sizes:
-                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                         text = tw.write_code(i)
                         sizes.append(sym.pystr_to_symbolic(text))
                         offset.append(offset_value)
@@ -356,7 +367,7 @@ class AST_translator:
                     sizes = []
                     offset = []
                     for j in i.shape.shape_list:
-                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                         text = tw.write_code(j)
                         sizes.append(sym.pystr_to_symbolic(text))
                         offset.append(offset_value)
@@ -391,7 +402,7 @@ class AST_translator:
         guard_substate = cfg.add_state(f"Guard{name}")
         cfg.add_edge(begin_state, guard_substate, InterstateEdge())
 
-        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.cond)
+        condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,self.placeholders).write_code(node.cond)
 
         body_ifstart_state = cfg.add_state(f"BodyIfStart{name}")
         self.last_sdfg_states[cfg] = body_ifstart_state
@@ -443,15 +454,15 @@ class AST_translator:
                     iter_name = self.name_mapping[sdfg][decl_node.lval.name]
                 else:
                     raise ValueError("Unknown variable " + decl_node.lval.name)
-                entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(decl_node.rval)
+                entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(decl_node.rval)
 
             cfg.add_edge(begin_state, guard_substate, InterstateEdge(assignments=entry))
 
-            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.cond)
+            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.cond)
 
             increment = "i+0+1"
             if isinstance(node.iter, ast_internal_classes.BinOp_Node):
-                increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.iter.rval)
+                increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.iter.rval)
             entry = {iter_name: increment}
 
             begin_loop_state = cfg.add_state("BeginLoop" + name)
@@ -476,13 +487,16 @@ class AST_translator:
                     iter_name = self.name_mapping[sdfg][decl_node.lval.name]
                 else:
                     raise ValueError("Unknown variable " + decl_node.lval.name)
-                entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(decl_node.rval)
+                entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
+                                                             placeholders=self.placeholders).write_code(decl_node.rval)
 
-            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.cond)
+            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
+                                                  placeholders=self.placeholders).write_code(node.cond)
 
             increment = "i+0+1"
             if isinstance(node.iter, ast_internal_classes.BinOp_Node):
-                increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(node.iter.rval)
+                increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
+                                                      placeholders=self.placeholders).write_code(node.iter.rval)
 
             loop_region = LoopRegion(name, condition, iter_name, f"{iter_name} = {entry[iter_name]}",
                                      f"{iter_name} = {increment}")
@@ -513,7 +527,7 @@ class AST_translator:
             elif isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
             else:
-                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                 if node.init is not None:
                     text = tw.write_code(node.init)
                     self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)
@@ -526,7 +540,8 @@ class AST_translator:
                 self.last_sdfg_states[cfg] = bstate
             if node.init is not None:
                 substate = cfg.add_state(f"Dummystate_{node.name}")
-                increment = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping).write_code(node.init)
+                increment = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,
+                                                    placeholders=self.placeholders).write_code(node.init)
 
                 entry = {node.name: increment}
                 cfg.add_edge(self.last_sdfg_states[cfg], substate, InterstateEdge(assignments=entry))
@@ -602,6 +617,8 @@ class AST_translator:
                 varname = variable.arg_name.name
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
+            elif isinstance(variable, ast_internal_classes.Data_Ref_Node):
+                varname = ast_utils.get_name(variable)
 
             if isinstance(variable, ast_internal_classes.Literal) or varname == "LITERAL":
                 literals.append(parameters[arg_i])
@@ -638,7 +655,7 @@ class AST_translator:
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         for variable_in_call in variables_in_call:
             all_arrays = self.get_arrays_in_context(sdfg)
-
+            
             sdfg_name = self.name_mapping.get(sdfg).get(ast_utils.get_name(variable_in_call))
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(ast_utils.get_name(variable_in_call))
             matched = False
@@ -672,14 +689,14 @@ class AST_translator:
                                 else:
                                     raise NotImplementedError("Index in ParDecl should be ALL")
                             else:
-                                text = ast_utils.ProcessedWriter(sdfg, self.name_mapping).write_code(i)
+                                text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
                                 index_list.append(sym.pystr_to_symbolic(text))
                                 strides.pop(indices - changed_indices)
                                 offsets.pop(indices - changed_indices)
                                 changed_indices += 1
                             indices = indices + 1
 
-                    if isinstance(variable_in_call, ast_internal_classes.Name_Node):
+                    if isinstance(variable_in_call, ast_internal_classes.Name_Node) or isinstance(variable_in_call,ast_internal_classes.Data_Ref_Node):
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
@@ -706,7 +723,7 @@ class AST_translator:
                             new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
-                        if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
+                        if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
                             offsets_zero = []
                             for index in offsets:
                                 offsets_zero.append(0)
@@ -1148,7 +1165,7 @@ class AST_translator:
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
             ast_utils.add_memlet_write(substate, i, tasklet, k, memlet_range)
         tw = ast_utils.TaskletWriter(output_names, output_names_changed, sdfg, self.name_mapping, input_names,
-                                     input_names_tasklet)
+                                     input_names_tasklet,placeholders=self.placeholders)
 
         text = tw.write_code(node)
         tasklet.code = CodeBlock(text, lang.Python)
@@ -1229,7 +1246,7 @@ class AST_translator:
                 output_names_changed.append(o_t + "_out")
 
             tw = ast_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
-                                         self.name_mapping)
+                                         self.name_mapping,placeholders=self.placeholders)
             if not isinstance(rettype, ast_internal_classes.Void) and hasret:
                 special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
                 special_list_out.append(retval.name + "_out")
@@ -1306,17 +1323,17 @@ class AST_translator:
                         sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
                         sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
                         for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
-                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
+                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
                             edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
                             #print(edge)
-                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                     text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
                     sizes.append(sym.pystr_to_symbolic(text))
                     #TODO: shouldn't this use node.offset??
                     offset.append(offset_value)
                     self.count_of_struct_symbols_lifted+=1
                 else:
-                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                     text = tw.write_code(i)
                     sizes.append(sym.pystr_to_symbolic(text))
                     offset.append(offset_value)
@@ -1435,11 +1452,11 @@ def create_ast_from_string(
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    functions_and_subroutines = functions_and_subroutines_builder.nodes
+    functions_and_subroutines = functions_and_subroutines_builder.names
 
     if transform:
         program = ast_transforms.functionStatementEliminator(program)
-        program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+        program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
         program = ast_transforms.CallExtractor().visit(program)
         program = ast_transforms.SignToIf().visit(program)
         program = ast_transforms.ArrayToLoop(program).visit(program)
@@ -1479,10 +1496,12 @@ def create_sdfg_from_string(
     dep_graph = nx.DiGraph()
     asts = {}
     actually_used_in_module={}
+    interface_blocks = {}
     ast = recursive_ast_improver(ast,
                                  sources,
                                  [],
                                  parser,
+                                 interface_blocks,
                                  exclude_list=exclude_list,
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
@@ -1514,7 +1533,6 @@ def create_sdfg_from_string(
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
-            print(j[0],j[1],deps)
             if deps is None:   
                 continue
             for k in deps:
@@ -1638,7 +1656,32 @@ def create_sdfg_from_string(
 
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
-
+    functions_to_rename={}
+    for i in parse_order:
+        own_ast.current_ast=i
+        
+        own_ast.unsupported_fortran_syntax[i]=[]
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "mo_cdi","iso_fortran_env"]:
+            continue
+       
+        own_ast.add_name_list_for_module(i, name_dict[i])
+        try:
+            partial_module = own_ast.create_ast(asts[i])
+        except:
+            print("Module " + i + " could not be parsed ",own_ast.unsupported_fortran_syntax[i])
+            print(own_ast.unsupported_fortran_syntax[i])
+            continue
+        tmp_rename=rename_dict[i]
+        for j in tmp_rename:
+            #print(j)
+            if own_ast.symbols.get(j) is None:
+                #raise NameError("Symbol " + j + " not found in partial ast")
+                if functions_to_rename.get(i) is None:
+                    functions_to_rename[i]=[j]
+                else:
+                    functions_to_rename[i].append(j)    
+            else:
+                own_ast.symbols[tmp_rename[j]]=own_ast.symbols[j]
     program = own_ast.create_ast(ast)
 
     # Repeated!
@@ -1666,16 +1709,16 @@ def create_sdfg_from_string(
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     
     count=0
     for i in program.function_definitions:
@@ -1772,9 +1815,9 @@ def create_sdfg_from_fortran_file(source_string: str, use_experimental_cfg_block
     program = own_ast.create_ast(ast)
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop().visit(program)
@@ -1797,6 +1840,7 @@ def recursive_ast_improver(ast,
                            source_list,
                            include_list,
                            parser,
+                           interface_blocks,
                            exclude_list=[],
                            missing_modules=[],
                            dep_graph=nx.DiGraph(),
@@ -1817,7 +1861,9 @@ def recursive_ast_improver(ast,
     
     fandsl=ast_utils.FunctionSubroutineLister()
     fandsl.get_functions_and_subroutines(ast)
-    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
+    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines #+ list(fandsl.interface_blocks.keys())
+    if len(fandsl.interface_blocks) > 0:
+        interface_blocks[ast.children[0].children[0].children[1].string.lower()] = fandsl.interface_blocks
 
     #print("Functions and subroutines: ", functions_and_subroutines)
     if not main_program_mode:
@@ -1838,6 +1884,7 @@ def recursive_ast_improver(ast,
 
             for j in objects_in_modules[i].children:
                 weight.append(j)
+
         dep_graph.add_edge(parent_module, i, obj_list=weight)
 
     #print("It's turtles all the way down: ", len(exclude_list))
@@ -1883,6 +1930,7 @@ def recursive_ast_improver(ast,
                                           parser,
                                           exclude_list=exclude_list,
                                           missing_modules=missing_modules,
+                                          interface_blocks=interface_blocks,
                                           dep_graph=dep_graph,
                                           asts=asts)
         for mod in next_ast.children:
@@ -1911,14 +1959,59 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     dep_graph = nx.DiGraph()
     asts = {}
     actually_used_in_module={}
+    interface_blocks = {}
     ast = recursive_ast_improver(ast,
                                  source_list,
                                  include_list,
                                  parser,
+                                 interface_blocks,
                                  exclude_list=exclude_list,
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+
+    for mod, blocks in interface_blocks.items():
+
+        # get incoming edges
+        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
+
+            weights = data.get('obj_list')
+            if weights is None:
+                continue
+
+            new_weights = []
+            for weight in weights:
+                name = weight.string
+                if name in blocks:
+                    new_weights.extend(blocks[name])
+                else:
+                    new_weights.append(weight)
+
+            dep_graph[in_mod][mod]['obj_list'] = new_weights
+
+    complete_interface_blocks = {}
+    for mod, blocks in interface_blocks.items():
+        complete_interface_blocks.update(blocks)
+
+    for node, node_data in dep_graph.nodes(data=True):
+
+        objects = node_data.get('info_list')
+
+        if objects is None:
+            continue
+
+        new_names_in_subroutines = {}
+        for subroutine, names in objects.names_in_subroutines.items():
+
+            new_names_list = []
+            for name in names:
+                if name in complete_interface_blocks:
+                    for replacement in complete_interface_blocks[name]:
+                        new_names_list.append(replacement.string)
+                else:
+                    new_names_list.append(name)
+            new_names_in_subroutines[subroutine] = new_names_list
+        objects.names_in_subroutines = new_names_in_subroutines
     
     print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
@@ -1931,7 +2024,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
         if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
             changed=False
-
 
     parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
 
@@ -1946,7 +2038,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         res=simple_graph.nodes.get(i).get("info_list")
         for j in edges:
             deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
-            print(j[0],j[1],deps)
             if deps is None:   
                 continue
             for k in deps:
@@ -1956,6 +2047,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             if res is not None:
                 for jj in parse_list[i]:
+
                     if jj in res.list_of_functions:
                         if jj not in fands_list:
                             fands_list.append(jj)
@@ -1972,8 +2064,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         for j in actually_used_in_module[i]:
             if res is not None:
                 if j in res.list_of_functions:
+
                     if j not in fands_list:
                         fands_list.append(j)
+
                 if j in res.list_of_subroutines:
                     if j not in fands_list:
                         fands_list.append(j)  
@@ -1986,7 +2080,29 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     top_level_ast = parse_order.pop()
     changes=True
     new_children=[]
-    
+    name_dict = {}
+    rename_dict = {}
+    for i in parse_order:
+        local_rename_dict = {}
+        edges = list(simple_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
+        name_dict[i] = names
+    rename_dict["mo_solve_nonhydro"] = {}
+
     for i in ast.children:
     
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
@@ -2005,6 +2121,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             if k.__class__.__name__=="Entity_Decl":
                                 if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
                                     entity_decls.append(k)
+                                elif rename_dict[i.children[0].children[1].string].get(k.children[0].string) in actually_used_in_module[i.children[0].children[1].string]:
+                                    entity_decls.append(k)    
                         if entity_decls==[]:
                             continue            
                         if j.children[2].children.__class__.__name__=="tuple":
@@ -2163,18 +2281,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     program.structures = ast_transforms.Structures(structs_lister.structs)
 
-
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
-    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     #program = ast_transforms.functionStatementEliminator(program)
-    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
-    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
 
     
@@ -2262,6 +2379,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 
 
     program.tables=partial_ast.symbols
+    program.placeholders=partial_ast.placeholders
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
     unordered_modules=program.modules
     program.modules=[]
@@ -2272,7 +2390,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     for j in unordered_modules:
         if j.name.name==top_level_ast:
             program.modules.append(j)            
-
+    for i in program.modules:
+        print(i.name.name)
     for i in program.modules:
         for path in source_list:
             
@@ -2281,7 +2400,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="solve_nh":
+            #if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue

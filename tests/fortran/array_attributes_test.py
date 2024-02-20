@@ -341,6 +341,53 @@ def test_fortran_frontend_array_arbitrary_attribute():
         # offset -1 is already added
         assert a[i, 0] == (i + 1) * 2
 
+
+def test_fortran_frontend_array_arbitrary_attribute2():
+    test_string = """
+                    PROGRAM index_offset_test
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer :: arrsize3
+                    integer :: arrsize4
+                    double precision :: d(arrsize, arrsize2)
+                    double precision :: d2(arrsize3, arrsize4)
+                    CALL index_test_function(d, d2)
+                    end
+
+                    SUBROUTINE index_test_function(d, d2)
+                    double precision, dimension(:,:) :: d, d2
+
+                    CALL index_test_function_second(d,d2)
+
+                    END SUBROUTINE index_test_function
+
+                    SUBROUTINE index_test_function_second(d, d2)
+                    double precision, dimension(:,:) :: d, d2
+
+                    d(1,1) = SIZE(d,1)
+                    d(1,2) = SIZE(d,2)
+                    d(1,3) = SIZE(d2,1)
+                    d(1,4) = SIZE(d2,2)
+
+                    END SUBROUTINE index_test_function_second
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    sdfg.simplify(verbose=True)
+    sdfg.compile()
+
+    arrsize=5
+    arrsize2=10
+    arrsize3=3
+    arrsize4=7
+    a = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
+    b = np.full([arrsize3,arrsize4], 42, order="F", dtype=np.float64)
+    sdfg(d=a,d2=b,arrsize=arrsize,arrsize2=arrsize2,arrsize3=arrsize3,arrsize4=arrsize4)
+    assert a[0,0] == arrsize
+    assert a[0,1] == arrsize2
+    assert a[0,2] == arrsize3
+    assert a[0,3] == arrsize4
+
 if __name__ == "__main__":
 
     test_fortran_frontend_array_offset()
@@ -352,3 +399,4 @@ if __name__ == "__main__":
     test_fortran_frontend_array_offset_symbol()
     test_fortran_frontend_array_arbitrary()
     test_fortran_frontend_array_arbitrary_attribute()
+    test_fortran_frontend_array_arbitrary_attribute2()
