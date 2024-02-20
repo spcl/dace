@@ -20,7 +20,7 @@ def _make_sdfg(name, storage=dace.dtypes.StorageType.CPU_Heap, isview=False):
         _, tmp1 = sdfg.add_transient('tmp1', [N - 4, N - 4, N - i], dtype=dace.float64, storage=storage)
     _, tmp2 = sdfg.add_transient('tmp2', [1], dtype=dace.float64, storage=storage)
 
-    begin_state = sdfg.add_state("begin", is_start_state=True)
+    begin_state = sdfg.add_state("begin", is_start_block=True)
     guard_state = sdfg.add_state("guard")
     body1_state = sdfg.add_state("body1")
     body2_state = sdfg.add_state("body2")
@@ -190,6 +190,7 @@ def test_symbol_dependent_fpga_global_array():
 
 
 def test_symbol_dependent_array_in_map():
+
     @dace.program
     def symbol_dependent_array_in_map(A: dace.float32[10]):
         out = np.ndarray(10, dtype=np.float32)

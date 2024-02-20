@@ -484,11 +484,11 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
             cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
             cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
-            flags = Config.get("compiler", "cuda", "args")
-            flags += ' ' + ' '.join('-gencode arch=compute_{arch},code=sm_{arch}'.format(arch=arch)
-                                    for arch in cuda_arch)
+            cuda_arch = ';'.join(cuda_arch)
+            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
 
-            options.append("-DCUDA_NVCC_FLAGS=\"{}\"".format(flags))
+            flags = Config.get("compiler", "cuda", "args")
+            options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
             hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
@@ -1132,10 +1132,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         func=funcname,
                         type=dst_node.desc(sdfg).dtype.ctype,
                         bdims=', '.join(_topy(self._block_dims)),
-                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                        is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
                         accum=accum,
                         args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
                                        _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
+                elif funcname == 'dace::SharedToGlobal1D':
+                    # special case: use a new template struct that provides functions for copy and reduction
+                    callsite_stream.write(
+                        ('    {func}<{type}, {bdims}, {copysize}, {is_async}>{accum}({args});').format(
+                             func=funcname,
+                             type=dst_node.desc(sdfg).dtype.ctype,
+                             bdims=', '.join(_topy(self._block_dims)),
+                             copysize=', '.join(_topy(copy_shape)),
+                             is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
+                             accum=accum or '::Copy',
+                             args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + _topy(dst_strides) + custom_reduction)), sdfg,
+                        state_id, [src_node, dst_node])
                 else:
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +
@@ -1145,7 +1157,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                              bdims=', '.join(_topy(self._block_dims)),
                              copysize=', '.join(_topy(copy_shape)),
                              dststrides=', '.join(_topy(dst_strides)),
-                             is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                             is_async='true' if state_dfg.out_degree(dst_node) == 0 else 'false',
                              accum=accum,
                              args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction)), sdfg,
                         state_id, [src_node, dst_node])

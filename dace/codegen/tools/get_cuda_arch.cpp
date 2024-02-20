@@ -1,12 +1,14 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <set>
 #include <sstream>
 #include <string>
 
-int main(int argc, char **argv) {
+int main() {
   int count;
   if (cudaGetDeviceCount(&count) != cudaSuccess) return 1;
 
@@ -22,10 +24,13 @@ int main(int argc, char **argv) {
     architectures.insert(ss.str());
   }
 
-  // Print out architectures
-  for (std::set<std::string>::iterator iter = architectures.begin();
-       iter != architectures.end(); ++iter)
-    std::cout << *iter << " ";
+  if (architectures.empty()) {
+    return 1;
+  }
+
+  std::copy(architectures.begin(), std::prev(architectures.end(), 1),
+            std::ostream_iterator<std::string>(std::cout, ";"));
+  std::cout << *architectures.rbegin();
 
   return 0;
 }

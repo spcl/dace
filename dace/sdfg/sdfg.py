@@ -579,7 +579,8 @@ class SDFG(ControlFlowRegion):
         tmp = super().to_json()
 
         # Ensure properties are serialized correctly
-        tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
+        if 'constants_prop' in tmp['attributes']:
+            tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
         tmp['sdfg_list_id'] = int(self.sdfg_id)
         tmp['start_state'] = self._start_block
@@ -604,8 +605,13 @@ class SDFG(ControlFlowRegion):
         nodes = json_obj['nodes']
         edges = json_obj['edges']
 
+        if 'constants_prop' in attrs:
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+        else:
+            constants_prop = None
+
         ret = SDFG(name=attrs['name'],
-                   constants=dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop'])),
+                   constants=constants_prop,
                    parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
@@ -763,7 +769,7 @@ class SDFG(ControlFlowRegion):
         if name in self.symbols:
             raise FileExistsError('Symbol "%s" already exists in SDFG' % name)
         if not isinstance(stype, dtypes.typeclass):
-            stype = dtypes.DTYPE_TO_TYPECLASS[stype]
+            stype = dtypes.dtype_to_typeclass(stype)
         self.symbols[name] = stype
 
     def remove_symbol(self, name):
@@ -1423,9 +1429,13 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
+</script>
+<script>
     var sdfv_{uid} = new SDFV();
     var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
@@ -2115,16 +2125,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:

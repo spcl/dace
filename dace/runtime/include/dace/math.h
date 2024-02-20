@@ -2,14 +2,15 @@
 #ifndef __DACE_MATH_H
 #define __DACE_MATH_H
 
-#include "pi.h"
-#include "types.h"
-
 #include <complex>
 #include <numeric>
 #include <cmath>
 #include <cfloat>
 #include <type_traits>
+
+#include "pi.h"
+#include "nan.h"
+#include "types.h"
 
 #ifdef __CUDACC__
     #include <thrust/complex.h>
@@ -457,6 +458,7 @@ namespace dace
     namespace math
     {       
         static DACE_CONSTEXPR typeless_pi pi{};
+        static DACE_CONSTEXPR typeless_nan nan{};
         //////////////////////////////////////////////////////
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T exp(const T& a)
@@ -523,7 +525,13 @@ namespace dace
             return (T)std::pow(a, (T)b);
         }
 
-        template<typename T>
+        template<typename T, typename std::enable_if<std::is_integral<T>::value>::type* = nullptr>
+        DACE_CONSTEXPR DACE_HDFI T ifloor(const T& a)
+        {
+            return a;
+        }
+
+        template<typename T, typename std::enable_if<std::is_floating_point<T>::value>::type* = nullptr>
         DACE_CONSTEXPR DACE_HDFI int ifloor(const T& a)
         {
             return (int)std::floor(a);

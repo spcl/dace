@@ -42,7 +42,7 @@ class symbol(sympy.Symbol):
         if not isinstance(dtype, dtypes.typeclass):
             raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
 
-        dkeys = [k for k, v in dtypes.DTYPE_TO_TYPECLASS.items() if v == dtype]
+        dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
         is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
         if 'integer' in assumptions or not numpy.any(is_integer):
             # Using __xnew__ as the regular __new__ is cached, which leads
@@ -53,19 +53,10 @@ class symbol(sympy.Symbol):
 
         self.dtype = dtype
         self._constraints = []
-        self.value = None
         return self
 
-    def set(self, value):
-        warnings.warn('symbol.set is deprecated, use keyword arguments', DeprecationWarning)
-        if value is not None:
-            # First, check constraints
-            self.check_constraints(value)
-
-        self.value = self.dtype(value)
-
     def __getstate__(self):
-        return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
+        return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
     def _eval_subs(self, old, new):
         """
@@ -84,15 +75,6 @@ class symbol(sympy.Symbol):
             return None
         except AttributeError:
             return None
-
-    def is_initialized(self):
-        return self.value is not None
-
-    def get(self):
-        warnings.warn('symbol.get is deprecated, use keyword arguments', DeprecationWarning)
-        if self.value is None:
-            raise UnboundLocalError('Uninitialized symbol value for \'' + self.name + '\'')
-        return self.value
 
     def set_constraints(self, constraint_list):
         try:
@@ -140,9 +122,6 @@ class symbol(sympy.Symbol):
                 raise RuntimeError('Cannot validate constraint %s for symbol %s' % (str(constraint), self.name))
         if fail is not None:
             raise RuntimeError('Value %s invalidates constraint %s for symbol %s' % (str(value), str(fail), self.name))
-
-    def get_or_return(self, uninitialized_ret):
-        return self.value or uninitialized_ret
 
 
 class SymExpr(object):
@@ -287,13 +266,6 @@ class SymExpr(object):
 SymbolicType = Union[sympy.Basic, SymExpr]
 
 
-def symvalue(val):
-    """ Returns the symbol value if it is a symbol. """
-    if isinstance(val, symbol):
-        return val.get()
-    return val
-
-
 # http://stackoverflow.com/q/3844948/
 def _checkEqualIvo(lst):
     return not lst or lst.count(lst[0]) == len(lst)
@@ -333,9 +305,8 @@ def symlist(values):
     return result
 
 
-def evaluate(expr: Union[sympy.Basic, int, float],
-             symbols: Dict[Union[symbol, str], Union[int, float]]) -> \
-        Union[int, float, numpy.number]:
+def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
+                                                                 Union[int, float]]) -> Union[int, float, numpy.number]:
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
@@ -356,9 +327,7 @@ def evaluate(expr: Union[sympy.Basic, int, float],
         return expr
 
     # Evaluate all symbols
-    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)):
-            sval.get() if isinstance(sval, symbol) else sval
-            for sname, sval in symbols.items()}
+    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
@@ -1028,7 +997,7 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                   self.visit(node.orelse)],
                             keywords=[])
         return ast.copy_location(new_node, node)
-    
+
     def visit_Subscript(self, node):
         if isinstance(node.value, ast.Attribute):
             attr = ast.Subscript(value=ast.Name(id=node.value.attr, ctx=ast.Load()), slice=node.slice, ctx=ast.Load())
@@ -1405,8 +1374,7 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
         return sympy.ask(sympy.Q.is_true(sympy.Eq(*args)))
 
 
-def symbols_in_code(code: str, potential_symbols: Set[str] = None,
-                    symbols_to_ignore: Set[str] = None) -> Set[str]:
+def symbols_in_code(code: str, potential_symbols: Set[str] = None, symbols_to_ignore: Set[str] = None) -> Set[str]:
     """
     Tokenizes a code string for symbols and returns a set thereof.
 
@@ -1419,7 +1387,7 @@ def symbols_in_code(code: str, potential_symbols: Set[str] = None,
     if potential_symbols is not None and len(potential_symbols) == 0:
         # Don't bother tokenizing for an empty set of potential symbols
         return set()
-    
+
     tokens = set(re.findall(_NAME_TOKENS, code))
     if potential_symbols is not None:
         tokens &= potential_symbols

@@ -13,9 +13,6 @@ def transpose_add(A: dace.float32[M, K], B: dace.float32[K, M]):
 
 
 def test_inline_scalar():
-    K.set(24)
-    M.set(25)
-
     A = np.random.rand(25, 24).astype(np.float32)
     B = np.random.rand(24, 25).astype(np.float32)
 
