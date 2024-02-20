@@ -526,10 +526,10 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return [DiGraph._from_nx(e) for e in self._nx.edges()]
 
     def in_edges(self, node):
-        return [DiGraph._from_nx(e) for e in self._nx.in_edges(nbunch=node)]
+        return [DiGraph._from_nx(e) for e in self._nx.in_edges(node, True)]
 
     def out_edges(self, node):
-        return [DiGraph._from_nx(e) for e in self._nx.out_edges(nbunch=node)]
+        return [DiGraph._from_nx(e) for e in self._nx.out_edges(node, True)]
 
     def add_node(self, node):
         return self._nx.add_node(node)
