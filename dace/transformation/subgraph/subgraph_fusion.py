@@ -383,12 +383,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for edge in graph.in_edges(map_entry):
                 in_nodes.add(edge.src)
             for edge in graph.out_edges(map_exit):
-                current_node = edge.dst
+                # current_node = edge.dst
+                current_node = graph.memlet_path(edge)[-1].dst
                 if len(graph.out_edges(current_node)) == 0:
                     out_nodes.add(current_node)
                 else:
                     for dst_edge in graph.out_edges(current_node):
-                        if dst_edge.dst in map_entries:
+                        # if dst_edge.dst in map_entries:
+                        if graph.memlet_path(dst_edge)[-1].dst in map_entries:
                             # add to intermediate_nodes
                             intermediate_nodes.add(current_node)
 
