@@ -63,12 +63,12 @@ def simple_symbol_conversion(A: dace.int32[N]):
 
 
 def test_simple_symbol_conversion():
-    N.set(10)
-    A = np.random.randint(0, 1000, size=(N.get(), ), dtype=np.int32)
+    N = 10
+    A = np.random.randint(0, 1000, size=(N, ), dtype=np.int32)
     B = simple_symbol_conversion(A)
 
     assert (B.dtype == np.int64)
-    assert (B[0] == np.int64(N.get()))
+    assert (B[0] == np.int64(N))
 
 
 if __name__ == "__main__":

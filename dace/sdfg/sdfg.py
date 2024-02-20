@@ -2164,16 +2164,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:

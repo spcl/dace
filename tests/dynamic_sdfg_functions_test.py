@@ -21,10 +21,10 @@ from dace.memlet import Memlet
 def test_dynamic_sdfg_with_math_functions():
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
+    n = 20
 
-    input = np.random.rand(N.get()).astype(np.float32)
-    output = dp.ndarray([N], dp.float32)
+    input = np.random.rand(n).astype(np.float32)
+    output = dp.ndarray([n], dp.float32)
     output[:] = dp.float32(0)
 
     # Construct SDFG
@@ -42,10 +42,10 @@ def test_dynamic_sdfg_with_math_functions():
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))
     state.add_edge(map_exit, None, B, None, Memlet.simple(B, '0:N'))
 
-    mysdfg(A=input, B=output, N=N)
+    mysdfg(A=input, B=output, N=n)
     #mymodexp_prog(input, output)
 
-    diff = np.linalg.norm(np.exp(input) - output) / N.get()
+    diff = np.linalg.norm(np.exp(input) - output) / n
     print("Difference:", diff)
     assert diff <= 1e-5
 
