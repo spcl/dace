@@ -787,8 +787,6 @@ class SetProperty(Property):
             getter=None,
             setter=None,
             default=None,
-            from_string=None,
-            to_string=None,
             from_json=None,
             to_json=None,
             unmapped=False,  # Don't enforce 1:1 mapping with a member variable
