@@ -24,35 +24,6 @@ T = TypeVar('T')
 ###############################################################################
 
 
-def set_property_from_string(prop, obj, string, sdfg=None, from_json=False):
-    """ Interface function that guarantees that a property will always be
-    correctly set, if possible, by accepting all possible input arguments to
-    from_string. """
-
-    # If the property is a string (property name), obtain it from the object
-    if isinstance(prop, str):
-        prop = type(obj).__properties__[prop]
-
-    if isinstance(prop, CodeProperty):
-        if from_json:
-            val = prop.from_json(string)
-        else:
-            val = prop.from_string(string, obj.language)
-    elif isinstance(prop, (ReferenceProperty, DataProperty)):
-        if sdfg is None:
-            raise ValueError("You cannot pass sdfg=None when editing a ReferenceProperty!")
-        if from_json:
-            val = prop.from_json(string, sdfg)
-        else:
-            val = prop.from_string(string, sdfg)
-    else:
-        if from_json:
-            val = prop.from_json(string, sdfg)
-        else:
-            val = prop.from_string(string)
-    setattr(obj, prop.attr_name, val)
-
-
 ###############################################################################
 # Property base implementation
 ###############################################################################
