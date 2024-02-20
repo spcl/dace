@@ -3431,6 +3431,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 self._add_aug_assignment(node, rtarget, wtarget, result, op, boolarr)
             else:
                 self._add_assignment(node, wtarget, result, op, boolarr)
+                if op and not independent:
+                    # NOTE: Assuming WCR on the memlet
+                    self.outputs[new_name][1].wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
 
             # Connect states properly when there is output indirection
             if output_indirection:
