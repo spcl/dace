@@ -266,7 +266,7 @@ def test_interstate_dep():
 
     sdfg = dace.SDFG('intestate_dep')
     sdfg.add_array('A', (10, ), dtype=np.int32)
-    init = sdfg.add_state('init', is_start_state=True)
+    init = sdfg.add_state('init', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')
@@ -392,7 +392,7 @@ def test_symbol_race():
 
 def test_symbol_write_before_read():
     sdfg = dace.SDFG('tester')
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -410,7 +410,7 @@ def test_symbol_array_mix(overwrite):
     sdfg = dace.SDFG('tester')
     sdfg.add_transient('tmp', [1], dace.float64)
     sdfg.add_symbol('sym', dace.float64)
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -438,7 +438,7 @@ def test_symbol_array_mix_2(parallel):
     sdfg.add_array('A', [20], dace.float64)
     sdfg.add_array('B', [20], dace.float64)
     sdfg.add_symbol('sym', dace.float64)
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body_end = sdfg.add_state()
     after = sdfg.add_state()
@@ -461,7 +461,7 @@ def test_symbol_array_mix_2(parallel):
 @pytest.mark.parametrize('overwrite', (False, True))
 def test_internal_symbol_used_outside(overwrite):
     sdfg = dace.SDFG('tester')
-    init = sdfg.add_state(is_start_state=True)
+    init = sdfg.add_state(is_start_block=True)
     body_start = sdfg.add_state()
     body = sdfg.add_state()
     body_end = sdfg.add_state()
@@ -490,7 +490,7 @@ def test_shared_local_transient_single_state():
     """
 
     sdfg = dace.SDFG('shared_local_transient_single_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
@@ -525,7 +525,7 @@ def test_thread_local_transient_single_state():
     """
 
     sdfg = dace.SDFG('thread_local_transient_single_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body = sdfg.add_state('body')
     end = sdfg.add_state('end')
@@ -563,7 +563,7 @@ def test_shared_local_transient_multi_state():
     """
 
     sdfg = dace.SDFG('shared_local_transient_multi_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')
@@ -601,7 +601,7 @@ def test_thread_local_transient_multi_state():
     """
 
     sdfg = dace.SDFG('thread_local_transient_multi_state')
-    begin = sdfg.add_state('begin', is_start_state=True)
+    begin = sdfg.add_state('begin', is_start_block=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
     body1 = sdfg.add_state('body1')

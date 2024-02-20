@@ -16,13 +16,13 @@ def subarray(A, B):
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dp.ndarray([W, W, W, W])
     B = dp.ndarray([W, W, W, W])
 
-    A[:] = np.mgrid[0:W.get(), 0:W.get(), 0:W.get()]
-    for i in range(W.get()):
+    A[:] = np.mgrid[0:W, 0:W, 0:W]
+    for i in range(W):
         A[i, :] += 10 * (i + 1)
     B[:] = dp.float32(0.0)
 

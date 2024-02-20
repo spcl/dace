@@ -79,7 +79,7 @@ setup(name='dace',
       ] + cmake_requires,
       extras_require={
           'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
-          'docs': ['jinja2<3.1.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
+          'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1']
       },
       entry_points={
           'console_scripts': [
