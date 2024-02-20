@@ -45,10 +45,7 @@ b2 = -math.exp(datatype(-2.0) * alpha)
 c1 = c2 = 1
 
 
-def init_array(imgIn, imgOut):
-    w = W.get()
-    h = H.get()
-
+def init_array(imgIn, imgOut, w, h):
     for i in range(w):
         for j in range(h):
             imgIn[i, j] = datatype((313 * i + 991 * j) % 65536) / 65535.0
