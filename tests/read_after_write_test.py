@@ -29,17 +29,17 @@ def raw_prog(A, B):
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dp.ndarray([W])
     B = dp.ndarray([W])
 
-    A[:] = np.mgrid[0:W.get()]
+    A[:] = np.mgrid[0:W]
     B[:] = dp.float32(0.0)
 
     raw_prog(A, B, W=W)
 
-    diff = np.linalg.norm(4 * A - B) / W.get()
+    diff = np.linalg.norm(4 * A - B) / W
     print("Difference:", diff)
     assert diff <= 1e-5
 
