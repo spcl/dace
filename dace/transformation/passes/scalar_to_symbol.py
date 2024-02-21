@@ -95,7 +95,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
     # Check all occurrences of candidates in SDFG and filter out
     candidates_seen: Set[str] = set()
-    for state in sdfg.nodes():
+    for state in sdfg.states():
         candidates_in_state: Set[str] = set()
 
         for node in state.nodes():
@@ -221,6 +221,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         continue
             else:  # If input is not an acceptable node type, skip
                 candidates.remove(candidate)
+
+            # If the candidate is a view that is used to access a structure's scalar member it should not be promoted.
+            # TODO: This is not the goal for the long run and we want to promote these kinds of scalar views too
+            # eventually. However, this requires additional thought and discussion.
+            if isinstance(sdfg.data(candidate), dt.View):
+                for oe in state.out_edges(node):
+                    if isinstance(oe.dst, nodes.AccessNode) and isinstance(sdfg.data(oe.dst.data), dt.Structure):
+                        candidates.remove(candidate)
+                        break
         candidates_seen |= candidates_in_state
 
     # Filter out non-integral symbols that do not appear in inter-state edges

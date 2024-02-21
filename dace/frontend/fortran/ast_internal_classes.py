@@ -83,6 +83,18 @@ class Module_Node(FNode):
         'function_definitions',
     )
 
+class Module_Subprogram_Part_Node(FNode):
+    _attributes = ()
+    _fields = (
+        'subroutine_definitions',
+        'function_definitions',
+    )
+
+class Actual_Arg_Spec_Node(FNode):
+    _fields = (
+        'arg_name'
+        'arg',
+    )
 
 class Function_Subprogram_Node(FNode):
     _attributes = ('name', 'type', 'ret_name')
@@ -119,8 +131,11 @@ class Subroutine_Stmt_Node(FNode):
 
 class Function_Stmt_Node(FNode):
     _attributes = ('name', )
-    _fields = ('args', 'return')
+    _fields = ('args', 'ret')
 
+class Prefix_Node(FNode):
+    _attributes = ('elemental', )
+    _fields = ()
 
 class Name_Node(FNode):
     _attributes = ('name', 'type')
@@ -219,6 +234,7 @@ class Var_Decl_Node(Statement_Node):
         'type',
         'alloc',
         'kind',
+        'optional'
     )
     _fields = (
         'sizes',
@@ -255,29 +271,23 @@ class Literal(FNode):
 
 
 class Int_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Real_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Bool_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class String_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
-
+    pass
 
 class Char_Literal_Node(Literal):
-    _attributes = ()
-    _fields = ()
+    pass
 
+class Suffix_Node(FNode):
+    _attributes = ()
+    _fields = ('name')
 
 class Call_Expr_Node(FNode):
     _attributes = ('type', 'subroutine')
@@ -285,6 +295,31 @@ class Call_Expr_Node(FNode):
         'name',
         'args',
     )
+
+
+class Derived_Type_Stmt_Node(FNode):
+    _attributes = ('name', )
+    _fields = ('args', )
+
+
+class Derived_Type_Def_Node(FNode):
+    _attributes = ('name', )
+    _fields = ('component_part', )
+
+
+class Component_Part_Node(FNode):
+    _attributes = ()
+    _fields = ('component_def_stmts', )
+
+
+class Data_Component_Def_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('vars', )
+
+
+class Data_Ref_Node(FNode):
+    _attributes = ()
+    _fields = ('parent_ref', 'part_ref')
 
 
 class Array_Constructor_Node(FNode):
@@ -299,6 +334,11 @@ class Ac_Value_List_Node(FNode):
 
 class Section_Subscript_List_Node(FNode):
     _fields = ('list')
+
+
+class Pointer_Assignment_Stmt_Node(FNode):
+    _attributes = ()
+    _fields = ('name_pointer', 'name_target')
 
 
 class For_Stmt_Node(FNode):
@@ -348,6 +388,25 @@ class Nonlabel_Do_Stmt_Node(FNode):
         'iter',
     )
 
+class While_True_Control(FNode):
+    _attributes = ()
+    _fields = (
+        'name',
+    )
+
+
+class While_Control(FNode):
+    _attributes = ()
+    _fields = (
+        'cond',
+    )
+
+class While_Stmt_Node(FNode):
+    _attributes = ('name')
+    _fields = (
+        'body',
+        'cond',
+    )
 
 class Loop_Control_Node(FNode):
     _attributes = ()
@@ -365,8 +424,11 @@ class Else_If_Stmt_Node(FNode):
 
 class Only_List_Node(FNode):
     _attributes = ()
-    _fields = ('names', )
+    _fields = ('names','renames', )
 
+class Rename_Node(FNode):
+    _attributes = ()
+    _fields = ('oldname', 'newname', )
 
 class ParDecl_Node(FNode):
     _attributes = ('type', )
@@ -379,7 +441,7 @@ class Structure_Constructor_Node(FNode):
 
 
 class Use_Stmt_Node(FNode):
-    _attributes = ('name', )
+    _attributes = ('name','list_all' )
     _fields = ('list', )
 
 

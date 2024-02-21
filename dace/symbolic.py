@@ -701,10 +701,18 @@ class Attr(sympy.Function):
 
     @property
     def free_symbols(self):
-        return {sympy.Symbol(str(self))}
+        # NOTE: The following handles the case where the attribute is an array access, e.g., "indptr[i]"
+        if isinstance(self.args[1], sympy.Function):
+            attribute = str(self.args[1].func)
+        else:
+            attribute = str(self.args[1])
+        return {sympy.Symbol(f"{self.args[0]}.{attribute}")}
 
     def __str__(self):
         return f'{self.args[0]}.{self.args[1]}'
+    
+    def _subs(self, *args, **kwargs):
+        return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
 def sympy_intdiv_fix(expr):
@@ -1065,6 +1073,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
         'Attr': Attr,
+        'id': sympy.Symbol('id')
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -1116,7 +1125,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) == 'OR':
             return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         if str(expr.func) == 'Attr':
-            return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
+            # TODO: We want to check that args[0] is a Structure.
+            #       However, this is information is not currently passed from the code generator.
+            if self.cpp_mode:
+                sep = '->'
+            else:
+                sep = '.'
+            if isinstance(expr.args[1], sympy.Function):
+                attribute = f'{self._print(expr.args[1].func)}[{",".join(map(self._print, expr.args[1].args))}]'
+            else:
+                attribute = self._print(expr.args[1])
+            return f'{self._print(expr.args[0])}{sep}{attribute}'
+            # return f'{self._print(expr.args[0])}.{self._print(expr.args[1])}'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):

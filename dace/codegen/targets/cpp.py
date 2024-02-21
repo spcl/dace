@@ -61,6 +61,13 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
+    tokens = data_name.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = data_name.replace('.', '->')
+    else:
+        name = data_name
     ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
     if relative_offset:
         s = memlet.subset
@@ -99,6 +106,7 @@ def copy_expr(
         # get conf flag
         decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
+        # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
         expr = fpga.fpga_ptr(
             data_name,
             data_desc,
@@ -112,7 +120,7 @@ def copy_expr(
             and not isinstance(data_desc, data.View),
             decouple_array_interfaces=decouple_array_interfaces)
     else:
-        expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
+        expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -281,7 +289,8 @@ def emit_memlet_reference(dispatcher,
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer)
+    is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
+                                                             isinstance(desc, data.StructArray))
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
@@ -331,7 +340,8 @@ def emit_memlet_reference(dispatcher,
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            ref = '&'
+            if not isinstance(desc, data.StructArray):
+                ref = '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
@@ -344,7 +354,7 @@ def emit_memlet_reference(dispatcher,
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        if is_write is False:
+        if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
@@ -578,17 +588,26 @@ def cpp_array_expr(sdfg,
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
+    tokens = memlet.data.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = memlet.data.replace('.', '->')
+    else:
+        name = memlet.data
+
     if with_brackets:
         if fpga.is_fpga_array(desc):
             # get conf flag
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
             ptrname = fpga.fpga_ptr(memlet.data,
                                     desc,
                                     sdfg,
                                     subset,
                                     decouple_array_interfaces=decouple_array_interfaces)
         else:
-            ptrname = ptr(memlet.data, desc, sdfg, codegen)
+            ptrname = ptr(name, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -1017,6 +1036,16 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         # Replace values with their code-generated names (for example, persistent arrays)
         desc = self.sdfg.arrays[t.id]
         self.write(ptr(t.id, desc, self.sdfg, self.codegen))
+    
+    def _Attribute(self, t: ast.Attribute):
+        from dace.frontend.python.astutils import rname
+        name = rname(t)
+        if name not in self.sdfg.arrays:
+            return super()._Attribute(t)
+
+        # Replace values with their code-generated names (for example, persistent arrays)
+        desc = self.sdfg.arrays[name]
+        self.write(ptr(name, desc, self.sdfg, self.codegen))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice

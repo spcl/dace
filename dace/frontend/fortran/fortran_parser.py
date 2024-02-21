@@ -1,15 +1,17 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
 from venv import create
 import warnings
 
-from dace.data import Scalar
+from dace.data import Scalar, Structure
 
 import dace.frontend.fortran.ast_components as ast_components
 import dace.frontend.fortran.ast_transforms as ast_transforms
 import dace.frontend.fortran.ast_utils as ast_utils
 import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
-from typing import List, Tuple, Set
+from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
+from typing import Dict, List, Optional, Tuple, Set
 from dace import dtypes
 from dace import Language as lang
 from dace import data as dat
@@ -23,19 +25,37 @@ from fparser.common.readfortran import FortranStringReader as fsr
 from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
+import os
+from os import path
+from shutil import copyfile
+import networkx as nx
 
 class AST_translator:
     """  
     This class is responsible for translating the internal AST into a SDFG.
     """
-    def __init__(self, ast: ast_components.InternalFortranAst, source: str):
+    def __init__(
+        self,
+        ast: ast_components.InternalFortranAst,
+        source: str,
+        multiple_sdfgs: bool = False,
+        startpoint=None,
+        sdfg_path=None,
+        toplevel_subroutine: Optional[str] = None
+    ):
         """
         :ast: The internal fortran AST to be used for translation
         :source: The source file name from which the AST was generated
         """
+        self.sdfg_path=sdfg_path
+        self.count_of_struct_symbols_lifted=0
+        self.registered_types = {}
+        self.transient_mode=True
         self.tables = ast.tables
+        self.startpoint = startpoint
         self.top_level = None
         self.globalsdfg = None
+        self.multiple_sdfgs = multiple_sdfgs
         self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = ast_utils.NameMap()
         self.contexts = {}
@@ -50,7 +70,10 @@ class AST_translator:
         self.last_returns = {}
         self.module_vars = []
         self.libraries = {}
+        self.struct_views={}
         self.last_call_expression = {}
+        self.structures = ast.structures
+        self.toplevel_subroutine = toplevel_subroutine
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -67,6 +90,8 @@ class AST_translator:
             ast_internal_classes.Write_Stmt_Node: self.write2sdfg,
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
             ast_internal_classes.Break_Node: self.break2sdfg,
+            ast_internal_classes.Derived_Type_Def_Node: self.derivedtypedef2sdfg,
+            ast_internal_classes.Pointer_Assignment_Stmt_Node: self.pointerassignment2sdfg,
         }
 
     def get_dace_type(self, type):
@@ -75,7 +100,15 @@ class AST_translator:
         by referencing the ast_utils.fortrantypes2dacetypes dictionary.
         """
         if isinstance(type, str):
-            return ast_utils.fortrantypes2dacetypes[type]
+            if type in ast_utils.fortrantypes2dacetypes:
+                return ast_utils.fortrantypes2dacetypes[type]
+            elif type in self.registered_types:
+                return self.registered_types[type]
+            else:
+                #TODO: This is bandaid.
+                if type=="VOID":
+                    return ast_utils.fortrantypes2dacetypes["DOUBLE"]
+                    raise ValueError("Unknown type " + type)
 
     def get_name_mapping_in_context(self, sdfg: SDFG):
         """
@@ -147,26 +180,142 @@ class AST_translator:
         """
         self.globalsdfg = sdfg
         for i in node.modules:
-            for j in i.specification_part.typedecls:
+            structs_lister=ast_transforms.StructLister()
+            if i.specification_part is not None:
+                structs_lister.visit(i.specification_part)
+            struct_dep_graph=nx.DiGraph()
+            for ii,name in zip(structs_lister.structs,structs_lister.names):
+                if name not in struct_dep_graph.nodes:
+                    struct_dep_graph.add_node(name)
+                struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+                struct_deps_finder.visit(ii)
+                struct_deps=struct_deps_finder.structs_used
+                #print(struct_deps)
+                for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+                    if j not in struct_dep_graph.nodes:
+                        struct_dep_graph.add_node(j)
+                    struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+            parse_order = list(reversed(list(nx.topological_sort(struct_dep_graph))))        
+            for jj in parse_order:
+              for j in i.specification_part.typedecls:
+                    if j.name.name==jj:
+                        self.translate(j, sdfg)
+                        if j.__class__.__name__ != "Derived_Type_Def_Node":
+                            for k in j.vardecl:
+                                self.module_vars.append((k.name, i.name))
+            if i.specification_part is not None:                                
+              for j in i.specification_part.symbols:
+                self.translate(j, sdfg)
+                if  isinstance(j, ast_internal_classes.Symbol_Array_Decl_Node):
+                    self.module_vars.append((j.name, i.name))
+                elif isinstance(j, ast_internal_classes.Symbol_Decl_Node):
+                    self.module_vars.append((j.name, i.name))
+                else:
+                    raise ValueError("Unknown symbol type")
+              for j in i.specification_part.specifications:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
-            for j in i.specification_part.symbols:
-                self.translate(j, sdfg)
-                for k in j.vardecl:
-                    self.module_vars.append((k.name, i.name))
-            for j in i.specification_part.specifications:
-                self.translate(j, sdfg)
-                for k in j.vardecl:
-                    self.module_vars.append((k.name, i.name))
+        if node.main_program is not None:
 
-        for i in node.main_program.specification_part.typedecls:
-            self.translate(i, sdfg)
-        for i in node.main_program.specification_part.symbols:
-            self.translate(i, sdfg)
-        for i in node.main_program.specification_part.specifications:
-            self.translate(i, sdfg)
-        self.translate(node.main_program.execution_part.execution, sdfg)
+            for i in node.main_program.specification_part.typedecls:
+                self.translate(i, sdfg)
+            for i in node.main_program.specification_part.symbols:
+                self.translate(i, sdfg)
+            for i in node.main_program.specification_part.specifications:
+                self.translate(i, sdfg)
+            self.translate(node.main_program.execution_part.execution, sdfg)
+        else: 
+            if self.startpoint is None:
+                raise ValueError("No main program or start point found")
+            else:
+
+                if self.startpoint.specification_part is not None:
+                    self.transient_mode=False
+                    for i in self.startpoint.specification_part.typedecls:
+                        self.translate(i, sdfg)
+                    for i in self.startpoint.specification_part.symbols:
+                        self.translate(i, sdfg)
+
+                    for i in self.startpoint.specification_part.specifications:
+                        self.translate(i, sdfg)
+                self.transient_mode=True    
+                self.translate(self.startpoint.execution_part.execution, sdfg)   
+
+    def pointerassignment2sdfg(self, node: ast_internal_classes.Pointer_Assignment_Stmt_Node, sdfg: SDFG):
+        """
+        This function is responsible for translating Fortran pointer assignments into a SDFG.
+        :param node: The node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        """
+        if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
+            if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
+                raise ValueError("Unknown variable " + node.name_target.name)
+            if isinstance(node.name_target.part_ref,ast_internal_classes.Data_Ref_Node):
+                self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
+            else:    
+                self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.name]
+
+
+        else:       
+            if node.name_target.name not in self.name_mapping[sdfg]:
+                raise ValueError("Unknown variable " + node.name_target.name)
+            found = False
+            for i in self.unallocated_arrays:
+                if i[0] == node.name_pointer.name:
+                    if found:
+                        raise ValueError("Multiple unallocated arrays with the same name")
+                    fount = True
+                    self.unallocated_arrays.remove(i)
+            self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.name]
+
+    def derivedtypedef2sdfg(self, node: ast_internal_classes.Derived_Type_Def_Node, sdfg: SDFG):
+        """
+        This function is responsible for registering Fortran derived type declarations into a SDFG as nested data types.
+        :param node: The node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        """
+        name = node.name.name
+        if node.component_part is None:
+            components=[]
+        else:     
+            components = node.component_part.component_def_stmts
+        dict_setup = {}
+        for i in components:
+            j = i.vars
+            for k in j.vardecl:
+                complex_datatype=False
+                datatype = self.get_dace_type(k.type)
+                if isinstance(datatype, dat.Structure):
+                    complex_datatype=True
+                if k.sizes is not None:
+                    sizes = []
+                    offset = []
+                    offset_value = -1
+                    for i in k.sizes:
+                        tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                        text = tw.write_code(i)
+                        sizes.append(sym.pystr_to_symbolic(text))
+                        offset.append(offset_value)
+                    strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
+                    if not complex_datatype:
+                        dict_setup[k.name] = dat.Array(
+                        datatype,
+                        sizes,
+                        strides=strides,
+                        offset=offset,
+                        )
+                    else:
+                        dict_setup[k.name] = dat.StructArray(datatype, sizes, strides=strides, offset=offset)
+
+                else:
+                    if not complex_datatype:
+                        dict_setup[k.name] = dat.Scalar(datatype)
+                    else:
+                        dict_setup[k.name] = datatype
+
+        structure_obj = Structure(dict_setup, name)
+        self.registered_types[name] = structure_obj
 
     def basicblock2sdfg(self, node: ast_internal_classes.Execution_Part_Node, sdfg: SDFG):
         """
@@ -213,7 +362,6 @@ class AST_translator:
                                    offset=offset,
                                    strides=strides,
                                    transient=transient)
-
 
     def write2sdfg(self, node: ast_internal_classes.Write_Stmt_Node, sdfg: SDFG):
         #TODO implement
@@ -318,8 +466,14 @@ class AST_translator:
             if isinstance(node.init, ast_internal_classes.Int_Literal_Node) or isinstance(
                     node.init, ast_internal_classes.Real_Literal_Node):
                 self.contexts[sdfg.name].constants[node.name] = node.init.value
-            if isinstance(node.init, ast_internal_classes.Name_Node):
+            elif isinstance(node.init, ast_internal_classes.Name_Node):
                 self.contexts[sdfg.name].constants[node.name] = self.contexts[sdfg.name].constants[node.init.name]
+            else:
+                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                if node.init is not None:
+                    text = tw.write_code(node.init)
+                    self.contexts[sdfg.name].constants[node.name] = sym.pystr_to_symbolic(text)
+           
         datatype = self.get_dace_type(node.type)
         if node.name not in sdfg.symbols:
             sdfg.add_symbol(node.name, datatype)
@@ -365,6 +519,36 @@ class AST_translator:
 
         new_sdfg = SDFG(node.name.name)
         substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + node.name.name)
+
+        # TODO: This is a bandaid
+        #Add a pass over the arguments of the subroutine - and over the closure of used structures
+        # get the additional integer arguments for assumed shapes for arrays and structures and 
+        # get these from either additional fields in the structure of additional arguments for arrays
+        if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
+            for i in node.specification_part.specifications:
+
+                ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
+                assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
+
+                for decl in i.vardecl:
+                    if not self.structures.is_struct(decl.type):
+                        continue
+
+                    struct_type = self.structures.get_definition(decl.type)
+
+                    for var, var_type in struct_type.vars.items():
+
+                        if var_type.sizes is None or len(var_type.sizes) == 0:
+                            continue
+
+                        # for assumed shape, all vars starts with the same prefix
+                        if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                            continue
+
+                        for edge in new_sdfg.in_edges(assign_state):
+                            for size in var_type.sizes:
+                                edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+
         variables_in_call = []
         if self.last_call_expression.get(sdfg) is not None:
             variables_in_call = self.last_call_expression[sdfg]
@@ -373,10 +557,12 @@ class AST_translator:
         if not ((len(variables_in_call) == len(parameters)) or
                 (len(variables_in_call) == len(parameters) + 1
                  and not isinstance(node.result_type, ast_internal_classes.Void))):
-            for i in variables_in_call:
-                print("VAR CALL: ", i.name)
-            for j in parameters:
-                print("LOCAL TO UPDATE: ", j.name)
+            print('Variables in call', len(variables_in_call))
+            print('Parameters', len(parameters))
+            #for i in variables_in_call:
+            #    print("VAR CALL: ", i.name)
+            #for j in parameters:
+            #    print("LOCAL TO UPDATE: ", j.name)
             raise ValueError("number of parameters does not match the function signature")
 
         # creating new arrays for nested sdfg
@@ -397,8 +583,11 @@ class AST_translator:
         for arg_i, variable in enumerate(variables_in_call):
             if isinstance(variable, ast_internal_classes.Name_Node):
                 varname = variable.name
+            elif isinstance(variable, ast_internal_classes.Actual_Arg_Spec_Node):
+                varname = variable.arg_name.name
             elif isinstance(variable, ast_internal_classes.Array_Subscript_Node):
                 varname = variable.name.name
+
             if isinstance(variable, ast_internal_classes.Literal) or varname == "LITERAL":
                 literals.append(parameters[arg_i])
                 literal_values.append(variable)
@@ -479,7 +668,27 @@ class AST_translator:
                         shape = list(array.shape)
                     # Functionally, this identifies the case where the array is in fact a scalar
                     if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
+                        if hasattr(array,"name") and array.name in self.registered_types:
+                            datatype=self.get_dace_type(array.name)
+                            datatype_to_add=copy.deepcopy(datatype)
+                            datatype_to_add.transient = False
+                            new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                            if self.struct_views.get(new_sdfg) is None:
+                                self.struct_views[new_sdfg] = {}
+                            for i in datatype_to_add.members:
+                                current_dtype=datatype_to_add.members[i].dtype
+                                for other_type in self.registered_types:
+                                    if current_dtype.dtype==self.registered_types[other_type].dtype:
+                                        other_type_obj=self.registered_types[other_type]
+                                        for j in other_type_obj.members:
+                                            new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                            self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
+                                            self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
+                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                                self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
+                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                        else:
+                            new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                     else:
                         # This is the case where the array is not a scalar and we need to create a view
                         if not isinstance(variable_in_call, ast_internal_classes.Name_Node):
@@ -575,6 +784,7 @@ class AST_translator:
                 outs_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
             new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], dtypes.int32, transient=False)
         addedmemlets = []
+        
         globalmemlets = []
         # This handles the case where the function is called with read variables found in a module
         for i in not_found_read_names:
@@ -590,7 +800,7 @@ class AST_translator:
                     array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -610,7 +820,7 @@ class AST_translator:
                     array_in_global = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -635,7 +845,7 @@ class AST_translator:
                     array = sdfg.arrays[self.name_mapping[sdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -655,7 +865,7 @@ class AST_translator:
                     array = self.globalsdfg.arrays[self.name_mapping[self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i], array_in_global.dtype, transient=False)
-                    elif array_in_global.type == "Array":
+                    elif (hasattr(array_in_global, 'type') and array_in_global.type == "Array") or isinstance(array_in_global, dat.Array):
                         new_sdfg.add_array(self.name_mapping[new_sdfg][i],
                                            array_in_global.shape,
                                            array_in_global.dtype,
@@ -663,22 +873,30 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
-
-        internal_sdfg = substate.add_nested_sdfg(new_sdfg,
+        if self.multiple_sdfgs==False:
+            internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                  sdfg,
                                                  ins_in_new_sdfg,
                                                  outs_in_new_sdfg,
                                                  symbol_mapping=sym_dict)
+        else:
+            internal_sdfg = substate.add_nested_sdfg(None,
+                                                 sdfg,
+                                                 ins_in_new_sdfg,
+                                                 outs_in_new_sdfg,
+                                                 symbol_mapping=sym_dict,
+                                                 name="External_nested_" + new_sdfg.name)    
+        #if self.multiple_sdfgs==False:
+            # Now adding memlets
 
-        # Now adding memlets
         for i in self.libstates:
             memlet = "0"
             if i in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if i in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
 
         for i in variables_in_call:
 
@@ -711,62 +929,68 @@ class AST_translator:
                     if local_name.name in write_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[2].label].shape])
                         substate.add_memlet_path(internal_sdfg,
-                                                 elem[2],
-                                                 src_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[2].label, subset=memlet))
+                                                elem[2],
+                                                src_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                memlet=Memlet(expr=elem[2].label, subset=memlet))
                     if local_name.name in read_names:
                         memlet = subsets.Range([(0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape])
                         substate.add_memlet_path(elem[1],
-                                                 internal_sdfg,
-                                                 dst_conn=self.name_mapping[new_sdfg][local_name.name],
-                                                 memlet=Memlet(expr=elem[1].label, subset=memlet))
+                                                internal_sdfg,
+                                                dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                                                memlet=Memlet(expr=elem[1].label, subset=memlet))
 
             if not found:
                 if local_name.name in write_names:
                     ast_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                               self.name_mapping[new_sdfg][local_name.name], memlet)
+                                            self.name_mapping[new_sdfg][local_name.name], memlet)
                 if local_name.name in read_names:
                     ast_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                              self.name_mapping[new_sdfg][local_name.name], memlet)
+                                            self.name_mapping[new_sdfg][local_name.name], memlet)
 
         for i in addedmemlets:
-
+            local_name=ast_internal_classes.Name_Node(name=i)
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if local_name.name in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[sdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
         for i in globalmemlets:
-
+            local_name=ast_internal_classes.Name_Node(name=i)
             memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                           self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
             if local_name.name in read_names:
                 ast_utils.add_memlet_read(substate, self.name_mapping[self.globalsdfg][i], internal_sdfg,
-                                          self.name_mapping[new_sdfg][i], memlet)
+                                        self.name_mapping[new_sdfg][i], memlet)
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
+        if self.multiple_sdfgs==False:
+            if node.execution_part is not None:
+                if node.specification_part is not None:  
+                    for j in node.specification_part.uses:
+                        for k in j.list:
+                            if self.contexts.get(new_sdfg.name) is None:
+                                self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
+                            if self.contexts[new_sdfg.name].constants.get(
+                                    ast_utils.get_name(k)) is None and self.contexts[self.globalsdfg.name].constants.get(
+                                        ast_utils.get_name(k)) is not None:
+                                self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
+                                    self.globalsdfg.name].constants[ast_utils.get_name(k)]
 
-        if node.execution_part is not None:
-            for j in node.specification_part.uses:
-                for k in j.list:
-                    if self.contexts.get(new_sdfg.name) is None:
-                        self.contexts[new_sdfg.name] = ast_utils.Context(name=new_sdfg.name)
-                    if self.contexts[new_sdfg.name].constants.get(
-                            ast_utils.get_name(k)) is None and self.contexts[self.globalsdfg.name].constants.get(
-                                ast_utils.get_name(k)) is not None:
-                        self.contexts[new_sdfg.name].constants[ast_utils.get_name(k)] = self.contexts[
-                            self.globalsdfg.name].constants[ast_utils.get_name(k)]
+                            pass
+                    for j in node.specification_part.specifications:
+                        self.declstmt2sdfg(j, new_sdfg)
+                for i in assigns:
+                        self.translate(i, new_sdfg)
+                self.translate(node.execution_part, new_sdfg)
 
-                    pass
-            for j in node.specification_part.specifications:
-                self.declstmt2sdfg(j, new_sdfg)
-            for i in assigns:
-                self.translate(i, new_sdfg)
-            self.translate(node.execution_part, new_sdfg)
+        if self.multiple_sdfgs==True:
+            internal_sdfg.path=self.sdfg_path+ new_sdfg.name + ".sdfg"
+            #new_sdfg.save(path.join(self.sdfg_path, new_sdfg.name + ".sdfg"))        
+
 
     def binop2sdfg(self, node: ast_internal_classes.BinOp_Node, sdfg: SDFG):
         """
@@ -781,7 +1005,8 @@ class AST_translator:
         calls.visit(node)
         if len(calls.nodes) == 1:
             augmented_call = calls.nodes[0]
-            if augmented_call.name.name not in ["sqrt", "exp", "pow", "max", "min", "abs", "tanh", "__dace_epsilon"]:
+            from dace.frontend.fortran.intrinsics import FortranIntrinsics
+            if augmented_call.name.name not in ["pow", "atan2", "tanh", "__dace_epsilon", *FortranIntrinsics.retained_function_names()]:
                 augmented_call.args.append(node.lval)
                 augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg)
@@ -828,7 +1053,13 @@ class AST_translator:
 
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
-            ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+            src= ast_utils.add_memlet_read(substate, i, tasklet, j, memlet_range)
+            if self.struct_views.get(sdfg) is not None:
+              if self.struct_views[sdfg].get(i) is not None:
+                chain= self.struct_views[sdfg][i]
+                access=substate.add_access(chain[0])
+                substate.add_edge(access, None,src,'views',  Memlet(data=chain[0], subset=memlet_range))
+
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
 
@@ -852,22 +1083,24 @@ class AST_translator:
         match_found = False
         rettype = "INTEGER"
         hasret = False
-        if node.name in self.functions_and_subroutines:
+        for fsname in self.functions_and_subroutines:
+          if fsname.name == node.name.name:
+        
             for i in self.top_level.function_definitions:
-                if i.name == node.name:
+                if i.name.name == node.name.name:
                     self.function2sdfg(i, sdfg)
                     return
             for i in self.top_level.subroutine_definitions:
-                if i.name == node.name:
+                if i.name.name == node.name.name:
                     self.subroutine2sdfg(i, sdfg)
                     return
             for j in self.top_level.modules:
                 for i in j.function_definitions:
-                    if i.name == node.name:
+                    if i.name.name == node.name.name:
                         self.function2sdfg(i, sdfg)
                         return
                 for i in j.subroutine_definitions:
-                    if i.name == node.name:
+                    if i.name.name == node.name.name:
                         self.subroutine2sdfg(i, sdfg)
                         return
         else:
@@ -970,7 +1203,7 @@ class AST_translator:
 
         """
         #if the sdfg is the toplevel-sdfg, the variable is a global variable
-        transient = True
+        transient = self.transient_mode
         # find the type
         datatype = self.get_dace_type(node.type)
         if hasattr(node, "alloc"):
@@ -983,10 +1216,28 @@ class AST_translator:
             offset = []
             offset_value = -1
             for i in node.sizes:
-                tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
-                text = tw.write_code(i)
-                sizes.append(sym.pystr_to_symbolic(text))
-                offset.append(offset_value)
+                stuff=[ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
+                if len(stuff)>0:
+                    count=self.count_of_struct_symbols_lifted
+                    sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                    if sdfg.parent_sdfg is not None:
+                        sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
+                        sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
+                        for edge in sdfg.parent.parent_graph.in_edges(sdfg.parent):
+                            assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping).write_code(i)
+                            edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
+                            #print(edge)
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
+                    sizes.append(sym.pystr_to_symbolic(text))
+                    #TODO: shouldn't this use node.offset??
+                    offset.append(offset_value)
+                    self.count_of_struct_symbols_lifted+=1
+                else:
+                    tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping)
+                    text = tw.write_code(i)
+                    sizes.append(sym.pystr_to_symbolic(text))
+                    offset.append(offset_value)
 
         else:
             sizes = None
@@ -1000,10 +1251,38 @@ class AST_translator:
         self.name_mapping[sdfg][node.name] = sdfg._find_new_name(node.name)
 
         if sizes is None:
-            sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
+            if isinstance(datatype, Structure):
+                datatype_to_add=copy.deepcopy(datatype)
+                datatype_to_add.transient = transient
+                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
+                if self.struct_views.get(sdfg) is None:
+                    self.struct_views[sdfg] = {}
+                for i in datatype_to_add.members:
+                    current_dtype=datatype_to_add.members[i].dtype
+                    for other_type in self.registered_types:
+                        if current_dtype.dtype==self.registered_types[other_type].dtype:
+                            other_type_obj=self.registered_types[other_type]
+                            for j in other_type_obj.members:
+                                sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
+                                self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
+                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                    self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
+                    self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
+
+            else:
+                sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
         else:
             strides = [dat._prod(sizes[:i]) for i in range(len(sizes))]
-            sdfg.add_array(self.name_mapping[sdfg][node.name],
+            
+            if isinstance(datatype, Structure):
+                datatype.transient = transient
+                arr_dtype = datatype[sizes]
+                arr_dtype.offset = [-1 for _ in sizes]
+                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
+                
+            else:    
+                sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
                            dtype=datatype,
                            offset=offset,
@@ -1016,6 +1295,9 @@ class AST_translator:
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
 
+        if hasattr(node,"init") and node.init is not None:
+            self.translate(ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=node.name,type=node.type),op="=",rval=node.init,line_number=node.line_number), sdfg)    
+
     def break2sdfg(self, node: ast_internal_classes.Break_Node, sdfg: SDFG):
 
         self.last_loop_breaks[sdfg] = self.last_sdfg_states[sdfg]
@@ -1025,7 +1307,8 @@ def create_ast_from_string(
     source_string: str,
     sdfg_name: str,
     transform: bool = False,
-    normalize_offsets: bool = False
+    normalize_offsets: bool = False,
+    multiple_sdfgs: bool = False
 ):
     """
     Creates an AST from a Fortran file in a string
@@ -1041,6 +1324,23 @@ def create_ast_from_string(
     own_ast = ast_components.InternalFortranAst(ast, tables)
     program = own_ast.create_ast(ast)
 
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     functions_and_subroutines = functions_and_subroutines_builder.nodes
@@ -1053,17 +1353,22 @@ def create_ast_from_string(
         program = ast_transforms.ArrayToLoop(program).visit(program)
 
         for transformation in own_ast.fortran_intrinsics().transformations():
-            program = transformation(program).visit(program)
+            transformation.initialize(program)
+            program = transformation.visit(program)
 
         program = ast_transforms.ForDeclarer().visit(program)
         program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+
+        program = ast_transforms.optionalArgsExpander(program)
 
     return (program, own_ast)
 
 def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
-    normalize_offsets: bool = False
+    normalize_offsets: bool = False,
+    multiple_sdfgs: bool = False,
+    sources: List[str] = None,
 ):
     """
     Creates an SDFG from a fortran file in a string
@@ -1075,24 +1380,264 @@ def create_sdfg_from_string(
     parser = pf().create(std="f2008")
     reader = fsr(source_string)
     ast = parser(reader)
+
+    exclude_list = []
+    missing_modules = []
+    dep_graph = nx.DiGraph()
+    asts = {}
+    actually_used_in_module={}
+    ast = recursive_ast_improver(ast,
+                                 sources,
+                                 [],
+                                 parser,
+                                 exclude_list=exclude_list,
+                                 missing_modules=missing_modules,
+                                 dep_graph=dep_graph,
+                                 asts=asts)
+    
+    print(dep_graph)
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
+    
+    changed=True
+    while changed:
+        
+        simpler_graph=simple_graph.copy()
+        simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
+        if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
+            changed=False
+
+
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
+      
+    parse_list={}
+    what_to_parse_list={}
+    type_to_parse_list={}
+    for i in parse_order:
+        edges=simple_graph.in_edges(i)
+        parse_list[i]=[]
+        fands_list=[]
+        type_list=[]
+        res=simple_graph.nodes.get(i).get("info_list")
+        for j in edges:
+            deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            print(j[0],j[1],deps)
+            if deps is None:   
+                continue
+            for k in deps:
+                if k.string not in parse_list[i]:
+                    parse_list[i].append(k.string)
+            
+            
+            if res is not None:
+                for jj in parse_list[i]:
+                    if jj in res.list_of_functions:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_subroutines:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_types:
+                        if jj not in type_list:
+                            type_list.append(jj)        
+        print("Module " + i + " used names: " + str(parse_list[i]))
+        if len(fands_list)>0:
+            print("Module " + i + " used fands: " + str(fands_list))
+            print("ACtually used: "+str(actually_used_in_module[i]))
+        for j in actually_used_in_module[i]:
+            if res is not None:
+                if j in res.list_of_functions:
+                    if j not in fands_list:
+                        fands_list.append(j)
+                if j in res.list_of_subroutines:
+                    if j not in fands_list:
+                        fands_list.append(j)  
+                if j in res.list_of_types:
+                    if j not in type_list:
+                        type_list.append(j)        
+
+        what_to_parse_list[i]=fands_list  
+        type_to_parse_list[i]=type_list 
+    
+    if len(parse_order)==0:
+        top_level_ast=ast
+    else:
+        top_level_ast = parse_order.pop()
+    changes=True
+    new_children=[]
+    if len(parse_order)>0:
+        for i in ast.children:
+        
+            if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+                print("Module " + i.children[0].children[1].string + " not needing parsing")
+            else:
+                types=[]
+                subroutinesandfunctions=[]
+                new_spec_children=[]
+                for j in i.children[1].children:
+                    if j.__class__.__name__=="Type_Declaration_Stmt":
+                        if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                            new_spec_children.append(j) 
+                            continue   
+                        else:
+                            entity_decls=[]
+                            for k in j.children[2].children:
+                                if k.__class__.__name__=="Entity_Decl":
+                                    if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                        entity_decls.append(k)
+                            if entity_decls==[]:
+                                continue            
+                            if j.children[2].children.__class__.__name__=="tuple":
+                                print("Assumption failed: Tuple not expected")
+                                new_spec_children.append(j)
+                                continue
+                            j.children[2].children.clear()
+                            for k in entity_decls:
+                                j.children[2].children.append(k)            
+                            new_spec_children.append(j)
+                    elif j.__class__.__name__=="Derived_Type_Def":
+                        if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                            new_spec_children.append(j)
+                    else:
+                        new_spec_children.append(j)
+                i.children[1].children.clear()
+                for j in new_spec_children:
+                    i.children[1].children.append(j)        
+                if i.children[2].__class__.__name__=="End_Module_Stmt":
+                    new_children.append(i)
+                    continue
+                if i.children[0].children[1].string!=top_level_ast:
+                    for j in i.children[2].children:
+                        if j.__class__.__name__!="Contains_Stmt":
+
+                            if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                                subroutinesandfunctions.append(j)        
+                    i.children[2].children.clear()
+                    for j in subroutinesandfunctions:
+                        i.children[2].children.append(j)        
+                new_children.append(i)
+
+        ast.children.clear()
+        for i in new_children:
+            ast.children.append(i)  
+        name_dict = {}
+        rename_dict = {}
+        for i in parse_order:
+            local_rename_dict = {}
+            edges = list(simple_graph.in_edges(i))
+            names = []
+            for j in edges:
+                list_dict = simple_graph.get_edge_data(j[0], j[1])
+                if (list_dict['obj_list'] is not None):
+                    for k in list_dict['obj_list']:
+                        if not k.__class__.__name__ == "Name":
+                            if k.__class__.__name__ == "Rename":
+                                if k.children[2].string not in names:
+                                    names.append(k.children[2].string)
+                                local_rename_dict[k.children[2].string] = k.children[1].string
+                            #print("Assumption failed: Object list contains non-name node")
+                        else:
+                            if k.string not in names:
+                                names.append(k.string)
+            rename_dict[i] = local_rename_dict
+            name_dict[i] = names
+                    
+
     tables = SymbolTable
     own_ast = ast_components.InternalFortranAst(ast, tables)
+
     program = own_ast.create_ast(ast)
+
+    # Repeated!
+    # We need that to know in transformations what structures are used.
+    # The actual structure listing is repeated later to resolve cycles.
+    # Not sure if we can actually do it earlier.
+
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+    own_ast.structures = ast_transforms.Structures(structs_lister.structs)
+
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
     program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.FunctionCallTransformer().visit(program)
+    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    
+    count=0
+    for i in program.function_definitions:
+        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+            program.subroutine_definitions.append(i)
+            own_ast.functions_and_subroutines.append(i.name)
+            count+=1
+    if count!=len(program.function_definitions):
+        raise NameError("Not all functions were transformed to subroutines")
+    program.function_definitions=[]
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
 
     for transformation in own_ast.fortran_intrinsics().transformations():
-        program = transformation(program).visit(program)
+        transformation.initialize(program)
+        program = transformation.visit(program)
 
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
-    ast2sdfg = AST_translator(own_ast, __file__)
+    program = ast_transforms.optionalArgsExpander(program)
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+    cycles=nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    has_cycles=list(cycles)
+    cycles_we_cannot_ignore=[]
+    for cycle in has_cycles:
+        print(cycle)
+        for i in cycle:
+            is_pointer=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["pointing"]
+            point_name=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["point_name"]
+            print(i,is_pointer)
+            if is_pointer:
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name)
+                actually_used_pointer_node_finder.visit(program)
+                print(actually_used_pointer_node_finder.nodes)
+                if len(actually_used_pointer_node_finder.nodes)==0:
+                    print("We can ignore this cycle")
+                    program=ast_transforms.StructPointerEliminator(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name).visit(program)
+                else:
+                    cycles_we_cannot_ignore.append(cycle)    
+    if len(cycles_we_cannot_ignore)>0:
+        raise NameError("Structs have cyclic dependencies")
+    own_ast.tables = own_ast.symbols
+
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -1100,13 +1645,18 @@ def create_sdfg_from_string(
 
     for node, parent in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.NestedSDFG):
-            if 'test_function' in node.sdfg.name:
-                sdfg = node.sdfg
-                break
+            if node.sdfg is not None:
+                if 'test_function' in node.sdfg.name:
+                    sdfg = node.sdfg
+                    break
     sdfg.parent = None
     sdfg.parent_sdfg = None
     sdfg.parent_nsdfg_node = None
     sdfg.reset_sdfg_list()
+
+    sdfg.apply_transformations(IntrinsicSDFGTransformation)
+    sdfg.expand_library_nodes()
+
     return sdfg
 
 
@@ -1130,17 +1680,546 @@ def create_sdfg_from_fortran_file(source_string: str):
     program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.SignToIf().visit(program)
-    program = ast_transforms.ArrayToLoop(program).visit(program)
-
-    for transformation in own_ast.fortran_intrinsics():
-        program = transformation(program).visit(program)
-
+    program = ast_transforms.ArrayToLoop().visit(program)
+    program = ast_transforms.SumToLoop().visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
-    program = ast_transforms.IndexExtractor(program).visit(program)
+    program = ast_transforms.IndexExtractor().visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
     ast2sdfg = AST_translator(own_ast, __file__)
     sdfg = SDFG(source_string)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
+    sdfg.apply_transformations(IntrinsicSDFGTransformation)
+    sdfg.expand_library_nodes()
 
     return sdfg
+
+def recursive_ast_improver(ast,
+                           source_list,
+                           include_list,
+                           parser,
+                           exclude_list=[],
+                           missing_modules=[],
+                           dep_graph=nx.DiGraph(),
+                           asts={}):
+    dfl = ast_utils.DefModuleLister()
+    dfl.get_defined_modules(ast)
+    defined_modules = dfl.list_of_modules
+    main_program_mode=False
+    if len(defined_modules) != 1:
+        #print("Defined modules: ", defined_modules)
+        print("Assumption failed: Only one module per file")
+        if len(defined_modules)==0 and ast.__class__.__name__ == "Program":
+            main_program_mode=True
+    ufl = ast_utils.UseModuleLister()
+    ufl.get_used_modules(ast)
+    objects_in_modules = ufl.objects_in_use
+    used_modules = ufl.list_of_modules
+    
+    fandsl=ast_utils.FunctionSubroutineLister()
+    fandsl.get_functions_and_subroutines(ast)
+    functions_and_subroutines=fandsl.list_of_functions+fandsl.list_of_subroutines
+
+    #print("Functions and subroutines: ", functions_and_subroutines)
+    if not main_program_mode:
+        parent_module = defined_modules[0]
+    else:
+        parent_module = ast.children[0].children[0].children[1].string
+    for i in defined_modules:
+        if i not in exclude_list:
+            exclude_list.append(i)
+        #if i not in dep_graph.nodes:
+        dep_graph.add_node(i,info_list=fandsl)
+    for i in used_modules:
+        if i not in dep_graph.nodes:
+            dep_graph.add_node(i)
+        weight = None
+        if i in objects_in_modules:
+            weight=[]
+
+            for j in objects_in_modules[i].children:
+                weight.append(j)
+        dep_graph.add_edge(parent_module, i, obj_list=weight)
+
+    #print("It's turtles all the way down: ", len(exclude_list))
+    modules_to_parse = []
+    for i in used_modules:
+        if i not in defined_modules and i not in exclude_list:
+            #print("Module " + i + " not defined")
+            modules_to_parse.append(i)
+    added_modules = []
+    for i in modules_to_parse:
+        found = False
+        name=i
+        if i=="mo_restart_nml_and_att": 
+            name="mo_restart_nmls_and_atts"
+        if i=="yomhook":
+            name="yomhook_dummy"    
+        for j in source_list:
+            if name in j:
+                fname = j.split("/")
+                fname = fname[len(fname) - 1]
+                if fname == name + ".f90" or fname == name + ".F90":
+                    found = True
+                    next_file = j
+                    break
+
+        if not found:
+            print("Module " + i + " not found in source list! This is bad!")
+            if i not in missing_modules:
+                missing_modules.append(i)
+            #raise Exception("Module " + i + " not found in source list")
+            continue
+        if isinstance(source_list,dict):
+            reader = fsr(source_list[next_file])
+            next_ast = parser(reader)
+            
+        else:
+            next_reader = ffr(file_candidate=next_file, include_dirs=include_list, source_only=source_list)
+            next_ast = parser(next_reader)
+
+        next_ast = recursive_ast_improver(next_ast,
+                                          source_list,
+                                          include_list,
+                                          parser,
+                                          exclude_list=exclude_list,
+                                          missing_modules=missing_modules,
+                                          dep_graph=dep_graph,
+                                          asts=asts)
+        for mod in next_ast.children:
+            added_modules.append(mod)
+            if mod.children[0].children[1].string not in exclude_list:
+                exclude_list.append(mod.children[0].children[1].string)
+
+    for i in added_modules:
+        if ast.children.count(i) == 0:
+            ast.children.append(i)
+        asts[i.children[0].children[1].string.lower()] = i
+    return ast
+
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir):
+    """
+    Creates an SDFG from a fortran file
+    :param source_string: The fortran file name
+    :return: The resulting SDFG
+
+    """
+    parser = pf().create(std="f2008")
+    reader = ffr(file_candidate=source_string, include_dirs=include_list, source_only=source_list)
+    ast = parser(reader)
+    exclude_list = []
+    missing_modules = []
+    dep_graph = nx.DiGraph()
+    asts = {}
+    actually_used_in_module={}
+    ast = recursive_ast_improver(ast,
+                                 source_list,
+                                 include_list,
+                                 parser,
+                                 exclude_list=exclude_list,
+                                 missing_modules=missing_modules,
+                                 dep_graph=dep_graph,
+                                 asts=asts)
+    
+    print(dep_graph)
+    parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
+    simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
+    
+    changed=True
+    while changed:
+        
+        simpler_graph=simple_graph.copy()
+        simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(simpler_graph)
+        if simple_graph.number_of_nodes()==simpler_graph.number_of_nodes() and simple_graph.number_of_edges()==simpler_graph.number_of_edges(): 
+            changed=False
+
+
+    parse_order = list(reversed(list(nx.topological_sort(simple_graph))))
+
+    parse_list={}
+    what_to_parse_list={}
+    type_to_parse_list={}
+    for i in parse_order:
+        edges=simple_graph.in_edges(i)
+        parse_list[i]=[]
+        fands_list=[]
+        type_list=[]
+        res=simple_graph.nodes.get(i).get("info_list")
+        for j in edges:
+            deps=simple_graph.get_edge_data(j[0],j[1]).get("obj_list")
+            print(j[0],j[1],deps)
+            if deps is None:   
+                continue
+            for k in deps:
+                if k.string not in parse_list[i]:
+                    parse_list[i].append(k.string)
+            
+            
+            if res is not None:
+                for jj in parse_list[i]:
+                    if jj in res.list_of_functions:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_subroutines:
+                        if jj not in fands_list:
+                            fands_list.append(jj)
+                    if jj in res.list_of_types:
+                        if jj not in type_list:
+                            type_list.append(jj)        
+        print("Module " + i + " used names: " + str(parse_list[i]))
+        if len(fands_list)>0:
+            print("Module " + i + " used fands: " + str(fands_list))
+            print("ACtually used: "+str(actually_used_in_module[i]))
+        for j in actually_used_in_module[i]:
+            if res is not None:
+                if j in res.list_of_functions:
+                    if j not in fands_list:
+                        fands_list.append(j)
+                if j in res.list_of_subroutines:
+                    if j not in fands_list:
+                        fands_list.append(j)  
+                if j in res.list_of_types:
+                    if j not in type_list:
+                        type_list.append(j)        
+
+        what_to_parse_list[i]=fands_list  
+        type_to_parse_list[i]=type_list   
+    top_level_ast = parse_order.pop()
+    changes=True
+    new_children=[]
+    
+    for i in ast.children:
+    
+        if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
+            print("Module " + i.children[0].children[1].string + " not needing parsing")
+        else:
+            types=[]
+            subroutinesandfunctions=[]
+            new_spec_children=[]
+            for j in i.children[1].children:
+                if j.__class__.__name__=="Type_Declaration_Stmt":
+                    #if j.children[0].__class__.__name__!="Declaration_Type_Spec":
+                    #    new_spec_children.append(j)    
+                    #else:
+                        entity_decls=[]
+                        for k in j.children[2].children:
+                            if k.__class__.__name__=="Entity_Decl":
+                                if k.children[0].string in actually_used_in_module[i.children[0].children[1].string]:
+                                    entity_decls.append(k)
+                        if entity_decls==[]:
+                            continue            
+                        if j.children[2].children.__class__.__name__=="tuple":
+                            print("Assumption failed: Tuple not expected")
+                            new_spec_children.append(j)
+                            continue
+                        j.children[2].children.clear()
+                        for k in entity_decls:
+                            j.children[2].children.append(k)            
+                        new_spec_children.append(j)
+                elif j.__class__.__name__=="Derived_Type_Def":
+                    if j.children[0].children[1].string in type_to_parse_list[i.children[0].children[1].string]:
+                        new_spec_children.append(j)
+                else:
+                    new_spec_children.append(j)
+            i.children[1].children.clear()
+            for j in new_spec_children:
+                i.children[1].children.append(j)        
+            if i.children[2].__class__.__name__=="End_Module_Stmt":
+                new_children.append(i)
+                continue
+            if i.children[0].children[1].string!=top_level_ast:
+                for j in i.children[2].children:
+                    if j.__class__.__name__!="Contains_Stmt":
+
+                        if j.children[0].children[1].string in what_to_parse_list[i.children[0].children[1].string]:
+                            subroutinesandfunctions.append(j)        
+                i.children[2].children.clear()
+                for j in subroutinesandfunctions:
+                    i.children[2].children.append(j)        
+            new_children.append(i)
+
+    ast.children.clear()
+    for i in new_children:
+        ast.children.append(i)  
+    name_dict = {}
+    rename_dict = {}
+    for i in parse_order:
+        local_rename_dict = {}
+        edges = list(simple_graph.in_edges(i))
+        names = []
+        for j in edges:
+            list_dict = simple_graph.get_edge_data(j[0], j[1])
+            if (list_dict['obj_list'] is not None):
+                for k in list_dict['obj_list']:
+                    if not k.__class__.__name__ == "Name":
+                        if k.__class__.__name__ == "Rename":
+                            if k.children[2].string not in names:
+                                names.append(k.children[2].string)
+                            local_rename_dict[k.children[2].string] = k.children[1].string
+                        #print("Assumption failed: Object list contains non-name node")
+                    else:
+                        if k.string not in names:
+                            names.append(k.string)
+        rename_dict[i] = local_rename_dict
+        name_dict[i] = names
+    # for i in parse_order:
+    #     edges = list(simple_graph.in_edges(i))
+    #     for j in edges:
+    #         list_dict = simple_graph.get_edge_data(j[0], j[1]) 
+    #         names_in_edge = []
+    #         if (list_dict['obj_list'] is not None):
+    #             for k in list_dict['obj_list']:
+    #                     names_in_edge.append(k.string)
+
+    #         changes=True
+    #         while changes:
+    #             changes=False
+    #             if asts.get(i) is None:
+    #                 continue
+    #             for k in asts[i].children[2].children:
+    #                 if k.__class__.__name__ == "Contains_Stmt":
+    #                     asts[i].children[2].children.remove(k)
+    #                     changes=True
+    #                 elif k.__class__.__name__ == "Subroutine_Subprogram":
+    #                     if k.children[0].children[1].string not in names_in_edge:
+    #                         asts[i].children[2].children.remove(k)
+    #                         changes=True
+    #                 elif k.__class__.__name__ == "Function_Subprogram":
+    #                     if k.children[0].children[1].string not in names_in_edge :
+    #                         asts[i].children[2].children.remove(k)
+    #                         changes=True
+                    
+    tables = SymbolTable
+    partial_ast = ast_components.InternalFortranAst(top_level_ast, tables)
+    partial_modules = {}
+    partial_ast.symbols["c_int"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_int8_t"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_int64_t"]=ast_internal_classes.Int_Literal_Node(value=8)
+    partial_ast.symbols["c_int32_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_size_t"]=ast_internal_classes.Int_Literal_Node(value=4)
+    partial_ast.symbols["c_long"]=ast_internal_classes.Int_Literal_Node(value=8)
+    partial_ast.symbols["c_signed_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    partial_ast.symbols["c_null_char"]=ast_internal_classes.Int_Literal_Node(value=1)
+    functions_to_rename={}
+
+    #Why would you ever name a file differently than the module? Especially just one random file out of thousands???
+    #asts["mo_restart_nml_and_att"]=asts["mo_restart_nmls_and_atts"]
+    partial_ast.to_parse_list=what_to_parse_list
+    for i in parse_order:
+        partial_ast.current_ast=i
+        
+        partial_ast.unsupported_fortran_syntax[i]=[]
+        if i in ["mtime","ISO_C_BINDING", "iso_c_binding", "mo_cdi","iso_fortran_env"]:
+            continue
+       
+        partial_ast.add_name_list_for_module(i, name_dict[i])
+        try:
+            partial_module = partial_ast.create_ast(asts[i])
+            partial_modules[partial_module.name.name] = partial_module
+        except:
+            print("Module " + i + " could not be parsed ",partial_ast.unsupported_fortran_syntax[i])
+            #print(partial_ast.unsupported_fortran_syntax[i])
+            continue
+        tmp_rename=rename_dict[i]
+        for j in tmp_rename:
+            #print(j)
+            if partial_ast.symbols.get(j) is None:
+                #raise NameError("Symbol " + j + " not found in partial ast")
+                if functions_to_rename.get(i) is None:
+                    functions_to_rename[i]=[j]
+                else:
+                    functions_to_rename[i].append(j)    
+            else:
+                partial_ast.symbols[tmp_rename[j]]=partial_ast.symbols[j]
+
+        print("Parsed successfully module: ", i," ",partial_ast.unsupported_fortran_syntax[i])
+        #print(partial_ast.unsupported_fortran_syntax[i])
+    #try:
+    partial_ast.current_ast="top level"
+
+    program = partial_ast.create_ast(ast)
+    program.module_declarations = ast_utils.parse_module_declarations(partial_ast, ast, partial_modules)
+    #except:
+        
+    #        print(" top level module could not be parsed ", partial_ast.unsupported_fortran_syntax["top level"])
+            #print(partial_ast.unsupported_fortran_syntax["top level"])
+    #        return
+
+    
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+
+    program.structures = ast_transforms.Structures(structs_lister.structs)
+
+
+    functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    partial_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    #program = ast_transforms.functionStatementEliminator(program)
+    program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallToArray(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.CallExtractor().visit(program)
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
+    program = ast_transforms.FunctionCallTransformer().visit(program)
+    program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.nodes).visit(program)
+    program = ast_transforms.optionalArgsExpander(program)
+    
+    count=0
+    for i in program.function_definitions:
+        if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
+            program.subroutine_definitions.append(i)
+            partial_ast.functions_and_subroutines.append(i.name)
+            count+=1
+    if count!=len(program.function_definitions):
+        raise NameError("Not all functions were transformed to subroutines")
+    for i in program.modules:
+        count=0
+        for j in i.function_definitions:
+            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
+                i.subroutine_definitions.append(j)
+                partial_ast.functions_and_subroutines.append(j.name)
+                count+=1
+        if count!=len(i.function_definitions):
+            raise NameError("Not all functions were transformed to subroutines")
+        i.function_definitions=[]
+    program.function_definitions=[]
+    program = ast_transforms.SignToIf().visit(program)
+    program = ast_transforms.ArrayToLoop(program).visit(program)
+    print("Before intrinsics")
+    for transformation in partial_ast.fortran_intrinsics().transformations():
+        transformation.initialize(program)
+        program = transformation.visit(program)
+    print("After intrinsics")
+    program = ast_transforms.ForDeclarer().visit(program)
+    program = ast_transforms.IndexExtractor(program).visit(program)
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
+    cycles=nx.algorithms.cycles.simple_cycles(struct_dep_graph)
+    has_cycles=list(cycles)
+    cycles_we_cannot_ignore=[]
+    for cycle in has_cycles:
+        print(cycle)
+        for i in cycle:
+            is_pointer=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["pointing"]
+            point_name=struct_dep_graph.get_edge_data(i,cycle[(cycle.index(i)+1)%len(cycle)])["point_name"]
+            print(i,is_pointer)
+            if is_pointer:
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name,structs_lister,struct_dep_graph,"simple")
+                actually_used_pointer_node_finder.visit(program)
+                print(actually_used_pointer_node_finder.nodes)
+                if len(actually_used_pointer_node_finder.nodes)==0:
+                    print("We can ignore this cycle")
+                    program=ast_transforms.StructPointerEliminator(i,cycle[(cycle.index(i)+1)%len(cycle)],point_name).visit(program)
+                else:
+                    cycles_we_cannot_ignore.append(cycle)    
+    if len(cycles_we_cannot_ignore)>0:
+        raise NameError("Structs have cyclic dependencies")
+
+    for struct,name in zip(structs_lister.structs,structs_lister.names):
+        struct_member_finder=ast_transforms.StructMemberLister()
+        struct_member_finder.visit(struct)
+        for member,is_pointer,point_name in zip(struct_member_finder.members,struct_member_finder.is_pointer,struct_member_finder.pointer_names):
+            if is_pointer:    
+                actually_used_pointer_node_finder=ast_transforms.StructPointerChecker(name,member,point_name,structs_lister,struct_dep_graph,"full")
+                actually_used_pointer_node_finder.visit(program)
+                found=False
+                for i in actually_used_pointer_node_finder.nodes:
+                    nl=ast_transforms.FindNames()
+                    nl.visit(i)
+                    if point_name in nl.names:
+                        found=True
+                        break
+                print("Struct Name: ",name," Member Name: ",point_name, " Found: ", found)
+                if not found:
+                    print("We can delete this member")
+                    program=ast_transforms.StructPointerEliminator(name,member,point_name).visit(program)
+                
+
+    program.tables=partial_ast.symbols
+    program.functions_and_subroutines=partial_ast.functions_and_subroutines
+    unordered_modules=program.modules
+    program.modules=[]
+    for i in parse_order:
+        for j in unordered_modules:
+            if j.name.name==i:
+                program.modules.append(j)
+    for j in unordered_modules:
+        if j.name.name==top_level_ast:
+            program.modules.append(j)            
+
+    for i in program.modules:
+        for path in source_list:
+            
+            if path.lower().find(i.name.name.lower())!=-1:
+                mypath=path
+                break
+        #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
+        for j in i.subroutine_definitions:
+            if j.name.name!="div_avg":
+                continue
+            if j.execution_part is None:
+                continue
+            startpoint = j
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
+            sdfg = SDFG(j.name.name)
+            ast2sdfg.top_level = program
+            ast2sdfg.globalsdfg = sdfg
+            
+            ast2sdfg.translate(program, sdfg)
+            #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_very_raw_before_intrinsics.sdfg"))
+            #try:
+            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
+            #except:
+            #    print("Intrinsics failed for ", sdfg.name)    
+            #    continue
+            
+            try:
+                sdfg.expand_library_nodes()
+            except:
+                print("Expansion failed for ", sdfg.name)    
+                continue
+            
+            sdfg.validate()
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
+            try:    
+                sdfg.simplify(verbose=True)
+            except Exception as e:
+                print("Simplification failed for ", sdfg.name)    
+                print(e)
+                continue
+            try:  
+                sdfg.compile()
+            except Exception as e:
+                print("Compilation failed for ", sdfg.name)
+                print(e)
+                continue
+
+    #return sdfg

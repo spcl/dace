@@ -31,6 +31,51 @@ class CPUCodeGen(TargetCodeGenerator):
     target_name = "cpu"
     language = "cpp"
 
+    def _define_sdfg_arguments(self, sdfg, arglist):
+
+        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
+            for k, v in struct.members.items():
+                if isinstance(v, data.Structure):
+                    _visit_structure(v, args, f'{prefix}->{k}')
+                elif isinstance(v, data.StructArray):
+                    _visit_structure(v.stype, args, f'{prefix}->{k}')
+                if isinstance(v, data.Data):
+                    args[f'{prefix}->{k}'] = v
+
+        # Keeps track of generated connectors, so we know how to access them in nested scopes
+        args = dict(arglist)
+        for name, arg_type in arglist.items():
+            if isinstance(arg_type, data.Structure):
+                desc = sdfg.arrays[name]
+                _visit_structure(arg_type, args, name)
+            elif isinstance(arg_type, data.StructArray):
+                desc = sdfg.arrays[name]
+                desc = desc.stype
+                _visit_structure(desc, args, name)
+
+        for name, arg_type in args.items():
+            if isinstance(arg_type, data.Scalar):
+                # GPU global memory is only accessed via pointers
+                # TODO(later): Fix workaround somehow
+                if arg_type.storage is dtypes.StorageType.GPU_Global:
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
+                    continue
+
+                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
+            elif isinstance(arg_type, data.Array):
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
+            elif isinstance(arg_type, data.Stream):
+                if arg_type.is_stream_array():
+                    self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
+                else:
+                    self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
+            elif isinstance(arg_type, data.Structure):
+                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, arg_type.dtype.ctype)
+            else:
+                raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
+                                                                                     v=str(arg_type)))
+
     def __init__(self, frame_codegen, sdfg):
         self._frame = frame_codegen
         self._dispatcher: TargetDispatcher = frame_codegen.dispatcher
@@ -55,46 +100,9 @@ class CPUCodeGen(TargetCodeGenerator):
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
-        def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
-            for k, v in struct.members.items():
-                if isinstance(v, data.Structure):
-                    _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
-                    _visit_structure(v.stype, args, f'{prefix}->{k}')
-                elif isinstance(v, data.Data):
-                    args[f'{prefix}->{k}'] = v
-
         # Keeps track of generated connectors, so we know how to access them in nested scopes
         arglist = dict(self._frame.arglist)
-        for name, arg_type in self._frame.arglist.items():
-            if isinstance(arg_type, data.Structure):
-                desc = sdfg.arrays[name]
-                _visit_structure(arg_type, arglist, name)
-            elif isinstance(arg_type, data.StructArray):
-                desc = sdfg.arrays[name]
-                desc = desc.stype
-                _visit_structure(desc, arglist, name)
-
-        for name, arg_type in arglist.items():
-            if isinstance(arg_type, (data.Scalar, data.Structure)):
-                # GPU global memory is only accessed via pointers
-                # TODO(later): Fix workaround somehow
-                if arg_type.storage is dtypes.StorageType.GPU_Global:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-                    continue
-
-                self._dispatcher.defined_vars.add(name, DefinedType.Scalar, arg_type.dtype.ctype)
-            elif isinstance(arg_type, data.Array):
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(arg_type.dtype).ctype)
-            elif isinstance(arg_type, data.Stream):
-                if arg_type.is_stream_array():
-                    self._dispatcher.defined_vars.add(name, DefinedType.StreamArray, arg_type.as_arg(name=''))
-                else:
-                    self._dispatcher.defined_vars.add(name, DefinedType.Stream, arg_type.as_arg(name=''))
-            else:
-                raise TypeError("Unrecognized argument type: {t} (value {v})".format(t=type(arg_type).__name__,
-                                                                                     v=str(arg_type)))
+        self._define_sdfg_arguments(sdfg, arglist)
 
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
@@ -206,15 +214,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 memlet.subset = subsets.Range.from_array(viewed_dnode.desc(sdfg))
 
         # Emit memlet as a reference and register defined variable
+        conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
                                                         name,
-                                                        dtypes.pointer(nodedesc.dtype),
+                                                        conntype,
                                                         ancestor=0,
                                                         is_write=is_write)
         if not declared:
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
+                        dtypes.pointer(nodedesc.dtype).ctype)
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             if isinstance(nodedesc, data.StructureView):
                 for k, v in nodedesc.members.items():
@@ -224,10 +234,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
                         self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                 # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                if atype.endswith('*'):
-                    atype = atype[:-1]
-                if value.startswith('&'):
-                    value = value[1:]
+                # if atype.endswith('*'):
+                #     atype = atype[:-1]
+                # if value.startswith('&'):
+                #     value = value[1:]
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
@@ -258,7 +268,7 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
-        name = node.data
+        name = node.root_data
         ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
 
         if nodedesc.transient is False:
@@ -295,23 +305,40 @@ class CPUCodeGen(TargetCodeGenerator):
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
-                       allocation_stream):
-        name = node.data
-        alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
+                       allocation_stream, allocate_nested_data: bool = True):
+        alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         name = alloc_name
 
-        if nodedesc.transient is False:
+        tokens = node.data.split('.')
+        top_desc = sdfg.arrays[tokens[0]]
+        # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
+        # TODO: Study what is needed in the DaCe stack to ensure this assumption is correct.
+        top_transient = top_desc.transient
+        top_storage = top_desc.storage
+        top_lifetime = top_desc.lifetime
+
+        if top_transient is False:
             return
 
         # Check if array is already allocated
         if self._dispatcher.defined_vars.has(name):
             return
-
-        # Check if array is already declared
-        declared = self._dispatcher.declared_arrays.has(name)
+        
+        if len(tokens) > 1:
+            for i in range(len(tokens) - 1):
+                tmp_name = '.'.join(tokens[:i + 1])
+                tmp_alloc_name = cpp.ptr(tmp_name, sdfg.arrays[tmp_name], sdfg, self._frame)
+                if not self._dispatcher.defined_vars.has(tmp_alloc_name):
+                    self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(tmp_name), sdfg.arrays[tmp_name],
+                                        function_stream, declaration_stream, allocation_stream,
+                                        allocate_nested_data=False)
+            declared = True
+        else:
+            # Check if array is already declared
+            declared = self._dispatcher.declared_arrays.has(name)
 
         define_var = self._dispatcher.defined_vars.add
-        if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
+        if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             define_var = self._dispatcher.defined_vars.add_global
             nodedesc = update_persistent_desc(nodedesc, sdfg)
 
@@ -324,13 +351,19 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
-            for k, v in nodedesc.members.items():
-                if isinstance(v, data.Data):
-                    ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
-                    defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                    self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                    self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                        declaration_stream, allocation_stream)
+            if allocate_nested_data:
+                for k, v in nodedesc.members.items():
+                    if isinstance(v, data.Data):
+                        ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
+                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+                        # NOTE: The access node dataname must "navigate" the structure with dots (not arrows).
+                        if isinstance(v, data.Scalar):
+                            # NOTE: Scalar members are already defined in the struct definition.
+                            self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
+                        else:
+                            self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
+                                                    function_stream, declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, (data.StructureView, data.View)):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -338,6 +371,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
+            if top_desc is not None and isinstance(top_desc, (data.Structure, data.StructureView)):
+                # If this scalar is a field of a structure, there is no need for allocation.
+                return
+
             if node.setzero:
                 declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
             else:
@@ -394,21 +431,21 @@ class CPUCodeGen(TargetCodeGenerator):
             declaration_stream.write(definition, sdfg, state_id, node)
             define_var(name, DefinedType.Stream, ctypedef)
 
-        elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
-              or (nodedesc.storage == dtypes.StorageType.Register and
+        elif (top_storage == dtypes.StorageType.CPU_Heap
+              or (top_storage == dtypes.StorageType.Register and
                   ((symbolic.issymbolic(arrsize, sdfg.constants)) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
 
-            if nodedesc.storage == dtypes.StorageType.Register:
+            if top_storage == dtypes.StorageType.Register:
 
                 if symbolic.issymbolic(arrsize, sdfg.constants):
                     warnings.warn('Variable-length array %s with size %s '
                                   'detected and was allocated on heap instead of '
-                                  '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
+                                  '%s' % (name, cpp.sym2cpp(arrsize), top_storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
                                   "{} since its size is greater than max_stack_array_size ({})".format(
-                                      name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
+                                      name, cpp.sym2cpp(arrsize_bytes), top_storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
@@ -428,7 +465,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                         node)
 
             return
-        elif (nodedesc.storage == dtypes.StorageType.Register):
+        elif (top_storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
@@ -449,7 +486,7 @@ class CPUCodeGen(TargetCodeGenerator):
             )
             define_var(name, DefinedType.Pointer, ctypedef)
             return
-        elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
+        elif top_storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             if not declared:
@@ -484,7 +521,7 @@ class CPUCodeGen(TargetCodeGenerator):
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
         else:
-            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+            raise NotImplementedError("Unimplemented storage type " + str(top_storage))
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         arrsize = nodedesc.total_size
@@ -497,18 +534,23 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
+        # Special case for structures
+        operator = 'delete[]'
+        if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
+            operator = 'delete'
+
+        if isinstance(nodedesc, (data.Scalar, data.View, data.StructureView, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write("delete[] %s;\n" % alloc_name, sdfg, state_id, node)
+            callsite_stream.write(f'{operator} {alloc_name};\n', sdfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
-                """#pragma omp parallel
+                f"""#pragma omp parallel
                 {{
-                    delete[] {name};
-                }}""".format(name=alloc_name),
+                    {operator} {alloc_name};
+                }}""",
                 sdfg,
                 state_id,
                 node,
@@ -619,17 +661,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
             #############################################
             # Corner cases
-
-            # Writing one index
-            if (isinstance(memlet.subset, subsets.Indices) and memlet.wcr is None
-                    and self._dispatcher.defined_vars.get(vconn)[0] == DefinedType.Scalar):
-                stream.write(
-                    "%s = %s;" % (vconn, self.memlet_ctor(sdfg, memlet, dst_nodedesc.dtype, False)),
-                    sdfg,
-                    state_id,
-                    [src_node, dst_node],
-                )
-                return
 
             # Setting a reference
             if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
@@ -1586,6 +1617,10 @@ class CPUCodeGen(TargetCodeGenerator):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
+
+        fsyms = self._frame.free_symbols(node.sdfg)
+        arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        self._define_sdfg_arguments(node.sdfg, arglist)
 
         # Quick sanity check.
         # TODO(later): Is this necessary or "can_access_parent" should always be False?
