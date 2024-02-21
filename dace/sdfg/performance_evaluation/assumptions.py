@@ -153,7 +153,7 @@ def propagate_assumptions_equal_symbols(condensed_assumptions):
                 equality_subs1.update({sym: sp.Symbol(uf.find(sym))})
 
     equality_subs2 = {}
-    # In a second step, each symbol gets replace with its equal number (if present)
+    # In a second step, each symbol gets replaced with its equal number (if present)
     # using equality_subs2.
     for sym, assum in condensed_assumptions.items():
         for e in assum.equal:
@@ -182,7 +182,7 @@ def parse_assumptions(assumptions, array_symbols):
     Parses a list of assumptions into substitution dictionaries. Firstly, it gathers all assumptions and
     keeps only the strongest ones. Afterwards it constructs two substitution dicts for the equality
     assumptions: First dict for symbol==symbol assumptions; second dict for symbol==number assumptions.
-    The other assumptions get handles by N tuples of substitution dicts (N = max number of concurrent
+    The other assumptions get handled by N tuples of substitution dicts (N = max number of concurrent
     assumptions for a single symbol). Each tuple is responsible for at most one assumption for each symbol. 
     First dict in the tuple substitutes the symbol with the assumption; second dict restores the initial symbol.
 
