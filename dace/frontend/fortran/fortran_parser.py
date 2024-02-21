@@ -561,7 +561,7 @@ class AST_translator:
         literals = []
         literal_values = []
         par2 = []
-
+        to_fix = []
         symbol_arguments = []
 
         # First we need to check if the parameters are literals or variables
@@ -660,6 +660,7 @@ class AST_translator:
                             datatype_to_add=copy.deepcopy(datatype)
                             datatype_to_add.transient = False
                             new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                            
                             if self.struct_views.get(new_sdfg) is None:
                                 self.struct_views[new_sdfg] = {}
                             for i in datatype_to_add.members:
@@ -986,8 +987,23 @@ class AST_translator:
                     nested_sdfg=parent_sdfg    
                     parent_sdfg=parent_sdfg.parent_sdfg
                     
-            
+        #print("Added memlets")
+        for datanode in substate.data_nodes():
+            if self.struct_views.get(sdfg) is not None and self.struct_views[sdfg].get(datanode.data) is not None:
+                components=self.struct_views[sdfg][datanode.data]
                 
+                if len(substate.in_edges(datanode))==0:
+                    #print("Data node has no in connectors")
+                    re=substate.add_read(components[0])
+                    memlet = Memlet(f'{components[0]}-> {datanode.data}')
+                    substate.add_edge(re,None,datanode,"views",dpcp(memlet))
+
+                if len(substate.out_edges(datanode))==0:
+                    #print("Data node has no out connectors")    
+                
+                    wr=substate.add_write(components[0])
+                    memlet2 = Memlet(f'{datanode.data}-> {components[0]}')
+                    substate.add_edge(datanode,"views2",wr,None,dpcp(memlet2))
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
         if self.multiple_sdfgs==False:
@@ -2341,8 +2357,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
-            #if j.name.name!="velocity_tendencies":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
