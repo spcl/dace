@@ -27,6 +27,18 @@ def test_fortran_frontend_empty():
     test_string = """
                     PROGRAM empty_test
                     implicit none
+                    use empty_module,only: my_empty_test_function
+                    double precision d(2,3)
+
+                    CALL my_empty_test_function(d)
+                                    
+                    end
+                    """
+    sources["empty_module.f90"]="""
+                    MODULE empty_module
+                    CONTAINS
+                    SUBROUTINE my_empty_test_function(d)
+
                     use module_mpi, only: my_process_is_mpi_all_seq_test_function
                     double precision d(2,3)
                     logical bla=False
@@ -39,8 +51,8 @@ def test_fortran_frontend_empty():
                         else
                         d(1,2)=1
                         endif
-                    end
-
+                    end subroutine my_empty_test_function
+                    END MODULE empty_module
                     
                     """
     sources["module_mpi.f90"]="""
@@ -48,7 +60,7 @@ def test_fortran_frontend_empty():
                     integer process_mpi_all_size=0
                     CONTAINS
                     LOGICAL FUNCTION my_process_is_mpi_all_seq_test_function()
-                        my_process_is_mpi_all_seq = (process_mpi_all_size <= 1)
+                        my_process_is_mpi_all_seq_test_function = (process_mpi_all_size <= 1)
                     END FUNCTION my_process_is_mpi_all_seq_test_function
                     END MODULE module_mpi
                     """
@@ -56,7 +68,7 @@ def test_fortran_frontend_empty():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "empty_test",sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
-    sdfg(d=a)
+    sdfg(d=a,process_mpi_all_size=0)
     assert (a[0, 0] == 0)
     assert (a[0, 1] == 5)
     assert (a[1, 2] == 0)
