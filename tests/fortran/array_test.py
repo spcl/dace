@@ -218,9 +218,9 @@ def test_fortran_frontend_memlet_in_map_test():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_array_3dmap()
-    #test_fortran_frontend_array_access()
-    #test_fortran_frontend_input_output_connector()
-    #test_fortran_frontend_array_ranges()
+    test_fortran_frontend_array_3dmap()
+    test_fortran_frontend_array_access()
+    test_fortran_frontend_input_output_connector()
+    test_fortran_frontend_array_ranges()
     test_fortran_frontend_twoconnector()
     test_fortran_frontend_memlet_in_map_test()

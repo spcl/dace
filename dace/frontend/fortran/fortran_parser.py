@@ -42,7 +42,8 @@ class AST_translator:
         multiple_sdfgs: bool = False,
         startpoint=None,
         sdfg_path=None,
-        toplevel_subroutine: Optional[str] = None
+        toplevel_subroutine: Optional[str] = None,
+        normalize_offsets = False
     ):
         """
         :ast: The internal fortran AST to be used for translation
@@ -76,6 +77,7 @@ class AST_translator:
         self.structures = ast.structures
         self.placeholders = ast.placeholders
         self.toplevel_subroutine = toplevel_subroutine
+        self.normalize_offsets = normalize_offsets
         self.ast_elements = {
             ast_internal_classes.If_Stmt_Node: self.ifstmt2sdfg,
             ast_internal_classes.For_Stmt_Node: self.forstmt2sdfg,
@@ -152,7 +154,7 @@ class AST_translator:
 
         for o_v in variables:
             if o_v.name == var_name_tasklet:
-                return ast_utils.generate_memlet(o_v, sdfg, self)
+                return ast_utils.generate_memlet(o_v, sdfg, self, self.normalize_offsets)
 
     def translate(self, node: ast_internal_classes.FNode, sdfg: SDFG):
         """
@@ -692,8 +694,12 @@ class AST_translator:
                             from dace import subsets
 
                             all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
-                            subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
-                                                    for i, s in zip(all_indices, array.shape)])
+                            if self.normalize_offsets:
+                                subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
+                                                        for i, s in zip(all_indices, array.shape)])
+                            else:
+                                subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
+                                                        for i, s in zip(all_indices, array.shape)])
                             smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
                             memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
@@ -907,7 +913,7 @@ class AST_translator:
             elif (len(var.shape) == 1 and var.shape[0] == 1):
                 memlet = "0"
             else:
-                memlet = ast_utils.generate_memlet(i, sdfg, self)
+                memlet = ast_utils.generate_memlet(i, sdfg, self, self.normalize_offsets)
 
             found = False
             for elem in views:
@@ -937,7 +943,7 @@ class AST_translator:
 
         for i in addedmemlets:
             local_name=ast_internal_classes.Name_Node(name=i)
-            memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self)
+            memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), sdfg, self, self.normalize_offsets)
             if local_name.name in write_names:
                 ast_utils.add_memlet_write(substate, self.name_mapping[sdfg][i], internal_sdfg,
                                         self.name_mapping[new_sdfg][i], memlet)
@@ -976,7 +982,7 @@ class AST_translator:
                     if local_name.name in read_names:
                         nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i])
 
-                memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), parent_sdfg, self)
+                memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), parent_sdfg, self, self.normalize_offsets)
                 if local_name.name in write_names:
                     ast_utils.add_memlet_write(nested_sdfg.parent, self.name_mapping[parent_sdfg][i], nested_sdfg.parent_nsdfg_node,
                                             self.name_mapping[nested_sdfg][i], memlet)
@@ -1284,7 +1290,7 @@ class AST_translator:
         if node.sizes is not None:
             sizes = []
             offset = []
-            offset_value = -1
+            offset_value = 0 if self.normalize_offsets else -1
             for i in node.sizes:
                 stuff=[ii for ii in ast_transforms.mywalk(i) if isinstance(ii, ast_internal_classes.Data_Ref_Node)]
                 if len(stuff)>0:
@@ -1667,6 +1673,7 @@ def create_sdfg_from_string(
     program.structures = ast_transforms.Structures(structs_lister.structs)
     own_ast.structures = ast_transforms.Structures(structs_lister.structs)
 
+    program.placeholders = own_ast.placeholders
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.names
@@ -1745,7 +1752,7 @@ def create_sdfg_from_string(
         raise NameError("Structs have cyclic dependencies")
     own_ast.tables = own_ast.symbols
 
-    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name)
+    ast2sdfg = AST_translator(own_ast, __file__, multiple_sdfgs=multiple_sdfgs, toplevel_subroutine=sdfg_name, normalize_offsets=normalize_offsets)
     sdfg = SDFG(sdfg_name)
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
@@ -2373,7 +2380,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if j.execution_part is None:
                 continue
             startpoint = j
-            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir)
+            ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir, normalize_offsets=normalize_offsets)
             sdfg = SDFG(j.name.name)
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg

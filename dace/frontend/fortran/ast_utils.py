@@ -330,11 +330,13 @@ class TaskletWriter:
                  sdfg: SDFG = None,
                  name_mapping=None,
                  input: List[str] = None,
-                 input_changes: List[str] = None,placeholders=None):
+                 input_changes: List[str] = None,
+                 placeholders=None
+    ):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
-        self.placeholders=placeholders
+        self.placeholders = placeholders
         self.mapping = name_mapping
         self.input = input
         self.input_changes = input_changes
@@ -504,7 +506,7 @@ class TaskletWriter:
             return left + op + right
 
 
-def generate_memlet(op, top_sdfg, state):
+def generate_memlet(op, top_sdfg, state, offset_normalization = False):
 
     if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
@@ -515,7 +517,7 @@ def generate_memlet(op, top_sdfg, state):
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for i in op.indices:
-            tw = TaskletWriter([], [], top_sdfg, state.name_mapping)
+            tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders)
             text = tw.write_code(i)
             #This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(sym.pystr_to_symbolic(text))
@@ -525,7 +527,10 @@ def generate_memlet(op, top_sdfg, state):
             return memlet
 
     all_indices = indices + [None] * (len(shape) - len(indices))
-    subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
+    if offset_normalization:
+        subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1) for i, s in zip(all_indices, shape)])
+    else:
+        subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
     return subset
 
 
@@ -534,7 +539,7 @@ class ProcessedWriter(TaskletWriter):
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
     :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
     """
-    def __init__(self, sdfg: SDFG, mapping,placeholders):
+    def __init__(self, sdfg: SDFG, mapping, placeholders):
         self.sdfg = sdfg
         self.mapping = mapping
         self.placeholders = placeholders

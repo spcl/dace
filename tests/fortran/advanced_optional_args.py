@@ -83,7 +83,6 @@ END SUBROUTINE get_indices_c
     res = np.full([size], 42, order="F", dtype=np.int32)
     res2 = np.full([size], 42, order="F", dtype=np.int32)
     sdfg(res=res, res2=res2, a=5)
-    print(res)
 
     assert res[0] == 5
     assert res2[0] == 0
