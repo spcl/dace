@@ -1077,6 +1077,7 @@ class IndexExtractor(NodeTransformer):
         self.count = count
         self.normalize_offsets = normalize_offsets
         self.program = ast
+        self.replacements = {}
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
@@ -1104,6 +1105,7 @@ class IndexExtractor(NodeTransformer):
             else:
                 
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
+                self.replacements["tmp_index_" + str(tmp)]=i
                 tmp = tmp + 1
         self.count = tmp
 
@@ -1118,7 +1120,7 @@ class IndexExtractor(NodeTransformer):
             res = lister.nodes
             temp = self.count
 
-
+            tmp_child=self.visit(child)
             if res is not None:
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
@@ -1164,7 +1166,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=i,
+                                            lval=copy.deepcopy(self.replacements[tmp_name]),
                                             rval=offset,
                                             line_number=child.line_number),
                                         line_number=child.line_number))
@@ -1175,11 +1177,11 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=i,
+                                            lval=copy.deepcopy(self.replacements[tmp_name]),
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                             line_number=child.line_number),
                                         line_number=child.line_number))
-            newbody.append(self.visit(child))
+            newbody.append(tmp_child)
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 
