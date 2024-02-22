@@ -6,7 +6,7 @@ from typing import Dict, List
 import copy
 import dace
 from dace import dtypes, subsets, symbolic
-from dace.properties import EnumProperty, make_properties
+from dace.properties import EnumProperty, make_properties, Property
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
@@ -18,8 +18,9 @@ from dace.sdfg.propagation import propagate_memlets_scope
 class MapExpansion(pm.SingleStateTransformation):
     """ Implements the map-expansion pattern.
 
-        Map-expansion takes an N-dimensional map and expands it to N 
-        unidimensional maps.
+        Map-expansion takes an N-dimensional map and expands it.
+        It will generate the k nested unidimensional map and a (N-k)-dimensional inner most map.
+        If k is not specified all maps are expanded.
 
         New edges abide by the following rules:
           1. If there are no edges coming from the outside, use empty memlets
@@ -33,6 +34,11 @@ class MapExpansion(pm.SingleStateTransformation):
                                   dtype=dtypes.ScheduleType,
                                   default=dtypes.ScheduleType.Sequential,
                                   allow_none=True)
+    expansion_limit = Property(desc="How many unidimensional maps will be creaed, known as k. "
+                               "If None, the default no limit is in place.",
+                               dtype=int,
+                               allow_none=True,
+                               default=None)
 
     @classmethod
     def expressions(cls):
@@ -49,16 +55,68 @@ class MapExpansion(pm.SingleStateTransformation):
         map_exit = graph.exit_node(map_entry)
         current_map = map_entry.map
 
+        if self.expansion_limit is None:
+            full_expand = True
+        elif isinstance(self.expansion_limit, int):
+            full_expand = False
+            if self.expansion_limit <= 0:   # These are invalid, so we make a full expansion
+                full_expand = True
+            elif (self.map_entry.map.get_param_num() - self.expansion_limit) <= 1:
+                full_expand = True
+        else:
+            raise TypeError(f"Does not know how to handle type {type(self.expansion_limit).__name__}")
+        #
+
         # Create new maps
         inner_schedule = self.inner_schedule or current_map.schedule
-        new_maps = [
-            nodes.Map(current_map.label + '_' + str(param), [param],
-                      subsets.Range([param_range]),
-                      schedule=inner_schedule)
-            for param, param_range in zip(current_map.params[1:], current_map.range[1:])
-        ]
-        current_map.params = [current_map.params[0]]
-        current_map.range = subsets.Range([current_map.range[0]])
+        if full_expand:
+            new_maps = [
+                nodes.Map(current_map.label + '_' + str(param), [param],
+                        subsets.Range([param_range]),
+                        schedule=inner_schedule)
+                for param, param_range in zip(current_map.params, current_map.range)
+            ]
+            for i, new_map in enumerate(new_maps):
+                new_map.range.tile_sizes[0] = current_map.range.tile_sizes[i]
+
+        else:
+            k = self.expansion_limit
+            new_maps: list[nodes.Map] = []
+
+            # Unidimensional maps
+            for dim in range(0, k):
+                dim_param = current_map.params[dim]
+                dim_range = current_map.range.ranges[dim]
+                dim_tile  = current_map.range.tile_sizes[dim]
+                new_maps.append(
+                    nodes.Map(
+                        current_map.label + '_' + str(dim_param),
+                        [dim_param],
+                        subsets.Range([dim_range]),
+                        schedule=inner_schedule
+                    )
+                )
+                new_maps[-1].range.tile_sizes[0] = dim_tile
+
+            # Multidimensional maps
+            mdim_params = current_map.params[k:]
+            mdim_ranges = current_map.range.ranges[k:]
+            mdim_tiles  = current_map.range.tile_sizes[k:]
+            new_maps.append(
+                    nodes.Map(
+                        current_map.label,  # The original name
+                        mdim_params,
+                        mdim_ranges,
+                        schedule=inner_schedule
+                    )
+            )
+            new_maps[-1].range.tile_sizes = mdim_tiles
+        #
+
+        # Reuse the map that is already existing for the first one.
+        current_map.params = new_maps[0].params
+        current_map.range  = new_maps[0].range
+        new_maps.pop(0)
 
         # Create new map entries and exits
         entries = [nodes.MapEntry(new_map) for new_map in new_maps]
