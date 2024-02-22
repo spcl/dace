@@ -2313,6 +2313,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
+    print("After index extractor")
     structs_lister=ast_transforms.StructLister()
     structs_lister.visit(program)
     struct_dep_graph=nx.DiGraph()
@@ -2390,8 +2391,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            #if j.name.name!="solve_nh":
             #if j.name.name!="velocity_tendencies":
+            if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
                 continue

@@ -1166,7 +1166,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=copy.deepcopy(self.replacements[tmp_name]),
+                                            lval=self.replacements[tmp_name],
                                             rval=offset,
                                             line_number=child.line_number),
                                         line_number=child.line_number))
@@ -1177,7 +1177,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=copy.deepcopy(self.replacements[tmp_name]),
+                                            lval=self.replacements[tmp_name],
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                             line_number=child.line_number),
                                         line_number=child.line_number))
