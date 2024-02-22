@@ -220,6 +220,7 @@ class AST_translator:
                 self.translate(j, sdfg)
                 for k in j.vardecl:
                     self.module_vars.append((k.name, i.name))
+        ast_utils.add_simple_state_to_sdfg(self, sdfg, "GlobalDefEnd")            
         if node.main_program is not None:
 
             for i in node.main_program.specification_part.typedecls:
@@ -235,7 +236,8 @@ class AST_translator:
             else:
 
                 if self.startpoint.specification_part is not None:
-                    self.transient_mode=False
+                    self.transient_mode=True
+
                     for i in self.startpoint.specification_part.typedecls:
                         self.translate(i, sdfg)
                     for i in self.startpoint.specification_part.symbols:
@@ -1282,7 +1284,18 @@ class AST_translator:
 
         """
         #if the sdfg is the toplevel-sdfg, the variable is a global variable
-        transient = self.transient_mode
+        is_arg = False
+        if isinstance(node.parent,ast_internal_classes.Subroutine_Subprogram_Node) or isinstance(node.parent,ast_internal_classes.Function_Subprogram_Node):
+            if hasattr(node.parent,"args"):
+                for i in node.parent.args:
+                    name =ast_utils.get_name(i)
+                    if name == node.name:
+                        is_arg = True
+                        break
+        if is_arg:
+            transient=False
+        else:
+            transient = self.transient_mode
         # find the type
         datatype = self.get_dace_type(node.type)
         if hasattr(node, "alloc"):
@@ -2377,8 +2390,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="solve_nh":
+            #if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
