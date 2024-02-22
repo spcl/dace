@@ -546,6 +546,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_circular_type()
     #test_fortran_frontend_type_in_call()
     #test_fortran_frontend_type_array()
-    test_fortran_frontend_type_array2()
+    #test_fortran_frontend_type_array2()
     #test_fortran_frontend_type_pointer()
     test_fortran_frontend_type_arg()
