@@ -817,7 +817,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         }
 
         local_storage = InLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
+        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
         local_storage.apply(graph, sdfg)
@@ -825,7 +825,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
         local_storage = OutLocalStorage()
-        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
+        local_storage.setup_match(sdfg, sdfg.cfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
         local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
@@ -872,7 +872,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
         sub_expansion = ExpandReduceCUDABlock()
-        sub_expansion.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
+        sub_expansion.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 

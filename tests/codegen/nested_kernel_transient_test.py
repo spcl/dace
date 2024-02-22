@@ -48,7 +48,7 @@ def _test_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.sdfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)
@@ -84,7 +84,7 @@ def _test_double_transient(persistent: bool):
     sdfg.apply_gpu_transformations()
 
     if persistent:
-        sdfg.sdfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+        sdfg.cfg_list[-1].arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
 
     a = np.random.rand(128, 64)
     expected = np.copy(a)

@@ -161,7 +161,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         # Create UUID
         state_id = sdfg.node_id(state)
         node_id = state.node_id(node)
-        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
+        uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
         preamble, postamble = '', ''
@@ -277,7 +277,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
         # Create UUID
         state_id = sdfg.node_id(state)
         node_id = state.node_id(node)
-        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
+        uuid = f'{sdfg.cfg_id}_{state_id}_{node_id}'
 
         # Get optional pre/postamble for instrumenting device data
         preamble, postamble = '', ''

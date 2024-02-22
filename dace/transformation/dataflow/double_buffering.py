@@ -8,7 +8,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
-from dace.transformation.dataflow.map_for_loop import MapToForLoop
+from dace.transformation.dataflow.map_for_loop import MapToLegacyForLoop
 
 
 class DoubleBuffering(transformation.SingleStateTransformation):
@@ -36,9 +36,9 @@ class DoubleBuffering(transformation.SingleStateTransformation):
             return False
 
         # Verify the map can be transformed to a for-loop
-        m2for = MapToForLoop()
-        m2for.setup_match(sdfg, sdfg.sdfg_id, self.state_id,
-                          {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
+        m2for = MapToLegacyForLoop()
+        m2for.setup_match(sdfg, sdfg.cfg_id, self.state_id,
+                          {MapToLegacyForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
         if not m2for.can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
@@ -109,9 +109,9 @@ class DoubleBuffering(transformation.SingleStateTransformation):
 
         ##############################
         # Turn map into for loop
-        map_to_for = MapToForLoop()
-        map_to_for.setup_match(sdfg, self.sdfg_id, self.state_id,
-                               {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
+        map_to_for = MapToLegacyForLoop()
+        map_to_for.setup_match(sdfg, self.cfg_id, self.state_id,
+                               {MapToLegacyForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
         nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
         ##############################

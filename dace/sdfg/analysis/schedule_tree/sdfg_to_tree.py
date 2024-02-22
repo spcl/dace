@@ -351,7 +351,7 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
     """
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
-    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]
+    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.cfg_id]
     redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
 
     # Collect redefined symbols

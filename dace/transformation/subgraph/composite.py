@@ -3,17 +3,14 @@
     Subgraph Fusion - Stencil Tiling Transformation
 """
 
-import dace
-from dace.transformation.subgraph import stencil_tiling
-
-import dace.transformation.transformation as transformation
 from dace.transformation.subgraph import SubgraphFusion, MultiExpansion
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import helpers
+from dace.transformation import transformation
 
-from dace import dtypes, registry, symbolic, subsets, data
+from dace import dtypes
 from dace.properties import EnumProperty, make_properties, Property, ShapeProperty
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import SDFG
 from dace.sdfg.graph import SubgraphView
 
 import copy
@@ -21,6 +18,7 @@ import warnings
 
 
 @make_properties
+@transformation.single_level_sdfg_only
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation
         Additional StencilTiling is also possible as a canonicalizing
@@ -64,10 +62,10 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 # deepcopy
                 graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
-                sdfg_copy.reset_sdfg_list()
+                sdfg_copy.reset_cfg_list()
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
                 subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
-                expansion.sdfg_id = sdfg_copy.sdfg_id
+                expansion.cfg_id = sdfg_copy.cfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
                 #expansion = MultiExpansion()
@@ -107,13 +105,13 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
         if self.allow_expansion:
             expansion = MultiExpansion()
-            expansion.setup_match(subgraph, self.sdfg_id, self.state_id)
+            expansion.setup_match(subgraph, self.cfg_id, self.state_id)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
 
         sf = SubgraphFusion()
-        sf.setup_match(subgraph, self.sdfg_id, self.state_id)
+        sf.setup_match(subgraph, self.cfg_id, self.state_id)
         if sf.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             # set SubgraphFusion properties
             sf.debug = self.debug
@@ -125,7 +123,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
         elif self.allow_tiling == True:
             st = StencilTiling()
-            st.setup_match(subgraph, self.sdfg_id, self.state_id)
+            st.setup_match(subgraph, self.cfg_id, self.state_id)
             if st.can_be_applied(sdfg, self.subgraph_view(sdfg)):
                 # set StencilTiling properties
                 st.debug = self.debug
@@ -136,7 +134,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 new_entries = st._outer_entries
                 subgraph = helpers.subgraph_from_maps(sdfg, graph, new_entries)
                 sf = SubgraphFusion()
-                sf.setup_match(subgraph, self.sdfg_id, self.state_id)
+                sf.setup_match(subgraph, self.cfg_id, self.state_id)
                 # set SubgraphFusion properties
                 sf.debug = self.debug
                 sf.transient_allocation = self.transient_allocation

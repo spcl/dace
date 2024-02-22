@@ -1041,9 +1041,9 @@ class SnitchCodeGen(TargetCodeGenerator):
                 raise NotImplementedError("Unimplemented reduction type " + str(redtype))
                 # fmt_str='inline {t} reduction_{sdfgid}_{stateid}_{nodeid}({t} {arga}, {t} {argb}) {{ {unparse_wcr_result} }}'
                 # fmt_str.format(t=dtype.ctype,
-                #   sdfgid=sdfg.sdfg_id, stateid=42, nodeid=43, unparse_wcr_result=cpp.unparse_cr_split(sdfg,memlet.wcr)[0],
+                #   sdfgid=sdfg.cfg_id, stateid=42, nodeid=43, unparse_wcr_result=cpp.unparse_cr_split(sdfg,memlet.wcr)[0],
                 #   arga=cpp.unparse_cr_split(sdfg,memlet.wcr)[1][0],argb=cpp.unparse_cr_split(sdfg,memlet.wcr)[1][1])
-                # sdfgid=sdfg.sdfg_id
+                # sdfgid=sdfg.cfg_id
                 # stateid=42
                 # nodeid=43
                 # return (f'reduction_{sdfgid}_{stateid}_{nodeid}(*({ptr}), {inname})')

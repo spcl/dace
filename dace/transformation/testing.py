@@ -68,7 +68,7 @@ class TransformationTester(Optimizer):
 
                 print('    ' * depth, type(match).__name__, '- ', end='', file=self.stdout)
 
-                tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
+                tsdfg: SDFG = new_sdfg.cfg_list[match.cfg_id]
                 tgraph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
                 match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)

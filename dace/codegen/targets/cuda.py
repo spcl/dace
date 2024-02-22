@@ -229,8 +229,8 @@ class CUDACodeGen(TargetCodeGenerator):
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
                 access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
 
-            reachable = reachability[sdfg.sdfg_id]
-            access_sets = access_nodes[sdfg.sdfg_id]
+            reachable = reachability[sdfg.cfg_id]
+            access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.nodes():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
@@ -649,7 +649,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 'allocname': allocname,
                 'type': nodedesc.dtype.ctype,
                 'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
-                'location': '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node))
+                'location': '%s_%s_%s' % (sdfg.cfg_id, state_id, dfg.node_id(node))
             }
 
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
@@ -1407,7 +1407,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.sdfg_id, sdfg.node_id(state),
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
                                        state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes

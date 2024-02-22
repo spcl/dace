@@ -155,7 +155,7 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             subgraph_nodes.add(input)
 
             subgraph = StateSubgraphView(state, subgraph_nodes)
-            helpers.state_fission(sdfg, subgraph)
+            helpers.state_fission(subgraph)
 
         if self.expr_index == 0:
             inedges = state.edges_between(input, tasklet)

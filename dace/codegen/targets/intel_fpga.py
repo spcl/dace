@@ -580,7 +580,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         is_autorun = len(kernel_args_opencl) == 0
 
         # create a unique module name to prevent name clashes
-        module_function_name = "mod_" + str(sdfg.sdfg_id) + "_" + module_name
+        module_function_name = "mod_" + str(sdfg.cfg_id) + "_" + module_name
         # The official limit suggested by Intel for module name is 61. However, the compiler
         # can also append text to the module. Longest seen so far is
         # "_cra_slave_inst", which is 15 characters, so we restrict to
@@ -616,7 +616,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                         kernel_name, module_function_name,
                         ", ".join([""] + kernel_args_call) if len(kernel_args_call) > 0 else ""), sdfg, state_id)
                 if state.instrument == dtypes.InstrumentationType.FPGA:
-                    self.instrument_opencl_kernel(module_function_name, state_id, sdfg.sdfg_id, instrumentation_stream)
+                    self.instrument_opencl_kernel(module_function_name, state_id, sdfg.cfg_id, instrumentation_stream)
             else:
                 # We will generate a separate kernel for each PE. Adds host call
                 start, stop, skip = unrolled_loop.range.ranges[0]
@@ -639,7 +639,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                             ", ".join([""] + kernel_args_call[:-1]) if len(kernel_args_call) > 1 else ""), sdfg,
                         state_id)
                     if state.instrument == dtypes.InstrumentationType.FPGA:
-                        self.instrument_opencl_kernel(unrolled_module_name, state_id, sdfg.sdfg_id,
+                        self.instrument_opencl_kernel(unrolled_module_name, state_id, sdfg.cfg_id,
                                                       instrumentation_stream)
 
         # ----------------------------------------------------------------------
@@ -663,7 +663,7 @@ __attribute__((autorun))\n"""
             # a function that will be used create a kernel multiple times
 
             # generate a unique name for this function
-            pe_function_name = "pe_" + str(sdfg.sdfg_id) + "_" + module_name + "_func"
+            pe_function_name = "pe_" + str(sdfg.cfg_id) + "_" + module_name + "_func"
             module_body_stream.write("inline void {}({}) {{".format(pe_function_name, ", ".join(kernel_args_opencl)),
                                      sdfg, state_id)
 

@@ -302,7 +302,7 @@ def test_loop_in_map_multiplied_indices():
 
     results = pipeline.apply_pass(sdfg, {})[UnderapproximateWrites.__name__]
 
-    nsdfg = sdfg.sdfg_list[1].parent_nsdfg_node
+    nsdfg = sdfg.cfg_list[1].parent_nsdfg_node
     map_state = sdfg.states()[0]
     result = results["approximation"]
     edge = map_state.out_edges(nsdfg)[0]

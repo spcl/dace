@@ -27,7 +27,7 @@ class InstrumentationProvider(object):
 
     def _idstr(self, sdfg, state, node):
         """ Returns a unique identifier string from a node or state. """
-        result = str(sdfg.sdfg_id)
+        result = str(sdfg.cfg_id)
         if state is not None:
             result += '_' + str(sdfg.node_id(state))
             if node is not None:

@@ -647,7 +647,7 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
+def state_fission(subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -657,7 +657,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str]
     """
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state, label=label)
+    newstate = state.parent_graph.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -851,8 +851,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     return ScopeSubgraphView(state, new_nodes, new_entry)
 
 
-def offset_map(sdfg: SDFG,
-               state: SDFGState,
+def offset_map(state: SDFGState,
                entry: nodes.MapEntry,
                dim: int,
                offset: symbolic.SymbolicType,
@@ -860,7 +859,6 @@ def offset_map(sdfg: SDFG,
     """
     Offsets a map parameter and its contents by a value.
 
-    :param sdfg: The SDFG in which the map resides.
     :param state: The state in which the map resides.
     :param entry: The map entry node.
     :param dim: The map dimension to offset.

@@ -34,7 +34,7 @@ namespace perf {
         unsigned long int tend;
         size_t tid;
         struct _element_id {
-            int sdfg_id;
+            int cfg_id;
             int state_id;
             int el_id;
         } element_id;
@@ -80,7 +80,7 @@ namespace perf {
             const char *counter_name,
             unsigned long int counter_val,
             size_t tid,
-            int sdfg_id,
+            int cfg_id,
             int state_id,
             int el_id
         ) {
@@ -95,7 +95,7 @@ namespace perf {
                 tstart,
                 0,
                 tid,
-                { sdfg_id, state_id, el_id },
+                { cfg_id, state_id, el_id },
                 { "", counter_val }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
@@ -113,7 +113,7 @@ namespace perf {
          * @param cat:      Comma separated categories the event belongs to.
          * @param tstart:   Start timestamp of the event.
          * @param tend:     End timestamp of the event.
-         * @param sdfg_id:  SDFG ID of the element associated with this event.
+         * @param cfg_id:   Control flow graph ID of the element associated with this event.
          * @param state_id: State ID of the element associated with this event.
          * @param el_id:    ID of the element associated with this event.
          */
@@ -122,13 +122,13 @@ namespace perf {
             const char *cat,
             unsigned long int tstart,
             unsigned long int tend,
-            int sdfg_id,
+            int cfg_id,
             int state_id,
             int el_id
         ) {
             std::thread::id thread_id = std::this_thread::get_id();
             size_t tid = std::hash<std::thread::id>{}(thread_id);
-            add_completion(name, cat, tstart, tend, tid, sdfg_id, state_id, el_id);
+            add_completion(name, cat, tstart, tend, tid, cfg_id, state_id, el_id);
         }
 
         void add_completion(
@@ -137,7 +137,7 @@ namespace perf {
             unsigned long int tstart,
             unsigned long int tend,
             size_t tid,
-            int sdfg_id,
+            int cfg_id,
             int state_id,
             int el_id
         ) {
@@ -149,7 +149,7 @@ namespace perf {
                 tstart,
                 tend,
                 tid,
-                { sdfg_id, state_id, el_id },
+                { cfg_id, state_id, el_id },
                 { "", 0 }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
@@ -205,7 +205,7 @@ namespace perf {
                     ofs << "\"tid\": " << event.tid << ", ";
 
                     ofs << "\"args\": {";
-                    ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
+                    ofs << "\"cfg_id\": " << event.element_id.cfg_id;
 
                     if (event.element_id.state_id > -1) {
                         ofs << ", \"state_id\": ";

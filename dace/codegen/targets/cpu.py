@@ -919,7 +919,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 shared_data_name = edge.data.data
                 if not shared_data_name:
                     # Very unique name. TODO: Make more intuitive
-                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node),
+                    shared_data_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.cfg_id, state_id, dfg.node_id(node),
                                                                   dfg.node_id(dst_node), edge.src_conn)
 
                 result.write(
@@ -1329,7 +1329,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     shared_data_name = edge.data.data
                     if not shared_data_name:
                         # Very unique name. TODO: Make more intuitive
-                        shared_data_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(src_node),
+                        shared_data_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.cfg_id, state_id, dfg.node_id(src_node),
                                                                       dfg.node_id(node), edge.src_conn)
 
                     # Read variable from shared storage
@@ -1398,7 +1398,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 local_name = edge.data.data
                 if not local_name:
                     # Very unique name. TODO: Make more intuitive
-                    local_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node),
+                    local_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.cfg_id, state_id, dfg.node_id(node),
                                                             dfg.node_id(dst_node), edge.src_conn)
 
                 # Allocate variable type
@@ -1501,7 +1501,7 @@ class CPUCodeGen(TargetCodeGenerator):
         arguments = []
 
         if state_struct:
-            toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
+            toplevel_sdfg: SDFG = sdfg.cfg_list[0]
             arguments.append(f'{cpp.mangle_dace_state_struct_name(toplevel_sdfg)} *__state')
 
         # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
@@ -1624,7 +1624,7 @@ class CPUCodeGen(TargetCodeGenerator):
             # If the SDFG has a unique name, use it
             sdfg_label = node.unique_name
         else:
-            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.sdfg_id, state_id, dfg.node_id(node))
+            sdfg_label = "%s_%d_%d_%d" % (node.sdfg.name, sdfg.cfg_id, state_id, dfg.node_id(node))
 
         code_already_generated = False
         if unique_functions and not inline:
@@ -2015,7 +2015,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     ctype = node.out_connectors[edge.src_conn].ctype
                     if not local_name:
                         # Very unique name. TODO: Make more intuitive
-                        local_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(
+                        local_name = '__dace_%d_%d_%d_%d_%s' % (sdfg.cfg_id, state_id, dfg.node_id(
                             edge.src), dfg.node_id(edge.dst), edge.src_conn)
 
                     # Allocate variable type

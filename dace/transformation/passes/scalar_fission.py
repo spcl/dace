@@ -4,10 +4,11 @@ from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, InterstateEdge
 from dace.sdfg import nodes as nd
-from dace.transformation import pass_pipeline as ppl
+from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes import analysis as ap
 
 
+@transformation.single_level_sdfg_only
 class ScalarFission(ppl.Pass):
     """
     Fission transient scalars or arrays of size 1 that are dominated by a write into separate data containers.
@@ -36,7 +37,7 @@ class ScalarFission(ppl.Pass):
         """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
-        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.sdfg_id]
+        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
 
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
