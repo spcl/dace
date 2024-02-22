@@ -1236,10 +1236,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        # This is done to make the reference constant, otherwise
-                        # compilers error out with initial reference value.
-                        memlet_type += ' const'
-                    result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    else:
+                        result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
