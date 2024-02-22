@@ -35,14 +35,15 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
     # Initialize symbols with values from dataset size
     psize = sizes[_SIZE_TO_IND[FLAGS.size]]
-    for k, v in psize.items():
-        k.set(v)
     psize = {str(k): v for k, v in psize.items()}
+    psize_lowercase = {k.lower(): v for k, v in psize.items()}
 
     # Construct arrays from tuple arguments
     for i, arg in enumerate(args):
         if isinstance(arg, tuple):
-            args[i] = dace.ndarray(*arg)
+            shape, dtype = arg
+            shape = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]
+            args[i] = dace.ndarray(shape, dtype)
 
     if FLAGS.simulate == False:
         if isinstance(func, dace.SDFG):
@@ -60,7 +61,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
     if FLAGS.compile == False:
         print('Initializing arrays...')
-        init_array(*args)
+        init_array(*args, **psize_lowercase)
         print('Running %skernel...' % ('specialized ' if FLAGS.specialize else ''))
 
         if FLAGS.simulate:
@@ -73,7 +74,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
         if FLAGS.save:
             if not isinstance(output_args, list):
-                output_args(func.name + '.dace.out', *args)
+                output_args(func.name + '.dace.out', *args, **psize_lowercase)
             else:
                 polybench_dump(func.name + '.dace.out', args, output_args)
 
