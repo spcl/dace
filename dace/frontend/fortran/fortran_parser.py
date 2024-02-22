@@ -1679,7 +1679,17 @@ def create_sdfg_from_string(
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
-    
+    for i in program.modules:
+        count=0
+        for j in i.function_definitions:
+            if isinstance(j, ast_internal_classes.Subroutine_Subprogram_Node):
+                i.subroutine_definitions.append(j)
+                own_ast.functions_and_subroutines.append(j.name)
+                count+=1
+        if count!=len(i.function_definitions):
+            raise NameError("Not all functions were transformed to subroutines")
+        i.function_definitions=[]
+    program.function_definitions=[]
     count=0
     for i in program.function_definitions:
         if isinstance(i, ast_internal_classes.Subroutine_Subprogram_Node):
@@ -2357,8 +2367,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="solve_nh":
+            #if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
