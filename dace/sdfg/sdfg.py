@@ -505,7 +505,6 @@ class SDFG(ControlFlowRegion):
         self.symbols = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
-        self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
         self._labels: Set[str] = set()
@@ -538,7 +537,7 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_sdfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -554,12 +553,12 @@ class SDFG(ControlFlowRegion):
         # Copy SDFG list and transformation history
         if hasattr(self, '_transformation_hist'):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
-        result._sdfg_list = []
+        result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
             from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
 
-            result._sdfg_list = result.reset_sdfg_list()
+            result._cfg_list = result.reset_cfg_list()
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
             if fixed:
                 warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
@@ -569,10 +568,11 @@ class SDFG(ControlFlowRegion):
     @property
     def sdfg_id(self):
         """
-        Returns the unique index of the current SDFG within the current
-        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        :note: ``sdfg_id`` is deprecated, please use ``cfg_id`` instead.
         """
-        return self.sdfg_list.index(self)
+        return self.cfg_id
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
@@ -580,8 +580,9 @@ class SDFG(ControlFlowRegion):
             :return: A string representing the JSON-serialized SDFG.
         """
         # Location in the SDFG list (only for root SDFG)
-        if self.parent_sdfg is None:
-            self.reset_sdfg_list()
+        is_root = self.parent_sdfg is None
+        if is_root:
+            self.reset_cfg_list()
 
         tmp = super().to_json()
 
@@ -589,14 +590,11 @@ class SDFG(ControlFlowRegion):
         if 'constants_prop' in tmp['attributes']:
             tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
-        tmp['sdfg_list_id'] = int(self.sdfg_id)
-        tmp['start_state'] = self._start_block
-
         tmp['attributes']['name'] = self.name
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
-        if int(self.sdfg_id) == 0:
+        if is_root:
             tmp['dace_version'] = dace.__version__
 
         return tmp
@@ -621,7 +619,7 @@ class SDFG(ControlFlowRegion):
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -636,8 +634,8 @@ class SDFG(ControlFlowRegion):
             e = dace.serialize.from_json(e)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_state' in json_obj:
-            ret._start_block = json_obj['start_state']
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
 
         return ret
 
@@ -655,8 +653,8 @@ class SDFG(ControlFlowRegion):
             # uniquely representing the SDFG. This, among other things, includes
             # the hash, name, transformation history, and meta attributes.
             if isinstance(json_obj, dict):
-                if 'sdfg_list_id' in json_obj:
-                    del json_obj['sdfg_list_id']
+                if 'cfg_list_id' in json_obj:
+                    del json_obj['cfg_list_id']
 
                 keys_to_delete = []
                 kv_to_recurse = []
@@ -906,8 +904,8 @@ class SDFG(ControlFlowRegion):
         if Config.get_bool('store_history') is False:
             return
         # Make sure the transformation is appended to the root SDFG.
-        if self.sdfg_id != 0:
-            self.sdfg_list[0].append_transformation(transformation)
+        if self.cfg_id != 0:
+            self.cfg_list[0].append_transformation(transformation)
             return
 
         if not self.orig_sdfg:
@@ -1117,32 +1115,32 @@ class SDFG(ControlFlowRegion):
         del self._arrays[name]
 
     def reset_sdfg_list(self):
-        if self.parent_sdfg is not None:
-            return self.parent_sdfg.reset_sdfg_list()
-        else:
-            # Propagate new SDFG list to all children
-            all_sdfgs = list(self.all_sdfgs_recursive())
-            for sd in all_sdfgs:
-                sd._sdfg_list = all_sdfgs
-        return self._sdfg_list
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+        :note: ``reset_sdfg_list`` is deprecated, please use ``reset_cfg_list`` instead.
+
+        :return: The newly updated CFG list.
+        """
+        warnings.warn('reset_sdfg_list is deprecated, use reset_cfg_list instead', DeprecationWarning)
+        return self.reset_cfg_list()
 
     def update_sdfg_list(self, sdfg_list):
-        # TODO: Refactor
-        sub_sdfg_list = self._sdfg_list
-        for sdfg in sdfg_list:
-            if sdfg not in sub_sdfg_list:
-                sub_sdfg_list.append(sdfg)
-        if self._parent_sdfg is not None:
-            self._parent_sdfg.update_sdfg_list(sub_sdfg_list)
-            self._sdfg_list = self._parent_sdfg.sdfg_list
-            for sdfg in sub_sdfg_list:
-                sdfg._sdfg_list = self._sdfg_list
-        else:
-            self._sdfg_list = sub_sdfg_list
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+        :note: ``update_sdfg_list`` is deprecated, please use ``update_cfg_list`` instead.
+
+        :param sdfg_list: The collection of CFGs to add to the CFG list.
+        """
+        warnings.warn('update_sdfg_list is deprecated, use update_cfg_list instead', DeprecationWarning)
+        self.update_cfg_list(sdfg_list)
 
     @property
-    def sdfg_list(self) -> List['SDFG']:
-        return self._sdfg_list
+    def sdfg_list(self) -> List['ControlFlowRegion']:
+        warnings.warn('sdfg_list is deprecated, use cfg_list instead', DeprecationWarning)
+        return self.cfg_list
 
     def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).

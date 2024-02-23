@@ -616,9 +616,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Create a unique kernel name to avoid name clashes
                 # If this kernels comes from a Nested SDFG, use that name also
                 if sdfg.parent_nsdfg_node is not None:
-                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                    kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.cfg_id}"
                 else:
-                    kernel_name = f"{state.label}_{kern_id}_{sdfg.sdfg_id}"
+                    kernel_name = f"{state.label}_{kern_id}_{sdfg.cfg_id}"
 
                 # Vitis HLS removes double underscores, which leads to a compilation
                 # error down the road due to kernel name mismatch. Remove them here
@@ -676,7 +676,7 @@ class FPGACodeGen(TargetCodeGenerator):
             ## Generate the global function here
 
             kernel_host_stream = CodeIOStream()
-            host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
+            host_function_name = f"__dace_runstate_{sdfg.cfg_id}_{state.name}_{state_id}"
             function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(host_function_name,
                                                                               ", ".join(kernel_args_opencl)))
 
@@ -717,8 +717,8 @@ std::cout << std::scientific;""")
                 kernel_host_stream.write(f"""\
 const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 // Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
-__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.sdfg_id}, {state_id}, -1);
-__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.cfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.cfg_id}, {state_id}, -1);
 """)
                 if Config.get_bool("instrumentation", "print_fpga_runtime"):
                     kernel_host_stream.write(f"""
@@ -2387,7 +2387,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def make_ptr_assignment(self, *args, **kwargs):
         return self._cpu_codegen.make_ptr_assignment(*args, codegen=self, **kwargs)
 
-    def instrument_opencl_kernel(self, kernel_name: str, state_id: int, sdfg_id: int, code_stream: CodeIOStream):
+    def instrument_opencl_kernel(self, kernel_name: str, state_id: int, cfg_id: int, code_stream: CodeIOStream):
         """
         Emits code to instrument the OpenCL kernel with the given `kernel_name`.
         """
@@ -2414,5 +2414,5 @@ if (event_end > last_end) {{
     last_end = event_end;
 }}
 // Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
-__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {sdfg_id}, {state_id}, -1);{print_str}
+__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {cfg_id}, {state_id}, -1);{print_str}
 }}""")
