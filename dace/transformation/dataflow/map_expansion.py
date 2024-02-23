@@ -49,12 +49,8 @@ class MapExpansion(pm.SingleStateTransformation):
         # includes an N-dimensional map, with N greater than one.
         return self.map_entry.map.get_param_num() > 1
 
-    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
-        # Extract the map and its entry and exit nodes.
-        map_entry = self.map_entry
-        map_exit = graph.exit_node(map_entry)
-        current_map = map_entry.map
-
+    def generate_new_maps(self,
+                          current_map: nodes.Map):
         if self.expansion_limit is None:
             full_expand = True
         elif isinstance(self.expansion_limit, int):
@@ -65,16 +61,15 @@ class MapExpansion(pm.SingleStateTransformation):
                 full_expand = True
         else:
             raise TypeError(f"Does not know how to handle type {type(self.expansion_limit).__name__}")
-        #
 
-        # Create new maps
         inner_schedule = self.inner_schedule or current_map.schedule
         if full_expand:
             new_maps = [
-                nodes.Map(current_map.label + '_' + str(param), [param],
-                        subsets.Range([param_range]),
-                        schedule=inner_schedule)
-                for param, param_range in zip(current_map.params, current_map.range)
+                nodes.Map(
+                    current_map.label + '_' + str(param), [param],
+                    subsets.Range([param_range]),
+                    schedule=inner_schedule if dim != 0 else current_map.schedule)
+                for dim, param, param_range in zip(range(len(current_map.params)), current_map.params, current_map.range)
             ]
             for i, new_map in enumerate(new_maps):
                 new_map.range.tile_sizes[0] = current_map.range.tile_sizes[i]
@@ -93,9 +88,7 @@ class MapExpansion(pm.SingleStateTransformation):
                         current_map.label + '_' + str(dim_param),
                         [dim_param],
                         subsets.Range([dim_range]),
-                        schedule=inner_schedule
-                    )
-                )
+                        schedule=inner_schedule if dim != 0 else current_map.schedule ))
                 new_maps[-1].range.tile_sizes[0] = dim_tile
 
             # Multidimensional maps
@@ -107,11 +100,18 @@ class MapExpansion(pm.SingleStateTransformation):
                         current_map.label,  # The original name
                         mdim_params,
                         mdim_ranges,
-                        schedule=inner_schedule
-                    )
-            )
+                        schedule=inner_schedule ))
             new_maps[-1].range.tile_sizes = mdim_tiles
-        #
+        return new_maps
+
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        # Extract the map and its entry and exit nodes.
+        map_entry = self.map_entry
+        map_exit = graph.exit_node(map_entry)
+        current_map = map_entry.map
+
+        # Generate the new maps that we should use.
+        new_maps = self.generate_new_maps(current_map)
 
         # Reuse the map that is already existing for the first one.
         current_map.params = new_maps[0].params
