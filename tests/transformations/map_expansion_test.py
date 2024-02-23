@@ -135,25 +135,29 @@ def test_expand_with_limits():
 
     map_entries = set()
     state = sdfg.start_state
-    for i, node in enumerate(state.nodes()):
-        print("{}) Find node {} of type {}.".format(i, str(node), type(node).__name__))
-        if not isinstance(node, dace.nodes.MapEntry):
-            continue
+    for iState, state in enumerate(sdfg.nodes()):
+        print("{}) Start with state {}".format(iState, str(state)))
 
-        if sdfg.start_state.entry_node(node) is None:
-            assert state.in_degree(node) == 1
-            assert state.out_degree(node) == 1
-            assert len(node.out_connectors) == 1
-            assert len(node.map.range.ranges) == 1
-            assert node.map.range.ranges[0][1] - node.map.range.ranges[0][0] + 1 == 20
-        else:
-            assert state.in_degree(node) == 1
-            assert state.out_degree(node) == 1
-            assert len(node.out_connectors) == 1
-            assert len(node.map.range.ranges) == 2
-            assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
+        for i, node in enumerate(state.nodes()):
+            print("\t{}) Find node {} of type {}.".format(i, str(node), type(node).__name__))
 
-        map_entries.add(node)
+            if not isinstance(node, dace.nodes.MapEntry):
+                continue
+
+            if sdfg.start_state.entry_node(node) is None:
+                assert state.in_degree(node) == 1
+                assert state.out_degree(node) == 1
+                assert len(node.out_connectors) == 1
+                assert len(node.map.range.ranges) == 1
+                assert node.map.range.ranges[0][1] - node.map.range.ranges[0][0] + 1 == 20
+            else:
+                assert state.in_degree(node) == 1
+                assert state.out_degree(node) == 1
+                assert len(node.out_connectors) == 1
+                assert len(node.map.range.ranges) == 2
+                assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
+
+            map_entries.add(node)
 
     sdfg(A=A)
     expected *= 2
