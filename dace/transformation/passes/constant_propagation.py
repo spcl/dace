@@ -7,7 +7,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
-from dace import SDFG, SDFGState, dtypes, symbolic, properties
+from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
 
 
@@ -165,6 +165,20 @@ class ConstantPropagation(ppl.Pass):
         """
         arrays: Set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
         result: Dict[SDFGState, Dict[str, Any]] = {}
+
+        # Add nested data to arrays
+        def _add_nested_datanames(name: str, desc: data.Structure):
+            for k, v in desc.members.items():
+                if isinstance(v, data.Structure):
+                    _add_nested_datanames(f'{name}.{k}', v)
+                elif isinstance(v, data.StructArray):
+                    # TODO: How are we handling this?
+                    pass
+                arrays.add(f'{name}.{k}')
+    
+        for name, desc in sdfg.arrays.items():
+            if isinstance(desc, data.Structure):
+                _add_nested_datanames(name, desc)
 
         # Process:
         # * Collect constants in topologically ordered states

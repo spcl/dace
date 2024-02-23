@@ -21,6 +21,12 @@ def _internal_replace(sym, symrepl):
 
     # Filter out only relevant replacements
     fsyms = set(map(str, sym.free_symbols))
+    # TODO/NOTE: Could we return the generated strings below as free symbols from Attr instead or ther will be issues?
+    for s in set(fsyms):
+        if '.' in s:
+            tokens = s.split('.')
+            for i in range(1, len(tokens)):
+                fsyms.add('.'.join(tokens[:i]))
     newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym

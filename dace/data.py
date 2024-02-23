@@ -82,9 +82,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
         else:
             if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
                 if 'descr' in interface:
-                    dtype = dtypes.struct('unnamed',
-                                          **{k: dtypes.typeclass(numpy.dtype(v).type)
-                                             for k, v in interface['descr']})
+                    dtype = dtypes.struct('unnamed', **{
+                        k: dtypes.typeclass(numpy.dtype(v).type)
+                        for k, v in interface['descr']
+                    })
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
@@ -490,6 +491,32 @@ class Structure(Data):
         if isinstance(s, list) or isinstance(s, tuple):
             return ContainerArray(self, tuple(s))
         return ContainerArray(self, (s, ))
+
+    # NOTE: Like Scalars?
+    @property
+    def may_alias(self) -> bool:
+        return False
+
+    # TODO: Can Structures be optional?
+    @property
+    def optional(self) -> bool:
+        return False
+
+    def keys(self):
+        result = self.members.keys()
+        for k, v in self.members.items():
+            if isinstance(v, Structure):
+                result |= set(map(lambda x: f"{k}.{x}", v.keys()))
+        return result
+
+    def clone(self):
+        return Structure(self.members, self.name, self.transient, self.storage, self.location, self.lifetime,
+                         self.debuginfo)
+
+    # NOTE: Like scalars?
+    @property
+    def pool(self) -> bool:
+        return False
 
 
 class TensorIterationTypes(aenum.AutoNumberEnum):
