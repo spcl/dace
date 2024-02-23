@@ -239,7 +239,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 value = f'{ptrname}[{offset}]'
             else:
                 if field_name is not None:
-                    if isinstance(vdesc, data.StructArray):
+                    if isinstance(vdesc, data.ContainerArray):
                         offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
                         arrexpr = f'{ptrname}[{offset}]'
                         stype = vdesc.stype
