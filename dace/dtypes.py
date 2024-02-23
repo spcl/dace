@@ -403,7 +403,6 @@ class typeclass(object):
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
-        self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
         self.typename = typename
@@ -605,7 +604,6 @@ class opaque(typeclass):
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
-        self.ctype_unaligned = typename
         self.dtype = self
 
     def to_json(self):
@@ -643,7 +641,6 @@ class pointer(typeclass):
         self.type = wrapped_typeclass.type
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
         self.ctype = wrapped_typeclass.ctype + "*"
-        self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
 
     def to_json(self):
@@ -658,6 +655,9 @@ class pointer(typeclass):
             return pointer(typeclass(None))
 
         return pointer(json_to_typeclass(json_obj['dtype'], context))
+
+    def as_arg(self, name):
+        return self._typeclass.as_arg('* ' + name)
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -711,10 +711,6 @@ class vector(typeclass):
         else:
             return self.base_type.ocltype
 
-    @property
-    def ctype_unaligned(self):
-        return self.ctype
-
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
         return _FFI_CTYPES[self.type] * self.veclen
@@ -762,10 +758,6 @@ class fixedlenarray(typeclass):
         if issymbolic(self.arraylen) or self.arraylen == 0 or (self.arraylen < 0) == True:
             return f'{self.atype.ctype}[]'
         return f'{self.atype.ctype}[{self.arraylen}]'
-
-    @property
-    def ctype_unaligned(self):
-        return self.ctype
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -827,7 +819,6 @@ class struct(typeclass):
         # TODO: Assuming no alignment! Get from ctypes
         # self.bytes = sum(t.bytes for t in fields_and_types.values())
         self.ctype = name
-        self.ctype_unaligned = name
         self.dtype = self
         self.packed = False
         self.opaque = False
@@ -998,6 +989,7 @@ class callback(typeclass):
         elif not isinstance(return_types, (list, tuple, set)):
             return_types = [return_types]
         self.dtype = self
+        self.variadic = False
         self.return_types = return_types
         self.input_types = []
         for arg in variadic_args:
@@ -1012,7 +1004,6 @@ class callback(typeclass):
             self.input_types.append(arg)
         self.bytes = int64.bytes
         self.type = self
-        self.ctype = self
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -1088,8 +1079,15 @@ class callback(typeclass):
                 else:
                     input_type_cstring.append(pointer(arg.dtype).ctype)
 
+        if self.variadic:
+            input_type_cstring.append('...')
+
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
+
+    @property
+    def ctype(self):
+        return self.as_arg('')
 
     def get_trampoline(self, pyfunc, other_arguments, refs):
         from functools import partial
