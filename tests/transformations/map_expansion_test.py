@@ -73,7 +73,7 @@ def test_expand_without_inputs():
             continue
 
         # (Fast) MapExpansion should not add memlet paths for each memlet to a tasklet
-        if sdfg.start_state.entry_node(node) is None:
+        if state.entry_node(node) is None:
             assert state.in_degree(node) == 0
             assert state.out_degree(node) == 1
             assert len(node.out_connectors) == 0
@@ -127,6 +127,7 @@ def test_expand_with_limits():
     expected *= 2
 
     sdfg = expansion.to_sdfg()
+    sdfg.simplify()
     sdfg(A=A)
     diff = np.linalg.norm(A - expected)
     print('Difference (before transformation):', diff)
@@ -135,27 +136,24 @@ def test_expand_with_limits():
 
     map_entries = set()
     state = sdfg.start_state
+    for node in state.nodes():
+        if not isinstance(node, dace.nodes.MapEntry):
+            continue
 
-    for iState, state in enumerate(sdfg.nodes()):
-        for i, node in enumerate(state.nodes()):
+        if state.entry_node(node) is None:
+            assert state.in_degree(node) == 1
+            assert state.out_degree(node) == 1
+            assert len(node.out_connectors) == 1
+            assert len(node.map.range.ranges) == 1
+            assert node.map.range.ranges[0][1] - node.map.range.ranges[0][0] + 1 == 20
+        else:
+            assert state.in_degree(node) == 1
+            assert state.out_degree(node) == 1
+            assert len(node.out_connectors) == 1
+            assert len(node.map.range.ranges) == 2
+            assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
 
-            if not isinstance(node, dace.nodes.MapEntry):
-                continue
-
-            if state.entry_node(node) is None:
-                assert state.in_degree(node) == 1
-                assert state.out_degree(node) == 1
-                assert len(node.out_connectors) == 1
-                assert len(node.map.range.ranges) == 1
-                assert node.map.range.ranges[0][1] - node.map.range.ranges[0][0] + 1 == 20
-            else:
-                assert state.in_degree(node) == 1
-                assert state.out_degree(node) == 1
-                assert len(node.out_connectors) == 1
-                assert len(node.map.range.ranges) == 2
-                assert list(map(lambda x: x[1] - x[0] + 1, node.map.range.ranges)) == [30, 5]
-
-            map_entries.add(node)
+        map_entries.add(node)
 
     sdfg(A=A)
     expected *= 2
