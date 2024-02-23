@@ -171,7 +171,7 @@ class ConstantPropagation(ppl.Pass):
             for k, v in desc.members.items():
                 if isinstance(v, data.Structure):
                     _add_nested_datanames(f'{name}.{k}', v)
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     # TODO: How are we handling this?
                     pass
                 arrays.add(f'{name}.{k}')

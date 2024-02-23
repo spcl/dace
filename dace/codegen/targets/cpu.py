@@ -33,12 +33,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _define_sdfg_arguments(self, sdfg, arglist):
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
                 elif isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
@@ -49,10 +49,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(arg_type, data.Structure):
                 desc = sdfg.arrays[name]
                 _visit_structure(arg_type, args, name)
-            elif isinstance(arg_type, data.StructArray):
+            elif isinstance(arg_type, data.ContainerArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
-                _visit_structure(desc, args, name)
+                if isinstance(desc, data.Structure):
+                    _visit_structure(desc, args, name)
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
@@ -221,6 +222,35 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         dtypes.pointer(nodedesc.dtype),
                                                         ancestor=0,
                                                         is_write=is_write)
+
+        # Test for views of container arrays and structs
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
+            vdesc = sdfg.arrays[viewed_dnode.data]
+            ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
+            field_name = None
+            if is_write and mpath[-1].dst_conn:
+                field_name = mpath[-1].dst_conn
+            elif not is_write and mpath[0].src_conn:
+                field_name = mpath[0].src_conn
+
+            # Plain view into a container array
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
+                offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                value = f'{ptrname}[{offset}]'
+            else:
+                if field_name is not None:
+                    if isinstance(vdesc, data.ContainerArray):
+                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                        arrexpr = f'{ptrname}[{offset}]'
+                        stype = vdesc.stype
+                    else:
+                        arrexpr = f'{ptrname}'
+                        stype = vdesc
+
+                    value = f'{arrexpr}->{field_name}'
+                    if isinstance(stype.members[field_name], data.Scalar):
+                        value = '&' + value
+
         if not declared:
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
@@ -358,7 +388,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
                                             declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, (data.StructureView, data.View)):
+        if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -523,7 +553,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                               dtypes.AllocationLifetime.External)
             self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
-        if isinstance(nodedesc, (data.Scalar, data.StructureView, data.View, data.Stream, data.Reference)):
+        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
