@@ -144,7 +144,7 @@ def test_expand_with_limits():
             if not isinstance(node, dace.nodes.MapEntry):
                 continue
 
-            if sdfg.start_state.entry_node(node) is None:
+            if state.entry_node(node) is None:
                 assert state.in_degree(node) == 1
                 assert state.out_degree(node) == 1
                 assert len(node.out_connectors) == 1
