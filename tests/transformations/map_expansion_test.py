@@ -135,11 +135,9 @@ def test_expand_with_limits():
 
     map_entries = set()
     state = sdfg.start_state
-    for iState, state in enumerate(sdfg.nodes()):
-        print("{}) Start with state {}".format(iState, str(state)))
 
+    for iState, state in enumerate(sdfg.nodes()):
         for i, node in enumerate(state.nodes()):
-            print("\t{}) Find node {} of type {}.".format(i, str(node), type(node).__name__))
 
             if not isinstance(node, dace.nodes.MapEntry):
                 continue
