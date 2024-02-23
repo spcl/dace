@@ -113,6 +113,9 @@ class MapExpansion(pm.SingleStateTransformation):
         # Generate the new maps that we should use.
         new_maps = self.generate_new_maps(current_map)
 
+        if not new_maps:        # No changes should be made -> noops
+            return
+
         # Reuse the map that is already existing for the first one.
         current_map.params = new_maps[0].params
         current_map.range  = new_maps[0].range
