@@ -135,7 +135,8 @@ def test_expand_with_limits():
 
     map_entries = set()
     state = sdfg.start_state
-    for node in state.nodes():
+    for i, node in enumerate(state.nodes()):
+        print("{}) Find node {} of type {}.".format(i, str(node), type(node).__name__))
         if not isinstance(node, dace.nodes.MapEntry):
             continue
 
@@ -154,13 +155,12 @@ def test_expand_with_limits():
 
         map_entries.add(node)
 
-    assert len(map_entries) == 2
-
     sdfg(A=A)
     expected *= 2
     diff2 = np.linalg.norm(A - expected)
     print('Difference:', diff2)
     assert (diff <= 1e-5) and (diff2 <= 1e-5)
+    assert len(map_entries) == 2
 
 
 if __name__ == '__main__':
