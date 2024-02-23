@@ -833,8 +833,8 @@ class struct(typeclass):
             'type': 'struct',
             'name': self.name,
             'data': [(k, v.to_json()) for k, v in self._data.items()],
-            'length': [(k, v) for k, v in self._length.items()],
-            'bytes': self.bytes,
+            'length': [(k, str(v)) for k, v in self._length.items()],
+            'bytes': str(self.bytes),
             'packed': self.packed,
             'opaque': self.opaque,
         }
@@ -845,11 +845,12 @@ class struct(typeclass):
             raise TypeError("Invalid type for struct")
 
         import dace.serialize  # Avoid import loop
+        from dace.symbolic import pystr_to_symbolic
 
         ret = struct(json_obj['name'])
         ret._data = {k: json_to_typeclass(v, context) for k, v in json_obj['data']}
-        ret._length = {k: v for k, v in json_obj['length']}
-        ret.bytes = json_obj['bytes']
+        ret._length = {k: pystr_to_symbolic(v) for k, v in json_obj['length']}
+        ret.bytes = pystr_to_symbolic(json_obj['bytes'])
         ret.packed = json_obj['packed']
         ret.opaque = json_obj['opaque']
 
@@ -1210,9 +1211,14 @@ class callback(typeclass):
             return {
                 'type': 'callback',
                 'arguments': [i.to_json() for i in self.input_types],
-                'returntypes': [r.to_json() for r in self.return_types]
+                'returntypes': [r.to_json() for r in self.return_types],
+                'variadic': self.variadic,
             }
-        return {'type': 'callback', 'arguments': [i.to_json() for i in self.input_types], 'returntypes': []}
+        return {'type': 'callback', 
+                'arguments': [i.to_json() for i in self.input_types],
+                'returntypes': [],
+                'variadic': self.variadic,
+        }
 
     @staticmethod
     def from_json(json_obj, context=None):
