@@ -1023,10 +1023,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write('for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
                                           '{{'.format(arrlen=array_length))
-                    for field_name, field_type in node_dtype._data.items():
+                    # TODO: Study further when tackling Structures on GPU.
+                    for field_name, field_type in node_dtype._typeclass.fields.items():
                         if isinstance(field_type, dtypes.pointer):
                             tclass = field_type.type
-                            length = node_dtype._length[field_name]
+
+                            length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
                             callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
                                                   '{sz}));'.format(dst=str(dst_node),

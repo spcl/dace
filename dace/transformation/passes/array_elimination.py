@@ -87,6 +87,9 @@ class ArrayElimination(ppl.Pass):
             if not desc.transient or isinstance(desc, data.Scalar):
                 continue
             if aname not in access_sets or not access_sets[aname]:
+                desc = sdfg.arrays[aname]
+                if isinstance(desc, data.Structure) and len(desc.members) > 0:
+                    continue
                 sdfg.remove_data(aname, validate=False)
                 result.add(aname)
 

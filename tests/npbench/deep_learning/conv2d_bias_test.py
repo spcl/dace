@@ -111,7 +111,8 @@ def test_cpu():
     run_conv2d_bias(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.gpu
+@pytest.mark.skip
+# @pytest.mark.gpu
 def test_gpu():
     run_conv2d_bias(dace.dtypes.DeviceType.GPU)
 

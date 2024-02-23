@@ -13,7 +13,7 @@ from functools import reduce
 import operator
 import copy
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
@@ -628,7 +628,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                                                   matching_edge.data,
                                                                   use_dst_subset=True)
                             new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.dst_subset
+                            new_memlet.other_subset = out_memlet.subset
 
                             inner_edge.data = new_memlet
                             if len(nstate.out_edges(inner_edge.dst)) > 0:

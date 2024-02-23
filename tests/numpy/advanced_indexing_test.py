@@ -227,6 +227,103 @@ def test_index_boolarr_inline():
     assert np.allclose(regression, A)
 
 
+def test_out_index_intarr():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N], indices: dace.int32[M]):
+        A[indices] = 2
+
+    A = np.random.rand(20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[indices] = 2
+    indexing_test(A, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+
+def test_out_index_intarr_bcast():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N], B: dace.float64[N, N], indices: dace.int32[M]):
+        A[indices] = B
+
+    A = np.random.rand(20, 20, 20)
+    B = np.random.rand(20, 20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[indices] = B
+    indexing_test(A, B, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+
+def test_out_index_intarr_aug():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N], indices: dace.int32[M]):
+        A[indices] += 1
+
+    A = np.random.rand(20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[indices] += 1
+    indexing_test(A, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+
+def test_out_index_intarr_aug_bcast():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N], B: dace.float64[N, N], indices: dace.int32[M]):
+        A[indices] += B
+
+    A = np.random.rand(20, 20, 20)
+    B = np.random.rand(20, 20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[indices] += B
+    indexing_test(A, B, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+
+def test_out_index_intarr_multidim():
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N], indices: dace.int32[M]):
+        A[1:2, indices, 3:4] = 2
+
+    A = np.random.rand(20, 20, 20)
+    indices = [1, 10, 15]
+    ref = np.copy(A)
+    ref[1:2, indices, 3:4] = 2
+    indexing_test(A, indices, M=3)
+
+    assert np.allclose(A, ref)
+
+
+@pytest.mark.parametrize('tuple_index', (False, True))
+def test_advanced_indexing_syntax(tuple_index):
+
+    @dace.program
+    def indexing_test(A: dace.float64[N, N, N]):
+        if tuple_index:
+            A[(1, 2, 3), ] = 2
+        else:
+            A[[1, 2, 3]] = 2
+        A[(1, 2, 3)] = 1
+
+    A = np.random.rand(20, 20, 20)
+    ref = np.copy(A)
+    ref[(1, 2, 3), ] = 2
+    ref[(1, 2, 3)] = 1
+    indexing_test(A)
+
+    assert np.allclose(A, ref)
+
+
 if __name__ == '__main__':
     test_flat()
     test_flat_noncontiguous()
@@ -244,3 +341,10 @@ if __name__ == '__main__':
     test_index_multiboolarr()
     test_index_boolarr_fixed()
     test_index_boolarr_inline()
+    test_out_index_intarr()
+    test_out_index_intarr_bcast()
+    test_out_index_intarr_aug()
+    test_out_index_intarr_aug_bcast()
+    test_out_index_intarr_multidim()
+    test_advanced_indexing_syntax(False)
+    test_advanced_indexing_syntax(True)

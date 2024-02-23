@@ -694,7 +694,17 @@ class Range(Subset):
         else:
             raise NotImplementedError
 
-    def squeeze(self, ignore_indices=None, offset=True):
+    def squeeze(self, ignore_indices: Optional[List[int]] = None, offset: bool = True) -> List[int]:
+        """
+        Removes size-1 ranges from the subset and returns a list of dimensions that remain.
+        
+        For example, ``[i:i+10, j]`` will change the range to ``[i:i+10]`` and return ``[0]``.
+        If ``offset`` is True, the subset will become ``[0:10]``.
+
+        :param ignore_indices: An iterable of dimensions to not include in squeezing.
+        :param offset: If True, will offset the non-ignored indices back so that they start with 0.
+        :return: A list of dimension indices in the original subset, which remain in the squeezed result.
+        """
         ignore_indices = ignore_indices or []
         shape = self.size()
         non_ones = []
