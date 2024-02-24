@@ -308,7 +308,7 @@ class AST_translator:
                 if k.sizes is not None:
                     sizes = []
                     offset = []
-                    offset_value = -1
+                    offset_value = 0 if self.normalize_offsets else -1
                     for i in k.sizes:
                         tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders)
                         text = tw.write_code(i)
@@ -357,7 +357,7 @@ class AST_translator:
                     datatype = j[1]
                     transient = j[3]
                     self.unallocated_arrays.remove(j)
-                    offset_value = -1
+                    offset_value = 0 if self.normalize_offsets else -1
                     sizes = []
                     offset = []
                     for j in i.shape.shape_list:
@@ -637,95 +637,212 @@ class AST_translator:
                     offsets = list(array.offset)
                     mysize = 1
 
-                    if isinstance(variable_in_call, ast_internal_classes.Array_Subscript_Node):
-                        changed_indices = 0
-                        for i in variable_in_call.indices:
-                            if isinstance(i, ast_internal_classes.ParDecl_Node):
-                                if i.type == "ALL":
-                                    shape.append(array.shape[indices])
-                                    mysize = mysize * array.shape[indices]
-                                    index_list.append(None)
-                                else:
-                                    raise NotImplementedError("Index in ParDecl should be ALL")
-                            else:
-                                text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
-                                index_list.append(sym.pystr_to_symbolic(text))
-                                strides.pop(indices - changed_indices)
-                                offsets.pop(indices - changed_indices)
-                                changed_indices += 1
-                            indices = indices + 1
-
-                    if isinstance(variable_in_call, ast_internal_classes.Name_Node) or isinstance(variable_in_call,ast_internal_classes.Data_Ref_Node):
-                        shape = list(array.shape)
-                    # Functionally, this identifies the case where the array is in fact a scalar
-                    if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                        if hasattr(array,"name") and array.name in self.registered_types:
-                            datatype=self.get_dace_type(array.name)
-                            datatype_to_add=copy.deepcopy(datatype)
-                            datatype_to_add.transient = False
-                            new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                    if isinstance(variable_in_call, ast_internal_classes.Data_Ref_Node):
+                        tmpvar = variable_in_call
+                        while isinstance(tmpvar, ast_internal_classes.Data_Ref_Node):
+                            tmpvar = tmpvar.part_ref
+                        print("Array_Subscript_Node")
+                        if isinstance(variable_in_call.part_ref, ast_internal_classes.Data_Ref_Node):
+                            raise NotImplementedError("recursed Data_Ref_Node not implemented")
+                        elif isinstance(variable_in_call.part_ref,ast_internal_classes.Array_Subscript_Node):
                             
-                            if self.struct_views.get(new_sdfg) is None:
-                                self.struct_views[new_sdfg] = {}
-                            for i in datatype_to_add.members:
-                                current_dtype=datatype_to_add.members[i].dtype
-                                for other_type in self.registered_types:
-                                    if current_dtype.dtype==self.registered_types[other_type].dtype:
-                                        other_type_obj=self.registered_types[other_type]
-                                        for j in other_type_obj.members:
-                                            new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                                            self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
-                                            self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
-                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-                                self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
-                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                            changed_indices = 0
+                            for i in variable_in_call.part_ref.indices:
+                                if isinstance(i, ast_internal_classes.ParDecl_Node):
+                                    if i.type == "ALL":
+                                        shape.append(array.shape[indices])
+                                        mysize = mysize * array.shape[indices]
+                                        index_list.append(None)
+                                    else:
+                                        raise NotImplementedError("Index in ParDecl should be ALL")
+                                else:
+                                    text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
+                                    index_list.append(sym.pystr_to_symbolic(text))
+                                    strides.pop(indices - changed_indices)
+                                    offsets.pop(indices - changed_indices)
+                                    changed_indices += 1
+                                indices = indices + 1
+                        
+
+                           
+                        elif isinstance(variable_in_call.part_ref,ast_internal_classes.Name_Node):
+                            shape = list(array.shape)
                         else:
-                            new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
-                    else:
-                        # This is the case where the array is not a scalar and we need to create a view
-                        if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
-                            offsets_zero = []
-                            for index in offsets:
-                                offsets_zero.append(0)
-                            viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
-                                                           shape,
-                                                           array.dtype,
-                                                           storage=array.storage,
-                                                           strides=strides,
-                                                           offset=offsets_zero)
-                            from dace import subsets
-
-                            all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
-                            if self.normalize_offsets:
-                                subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
-                                                        for i, s in zip(all_indices, array.shape)])
+                            raise NotImplementedError("Unknown part_ref type")
+                        if shape == () or shape == (1, ) or shape == [] or shape == [1]:
+                            element_type=array.dtype.base_type    
+                            if str(element_type) in self.registered_types:
+                                datatype=self.get_dace_type(str(element_type))
+                                datatype_to_add=copy.deepcopy(datatype)
+                                datatype_to_add.transient = False
+                                new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                                
+                                if self.struct_views.get(new_sdfg) is None:
+                                    self.struct_views[new_sdfg] = {}
+                                for i in datatype_to_add.members:
+                                    current_dtype=datatype_to_add.members[i].dtype
+                                    for other_type in self.registered_types:
+                                        if current_dtype.dtype==self.registered_types[other_type].dtype:
+                                            other_type_obj=self.registered_types[other_type]
+                                            for j in other_type_obj.members:
+                                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                                self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
+                                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
+                                    new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                                    self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
+                                    self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
                             else:
-                                subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
-                                                        for i, s in zip(all_indices, array.shape)])
-                            smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
+                                new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)            
+                        else:
+                            element_type=array.dtype.base_type    
+                            if element_type in self.registered_types:
+                                raise NotImplementedError("Nested derived types not implemented")
+                                datatype_to_add=copy.deepcopy(element_type)
+                                datatype_to_add.transient = False
+                                new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                                #arr_dtype = datatype[sizes]
+                                #arr_dtype.offset = [offset_value for _ in sizes]
+                                #sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)    
+                            else:
+                                if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
+                                    offsets_zero = []
+                                    for index in offsets:
+                                        offsets_zero.append(0)
+                                    viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
+                                                                shape,
+                                                                array.dtype,
+                                                                storage=array.storage,
+                                                                strides=strides,
+                                                                offset=offsets_zero)
+                                    from dace import subsets
 
-                            memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
-                            memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
-                            wv = None
-                            rv = None
-                            if local_name.name in read_names:
-                                r = substate.add_read(array_name)
-                                wv = substate.add_write(viewname)
-                                substate.add_edge(r, None, wv, 'views', dpcp(memlet))
-                            if local_name.name in write_names:
-                                rv = substate.add_read(viewname)
-                                w = substate.add_write(array_name)
-                                substate.add_edge(rv, 'views2', w, None, dpcp(memlet2))
+                                    all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
+                                    if self.normalize_offsets:
+                                        subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
+                                                                for i, s in zip(all_indices, array.shape)])
+                                    else:
+                                        subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
+                                                                for i, s in zip(all_indices, array.shape)])
+                                    smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                            self.views = self.views + 1
-                            views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
+                                    memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                    memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                    wv = None
+                                    rv = None
+                                    if local_name.name in read_names:
+                                        r = substate.add_read(array_name)
+                                        wv = substate.add_write(viewname)
+                                        substate.add_edge(r, None, wv, 'views', dpcp(memlet))
+                                    if local_name.name in write_names:
+                                        rv = substate.add_read(viewname)
+                                        w = substate.add_write(array_name)
+                                        substate.add_edge(rv, 'views', w, None, dpcp(memlet2))
 
-                        new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
-                                           shape,
-                                           array.dtype,
-                                           array.storage,
-                                           strides=strides,
-                                           offset=offsets)
+                                    self.views = self.views + 1
+                                    views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
+
+                                new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
+                                            shape,
+                                            array.dtype,
+                                            array.storage,
+                                            strides=strides,
+                                            offset=offsets)   
+                    else:
+                       
+
+                        if isinstance(variable_in_call, ast_internal_classes.Array_Subscript_Node):
+                            changed_indices = 0
+                            for i in variable_in_call.indices:
+                                if isinstance(i, ast_internal_classes.ParDecl_Node):
+                                    if i.type == "ALL":
+                                        shape.append(array.shape[indices])
+                                        mysize = mysize * array.shape[indices]
+                                        index_list.append(None)
+                                    else:
+                                        raise NotImplementedError("Index in ParDecl should be ALL")
+                                else:
+                                    text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
+                                    index_list.append(sym.pystr_to_symbolic(text))
+                                    strides.pop(indices - changed_indices)
+                                    offsets.pop(indices - changed_indices)
+                                    changed_indices += 1
+                                indices = indices + 1
+                           
+                                
+
+                        if isinstance(variable_in_call, ast_internal_classes.Name_Node):
+                            shape = list(array.shape)
+                        
+                        #print("Data_Ref_Node")    
+                    # Functionally, this identifies the case where the array is in fact a scalar
+                        if shape == () or shape == (1, ) or shape == [] or shape == [1]:
+                            if hasattr(array,"name") and array.name in self.registered_types:
+                                datatype=self.get_dace_type(array.name)
+                                datatype_to_add=copy.deepcopy(datatype)
+                                datatype_to_add.transient = False
+                                new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
+                                
+                                if self.struct_views.get(new_sdfg) is None:
+                                    self.struct_views[new_sdfg] = {}
+                                for i in datatype_to_add.members:
+                                    current_dtype=datatype_to_add.members[i].dtype
+                                    for other_type in self.registered_types:
+                                        if current_dtype.dtype==self.registered_types[other_type].dtype:
+                                            other_type_obj=self.registered_types[other_type]
+                                            for j in other_type_obj.members:
+                                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                                                self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
+                                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
+                                    new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                                    self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
+                                    self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                            else:
+                                new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
+                        else:
+                            # This is the case where the array is not a scalar and we need to create a view
+                            if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
+                                offsets_zero = []
+                                for index in offsets:
+                                    offsets_zero.append(0)
+                                viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
+                                                            shape,
+                                                            array.dtype,
+                                                            storage=array.storage,
+                                                            strides=strides,
+                                                            offset=offsets_zero)
+                                from dace import subsets
+
+                                all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
+                                if self.normalize_offsets:
+                                    subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
+                                                            for i, s in zip(all_indices, array.shape)])
+                                else:
+                                    subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
+                                                            for i, s in zip(all_indices, array.shape)])
+                                smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
+
+                                memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                wv = None
+                                rv = None
+                                if local_name.name in read_names:
+                                    r = substate.add_read(array_name)
+                                    wv = substate.add_write(viewname)
+                                    substate.add_edge(r, None, wv, 'views', dpcp(memlet))
+                                if local_name.name in write_names:
+                                    rv = substate.add_read(viewname)
+                                    w = substate.add_write(array_name)
+                                    substate.add_edge(rv, 'views', w, None, dpcp(memlet2))
+
+                                self.views = self.views + 1
+                                views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
+
+                            new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
+                                            shape,
+                                            array.dtype,
+                                            array.storage,
+                                            strides=strides,
+                                            offset=offsets)
                         
             if not matched:
                 # This handles the case where the function is called with global variables
@@ -1015,7 +1132,7 @@ class AST_translator:
                     mem2=Memlet.from_array(components[0] + '.' + components[1], sdfg.arrays[components[0]].members[components[1]])
                     
                     #memlet2 = Memlet(f'{datanode.data}-> {components[0]}')
-                    substate.add_edge(datanode,"views2",wr,None,dpcp(mem2))
+                    substate.add_edge(datanode,"views",wr,None,dpcp(mem2))
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
         if self.multiple_sdfgs==False:
@@ -1371,7 +1488,7 @@ class AST_translator:
             if isinstance(datatype, Structure):
                 datatype.transient = transient
                 arr_dtype = datatype[sizes]
-                arr_dtype.offset = [-1 for _ in sizes]
+                arr_dtype.offset = [offset_value for _ in sizes]
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
             else:    

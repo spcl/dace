@@ -304,7 +304,10 @@ def get_name(node: ast_internal_classes.FNode):
     elif isinstance(node, ast_internal_classes.Data_Ref_Node):
         view_name=node.parent_ref.name
         while isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-            view_name=view_name+"_"+node.part_ref.parent_ref.name
+            if isinstance(node.part_ref.parent_ref, ast_internal_classes.Name_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name
+            elif isinstance(node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name.name    
             node=node.part_ref
         view_name=view_name+"_"+get_name(node.part_ref)
         return view_name            
