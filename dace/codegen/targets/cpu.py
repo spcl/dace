@@ -644,6 +644,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
             raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
+        elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
+            # Sequential dependency edge
+            return
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
