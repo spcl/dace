@@ -732,7 +732,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
 
     :param sdfg: The SDFG to annotate.
     :param concretize_dynamic_unbounded: If True, we annotate dyncamic unbounded states with symbols of the
-                                         form "num_execs_{sdfg_id}_{loop_start_state_id}". Hence, for each
+                                         form "num_execs_{cfg_id}_{loop_start_state_id}". Hence, for each
                                          unbounded loop its states will have the same number of symbolic executions.
     :note: This operates on the SDFG in-place.
     """
@@ -909,7 +909,7 @@ def propagate_states(sdfg, concretize_dynamic_unbounded=False) -> None:
                             # We can always assume these symbols to be non-negative.
                             traversal_q.append(
                                 (unannotated_loop_edge.dst,
-                                 Symbol(f'num_execs_{sdfg.sdfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
+                                 Symbol(f'num_execs_{sdfg.cfg_id}_{sdfg.node_id(unannotated_loop_edge.dst)}',
                                         nonnegative=True), False, itvar_stack))
                         else:
                             # Propagate dynamic unbounded.

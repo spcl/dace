@@ -126,7 +126,7 @@ class SingleState(ControlFlow):
     def as_cpp(self, codegen, symbols) -> str:
         sdfg = self.state.parent
 
-        expr = '__state_{}_{}:;\n'.format(sdfg.sdfg_id, self.state.label)
+        expr = '__state_{}_{}:;\n'.format(sdfg.cfg_id, self.state.label)
         if self.state.number_of_nodes() > 0:
             expr += '{\n'
             expr += self.dispatch_state(self.state)
@@ -138,7 +138,7 @@ class SingleState(ControlFlow):
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_state and sdfg.out_degree(self.state) == 0:
-            expr += 'goto __state_exit_{};\n'.format(sdfg.sdfg_id)
+            expr += 'goto __state_exit_{};\n'.format(sdfg.cfg_id)
         return expr
 
     def generate_transition(self,
@@ -175,7 +175,7 @@ class SingleState(ControlFlow):
 
         if (not edge.data.is_unconditional()
                 or ((successor is None or edge.dst is not successor) and not assignments_only)):
-            expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
+            expr += 'goto __state_{}_{};\n'.format(sdfg.cfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
             expr += '}\n'
@@ -257,7 +257,7 @@ class GeneralBlock(ControlFlow):
                 # One unconditional edge
                 if (len(out_edges) == 1 and out_edges[0].data.is_unconditional()):
                     continue
-                expr += f'goto __state_exit_{sdfg.sdfg_id};\n'
+                expr += f'goto __state_exit_{sdfg.cfg_id};\n'
 
         return expr
 
@@ -326,7 +326,7 @@ class IfElseChain(ControlFlow):
         # execution should end, so we emit an "else goto exit" here.
         if len(self.body) > 0:
             expr += ' else {\n'
-        expr += 'goto __state_exit_{};\n'.format(self.sdfg.sdfg_id)
+        expr += 'goto __state_exit_{};\n'.format(self.sdfg.cfg_id)
         if len(self.body) > 0:
             expr += '\n}'
         return expr
@@ -475,7 +475,7 @@ class SwitchCaseScope(ControlFlow):
             expr += f'case {case}: {{\n'
             expr += body.as_cpp(codegen, symbols)
             expr += 'break;\n}\n'
-        expr += f'default: goto __state_exit_{self.sdfg.sdfg_id};'
+        expr += f'default: goto __state_exit_{self.sdfg.cfg_id};'
         expr += '\n}\n'
         return expr
 

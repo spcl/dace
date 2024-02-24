@@ -13,7 +13,7 @@ from functools import reduce
 import operator
 import copy
 
-from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
+from dace import memlet, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation, utils
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
@@ -601,7 +601,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
             if state.degree(dnode) == 0 and dnode not in isolated_nodes:
                 state.remove_node(dnode)
 
-        sdfg._sdfg_list = sdfg.reset_sdfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
     def _modify_access_to_access(self,
                                  input_edges: Dict[nodes.Node, MultiConnectorEdge],
@@ -645,7 +645,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                                                                   internal_offset=offset,
                                                                   external_offset=offset)
                             new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.dst_subset
+                            new_memlet.other_subset = out_memlet.subset
 
                             inner_edge.data = new_memlet
                             if len(nstate.out_edges(inner_edge.dst)) > 0:
