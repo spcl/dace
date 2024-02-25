@@ -13,6 +13,7 @@ import dace.frontend.fortran.ast_internal_classes as ast_internal_classes
 from dace.frontend.fortran.intrinsics import IntrinsicSDFGTransformation
 from typing import Dict, List, Optional, Tuple, Set
 from dace import dtypes
+from dace import subsets as subs
 from dace import Language as lang
 from dace import data as dat
 from dace import SDFG, InterstateEdge, Memlet, pointer, nodes
@@ -74,6 +75,7 @@ class AST_translator:
         self.libraries = {}
         self.struct_views={}
         self.last_call_expression = {}
+        self.struct_view_count = 0
         self.structures = ast.structures
         self.placeholders = ast.placeholders
         self.toplevel_subroutine = toplevel_subroutine
@@ -637,17 +639,171 @@ class AST_translator:
                     offsets = list(array.offset)
                     mysize = 1
 
+
                     if isinstance(variable_in_call, ast_internal_classes.Data_Ref_Node):
+                        done=False
                         tmpvar = variable_in_call
-                        while isinstance(tmpvar, ast_internal_classes.Data_Ref_Node):
-                            tmpvar = tmpvar.part_ref
-                        print("Array_Subscript_Node")
-                        if isinstance(variable_in_call.part_ref, ast_internal_classes.Data_Ref_Node):
-                            raise NotImplementedError("recursed Data_Ref_Node not implemented")
-                        elif isinstance(variable_in_call.part_ref,ast_internal_classes.Array_Subscript_Node):
+                        local_name = parameters[variables_in_call.index(variable_in_call)]
+                        top_structure_name=self.name_mapping[sdfg][ast_utils.get_name(tmpvar.parent_ref)]
+                        top_structure=sdfg.arrays[top_structure_name]
+                        current_parent_structure=top_structure
+                        current_parent_structure_name=top_structure_name
+                        name_chain=[top_structure_name]    
+                        while not done:
+                            if isinstance(tmpvar.part_ref, ast_internal_classes.Data_Ref_Node):
+                                tmpvar=tmpvar.part_ref
+                                
+                                current_member_name=ast_utils.get_name(tmpvar.parent_ref)
+                                current_member=current_parent_structure.members[current_member_name]
+                                concatenated_name="_".join(name_chain)
+                                sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.shape,current_member.dtype)
+                                local_shape=current_member.shape
+                                new_shape=[]
+                                local_indices=0
+                                local_strides=list(current_member.strides)
+                                local_offsets=list(current_member.offset)
+                                local_index_list=[]
+                                local_size =1
+                                if isinstance(tmpvar.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                                    changed_indices = 0
+                                    for i in tmpvar.parent_ref.indices:
+                                        if isinstance(i, ast_internal_classes.ParDecl_Node):
+                                            if i.type == "ALL":
+                                                new_shape.append(local_shape[local_indices])
+                                                local_size = local_size * local_shape[local_indices]
+                                                local_index_list.append(None)
+                                            else:
+                                                raise NotImplementedError("Index in ParDecl should be ALL")
+                                        else:
+                                            text = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(i)
+                                            local_index_list.append(sym.pystr_to_symbolic(text))
+                                            local_strides.pop(local_indices - changed_indices)
+                                            local_offsets.pop(local_indices - changed_indices)
+                                            changed_indices += 1
+                                        local_indices = local_indices + 1
+                                local_all_indices = [None] * (len(local_shape) - len(local_index_list)) + local_index_list
+                                if self.normalize_offsets:
+                                    subset = subs.Range([(i, i, 1) if i is not None else (0, s-1, 1)
+                                                                for i, s in zip(local_all_indices, local_shape)])
+                                else:
+                                    subset = subs.Range([(i, i, 1) if i is not None else (1, s, 1)
+                                                                for i, s in zip(local_all_indices, local_shape)])
+                                smallsubset = subs.Range([(0, s - 1, 1) for s in new_shape])
+
+                                
+                                if local_name.name in read_names:
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==current_parent_structure_name and len(substate.out_edges(i))==0:
+                                            re=i
+                                            already_there=True
+                                            break
+                                    if not already_there:
+                                        re=substate.add_read(current_parent_structure_name)    
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.out_edges(i))==0:
+                                            wv=i
+                                            already_there=True
+                                            break
+                                    if not already_there:
+                                        wv = substate.add_write(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
+                                    
+                                    mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                    substate.add_edge(re,None,wv,"views",dpcp(mem))
+
+                                if local_name.name in write_names:
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==current_parent_structure_name  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
+                                            already_there=True
+                                            wr=i
+                                            break
+                                    if not already_there:
+                                        wr=substate.add_write(current_parent_structure_name)
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
+                                            rv=i
+                                            already_there=True
+                                            break
+                                    if not already_there:    
+                                        rv = substate.add_read(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
+                                    mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                    substate.add_edge(rv,"views",wr,None,dpcp(mem2))
+
+                                current_parent_structure_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
+                                current_parent_structure=current_parent_structure.members[current_member_name]
+                                self.struct_view_count+=1
+                                name_chain.append(current_member_name)
+                            else:
+                                done=True    
+                                tmpvar=tmpvar.part_ref
+                                concatenated_name="_".join(name_chain)
+                                array_name=concatenated_name+"_"+ast_utils.get_name(tmpvar)
+                                last_view_name=concatenated_name+"_"+str(self.struct_view_count-1)
+                                stype=current_parent_structure.stype
+                                array=stype.members[ast_utils.get_name(tmpvar)]
+                                sdfg.add_view(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count),array.shape,array.dtype)
+                                
+                                if local_name.name in read_names:
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==last_view_name and len(substate.out_edges(i))==0:
+                                            re=i
+                                            already_there=True
+                                            break
+                                    if not already_there:
+                                        re=substate.add_read(last_view_name)
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count) and len(substate.out_edges(i))==0:
+                                            wv=i
+                                            already_there=True
+                                            break
+                                    if not already_there:    
+                                        wv = substate.add_write(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
+                                    mem=Memlet.from_array(last_view_name + "." + array_name,array )
+                                    substate.add_edge(re,None,wv,"views",dpcp(mem))
+                                    last_view_name_read=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
+
+                                if local_name.name in write_names:
+                                    already_there=False
+                                    for i in substate.data_nodes():
+                                        if i.data==last_view_name and len(substate.in_edges(i))==0:
+                                            already_there=True
+                                            wr=i
+                                            break
+                                    if not already_there:
+                                        wr=substate.add_write(last_view_name)
+                                    already_there=False    
+                                    for i in substate.data_nodes():
+                                        if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count) and len(substate.in_edges(i))==0:
+                                            rv=i
+                                            already_there=True
+                                            break
+                                    if not already_there:        
+                                        rv = substate.add_read(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
+                                    mem2=Memlet.from_array(last_view_name + "." + array_name,array )
+                                    substate.add_edge(rv,"views",wr,None,dpcp(mem2))
+                                    last_view_name_write=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
+
+                                
+                                if last_view_name_read!=last_view_name_write:
+                                    raise NotImplementedError("Read and write views should be the same")
+                                last_view_name=last_view_name_read
+                                strides = list(array.strides)
+                                offsets = list(array.offset)
+                                
+                               
+
+
+
+                     
+                        if isinstance(tmpvar,ast_internal_classes.Array_Subscript_Node):
                             
                             changed_indices = 0
-                            for i in variable_in_call.part_ref.indices:
+                            for i in tmpvar.indices:
                                 if isinstance(i, ast_internal_classes.ParDecl_Node):
                                     if i.type == "ALL":
                                         shape.append(array.shape[indices])
@@ -665,7 +821,7 @@ class AST_translator:
                         
 
                            
-                        elif isinstance(variable_in_call.part_ref,ast_internal_classes.Name_Node):
+                        elif isinstance(tmpvar,ast_internal_classes.Name_Node):
                             shape = list(array.shape)
                         else:
                             raise NotImplementedError("Unknown part_ref type")
@@ -725,21 +881,36 @@ class AST_translator:
                                                                 for i, s in zip(all_indices, array.shape)])
                                     smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                                    memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                    memlet = Memlet(f'{last_view_name}[{subset}]->{smallsubset}')
                                     memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
                                     wv = None
                                     rv = None
                                     if local_name.name in read_names:
-                                        r = substate.add_read(array_name)
+                                        found = False
+                                        for i in substate.data_nodes():
+                                            if i.data==last_view_name and len(substate.out_edges(i))==0:
+                                                re=i
+                                                found=True
+                                                break
+                                        if not found:
+                                            re = substate.add_read(last_view_name)
                                         wv = substate.add_write(viewname)
-                                        substate.add_edge(r, None, wv, 'views', dpcp(memlet))
+                                        substate.add_edge(re, None, wv, 'views', dpcp(memlet))
                                     if local_name.name in write_names:
                                         rv = substate.add_read(viewname)
-                                        w = substate.add_write(array_name)
-                                        substate.add_edge(rv, 'views', w, None, dpcp(memlet2))
+                                        found = False
+                                        for i in substate.data_nodes():
+                                            if i.data==last_view_name and len(substate.in_edges(i))==0:
+                                                wr=i
+                                                found=True
+                                                break
+                                        if not found:
+                                            wr = substate.add_write(last_view_name)
+                                        substate.add_edge(rv, 'views', wr, None, dpcp(memlet2))
 
                                     self.views = self.views + 1
                                     views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
+                                    #views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
 
                                 new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                             shape,
@@ -1113,26 +1284,26 @@ class AST_translator:
                     nested_sdfg=parent_sdfg    
                     parent_sdfg=parent_sdfg.parent_sdfg
                     
-        #print("Added memlets")
-        for datanode in substate.data_nodes():
-            if self.struct_views.get(sdfg) is not None and self.struct_views[sdfg].get(datanode.data) is not None:
-                components=self.struct_views[sdfg][datanode.data]
+        print("Added memlets")
+        # for datanode in substate.data_nodes():
+        #     if self.struct_views.get(sdfg) is not None and self.struct_views[sdfg].get(datanode.data) is not None:
+        #         components=self.struct_views[sdfg][datanode.data]
                 
-                if len(substate.in_edges(datanode))==0:
-                    #print("Data node has no in connectors")
-                    re=substate.add_read(components[0])
-                    mem=Memlet.from_array(components[0] + '.' + components[1],sdfg.arrays[components[0]].members[components[1]])
-                    #memlet = Memlet(f'{components[0]}-> {datanode.data}')
-                    substate.add_edge(re,None,datanode,"views",dpcp(mem))
+        #         if len(substate.in_edges(datanode))==0:
+        #             #print("Data node has no in connectors")
+        #             re=substate.add_read(components[0])
+        #             mem=Memlet.from_array(components[0] + '.' + components[1],sdfg.arrays[components[0]].members[components[1]])
+        #             #memlet = Memlet(f'{components[0]}-> {datanode.data}')
+        #             substate.add_edge(re,None,datanode,"views",dpcp(mem))
 
-                if len(substate.out_edges(datanode))==0:
-                    #print("Data node has no out connectors")    
+        #         if len(substate.out_edges(datanode))==0:
+        #             #print("Data node has no out connectors")    
                 
-                    wr=substate.add_write(components[0])
-                    mem2=Memlet.from_array(components[0] + '.' + components[1], sdfg.arrays[components[0]].members[components[1]])
+        #             wr=substate.add_write(components[0])
+        #             mem2=Memlet.from_array(components[0] + '.' + components[1], sdfg.arrays[components[0]].members[components[1]])
                     
-                    #memlet2 = Memlet(f'{datanode.data}-> {components[0]}')
-                    substate.add_edge(datanode,"views",wr,None,dpcp(mem2))
+        #             #memlet2 = Memlet(f'{datanode.data}-> {components[0]}')
+        #             substate.add_edge(datanode,"views",wr,None,dpcp(mem2))
 
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
         if self.multiple_sdfgs==False:
@@ -2509,8 +2680,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
-            #if j.name.name!="velocity_tendencies":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="velocity_tendencies":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
