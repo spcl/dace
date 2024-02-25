@@ -19,7 +19,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
-from typing import Union
+from typing import Optional, Tuple, Union
 from dace.codegen.targets import fpga
 
 
@@ -610,16 +610,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _emit_copy(
         self,
-        sdfg,
-        state_id,
-        src_node,
-        src_storage,
-        dst_node,
-        dst_storage,
-        dst_schedule,
-        edge,
-        dfg,
-        stream,
+        sdfg: SDFG,
+        state_id: int,
+        src_node: nodes.Node,
+        src_storage: dtypes.StorageType,
+        dst_node: nodes.Node,
+        dst_storage: dtypes.StorageType,
+        dst_schedule: dtypes.ScheduleType,
+        edge: Tuple[nodes.Node, str, nodes.Node, str, mmlt.Memlet],
+        dfg: SDFGState,
+        stream: CodeIOStream,
     ):
         u, uconn, v, vconn, memlet = edge
         orig_vconn = vconn
@@ -635,6 +635,20 @@ class CPUCodeGen(TargetCodeGenerator):
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
+        postample = None
+        if memlet.schedule == dtypes.MemletScheduleType.Doacross_Sink and memlet.doacross_dependency_offset is not None:
+            stream.write(
+                '#pragma omp ordered depend(sink:{offset})'.format(
+                    offset=','.join([str(o) for o in memlet.doacross_dependency_offset])
+                ),
+                sdfg,
+                state_id,
+                [src_node, dst_node]
+            )
+
+        if memlet.schedule == dtypes.MemletScheduleType.Doacross_Source:
+            postample = '#pragma omp ordered depend(source)'
+
         if isinstance(dst_node, nodes.Tasklet):
             # Copy into tasklet
             stream.write(
@@ -643,6 +657,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 state_id,
                 [src_node, dst_node],
             )
+            if postample:
+                stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
             return
         elif isinstance(src_node, nodes.Tasklet):
             # Copy out of tasklet
@@ -652,6 +668,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 state_id,
                 [src_node, dst_node],
             )
+            if postample:
+                stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
             return
         else:  # Copy array-to-array
             src_nodedesc = src_node.desc(sdfg)
@@ -674,6 +692,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     [src_node, dst_node],
                 )
+                if postample:
+                    stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                 return
 
             # Writing from/to a stream
@@ -710,6 +730,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         state_id,
                         [src_node, dst_node],
                     )
+                    if postample:
+                        stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                     return
                 # Array -> Stream - push bulk
                 if isinstance(src_nodedesc, (data.Scalar, data.Array)) and isinstance(dst_nodedesc, data.Stream):
@@ -741,6 +763,8 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id,
                             [src_node, dst_node],
                         )
+                    if postample:
+                        stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
                     return
                 else:
                     # Unknown case
@@ -871,6 +895,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if instr is not None:
                 instr.on_copy_end(sdfg, state_dfg, src_node, dst_node, edge, stream, None)
         #############################################################
+
+        if postample:
+            stream.write("    " + postample, sdfg, state_id, [src_node, dst_node])
 
     ###########################################################################
     # Memlet handling
@@ -1905,7 +1932,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Obtain start of map
         scope_dict = dfg.scope_dict()
-        map_node = scope_dict[node]
+        map_node: Optional[nodes.MapEntry] = scope_dict[node]
         state_dfg = sdfg.node(state_id)
 
         if map_node is None:
@@ -1922,6 +1949,10 @@ class CPUCodeGen(TargetCodeGenerator):
             instr.on_scope_exit(sdfg, state_dfg, node, outer_stream, callsite_stream, function_stream)
 
         self.generate_scope_postamble(sdfg, dfg, state_id, function_stream, outer_stream, callsite_stream)
+
+        if map_node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+            if map_node.map.omp_doacross_multi_source:
+                result.write("#pragma omp ordered depend(source)", sdfg, state_id, node)
 
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("}", sdfg, state_id, node)

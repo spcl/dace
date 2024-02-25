@@ -86,6 +86,7 @@ class MemletScheduleType(aenum.AutoNumberEnum):
     Default = ()
     Doacross_Sink = ()
     Doacross_Source = ()
+    Doacross_Source_Deferred = ()
 
 
 # A subset of GPU schedule types

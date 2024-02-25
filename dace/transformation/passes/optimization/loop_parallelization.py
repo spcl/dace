@@ -35,7 +35,8 @@ class ParallelizeDoacrossLoops(ppl.Pass):
     def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
         return {loop_analysis.LoopCarryDependencyAnalysis}
 
-    def _parallelize_loop(self, loop: LoopRegion, doacross_deps: Dict[Memlet, Tuple[Memlet, List[int]]]) -> None:
+    def _parallelize_loop(self, loop: LoopRegion,
+                          doacross_deps: Dict[Memlet, Tuple[Memlet, List[sympy.Basic]]]) -> None:
         body: SDFGState = loop.nodes()[0]
         loop_start = loop_analysis.get_init_assignment(loop)
         loop_end = loop_analysis.get_loop_end(loop)
@@ -49,9 +50,8 @@ class ParallelizeDoacrossLoops(ppl.Pass):
         for odep, _ in doacross_deps.values():
             if odep._edge:
                 out_deps_edges.add(odep._edge)
-
-        in_deps_handled = 0
-        out_deps_handled = 0
+        handled_in_deps = set()
+        handled_out_deps = set()
 
         source_nodes = body.source_nodes()
         sink_nodes = body.sink_nodes()
@@ -109,14 +109,13 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                     new_memlet = propagation.align_memlet(body, e, dst=False)
 
                     body.remove_edge(e)
-                    inner_edge, _ = body.add_edge_pair(map_entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
+                    body.add_edge_pair(map_entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
                     if e in in_deps_edges:
                         leaves = body.memlet_tree(e).leaves()
                         for leaf in leaves:
-                            pass
-                        inner_edge.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
-                        inner_edge.data.doacross_dependency_offset = doacross_deps[e.data][1]
-                        in_deps_handled += 1
+                            leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
+                            leaf.data.doacross_dependency_offset = doacross_deps[e.data][1]
+                        handled_in_deps.add(e)
             else:
                 body.add_nedge(map_entry, n, Memlet())
         for n in sink_nodes:
@@ -126,13 +125,12 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                     new_memlet = propagation.align_memlet(body, e, dst=True)
 
                     body.remove_edge(e)
-                    inner_edge, _ = body.add_edge_pair(map_exit, e.src, n, new_memlet, internal_connector=e.src_conn)
+                    body.add_edge_pair(map_exit, e.src, n, new_memlet, internal_connector=e.src_conn)
                     if e in out_deps_edges:
                         leaves = body.memlet_tree(e).leaves()
                         for leaf in leaves:
-                            pass
-                        inner_edge.data.schedule = dtypes.MemletScheduleType.Doacross_Source
-                        out_deps_handled += 1
+                            leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Source
+                        handled_out_deps.add(e)
             else:
                 body.add_nedge(n, map_exit, Memlet())
         intermediate_sinks = {}
@@ -180,12 +178,17 @@ class ParallelizeDoacrossLoops(ppl.Pass):
             body.add_nedge(map_entry, map_exit, Memlet())
 
         # If not all input and output doacross dependencies were handled yet, make sure they are marked here.
-        if in_deps_handled != len(list(doacross_deps.keys())):
-            pass
-            # TODO
-        if out_deps_handled != len(list(doacross_deps.values())):
-            pass
-            # TODO
+        for in_dep_edge in in_deps_edges:
+            if in_dep_edge not in handled_in_deps:
+                for leaf in body.memlet_tree(in_dep_edge).leaves():
+                    leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
+                    leaf.data.doacross_dependency_offset = doacross_deps[in_dep_edge.data][1]
+                handled_in_deps.add(in_dep_edge)
+        for out_dep_edge in out_deps_edges:
+            if out_dep_edge not in handled_out_deps:
+                for leaf in body.memlet_tree(out_dep_edge).leaves():
+                    leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Source
+                handled_out_deps.add(out_dep_edge)
 
         # Ensure internal map schedules are adjusted.
         for n in body.nodes():
@@ -203,6 +206,16 @@ class ParallelizeDoacrossLoops(ppl.Pass):
             loop.parent_graph.add_edge(body, oedge.dst, isedge_data)
             loop.parent_graph.remove_edge(oedge)
         loop.parent_graph.remove_node(loop)
+
+        # Finally, make sure there is only one dependency resolving edge (i.e, doacross source). If there are more than
+        # one, set their schedules to not generate a sync call (deferred), and instead synchronize at the end of the map
+        # scope.
+        if len(handled_out_deps) > 1:
+            for oe in handled_out_deps:
+                for leaf in body.memlet_tree(oe).leaves():
+                    if leaf.data.schedule == dtypes.MemletScheduleType.Doacross_Source:
+                        leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Source_Deferred
+            map_entry.map.omp_doacross_multi_source = True
 
         loop.sdfg.reset_cfg_list()
 
@@ -265,9 +278,9 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                                 if dep_start != dep_end:
                                     subsets_work_fine = False
                                     break
-                                dep_offsets.append(dep_start)
-                            else:
-                                dep_offsets.append(0)
+                                dep_offsets.append(loop_var + dep_start)
+                            #else:
+                            #    dep_offsets.append(0)
                         if not subsets_work_fine:
                             violating_dependency = True
                             break

@@ -899,6 +899,10 @@ class Map(object):
                               optional=True,
                               optional_condition=lambda m: m.schedule in
                               (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent))
+    omp_doacross_multi_source = Property(dtype=bool,
+                                         default=False,
+                                         optional=True,
+                                         optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross)
 
     gpu_block_size = ListProperty(element_type=int,
                                   default=None,
