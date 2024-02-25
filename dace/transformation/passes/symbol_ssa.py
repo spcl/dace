@@ -35,7 +35,7 @@ class StrictSymbolSSA(ppl.Pass):
         """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
-        symbol_scope_dict: ap.SymbolScopeDict = pipeline_results[ap.SymbolWriteScopes.__name__][sdfg.sdfg_id]
+        symbol_scope_dict: ap.SymbolScopeDict = pipeline_results[ap.SymbolWriteScopes.__name__][sdfg.cfg_id]
 
         for name, scope_dict in symbol_scope_dict.items():
             # If there is only one scope, don't do anything.

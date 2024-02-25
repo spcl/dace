@@ -503,7 +503,7 @@ def make_transients_persistent(sdfg: SDFG,
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
-        result[nsdfg.sdfg_id] = (persistent - not_persistent)
+        result[nsdfg.cfg_id] = (persistent - not_persistent)
 
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
@@ -570,7 +570,7 @@ def auto_optimize(sdfg: SDFG,
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
-        for s in sdfg.sdfg_list:
+        for s in sdfg.cfg_list:
             xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
                                                    validate=False,

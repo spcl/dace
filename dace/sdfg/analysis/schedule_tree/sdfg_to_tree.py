@@ -71,16 +71,11 @@ def dealias_sdfg(sdfg: SDFG):
             for parent_name in to_unsqueeze:
                 parent_arr = parent_sdfg.arrays[parent_name]
                 if isinstance(parent_arr, data.View):
-                    parent_arr = data.Array(parent_arr.dtype, parent_arr.shape, parent_arr.transient,
-                                            parent_arr.allow_conflicts, parent_arr.storage, parent_arr.location,
-                                            parent_arr.strides, parent_arr.offset, parent_arr.may_alias,
-                                            parent_arr.lifetime, parent_arr.alignment, parent_arr.debuginfo,
-                                            parent_arr.total_size, parent_arr.start_offset, parent_arr.optional,
-                                            parent_arr.pool)
+                    parent_arr = parent_arr.as_array()
                 elif isinstance(parent_arr, data.StructureView):
-                    parent_arr = data.Structure(parent_arr.members, parent_arr.name, parent_arr.transient,
-                                                parent_arr.storage, parent_arr.location, parent_arr.lifetime,
-                                                parent_arr.debuginfo)
+                    parent_arr = parent_arr.as_structure()
+                elif isinstance(parent_arr, data.ContainerView):
+                    parent_arr = copy.deepcopy(parent_arr.stype)
                 child_names = inv_replacements[parent_name]
                 for name in child_names:
                     child_arr = copy.deepcopy(parent_arr)
@@ -351,7 +346,7 @@ def replace_symbols_until_set(nsdfg: dace.nodes.NestedSDFG):
     """
     mapping = nsdfg.symbol_mapping
     sdfg = nsdfg.sdfg
-    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.sdfg_id]
+    reachable_states = StateReachability().apply_pass(sdfg, {})[sdfg.cfg_id]
     redefined_symbols: Dict[SDFGState, Set[str]] = defaultdict(set)
 
     # Collect redefined symbols
@@ -402,7 +397,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             # 1. Check for views
             if isinstance(e.src, dace.nodes.AccessNode):
                 desc = e.src.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.src)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.src)
@@ -412,7 +407,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                         continue
             if isinstance(e.dst, dace.nodes.AccessNode):
                 desc = e.dst.desc(sdfg)
-                if isinstance(desc, (dace.data.View, dace.data.StructureView)):
+                if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.dst)
                     if e is vedge:
                         viewed_node = sdutil.get_view_node(state, e.dst)
