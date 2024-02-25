@@ -7,13 +7,15 @@ import networkx as nx
 
 from dace import SDFG, SDFGState, properties
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.sdfg import nodes, propagation
 from dace.sdfg.analysis.writeset_underapproximation import (
     UnderapproximateWrites, UnderapproximateWritesDictT)
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.scope import ScopeTree
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion
+from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.analysis import ControlFlowBlockReachability
-
+from dace.transformation.passes.analysis import AccessRanges, ControlFlowBlockReachability
 
 @properties.make_properties
 class StateDataDependence(ppl.Pass):
@@ -30,21 +32,18 @@ class StateDataDependence(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
     def depends_on(self):
-        return {UnderapproximateWrites}
+        return {UnderapproximateWrites, AccessRanges}
 
-    def _state_get_deps(self, state: SDFGState,
-                        underapproximated_writes: UnderapproximateWritesDictT) -> Tuple[Set[Memlet], Set[Memlet]]:
-        # Collect underapproximated write memlets.
-        writes: Dict[str, List[Tuple[Memlet, nodes.AccessNode]]] = defaultdict(lambda: [])
-        for anode in state.data_nodes():
-            for iedge in state.in_edges(anode):
-                if not iedge.data.is_empty():
-                    root_edge = state.memlet_tree(iedge).root().edge
-                    writes[anode.data].append([underapproximated_writes['approximation'][root_edge], anode])
+    def _gather_reads_scope(self, state: SDFGState, scope: ScopeTree,
+                            writes: Dict[str, List[Tuple[Memlet, nodes.AccessNode]]],
+                            not_covered_reads: Set[Memlet], scope_ranges: Dict[str, Range]):
+        scope_nodes = state.scope_children()[scope.entry]
+        data_nodes_in_scope: Set[nodes.AccessNode] = set([n for n in scope_nodes if isinstance(nodes.AccessNode)])
+        if scope.entry is not None:
+            # propagate
+            pass
 
-        # Go over (overapproximated) reads and check if they are covered by writes.
-        not_covered_reads = set()
-        for anode in state.data_nodes():
+        for anode in data_nodes_in_scope:
             for oedge in state.out_edges(anode):
                 if not oedge.data.is_empty():
                     root_edge = state.memlet_tree(oedge).root().edge
@@ -57,12 +56,62 @@ class StateDataDependence(ppl.Pass):
                     if not covered:
                         not_covered_reads.add(root_edge.data)
 
+    def _state_get_deps(self, state: SDFGState,
+                        underapproximated_writes: UnderapproximateWritesDictT) -> Tuple[Set[Memlet], Set[Memlet]]:
+        # Collect underapproximated write memlets.
+        writes: Dict[str, List[Tuple[Memlet, nodes.AccessNode]]] = defaultdict(lambda: [])
+        for anode in state.data_nodes():
+            for iedge in state.in_edges(anode):
+                if not iedge.data.is_empty():
+                    root_edge = state.memlet_tree(iedge).root().edge
+                    if root_edge in underapproximated_writes['approximation']:
+                        writes[anode.data].append([underapproximated_writes['approximation'][root_edge], anode])
+                    else:
+                        writes[anode.data].append([root_edge.data, anode])
+
+        # Go over (overapproximated) reads and check if they are covered by writes.
+        not_covered_reads: List[Tuple[MultiConnectorEdge[Memlet], Memlet]] = []
+        for anode in state.data_nodes():
+            for oedge in state.out_edges(anode):
+                if not oedge.data.is_empty():
+                    root_edge = state.memlet_tree(oedge).root().edge
+                    read_subset = root_edge.data.src_subset
+                    covered = False
+                    for [write, to] in writes[anode.data]:
+                        if write.subset.covers_precise(read_subset) and nx.has_path(state.nx, to, anode):
+                            covered = True
+                            break
+                    if not covered:
+                        not_covered_reads.append([root_edge, root_edge.data])
+        # Make sure all reads are propagated if they happen inside maps. We do not need to do this for writes, because
+        # it is already taken care of by the write underapproximation analysis pass.
+        self._recursive_propagate_reads(state, state.scope_tree()[None], not_covered_reads)
+
         write_set = set()
         for data in writes:
             for memlet, _ in writes[data]:
                 write_set.add(memlet)
 
-        return not_covered_reads, write_set
+        read_set = set()
+        for reads in not_covered_reads:
+            read_set.add(reads[1])
+
+        return read_set, write_set
+
+    def _recursive_propagate_reads(self, state: SDFGState, scope: ScopeTree,
+                                   read_edges: Set[Tuple[MultiConnectorEdge[Memlet], Memlet]]):
+        for child in scope.children:
+            self._recursive_propagate_reads(state, child, read_edges)
+
+        if scope.entry is not None:
+            if isinstance(scope.entry, nodes.MapEntry):
+                for read_tuple in read_edges:
+                    read_edge, read_memlet = read_tuple
+                    for param in scope.entry.map.params:
+                        if param in read_memlet.free_symbols:
+                            aligned_memlet = propagation.align_memlet(state, read_edge, True)
+                            propagated_memlet = propagation.propagate_memlet(state, aligned_memlet, scope.entry, True)
+                            read_tuple[1] = propagated_memlet
 
     def apply_pass(self, top_sdfg: SDFG,
                    pipeline_results: Dict[str, Any]) -> Dict[int, Dict[SDFGState, Tuple[Set[Memlet], Set[Memlet]]]]:

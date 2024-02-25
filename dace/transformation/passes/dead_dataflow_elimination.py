@@ -10,7 +10,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.sdfg import infer_types
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 
 PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be erased
 

@@ -541,8 +541,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 # Arrays written with subsets that do not depend on the loop variable must be thread-local
                 map_dependency = False
-                for e in state.in_edges(node):
-                    subset = e.data.get_dst_subset(e, state)
+                for e in body.in_edges(node):
+                    subset = e.data.get_dst_subset(e, body)
                     if any(str(s) == itervar for s in subset.free_symbols):
                         map_dependency = True
                         break

@@ -4,15 +4,14 @@ from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import TYPE_CHECKING, List, Optional, Set, Union
-import warnings
 
 import dace
 import dace.serialize
 from dace import subsets, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
-                             DebugInfoProperty, LambdaProperty)
+from dace.properties import (EnumProperty, Property, ShapeProperty, make_properties, DataProperty, SubsetProperty,
+                             SymbolicProperty, DebugInfoProperty, LambdaProperty)
 
 if TYPE_CHECKING:
     import dace.sdfg.graph
@@ -53,6 +52,10 @@ class Memlet(object):
                              desc='If True, always generates non-conflicting '
                              '(non-atomic) writes in resulting code')
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
+    schedule = EnumProperty(dtype=dtypes.MemletScheduleType, desc="Memlet schedule",
+                            default=dtypes.MemletScheduleType.Default)
+    doacross_dependency_offset = ShapeProperty(allow_none=True, desc='Offset for doacross input dependencies',
+                                               default=None)
 
     def __init__(self,
                  expr: Optional[str] = None,
@@ -137,6 +140,9 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
+        self.schedule = dtypes.MemletScheduleType.Default
+        self.doacross_dependency_offset = None
+
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
         sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
@@ -205,6 +211,8 @@ class Memlet(object):
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
         node._wcr_nonatomic = self._wcr_nonatomic
         node._allow_oob = self._allow_oob
+        node._schedule = self._schedule
+        node._doacross_dependency_offset = self._doacross_dependency_offset
         node._is_data_src = self._is_data_src
 
         # Nullify graph references

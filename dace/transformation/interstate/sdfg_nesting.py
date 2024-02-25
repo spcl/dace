@@ -99,7 +99,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
-        if len(nested_sdfg.sdfg.nodes()) != 1:
+        if len(nested_sdfg.sdfg.nodes()) != 1 or not isinstance(nested_sdfg.sdfg.nodes()[0], SDFGState):
             return False
 
         # Ensure every connector has one incoming/outgoing edge and that it
@@ -749,9 +749,9 @@ class InlineSDFG(transformation.SingleStateTransformation):
 
         return result
 
-    def _modify_reshape_data(self, reshapes: Set[str], repldict: Dict[str, str], new_edges: Dict[str,
-                                                                                                 MultiConnectorEdge],
-                             nstate: SDFGState, state: SDFGState, inputs: bool):
+    def _modify_reshape_data(self, reshapes: Set[str], repldict: Dict[str, str],
+                             new_edges: Dict[str, MultiConnectorEdge], nstate: SDFGState, state: SDFGState,
+                             inputs: bool):
         anodes = nstate.source_nodes() if inputs else nstate.sink_nodes()
         reshp = {repldict[r]: r for r in reshapes}
         for node in anodes:

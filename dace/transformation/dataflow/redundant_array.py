@@ -298,13 +298,13 @@ class RedundantArray(pm.SingleStateTransformation):
                     if not subsets_intersect:
                         continue
                     try:
-                        has_bward_path = nx.has_path(G, a, true_out_array)
+                        has_fward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a, true_out_array)
+                        has_fward_path = nx.has_path(graph.nx, a, true_out_array)
                     try:
-                        has_fward_path = nx.has_path(G, true_out_array, a)
+                        has_bward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, true_out_array, a)
+                        has_bward_path = nx.has_path(graph.nx, true_out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.

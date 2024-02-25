@@ -27,7 +27,7 @@ from dace.sdfg import (SDFG, ScopeSubgraphView, SDFGState, dynamic_map_inputs, h
                        is_array_stream_view, is_devicelevel_gpu, nodes, scope_contains_scope)
 from dace.sdfg import utils as sdutil
 from dace.transformation import helpers as xfh
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 
 
 def prod(iterable):

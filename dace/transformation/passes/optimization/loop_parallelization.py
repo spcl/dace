@@ -1,0 +1,294 @@
+# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+
+from typing import Any, Dict, List, Set, Tuple
+
+import sympy
+from dace import data, dtypes, properties, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import nodes, propagation
+from dace.sdfg.graph import MultiConnectorEdge
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import LoopRegion, SDFGState
+from dace.subsets import Range
+from dace.transformation import pass_pipeline as ppl, helpers as xfh
+from dace.transformation.passes.analysis import loop_analysis
+
+
+@properties.make_properties
+class ParallelizeDoacrossLoops(ppl.Pass):
+    """
+    TODO
+    """
+
+    CATEGORY: str = 'Loop Parallelization'
+
+    def __init__(self):
+        self._non_analyzable_loops = set()
+        super().__init__()
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Edges
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & ppl.Modifies.CFG
+
+    def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
+        return {loop_analysis.LoopCarryDependencyAnalysis}
+
+    def _parallelize_loop(self, loop: LoopRegion, doacross_deps: Dict[Memlet, Tuple[Memlet, List[int]]]) -> None:
+        body: SDFGState = loop.nodes()[0]
+        loop_start = loop_analysis.get_init_assignment(loop)
+        loop_end = loop_analysis.get_loop_end(loop)
+        loop_stride = loop_analysis.get_loop_stride(loop)
+
+        in_deps_edges: Set[MultiConnectorEdge[Memlet]] = set()
+        for idep in doacross_deps.keys():
+            if idep._edge:
+                in_deps_edges.add(idep._edge)
+        out_deps_edges: Set[MultiConnectorEdge[Memlet]] = set()
+        for odep, _ in doacross_deps.values():
+            if odep._edge:
+                out_deps_edges.add(odep._edge)
+
+        in_deps_handled = 0
+        out_deps_handled = 0
+
+        source_nodes = body.source_nodes()
+        sink_nodes = body.sink_nodes()
+
+        # Check intermediate notes
+        intermediate_nodes = []
+        for node in body.nodes():
+            if isinstance(node, nodes.AccessNode) and body.in_degree(node) > 0 and node not in sink_nodes:
+                # Scalars written without WCR must be thread-local
+                if (isinstance(node.desc(loop.sdfg), data.Scalar) and
+                    any(e.data.wcr is None for e in body.in_edges(node))):
+                    continue
+                # Arrays written with subsets that do not depend on the loop variable must be thread-local
+                map_dependency = False
+                for e in body.in_edges(node):
+                    subset = e.data.get_dst_subset(e, body)
+                    if any(str(s) == loop.loop_variable for s in subset.free_symbols):
+                        map_dependency = True
+                        break
+                if not map_dependency:
+                    continue
+                intermediate_nodes.append(node)
+
+        map_entry, map_exit = body.add_map(loop.name + '_doacross',
+                                           [[loop.loop_variable, Range([(loop_start, loop_end, loop_stride)])]],
+                                           schedule=dtypes.ScheduleType.CPU_Multicore_Doacross)
+        map_entry.map.omp_schedule = dtypes.OMPScheduleType.Static
+        map_entry.map.omp_chunk_size = 1
+
+        # If the map uses symbols from data containers, instantiate reads
+        containers_to_read = map_entry.free_symbols & loop.sdfg.arrays.keys()
+        for rd in containers_to_read:
+            anode = body.add_read(rd)
+            body.add_memlet_path(anode, map_entry, dst_conn=rd, memlet=Memlet(rd))
+
+        # Direct edges among source and sink access nodes must pass through a tasklet. We first gather them and handle
+        # them later.
+        direct_edges: Set[MultiConnectorEdge[Memlet]] = set()
+        for n1 in source_nodes:
+            if not isinstance(n1, nodes.AccessNode):
+                continue
+            for n2 in sink_nodes:
+                if not isinstance(n2, nodes.AccessNode):
+                    continue
+                for e in body.edges_between(n1, n2):
+                    e.data.try_initialize(loop.sdfg, body, e)
+                    direct_edges.add(e)
+                    body.remove_edge(e)
+
+        # Reroute all memlets through the entry and exit nodes
+        for n in source_nodes:
+            if isinstance(n, nodes.AccessNode):
+                for e in body.out_edges(n):
+                    # Fix memlet to contain outer data as subset
+                    new_memlet = propagation.align_memlet(body, e, dst=False)
+
+                    body.remove_edge(e)
+                    inner_edge, _ = body.add_edge_pair(map_entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
+                    if e in in_deps_edges:
+                        leaves = body.memlet_tree(e).leaves()
+                        for leaf in leaves:
+                            pass
+                        inner_edge.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
+                        inner_edge.data.doacross_dependency_offset = doacross_deps[e.data][1]
+                        in_deps_handled += 1
+            else:
+                body.add_nedge(map_entry, n, Memlet())
+        for n in sink_nodes:
+            if isinstance(n, nodes.AccessNode):
+                for e in body.in_edges(n):
+                    # Fix memlet to contain outer data as subset
+                    new_memlet = propagation.align_memlet(body, e, dst=True)
+
+                    body.remove_edge(e)
+                    inner_edge, _ = body.add_edge_pair(map_exit, e.src, n, new_memlet, internal_connector=e.src_conn)
+                    if e in out_deps_edges:
+                        leaves = body.memlet_tree(e).leaves()
+                        for leaf in leaves:
+                            pass
+                        inner_edge.data.schedule = dtypes.MemletScheduleType.Doacross_Source
+                        out_deps_handled += 1
+            else:
+                body.add_nedge(n, map_exit, Memlet())
+        intermediate_sinks = {}
+        for n in intermediate_nodes:
+            if isinstance(loop.sdfg.arrays[n.data], data.View):
+                continue
+            if n.data in intermediate_sinks:
+                sink = intermediate_sinks[n.data]
+            else:
+                sink = body.add_access(n.data)
+                intermediate_sinks[n.data] = sink
+            xfh.make_map_internal_write_external(loop.sdfg, body, map_exit, n, sink)
+
+        # Here we handle the direct edges among source and sink access nodes.
+        for e in direct_edges:
+            src = e.src.data
+            dst = e.dst.data
+            if e.data.subset.num_elements() == 1:
+                t = body.add_tasklet(f"{n1}_{n2}", {'__inp'}, {'__out'}, "__out =  __inp")
+                src_conn, dst_conn = '__out', '__inp'
+            else:
+                desc = loop.sdfg.arrays[src]
+                tname, _ = loop.sdfg.add_transient('tmp',
+                                                   e.data.src_subset.size(),
+                                                   desc.dtype,
+                                                   desc.storage,
+                                                   find_new_name=True)
+                t = body.add_access(tname)
+                src_conn, dst_conn = None, None
+            body.add_memlet_path(n1,
+                                 map_entry,
+                                 t,
+                                 memlet=Memlet(data=src, subset=e.data.src_subset),
+                                 dst_conn=dst_conn)
+            body.add_memlet_path(t,
+                                 map_exit,
+                                 n2,
+                                 memlet=Memlet(data=dst,
+                                                      subset=e.data.dst_subset,
+                                                      wcr=e.data.wcr,
+                                                      wcr_nonatomic=e.data.wcr_nonatomic),
+                                 src_conn=src_conn)
+
+        if not source_nodes and not sink_nodes:
+            body.add_nedge(map_entry, map_exit, Memlet())
+
+        # If not all input and output doacross dependencies were handled yet, make sure they are marked here.
+        if in_deps_handled != len(list(doacross_deps.keys())):
+            pass
+            # TODO
+        if out_deps_handled != len(list(doacross_deps.values())):
+            pass
+            # TODO
+
+        # Ensure internal map schedules are adjusted.
+        for n in body.nodes():
+            if n != map_entry and isinstance(n, nodes.MapEntry):
+                n.map.schedule = dtypes.ScheduleType.Default
+
+        # Get rid of the loop and nest the loop body into the loop parent's graph.
+        loop.parent_graph.add_node(body)
+        for iedge in loop.parent_graph.in_edges(loop):
+            isedge_data = iedge.data
+            loop.parent_graph.add_edge(iedge.src, body, isedge_data)
+            loop.parent_graph.remove_edge(iedge)
+        for oedge in loop.parent_graph.out_edges(loop):
+            isedge_data = oedge.data
+            loop.parent_graph.add_edge(body, oedge.dst, isedge_data)
+            loop.parent_graph.remove_edge(oedge)
+        loop.parent_graph.remove_node(loop)
+
+        loop.sdfg.reset_cfg_list()
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Any:
+        """
+        TODO
+        """
+        results = {}
+
+        loop_deps_dict = pipeline_results[loop_analysis.LoopCarryDependencyAnalysis.__name__]
+
+        for cfg in top_sdfg.all_control_flow_regions(recursive=True):
+            if isinstance(cfg, LoopRegion):
+                loop: LoopRegion = cfg
+                loop_var = symbolic.symbol(loop.loop_variable)
+
+                # TODO: check that there are no sympy functions in the loop expressions.
+
+                sdfg = loop.sdfg
+                sdfg_id = sdfg.cfg_id
+                loop_deps: Dict[Memlet, Set[Memlet]] = loop_deps_dict[sdfg_id][loop]
+
+                # Check that no dependencies can not be parallelized via do-across, and that there is at least one such
+                # parallelizable dependency
+                can_parallelize = True
+                doacross_deps: Dict[Memlet, Tuple[Memlet, List[int]]] = dict()
+                for read, writes in loop_deps.items():
+                    do_acrossable = False
+                    violating_dependency = False
+                    read_deps: List[Tuple[Memlet, List[int]]] = []
+                    for write in writes:
+                        write_subset = write.dst_subset or write.subset
+                        if read.src_subset.dims() != write_subset.dims():
+                            continue
+                        subsets_work_fine = True
+                        dep_offsets = []
+                        for i in range(read.src_subset.dims()):
+                            if read.src_subset[i] != write_subset[i]:
+                                # TODO(later): This is currently limiting to where the dependency is not more than one
+                                # element and not strided. This could be expanded later, but is a bit more complex.
+                                if read.src_subset[i][2] != 1 or write_subset[i][2] != 1:
+                                    subsets_work_fine = False
+                                    break
+                                if not any(loop_var in x.free_symbols for x in write_subset[i]):
+                                    subsets_work_fine = False
+                                    break
+                                if not any(loop_var in x.free_symbols for x in read.src_subset[i]):
+                                    subsets_work_fine = False
+                                    break
+                                dep_start: sympy.Basic = read.src_subset[i][0] - write_subset[i][0]
+                                dep_end: sympy.Basic = read.src_subset[i][1] - write_subset[i][1]
+                                if len(dep_start.free_symbols) > 0 or len(dep_end.free_symbols) > 0:
+                                    subsets_work_fine = False
+                                    break
+                                if dep_end == 0 and not dep_start == 0:
+                                    dep_end -= read.src_subset[i][2]
+                                # TODO(later): This is currently limiting to exactly one dependency, but it may be
+                                # interesting to handle multiple. In that case, the guarantee that needs to be fulfilled
+                                # is just: dep_start > dep_end
+                                if dep_start != dep_end:
+                                    subsets_work_fine = False
+                                    break
+                                dep_offsets.append(dep_start)
+                            else:
+                                dep_offsets.append(0)
+                        if not subsets_work_fine:
+                            violating_dependency = True
+                            break
+                        read_deps.append([write, dep_offsets])
+                        do_acrossable = True
+                    if not do_acrossable or violating_dependency or len(read_deps) == 0:
+                        can_parallelize = False
+                        break
+
+                    resolving_write = None
+                    if len(read_deps) > 1:
+                        # TODO: get the last one of the writes to determine which one is the resolving write.
+                        raise NotImplementedError()
+                    else:
+                        resolving_write = read_deps[0]
+
+                    if resolving_write == None:
+                        can_parallelize = False
+                        break
+                    doacross_deps[read] = resolving_write
+                if can_parallelize and doacross_deps:
+                    self._parallelize_loop(loop, doacross_deps)
+
+        return results

@@ -107,7 +107,8 @@ class CPUCodeGen(TargetCodeGenerator):
         # Register dispatchers
         dispatcher.register_node_dispatcher(self)
         dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential],
+            [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Multicore_Doacross,
+             dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential],
             self)
 
         cpu_storage = [dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register]
@@ -1808,10 +1809,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # TODO: Refactor to generate_scope_preamble once a general code
         #  generator (that CPU inherits from) is implemented
-        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
+        if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Multicore_Doacross,
+                                 dtypes.ScheduleType.CPU_Persistent):
             # OpenMP header
             in_persistent = False
-            if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+            if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore or
+                node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross):
                 in_persistent = is_in_scope(sdfg, state_dfg, node, [dtypes.ScheduleType.CPU_Persistent])
                 if in_persistent:
                     # If already in a #pragma omp parallel, no need to use it twice
@@ -1846,6 +1849,8 @@ class CPUCodeGen(TargetCodeGenerator):
             # OpenMP nested loop properties
             if node.map.schedule == dtypes.ScheduleType.CPU_Multicore and node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
+            elif node.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                map_header += ' ordered(%d)' % node.map.get_param_num()
 
         if node.map.unroll:
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):

@@ -479,7 +479,7 @@ class SDFG(ControlFlowRegion):
 
     def __init__(self,
                  name: str,
-                 constants: Dict[str, Tuple[dt.Data, Any]] = None,
+                 constants: Optional[Dict[str, Tuple[dt.Data, Any]]] = None,
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
@@ -2374,6 +2374,15 @@ class SDFG(ControlFlowRegion):
         """
         from dace.transformation.passes.simplify import SimplifyPass
         return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
+
+    def canonicalize(self, validate=True, validate_all=False, verbose=False):
+        """ Applies canonicalizations that may make the SDFG more verbose or decrease performance, but may expose
+            crucial optimization opportunities.
+
+            :note: This is an in-place operation on the SDFG.
+        """
+        from dace.transformation.passes.canonicalize import CanonicalizationPass
+        return CanonicalizationPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
 
     def _initialize_transformations_from_type(
         self,

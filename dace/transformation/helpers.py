@@ -5,7 +5,7 @@ import itertools
 from networkx import MultiDiGraph
 from dace.sdfg.state import ControlFlowRegion
 
-from dace.subsets import Range, Subset, union
+from dace.subsets import Range, Subset, SubsetUnion, union
 import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
@@ -1360,7 +1360,7 @@ def can_run_state_on_fpga(state: SDFGState):
 
 
 def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nodes.MapExit, access: nodes.AccessNode,
-                                     sink: nodes.AccessNode):
+                                     sink: nodes.AccessNode) -> Tuple[bool, bool]:
     """
     Any writes to the Access node `access` that occur inside the Map with exit node `map_exit` are redirected to the
     Access node `sink` that is outside the Map. This method will remove, if possible, `access` and replace it with a
@@ -1371,16 +1371,18 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
     :param map_exit: The exit node of the Map.
     :param access: The Access node being written inside the Map.
     :param sink: The Access node to be written outside the Map.
+    :return: A tuple of two booleans, the first indicating that a redirection was performed, and the second indicating
+             that the redirection resulted in the removal of the access and replacement with a transient.
     """
 
     # Special case for scalars: if there is no write conflict resolution, then abort, since it is implied that the
     # scalar is thread-local.
     if isinstance(access.desc(sdfg), data.Scalar):
         if any(e.data.wcr is None for e in state.in_edges(access)):
-            return
+            return False
     # Ignore views
     if isinstance(access.desc(sdfg), data.View):
-        return
+        return False
 
     # Compute the union of the destination subsets of the edges that write to `access.`
     in_union = None
@@ -1396,7 +1398,10 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
 
     # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
     if not map_dependency:
-        return
+        return False
+
+    redirected_write = False
+    made_thread_local = False
 
     # Check if the union covers the output edges of `access.`
     covers_out = True
@@ -1459,6 +1464,9 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
         for e in visited:
             state.remove_edge(e)
         state.remove_node(access)
+
+        redirected_write = True
+        made_thread_local = True
     # Otherwise, we only add a memlet path to the sink.
     else:
         for e in state.in_edges(access):
@@ -1469,3 +1477,74 @@ def make_map_internal_write_external(sdfg: SDFG, state: SDFGState, map_exit: nod
                                   memlet=Memlet(data=sink.data,
                                                 subset=copy.deepcopy(subset),
                                                 other_subset=copy.deepcopy(subset)))
+        redirected_write = True
+
+    return redirected_write, made_thread_local
+
+def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nodes.MapExit, access: nodes.AccessNode,
+                                    source: Optional[nodes.AccessNode] = None) -> Tuple[bool, bool]:
+    """
+    Any read to the Access node `access` that occurs inside the Map with entry node `map_entry` are redirected to the
+    Access node `source` that is outside the Map, iff they are not covered by writes to that same node.
+    If after redirecting, there are no more reads remaining on `access`, the writes to `access` are subsequently
+    redirected out of the map as well.
+
+    :param sdfg: The SDFG in which the Access node resides.
+    :param state: The State in which the Access node resides.
+    :param map_entry: The entry node of the Map.
+    :param access: The Access node being read from inside the Map.
+    :param source: The Access node to be read from outside the Map.
+    :return: A tuple of booleans, the first indicating that a read was redirected, the second indicating that the
+             redirection resulted in also redirecting a write.
+    """
+    # For scalars, if there's a write to the same access, there's nothing to be done since it's thread-local.
+    desc = access.desc(sdfg)
+    if isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and desc.total_size == 1):
+        if any(e.data.data == access.data for e in state.in_edges(access)):
+            return [False, False]
+    # Ignore views
+    if isinstance(desc, data.View):
+        return [False, False]
+
+    # Compute the union of the destination subsets of the edges that write to `access.`
+    in_union: SubsetUnion = None
+    map_dependency = False
+    for e in state.in_edges(access):
+        subset = e.data.get_dst_subset(e, state)
+        if any(str(s) in map_entry.map.params for s in subset.free_symbols):
+            map_dependency = True
+        if in_union is None:
+            in_union = SubsetUnion(subset)
+        else:
+            in_union = in_union.union(subset)
+
+    # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
+    if not map_dependency:
+        return [False, False]
+
+    if source is None:
+        source = state.add_access(access.data)
+
+    # Check if the union covers the output edges of `access`. Any not covered read is redirected.
+    redirected_read = False
+    redirected_write = False
+    if in_union is not None:
+        for e in state.out_edges(access):
+            subset = e.data.get_src_subset(e, state)
+            if not in_union.covers_precise(subset):
+                state.add_memlet_path(source,
+                                      map_entry,
+                                      e.dst,
+                                      memlet=Memlet(data=source.data,
+                                                    subset=copy.deepcopy(subset)),
+                                      dst_conn=e.dst_conn)
+                state.remove_edge(e)
+                redirected_read = True
+
+    # If all reads were removed, redirect connected writes to the outside as well.
+    if state.out_degree(access) == 0:
+        exit_node = state.exit_node(map_entry)
+        outside_access = state.add_access(access.data)
+        redirected_write, _ = make_map_internal_write_external(sdfg, state, exit_node, access, outside_access)
+
+    return redirected_read, redirected_write

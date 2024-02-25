@@ -509,7 +509,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         self._scope_tree_cached = None
         self._scope_leaves_cached = None
 
-    def scope_tree(self) -> 'dace.sdfg.scope.ScopeTree':
+    def scope_tree(self) -> Dict[Optional['nd.Node'], 'dace.sdfg.scope.ScopeTree']:
         from dace.sdfg.scope import ScopeTree
 
         if (hasattr(self, '_scope_tree_cached') and self._scope_tree_cached is not None):
@@ -742,8 +742,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     # Filter out memlets which go out but the same data is written to the AccessNode by another memlet
                     for out_edge in list(out_edges):
                         for in_edge in list(in_edges):
+                            write_subset = in_edge.data.dst_subset or in_edge.data.subset
                             if (in_edge.data.data == out_edge.data.data
-                                    and in_edge.data.dst_subset.covers(out_edge.data.src_subset)):
+                                    and write_subset.covers(out_edge.data.src_subset)):
                                 out_edges.remove(out_edge)
                                 break
 
@@ -2597,6 +2598,7 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
         except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
             ordered_blocks = self.nodes()
 
+        sdfg = self if isinstance(self, dace.SDFG) else self.sdfg
         for block in ordered_blocks:
             state_symbols = set()
             if isinstance(block, ControlFlowRegion):
@@ -2616,9 +2618,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # compute the symbols that are used before being assigned.
                 efsyms = e.data.used_symbols(all_symbols)
                 # collect symbols representing data containers
-                dsyms = {sym for sym in efsyms if sym in self.sdfg.arrays}
+                dsyms = {sym for sym in efsyms if sym in sdfg.arrays}
                 for d in dsyms:
-                    efsyms |= {str(sym) for sym in self.sdfg.arrays[d].used_symbols(all_symbols)}
+                    efsyms |= {str(sym) for sym in sdfg.arrays[d].used_symbols(all_symbols)}
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms

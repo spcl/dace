@@ -8,7 +8,7 @@ from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
                                           SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
-from dace.transformation.passes import analysis as ap
+from dace.transformation.passes.analysis import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 

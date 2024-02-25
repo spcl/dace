@@ -12,7 +12,7 @@ from dace import SDFG, properties, symbolic
 from typing import Dict, Optional, Set, Any, Tuple
 
 from dace.transformation.pass_pipeline import Pass
-from dace.transformation.passes.control_flow_region_analysis import CFGDataDependence
+from dace.transformation.passes.analysis.control_flow_region_analysis import CFGDataDependence
 
 
 @properties.make_properties

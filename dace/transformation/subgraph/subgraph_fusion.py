@@ -912,7 +912,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         # dimensions
                         union = None
                         for oe in graph.out_edges(transients_created[dst]):
-                            union = subsets.union(union, oe.data.subset)
+                            read_subset = oe.data.src_subset or oe.data.subset
+                            union = subsets.union(union, read_subset)
                         if isinstance(union, subsets.Indices):
                             union = subsets.Range.from_indices(union)
                         inner_memlet = dcpy(edge.data)
