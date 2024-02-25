@@ -51,7 +51,7 @@ def test_p1(in_transient, out_transient):
             reduce_node = node
 
     rexp = ReduceExpansion()
-    rexp.setup_match(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
+    rexp.setup_match(sdfg, sdfg.cfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
     assert rexp.can_be_applied(state, 0, sdfg) == True
 
     A = np.random.rand(30, 20).astype(np.float64)

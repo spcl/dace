@@ -185,6 +185,63 @@ def test_linspace_5():
 def test_linspace_6():
     return np.linspace(-5, 5.5, dtype=np.float32)
 
+
+@dace.program
+def program_strides_0():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 1))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
+    return A
+
+
+def test_strides_0():
+    A = program_strides_0()
+    assert A.strides == (8, 4)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_1():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(4, 2))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
+    return A
+
+
+def test_strides_1():
+    A = program_strides_1()
+    assert A.strides == (16, 8)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_2():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(1, 2))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
+    return A
+
+
+def test_strides_2():
+    A = program_strides_2()
+    assert A.strides == (4, 8)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
+@dace.program
+def program_strides_3():
+    A = dace.ndarray((2, 2), dtype=dace.int32, strides=(2, 4))
+    for i, j in dace.map[0:2, 0:2]:
+            A[i, j] = i * 2 + j
+    return A
+
+
+def test_strides_3():
+    A = program_strides_3()
+    assert A.strides == (8, 16)
+    assert np.allclose(A, [[0, 1], [2, 3]])
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -214,3 +271,7 @@ if __name__ == "__main__":
     test_linspace_4()
     test_linspace_5()
     test_linspace_6()
+    test_strides_0()
+    test_strides_1()
+    test_strides_2()
+    test_strides_3()
