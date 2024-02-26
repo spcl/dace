@@ -41,6 +41,7 @@ class ParallelizeDoacrossLoops(ppl.Pass):
         loop_start = loop_analysis.get_init_assignment(loop)
         loop_end = loop_analysis.get_loop_end(loop)
         loop_stride = loop_analysis.get_loop_stride(loop)
+        itvar = symbolic.symbol(loop.loop_variable)
 
         in_deps_edges: Set[MultiConnectorEdge[Memlet]] = set()
         for idep in doacross_deps.keys():
@@ -113,8 +114,20 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                     if e in in_deps_edges:
                         leaves = body.memlet_tree(e).leaves()
                         for leaf in leaves:
-                            leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
-                            leaf.data.doacross_dependency_offset = doacross_deps[e.data][1]
+                            can_skip = False
+                            subs = leaf.data.dst_subset or leaf.data.subset
+                            # Check if this is not actually a carry dependency but rather depends on i for the iteration
+                            # i, in which case it gets skipped.
+                            for rng in subs.ranges:
+                                if itvar in rng[0].free_symbols or itvar in rng[1].free_symbols:
+                                    if rng[0] == rng[1] and rng[0] == itvar:
+                                        can_skip = True
+                                    else:
+                                        can_skip = False
+                                        break
+                            if not can_skip:
+                                leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
+                                leaf.data.doacross_dependency_offset = doacross_deps[e.data][1]
                         handled_in_deps.add(e)
             else:
                 body.add_nedge(map_entry, n, Memlet())
@@ -181,8 +194,20 @@ class ParallelizeDoacrossLoops(ppl.Pass):
         for in_dep_edge in in_deps_edges:
             if in_dep_edge not in handled_in_deps:
                 for leaf in body.memlet_tree(in_dep_edge).leaves():
-                    leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
-                    leaf.data.doacross_dependency_offset = doacross_deps[in_dep_edge.data][1]
+                    can_skip = False
+                    subs = leaf.data.dst_subset or leaf.data.subset
+                    # Check if this is not actually a carry dependency but rather depends on i for the iteration i, in
+                    # which case it gets skipped.
+                    for rng in subs.ranges:
+                        if itvar in rng[0].free_symbols or itvar in rng[1].free_symbols:
+                            if rng[0] == rng[1] and rng[0] == itvar:
+                                can_skip = True
+                            else:
+                                can_skip = False
+                                break
+                    if not can_skip:
+                        leaf.data.schedule = dtypes.MemletScheduleType.Doacross_Sink
+                        leaf.data.doacross_dependency_offset = doacross_deps[in_dep_edge.data][1]
                 handled_in_deps.add(in_dep_edge)
         for out_dep_edge in out_deps_edges:
             if out_dep_edge not in handled_out_deps:

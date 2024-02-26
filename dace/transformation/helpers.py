@@ -586,7 +586,12 @@ def nest_state_subgraph(sdfg: SDFG,
         if name in reconnected_in:
             continue
         if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+            if edge.data.other_subset:
+                root_data = state.memlet_tree(edge).root().edge.data.data
+                data = Memlet.from_array(root_data, sdfg.arrays[root_data])
+                #data.other_subset = edge.data.other_subset
+            else:
+                data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
             data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
@@ -602,7 +607,11 @@ def nest_state_subgraph(sdfg: SDFG,
         if name in reconnected_out:
             continue
         if full_data:
-            data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
+            if edge.data.other_subset:
+                root_data = state.memlet_tree(edge).root().edge.data.data
+                data = Memlet.from_array(root_data, sdfg.arrays[root_data])
+            else:
+                data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
             data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
@@ -634,8 +643,19 @@ def nest_state_subgraph(sdfg: SDFG,
     state.remove_nodes_from(subgraph.nodes())
 
     # Remove subgraph transients from top-level graph
+    #transients_to_keep = set()
+    #for ie in inputs:
+    #    if ie.data.data:
+    #        transients_to_keep.add(ie.data.data)
+    #for oe in outputs:
+    #    if oe.data.data:
+    #        transients_to_keep.add(oe.data.data)
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
+        #if transient not in transients_to_keep:
+        #    del sdfg.arrays[transient]
+        #else:
+        #    sdfg.arrays[transient] = copy.deepcopy(nsdfg.arrays[transient])
 
     # Remove newly isolated nodes due to memlet consolidation
     for edge in inputs:

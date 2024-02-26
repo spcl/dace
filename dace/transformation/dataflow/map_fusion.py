@@ -11,7 +11,7 @@ from dace.memlet import Memlet
 from dace.sdfg import replace
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from typing import List, Union
+from typing import Dict, List, Set, Union
 import networkx as nx
 
 
@@ -273,6 +273,11 @@ class MapFusion(transformation.SingleStateTransformation):
                 adjacent to the new map entry node post fusion.
 
         """
+        # Lazy import to avoid circular dependencies.
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.analysis.analysis import StateReachability
+        reach = None
+
         first_exit = self.first_map_exit
         first_entry = graph.entry_node(first_exit)
         second_entry = self.second_map_entry
@@ -290,6 +295,9 @@ class MapFusion(transformation.SingleStateTransformation):
             if sdfg.arrays[node.data].transient is False:
                 do_not_erase.add(node)
             else:
+                # Check if it's used in the same state, i.e., if there's incoming or outgoing edges other than the
+                # ones leading to / from the maps to be fused. If not, then also check that the data container is not
+                # being used in any reachable state.
                 for edge in graph.in_edges(node):
                     if edge.src != first_exit:
                         do_not_erase.add(node)
@@ -299,6 +307,18 @@ class MapFusion(transformation.SingleStateTransformation):
                         if edge.dst != second_entry:
                             do_not_erase.add(node)
                             break
+                    else:
+                        # TODO: Improve this, this is incredibly expensive!
+                        if reach is None:
+                            reach_pass = Pipeline([StateReachability()])
+                            pass_results = {}
+                            reach_pass.apply_pass(sdfg, pass_results)
+                            reach: Dict[int, Dict[SDFGState, Set[SDFGState]]] = pass_results[StateReachability.__name__]
+                        for reached in reach[sdfg.cfg_id][graph]:
+                            if reached is not graph:
+                                for dn in reached.data_nodes():
+                                    if dn.data == node.data:
+                                        do_not_erase.add(node)
 
         # Find permutation between first and second scopes
         perm = self.find_permutation(first_entry.map, second_entry.map)

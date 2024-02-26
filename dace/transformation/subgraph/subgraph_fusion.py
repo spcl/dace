@@ -297,7 +297,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                     # get corresponding inner memlet and join its subset to our access set
                                     for oe in graph.out_edges(e.dst):
                                         if oe.src_conn[3:] == e.dst_conn[2:]:
-                                            current_subset = dcpy(oe.data.subset)
+                                            current_subset = dcpy(oe.data.src_subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
                                             access_set = subsets.union(access_set, current_subset)
@@ -309,7 +309,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                     for ie in graph.in_edges(e.src):
                                         # get corresponding inner memlet and join its subset to our access set
                                         if ie.dst_conn[2:] == e.src_conn[3:]:
-                                            current_subset = dcpy(ie.data.subset)
+                                            current_subset = dcpy(ie.data.dst_subset or ie.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
 
                                             access_set = subsets.union(access_set, current_subset)
@@ -995,12 +995,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                 in_edges_iter = iter(in_edges)
                 in_edge = next(in_edges_iter)
-                target_subset = dcpy(in_edge.data.subset)
+                target_subset = dcpy(in_edge.data.dst_subset or in_edge.data.subset)
                 target_subset.pop(invariant_dimensions[data_name])
                 while True:
                     try:  # executed if there are multiple in_edges
                         in_edge = next(in_edges_iter)
-                        target_subset_curr = dcpy(in_edge.data.subset)
+                        target_subset_curr = dcpy(in_edge.data.dst_subset or in_edge.data.subset)
                         target_subset_curr.pop(invariant_dimensions[data_name])
                         target_subset = subsets.union(target_subset, \
                                                       target_subset_curr)

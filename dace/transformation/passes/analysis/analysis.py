@@ -43,7 +43,7 @@ class StateReachability(ppl.Pass):
             # TODO(later): Technically an overapproximation. A branch terminating a break is excluded from this.
             closure.update(region.all_states())
 
-        for reached_block in block_reach[region.cfg_id][region]:
+        for reached_block in block_reach[region.parent_graph.cfg_id][region]:
             if isinstance(reached_block, ControlFlowRegion):
                 closure.update(reached_block.all_states())
             else:
