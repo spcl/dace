@@ -992,6 +992,8 @@ def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
     """
     if memlet_data == access_data:
         return True
+    if memlet_data is None or access_data is None:
+        return False
     access_tokens = access_data.split('.')
     memlet_tokens = memlet_data.split('.')
     mem_root = '.'.join(memlet_tokens[:len(access_tokens)])
