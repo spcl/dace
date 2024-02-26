@@ -981,3 +981,18 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
         return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
+
+
+def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
+    """ Validates that the src/dst access node data matches the memlet data.
+
+        :param memlet_data: The data of the memlet.
+        :param access_data: The data of the access node.
+        :return: True if the memlet data matches the access node data.
+    """
+    if memlet_data == access_data:
+        return True
+    access_tokens = access_data.split('.')
+    memlet_tokens = memlet_data.split('.')
+    mem_root = '.'.join(memlet_tokens[:len(access_tokens)])
+    return mem_root == access_data
