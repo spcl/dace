@@ -741,11 +741,15 @@ class AST_translator:
                                 tmpvar=tmpvar.part_ref
                                 concatenated_name="_".join(name_chain)
                                 array_name=concatenated_name+"_"+ast_utils.get_name(tmpvar)
+                                member_name=ast_utils.get_name(tmpvar)
                                 last_view_name=concatenated_name+"_"+str(self.struct_view_count-1)
-                                stype=current_parent_structure.stype
-                                array=stype.members[ast_utils.get_name(tmpvar)]
+                                if isinstance(current_parent_structure,dat.StructArray):
+                                    stype=current_parent_structure.stype
+                                    array=stype.members[ast_utils.get_name(tmpvar)]
+                                else:
+                                    array=current_parent_structure.members[ast_utils.get_name(tmpvar)]    
                                 sdfg.add_view(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count),array.shape,array.dtype)
-                                
+                                last_view_name_read=None
                                 if local_name.name in read_names:
                                     already_there=False
                                     for i in substate.data_nodes():
@@ -763,10 +767,10 @@ class AST_translator:
                                             break
                                     if not already_there:    
                                         wv = substate.add_write(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
-                                    mem=Memlet.from_array(last_view_name + "." + array_name,array )
+                                    mem=Memlet.from_array(last_view_name + "." + member_name,array )
                                     substate.add_edge(re,None,wv,"views",dpcp(mem))
                                     last_view_name_read=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
-
+                                last_view_name_write=None
                                 if local_name.name in write_names:
                                     already_there=False
                                     for i in substate.data_nodes():
@@ -784,16 +788,23 @@ class AST_translator:
                                             break
                                     if not already_there:        
                                         rv = substate.add_read(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
-                                    mem2=Memlet.from_array(last_view_name + "." + array_name,array )
+                                    mem2=Memlet.from_array(last_view_name + "." + member_name,array )
                                     substate.add_edge(rv,"views",wr,None,dpcp(mem2))
                                     last_view_name_write=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
 
-                                
-                                if last_view_name_read!=last_view_name_write:
-                                    raise NotImplementedError("Read and write views should be the same")
-                                last_view_name=last_view_name_read
+                                if last_view_name_write is not None and last_view_name_read is not None:
+                                    if last_view_name_read!=last_view_name_write:
+                                        raise NotImplementedError("Read and write views should be the same")
+                                    else:
+                                        last_view_name=last_view_name_read
+                                if last_view_name_read is not None and last_view_name_write is None:
+                                    last_view_name=last_view_name_read
+                                if last_view_name_write is not None and last_view_name_read is None:
+                                    last_view_name=last_view_name_write    
                                 strides = list(array.strides)
                                 offsets = list(array.offset)
+                                self.struct_view_count+=1
+
                                 
                                
 
