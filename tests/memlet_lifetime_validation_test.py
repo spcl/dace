@@ -11,11 +11,6 @@ def test():
     print('SDFG memlet lifetime validation test')
     # Externals (parameters, symbols)
     N = dp.symbol('N')
-    N.set(20)
-    input = dp.ndarray([N], dp.int32)
-    output = dp.ndarray([N], dp.int32)
-    input[:] = dp.int32(5)
-    output[:] = dp.int32(0)
 
     # Construct SDFG 1
     sdfg1 = SDFG('shouldntwork1')

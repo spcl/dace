@@ -102,9 +102,9 @@ class MPITransformMap(transformation.SingleStateTransformation):
         rangeexpr = str(map_entry.map.range.num_elements())
 
         stripmine_subgraph = {StripMining.map_entry: self.subgraph[MPITransformMap.map_entry]}
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = sdfg.cfg_id
         stripmine = StripMining()
-        stripmine.setup_match(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
+        stripmine.setup_match(sdfg, cfg_id, self.state_id, stripmine_subgraph, self.expr_index)
         stripmine.dim_idx = -1
         stripmine.new_dim_prefix = "mpi"
         stripmine.tile_size = "(" + rangeexpr + "/__dace_comm_size)"
@@ -128,9 +128,9 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 LocalStorage.node_a: graph.node_id(outer_map),
                 LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
             }
-            sdfg_id = sdfg.sdfg_id
+            cfg_id = sdfg.cfg_id
             in_local_storage = InLocalStorage()
-            in_local_storage.setup_match(sdfg, sdfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
+            in_local_storage.setup_match(sdfg, cfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
             in_local_storage.array = e.data.data
             in_local_storage.apply(graph, sdfg)
 
@@ -146,8 +146,8 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 LocalStorage.node_a: graph.node_id(in_map_exit),
                 LocalStorage.node_b: graph.node_id(out_map_exit)
             }
-            sdfg_id = sdfg.sdfg_id
+            cfg_id = sdfg.cfg_id
             outlocalstorage = OutLocalStorage()
-            outlocalstorage.setup_match(sdfg, sdfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
+            outlocalstorage.setup_match(sdfg, cfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
             outlocalstorage.array = name
             outlocalstorage.apply(graph, sdfg)

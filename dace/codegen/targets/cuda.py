@@ -229,8 +229,8 @@ class CUDACodeGen(TargetCodeGenerator):
                 reachability = ap.StateReachability().apply_pass(top_sdfg, {})
                 access_nodes = ap.FindAccessStates().apply_pass(top_sdfg, {})
 
-            reachable = reachability[sdfg.sdfg_id]
-            access_sets = access_nodes[sdfg.sdfg_id]
+            reachable = reachability[sdfg.cfg_id]
+            access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.nodes():
                 # Find all data descriptors that will no longer be used after this state
                 last_state_arrays: Set[str] = set(
@@ -649,7 +649,7 @@ DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStr
                 'allocname': allocname,
                 'type': nodedesc.dtype.ctype,
                 'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
-                'location': '%s_%s_%s' % (sdfg.sdfg_id, state_id, dfg.node_id(node))
+                'location': '%s_%s_%s' % (sdfg.cfg_id, state_id, dfg.node_id(node))
             }
 
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
@@ -1023,10 +1023,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if issubclass(node_dtype.type, ctypes.Structure):
                     callsite_stream.write('for (size_t __idx = 0; __idx < {arrlen}; ++__idx) '
                                           '{{'.format(arrlen=array_length))
-                    for field_name, field_type in node_dtype._data.items():
+                    # TODO: Study further when tackling Structures on GPU.
+                    for field_name, field_type in node_dtype._typeclass.fields.items():
                         if isinstance(field_type, dtypes.pointer):
                             tclass = field_type.type
-                            length = node_dtype._length[field_name]
+
+                            length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
                             callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
                                                   '{sz}));'.format(dst=str(dst_node),
@@ -1407,7 +1409,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.sdfg_id, sdfg.node_id(state),
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.cfg_id, sdfg.node_id(state),
                                        state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes

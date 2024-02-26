@@ -94,7 +94,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        map_fusion.setup_match(subgraph, candidate.cfg_id, candidate.node_id(candidate.start_state))
         if map_fusion.can_be_applied(candidate.start_state, candidate):
             fuse_counter = map_fusion.apply(candidate.start_state, candidate)
 
@@ -120,7 +120,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
         map_fusion = sg.SubgraphOTFFusion()
-        map_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
+        map_fusion.setup_match(subgraph, sdfg.cfg_id, state_id)
         if map_fusion.can_be_applied(state, sdfg):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
@@ -255,7 +255,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
 
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
+                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.cfg_id,
                                                experiment_sdfg.node_id(experiment_state))
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
@@ -289,7 +289,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
                         map_fusion = sg.SubgraphOTFFusion()
-                        map_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        map_fusion.setup_match(subgraph, nsdfg.cfg_id, nsdfg.node_id(state))
                         actual_fuse_counter = map_fusion.apply(state, nsdfg)
 
                         best_pattern = None
