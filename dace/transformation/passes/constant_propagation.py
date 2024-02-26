@@ -129,13 +129,13 @@ class ConstantPropagation(ppl.Pass):
 
         if self.recursive:
             # Change result to set of tuples
-            sid = sdfg.sdfg_id
+            sid = sdfg.cfg_id
             result = set((sid, sym) for sym in result)
 
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
-                        nested_id = node.sdfg.sdfg_id
+                        nested_id = node.sdfg.cfg_id
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
                         internal = self.apply_pass(node.sdfg, _, const_syms)
                         if internal:
@@ -171,7 +171,7 @@ class ConstantPropagation(ppl.Pass):
             for k, v in desc.members.items():
                 if isinstance(v, data.Structure):
                     _add_nested_datanames(f'{name}.{k}', v)
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     # TODO: How are we handling this?
                     pass
                 arrays.add(f'{name}.{k}')

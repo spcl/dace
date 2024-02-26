@@ -590,7 +590,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 f'Duplicate memlet detected: "{e}". Please copy objects '
                 'rather than using multiple references to the same one', sdfg, state_id, eid)
         references.add(id(e))
-        if id(e.data) in references:
+        if e.data.is_empty():
+            pass
+        elif id(e.data) in references:
             raise InvalidSDFGEdgeError(
                 f'Duplicate memlet detected: "{e.data}". Please copy objects '
                 'rather than using multiple references to the same one', sdfg, state_id, eid)
@@ -828,7 +830,7 @@ class InvalidSDFGError(Exception):
         return f'File "{lineinfo.filename}"'
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id)
 
     def __str__(self):
         if self.state_id is not None:
@@ -861,7 +863,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, isedge_id=self.edge_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, isedge_id=self.edge_id)
 
     def __str__(self):
         if self.edge_id is not None:
@@ -908,7 +910,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, node_id=self.node_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
         state = self.sdfg.node(self.state_id)
@@ -953,7 +955,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         self.path = None
 
     def to_json(self):
-        return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, edge_id=self.edge_id)
+        return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
         state = self.sdfg.node(self.state_id)
