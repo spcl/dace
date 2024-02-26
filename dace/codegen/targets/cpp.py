@@ -290,7 +290,7 @@ def emit_memlet_reference(dispatcher,
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
-                                                             isinstance(desc, data.StructArray))
+                                                             isinstance(desc, data.ContainerArray))
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
@@ -340,7 +340,7 @@ def emit_memlet_reference(dispatcher,
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            if not isinstance(desc, data.StructArray):
+            if not isinstance(desc, data.ContainerArray):
                 ref = '&'
         else:
             # constexpr arrays

@@ -299,6 +299,24 @@ class FindOutputs(NodeVisitor):
     def __init__(self):
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        for i in node.args:
+            if isinstance(i, ast_internal_classes.Name_Node) :
+                self.nodes.append(i)
+            elif isinstance(i, ast_internal_classes.Array_Subscript_Node):
+                self.nodes.append(i.name)
+                for j in i.indices:
+                    self.visit(j)
+            elif isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i.parent_ref, ast_internal_classes.Name_Node):
+                    self.nodes.append(i.parent_ref)    
+                elif isinstance(i.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    self.nodes.append(i.parent_ref.name)
+                    for j in i.parent_ref.indices:
+                        self.visit(j)
+                self.visit(i.part_ref)        
+            self.visit(i)    
+
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
             if isinstance(node.lval, ast_internal_classes.Name_Node):
