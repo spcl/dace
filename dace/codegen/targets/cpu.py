@@ -1083,6 +1083,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Write out
                     result.write(write_expr, sdfg, state_id, node)
 
+                    # If the memlet resolves a doacross dependency, insert the necessary pragma.
+                    if memlet.schedule == dtypes.MemletScheduleType.Doacross_Source:
+                        result.write("#pragma omp ordered depend(source)", sdfg, state_id, node)
+
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
                 if dst_node != node and not isinstance(dst_node, nodes.Tasklet):
