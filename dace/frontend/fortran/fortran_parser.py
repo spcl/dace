@@ -325,7 +325,7 @@ class AST_translator:
                         offset=offset,
                         )
                     else:
-                        dict_setup[k.name] = dat.StructArray(datatype, sizes, strides=strides, offset=offset)
+                        dict_setup[k.name] = dat.ContainerArray(datatype, sizes, strides=strides, offset=offset)
 
                 else:
                     if not complex_datatype:
@@ -743,7 +743,7 @@ class AST_translator:
                                 array_name=concatenated_name+"_"+ast_utils.get_name(tmpvar)
                                 member_name=ast_utils.get_name(tmpvar)
                                 last_view_name=concatenated_name+"_"+str(self.struct_view_count-1)
-                                if isinstance(current_parent_structure,dat.StructArray):
+                                if isinstance(current_parent_structure,dat.ContainerArray):
                                     stype=current_parent_structure.stype
                                     array=stype.members[ast_utils.get_name(tmpvar)]
                                 else:
