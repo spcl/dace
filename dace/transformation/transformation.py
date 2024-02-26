@@ -63,7 +63,7 @@ class PatternTransformation(TransformationBase):
     """
 
     # Properties
-    sdfg_id = Property(dtype=int, category="(Debug)")
+    cfg_id = Property(dtype=int, category="(Debug)")
     state_id = Property(dtype=int, category="(Debug)")
     _subgraph = DictProperty(key_type=int, value_type=int, category="(Debug)")
     expr_index = Property(dtype=int, category="(Debug)")
@@ -156,7 +156,7 @@ class PatternTransformation(TransformationBase):
 
     def setup_match(self,
                     sdfg: SDFG,
-                    sdfg_id: int,
+                    cfg_id: int,
                     state_id: int,
                     subgraph: Dict['PatternNode', int],
                     expr_index: int,
@@ -165,7 +165,7 @@ class PatternTransformation(TransformationBase):
         """
         Sets the transformation to a given subgraph pattern.
 
-        :param sdfg_id: A unique ID of the SDFG.
+        :param cfg_id: A unique ID of the SDFG.
         :param state_id: The node ID of the SDFG state, if applicable. If
                             transformation does not operate on a single state,
                             the value should be -1.
@@ -184,7 +184,7 @@ class PatternTransformation(TransformationBase):
         """
 
         self._sdfg = sdfg
-        self.sdfg_id = sdfg_id
+        self.cfg_id = cfg_id
         self.state_id = state_id
         if not override:
             expr = self.expressions()[expr_index]
@@ -211,21 +211,18 @@ class PatternTransformation(TransformationBase):
 
     def apply_pattern(self, append: bool = True, annotate: bool = True) -> Union[Any, None]:
         """
-        Applies this transformation on the given SDFG, using the transformation
-        instance to find the right SDFG object (based on SDFG ID), and applying
-        memlet propagation as necessary.
+        Applies this transformation on the given SDFG, using the transformation instance to find the right control flow
+        graph object (based on control flow graph ID), and applying memlet propagation as necessary.
 
-        :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
-                     transformation to.
-        :param append: If True, appends the transformation to the SDFG
-                       transformation history.
-        :return: A transformation-defined return value, which could be used
-                 to pass analysis data out, or nothing.
+        :param append: If True, appends the transformation to the SDFG transformation history.
+        :param annotate: If True, applies memlet propagation as necessary.
+        :return: A transformation-defined return value, which could be used to pass analysis data out, or nothing.
         """
         if append:
             self._sdfg.append_transformation(self)
-        tsdfg: SDFG = self._sdfg.sdfg_list[self.sdfg_id]
-        tgraph = tsdfg.node(self.state_id) if self.state_id >= 0 else tsdfg
+        tcfg = self._sdfg.cfg_list[self.cfg_id]
+        tsdfg = tcfg.sdfg if not isinstance(tcfg, SDFG) else tcfg
+        tgraph = tcfg.node(self.state_id) if self.state_id >= 0 else tcfg
         retval = self.apply(tgraph, tsdfg)
         if annotate and not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
@@ -348,7 +345,7 @@ class PatternTransformation(TransformationBase):
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
         instance = cls()
-        instance.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
+        instance.setup_match(sdfg, sdfg.cfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
@@ -396,7 +393,7 @@ class PatternTransformation(TransformationBase):
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(None, json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0), subgraph,
+        ret.setup_match(None, json_obj.get('cfg_id', 0), json_obj.get('state_id', 0), subgraph,
                         json_obj.get('expr_index', 0))
         context = context or {}
         context['transformation'] = ret
@@ -616,7 +613,7 @@ class ExpandTransformation(PatternTransformation):
                 nsdfg = expansion.sdfg
                 nsdfg.parent = state
                 nsdfg.parent_sdfg = sdfg
-                nsdfg.update_sdfg_list([])
+                nsdfg.update_cfg_list([])
                 nsdfg.parent_nsdfg_node = expansion
 
                 # Update schedule to match library node schedule
@@ -658,7 +655,7 @@ class ExpandTransformation(PatternTransformation):
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(None, json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0), subgraph,
+        ret.setup_match(None, json_obj.get('cfg_id', 0), json_obj.get('state_id', 0), subgraph,
                         json_obj.get('expr_index', 0))
         context = context or {}
         context['transformation'] = ret
@@ -680,24 +677,22 @@ class SubgraphTransformation(TransformationBase):
     class docstring for more information.
     """
 
-    sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the '
-                        'SDFG')
+    cfg_id = Property(dtype=int, desc='ID of CFG to transform')
+    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
-    def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+    def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], cfg_id: int = None, state_id: int = None):
         """
         Sets the transformation to a given subgraph.
 
         :param subgraph: A set of node (or state) IDs or a subgraph view object.
-        :param sdfg_id: A unique ID of the SDFG.
-        :param state_id: The node ID of the SDFG state, if applicable. If
-                            transformation does not operate on a single state,
-                            the value should be -1.
+        :param cfg_id: A unique ID of the CFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If transformation does not operate on a single
+                         state, the value should be -1.
         """
-        if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (sdfg_id is None or state_id is None)):
+        if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (cfg_id is None or state_id is None)):
             raise TypeError('Subgraph transformation either expects a SubgraphView or a '
-                            'set of node IDs, SDFG ID and state ID (or -1).')
+                            'set of node IDs, control flow graph ID and state ID (or -1).')
 
         self._pipeline_results = None
 
@@ -710,20 +705,20 @@ class SubgraphTransformation(TransformationBase):
 
             if isinstance(subgraph.graph, SDFGState):
                 sdfg = subgraph.graph.parent
-                self.sdfg_id = sdfg.sdfg_id
+                self.cfg_id = sdfg.cfg_id
                 self.state_id = sdfg.node_id(subgraph.graph)
             elif isinstance(subgraph.graph, SDFG):
-                self.sdfg_id = subgraph.graph.sdfg_id
+                self.cfg_id = subgraph.graph.cfg_id
                 self.state_id = -1
             else:
                 raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
         else:
             self.subgraph = subgraph
-            self.sdfg_id = sdfg_id
+            self.cfg_id = cfg_id
             self.state_id = state_id
 
     def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
-        sdfg = sdfg.sdfg_list[self.sdfg_id]
+        sdfg = sdfg.cfg_list[self.cfg_id]
         if self.state_id == -1:
             return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
         state = sdfg.node(self.state_id)
@@ -748,7 +743,7 @@ class SubgraphTransformation(TransformationBase):
         return result
 
     def subgraph_view(self, sdfg: SDFG) -> gr.SubgraphView:
-        graph = sdfg.sdfg_list[self.sdfg_id]
+        graph = sdfg.cfg_list[self.cfg_id]
         if self.state_id != -1:
             graph = graph.node(self.state_id)
         return gr.SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
@@ -835,7 +830,7 @@ class SubgraphTransformation(TransformationBase):
             # Construct subgraph and instantiate transformation
             subgraph = gr.SubgraphView(graph, where)
             instance = cls()
-            instance.setup_match(subgraph, sdfg.sdfg_id, state_id)
+            instance.setup_match(subgraph, sdfg.cfg_id, state_id)
         else:
             # Construct instance from subgraph directly
             instance = cls()
@@ -866,7 +861,7 @@ class SubgraphTransformation(TransformationBase):
 
         # Reconstruct transformation
         ret = xform()
-        ret.setup_match(json_obj.get('subgraph', {}), json_obj.get('sdfg_id', 0), json_obj.get('state_id', 0))
+        ret.setup_match(json_obj.get('subgraph', {}), json_obj.get('cfg_id', 0), json_obj.get('state_id', 0))
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})

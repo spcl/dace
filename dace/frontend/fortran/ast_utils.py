@@ -414,7 +414,8 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                #print(sdfg_name)
+                print(sdfg_name) 
+                print(location)
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return str(size)
         for i in self.sdfg.arrays:

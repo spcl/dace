@@ -52,7 +52,7 @@ class DaCeCodeGenerator(object):
 
         # resolve all symbols and constants
         # first handle root
-        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
+        self._symbols_and_constants[sdfg.cfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
         # then recurse
         for nested, state in sdfg.all_nodes_recursive():
             if isinstance(nested, nodes.NestedSDFG):
@@ -63,7 +63,7 @@ class DaCeCodeGenerator(object):
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
-                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg.sdfg_id]
+                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg.cfg_id]
                 result |= parent_constants
 
                 # check for constant inputs
@@ -72,11 +72,11 @@ class DaCeCodeGenerator(object):
                         # this edge is constant => propagate to nested sdfg
                         result.add(edge.dst_conn)
 
-                self._symbols_and_constants[nsdfg.sdfg_id] = result
+                self._symbols_and_constants[nsdfg.cfg_id] = result
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
-        return self._symbols_and_constants[sdfg.sdfg_id]
+        return self._symbols_and_constants[sdfg.cfg_id]
 
     def free_symbols(self, obj: Any):
         k = id(obj)
@@ -155,12 +155,9 @@ class DaCeCodeGenerator(object):
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted_definitions = set()
+        emitted = set()
         
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
-            if dtype in emitted_definitions:
-                return False
-            emitted_definitions.add(dtype)
             if isinstance(dtype, dtypes.pointer):
                 wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
             elif isinstance(dtype, dtypes.struct):
@@ -169,7 +166,10 @@ class DaCeCodeGenerator(object):
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
-                global_stream.write(dtype.emit_definition(), sdfg)
+                if dtype not in emitted:
+                    global_stream.write(dtype.emit_definition(), sdfg)
+                    wrote_something = True
+                    emitted.add(dtype)
             return wrote_something
 
         # Emit unique definitions
@@ -395,7 +395,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             
             offset = 0
             for subsdfg, aname, arr in arrays:
-                allocname = f'__state->__{subsdfg.sdfg_id}_{aname}'
+                allocname = f'__state->__{subsdfg.cfg_id}_{aname}'
                 callsite_stream.write(f'{allocname} = decltype({allocname})(ptr + {sym2cpp(offset)});', subsdfg)
                 offset += arr.total_size * arr.dtype.bytes
             
@@ -454,7 +454,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_states(self, sdfg, global_stream, callsite_stream):
         states_generated = set()
 
-        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.sdfg_id})')
+        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.cfg_id})')
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
@@ -487,7 +487,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         opbar.done()
 
         # Write exit label
-        callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
+        callsite_stream.write(f'__state_exit_{sdfg.cfg_id}:;', sdfg)
 
         return states_generated
 
@@ -544,8 +544,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
-            fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
+            shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
+            fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
 
             #############################################
             # Look for all states in which a scope-allocated array is used in
@@ -567,7 +567,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     instances[edge_array].append((state, nodes.AccessNode(edge_array)))
             #############################################
 
-            access_instances[sdfg.sdfg_id] = instances
+            access_instances[sdfg.cfg_id] = instances
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             # NOTE: Assuming here that all Structure members share transient/storage/lifetime properties.
@@ -595,9 +595,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # 6. True if deallocation should take place, otherwise False.
 
             first_state_instance, first_node_instance = \
-                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[0]
+                access_instances[sdfg.cfg_id].get(name, [(None, None)])[0]
             last_state_instance, last_node_instance = \
-                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
+                access_instances[sdfg.cfg_id].get(name, [(None, None)])[-1]
 
             # Cases
             if top_lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -608,7 +608,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if first_node_instance is None:
                     continue
 
-                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
 
                 if top_storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
                     self.statestruct.append(definition)
@@ -625,7 +625,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if first_node_instance is None:
                     continue
 
-                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                definition = desc.as_arg(name=f'__{sdfg.cfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
@@ -638,7 +638,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            if (name in shared_transients[sdfg.sdfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG):
+            if (name in shared_transients[sdfg.cfg_id] or top_lifetime is dtypes.AllocationLifetime.SDFG):
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
@@ -752,24 +752,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            fsymbols = fsyms[sdfg.sdfg_id]
+            fsymbols = fsyms[sdfg.cfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
                     and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)):
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
                     # If any state is not reachable from first state, find common denominators in the form of
                     # dominator and postdominator.
-                    instances = access_instances[sdfg.sdfg_id][name]
+                    instances = access_instances[sdfg.cfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
-                    if isinstance(desc, (data.StructureView, data.View)):
+                    if isinstance(desc, data.View):
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
                         self.where_allocated[(sdfg, name)] = cursdfg
                         continue
 
-                    if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
+                    if any(inst not in reachability[sdfg.cfg_id][first_state_instance] for inst in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
                         # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
@@ -829,20 +829,20 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
     def generate_code(self,
                       sdfg: SDFG,
                       schedule: Optional[dtypes.ScheduleType],
-                      sdfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+                      cfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
 
             :param sdfg: The SDFG to generate code for.
             :param schedule: The schedule the SDFG is currently located, or
                              None if the SDFG is top-level.
-            :param sdfg_id: An optional string id given to the SDFG label
+            :param cfg_id An optional string id given to the SDFG label
             :return: A tuple of the generated global frame code, local frame
                      code, and a set of targets that have been used in the
                      generation of this SDFG.
         """
-        if len(sdfg_id) == 0 and sdfg.sdfg_id != 0:
-            sdfg_id = '_%d' % sdfg.sdfg_id
+        if len(cfg_id) == 0 and sdfg.cfg_id != 0:
+            cfg_id = '_%d' % sdfg.cfg_id
 
         global_stream = CodeIOStream()
         callsite_stream = CodeIOStream()
