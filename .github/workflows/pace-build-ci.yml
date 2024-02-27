@@ -20,13 +20,13 @@ jobs:
               python-version: [3.8.12]
 
       steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
         with:
               repository: 'GEOS-ESM/PyFV3'
               ref: 'ci/DaCe'
               submodules: 'recursive'
               path: 'pyFV3'
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
         with: 
             path: 'dace'
             submodules: 'recursive'
