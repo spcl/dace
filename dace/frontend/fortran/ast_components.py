@@ -452,9 +452,18 @@ class InternalFortranAst:
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
         return_type = ast_internal_classes.Void
+
+        optional_args_count = 0
+        if specification_part is not None:
+            for j in specification_part.specifications:
+                for k in j.vardecl:
+                    if k.optional:
+                        optional_args_count += 1
+
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=name.name,
             args=name.args,
+            optional_args_count=optional_args_count,
             specification_part=specification_part,
             execution_part=execution_part,
             type=return_type,
@@ -525,7 +534,7 @@ class InternalFortranAst:
         if args==None:
             ret_args = []
         else:
-            ret_args = args.args   
+            ret_args = args.args
         return ast_internal_classes.Subroutine_Stmt_Node(name=name, args=ret_args, line_number=node.item.span,elemental=elemental)
 
     def ac_value_list(self, node: FASTNode):

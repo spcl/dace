@@ -110,6 +110,7 @@ class Subroutine_Subprogram_Node(FNode):
     _attributes = ('name', 'type')
     _fields = (
         'args',
+        'optional_args_count',
         'specification_part',
         'execution_part',
     )
