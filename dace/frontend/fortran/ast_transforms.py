@@ -565,25 +565,6 @@ class CallToArray(NodeTransformer):
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
 
-        is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
-        is_interface_func = not is_func and node.name.name in self.funcs.iblocks
-        
-        if is_func or is_interface_func:
-
-            if is_interface_func:
-
-                available_names = self.funcs.iblocks[node.name.name].copy()
-                print("Invoke", node.name.name, available_names)
-                for name in available_names:
-                    print(name, self.funcs.nodes[name].args)
-
-            processed_args = []
-            for i in node.args:
-                arg = CallToArray(self.funcs).visit(i)
-                processed_args.append(arg)
-            node.args = processed_args
-            return node
-
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
@@ -1922,3 +1903,101 @@ class ElementalFunctionExpander(NodeTransformer):
             else:
                 newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+class TypeInterference(NodeTransformer):
+    """
+    """
+    def __init__(self, ast):
+        self.count = 0
+
+        self.ast = ast
+        ParentScopeAssigner().visit(ast)
+        self.scope_vars = ScopeVarsDeclarations(ast)
+        self.scope_vars.visit(ast)
+        self.structures = ast.structures
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+
+        if not hasattr(node, 'type') or node.type == 'VOID':
+            try:
+                node.type = self.scope_vars.get_var(node.parent, node.name).type
+            except:
+                print(f"Ignore type inference for {node.name}")
+
+        return node
+
+    def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
+
+        if node.type != 'VOID':
+            return node
+
+        struct, variable = self.structures.find_definition(
+            self.scope_vars, node
+        )
+        node.type = variable.type
+        return node
+
+class ReplaceInterfaceBlocks(NodeTransformer):
+    """
+    """
+    def __init__(self, funcs: FindFunctionAndSubroutines):
+        self.funcs = funcs
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+
+        is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
+        is_interface_func = not is_func and node.name.name in self.funcs.iblocks
+        
+        if is_func or is_interface_func:
+
+            if is_interface_func:
+
+                available_names = []
+                print("Invoke", node.name.name, available_names)
+                for name in self.funcs.iblocks[node.name.name]:
+
+                    non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
+
+                    success = True
+                    for call_arg, func_arg in zip(node.args[0:non_optional_args], self.funcs.nodes[name].args[0:non_optional_args]):
+                        if call_arg.type != func_arg.type:
+                            print(f"Ignore {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
+                            success = False
+                            break
+                        else:
+                            print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
+
+                    #if len(self.funcs.nodes[name].args) != len(node.args):
+                    #    print(f"Ignore {name}, wrong param number {len(node.args)} instead of {len(self.funcs.nodes[name].args)}")
+                    #    continue
+
+                    #for idx, func_arg in node.args:
+                    #    if call_arg.type != func_arg.type:
+                    #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
+                    #        success = False
+                    #        break
+
+                    ## compare optional args
+                    #for idx, func_arg in node.args:
+                    #    pass
+                    #    #if isinstance()
+
+                    #for call_arg, func_arg in zip(node.args, self.funcs.nodes[name].args):
+                    #    if call_arg.type != func_arg.type:
+                    #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
+                    #        success = False
+                    #        break
+
+                    if success:
+                        available_names.append(name)
+
+                if len(available_names) == 0:
+                    raise RuntimeError("No matching function calls!")
+
+                if len(available_names) != 1:
+                    print(node.name.name, available_names)
+                    raise RuntimeError("Too many matching function calls!")
+
+                node.name = available_names[0]
+
+        return node
