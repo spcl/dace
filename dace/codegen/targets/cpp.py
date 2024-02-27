@@ -61,6 +61,13 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
+    tokens = data_name.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = data_name.replace('.', '->')
+    else:
+        name = data_name
     ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
     if relative_offset:
         s = memlet.subset
@@ -99,6 +106,7 @@ def copy_expr(
         # get conf flag
         decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
+        # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'data_name' here.
         expr = fpga.fpga_ptr(
             data_name,
             data_desc,
@@ -112,7 +120,7 @@ def copy_expr(
             and not isinstance(data_desc, data.View),
             decouple_array_interfaces=decouple_array_interfaces)
     else:
-        expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
+        expr = ptr(name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -246,15 +254,15 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
         from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
 
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
-            return f'__{sdfg.sdfg_id}_{name}'
+            return f'__{sdfg.cfg_id}_{name}'
         elif not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-            return f'__state->__{sdfg.sdfg_id}_{name}'
+            return f'__state->__{sdfg.cfg_id}_{name}'
         elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
-            return f'__{sdfg.sdfg_id}_{name}'
+            return f'__{sdfg.cfg_id}_{name}'
     elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
           and framecode.where_allocated[(sdfg, name)] is not sdfg):
         # Array allocated for another SDFG, use unambiguous name
-        return f'__{sdfg.sdfg_id}_{name}'
+        return f'__{sdfg.cfg_id}_{name}'
 
     return name
 
@@ -344,7 +352,7 @@ def emit_memlet_reference(dispatcher,
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        if is_write is False:
+        if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
@@ -578,17 +586,26 @@ def cpp_array_expr(sdfg,
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
+    # NOTE: Are there any cases where a mix of '.' and '->' is needed when traversing nested structs?
+    # TODO: Study this when changing Structures to be (optionally?) non-pointers.
+    tokens = memlet.data.split('.')
+    if len(tokens) > 1 and tokens[0] in sdfg.arrays and isinstance(sdfg.arrays[tokens[0]], data.Structure):
+        name = memlet.data.replace('.', '->')
+    else:
+        name = memlet.data
+
     if with_brackets:
         if fpga.is_fpga_array(desc):
             # get conf flag
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            # TODO: Study structures on FPGAs. Should probably use 'name' instead of 'memlet.data' here.
             ptrname = fpga.fpga_ptr(memlet.data,
                                     desc,
                                     sdfg,
                                     subset,
                                     decouple_array_interfaces=decouple_array_interfaces)
         else:
-            ptrname = ptr(memlet.data, desc, sdfg, codegen)
+            ptrname = ptr(name, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -897,7 +914,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
             from dace.codegen.targets.mlir import utils
 
-            mlir_func_uid = "_" + str(sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
+            mlir_func_uid = "_" + str(sdfg.cfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
 
             mlir_ast = utils.get_ast(node.code.code)
             mlir_is_generic = utils.is_generic(mlir_ast)

@@ -37,9 +37,9 @@ class ReferenceToView(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.sdfg_id]
-        access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.sdfg_id]
-        reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.sdfg_id]
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results[ap.StateReachability.__name__][sdfg.cfg_id]
+        access_states: Dict[str, Set[SDFGState]] = pipeline_results[ap.FindAccessStates.__name__][sdfg.cfg_id]
+        reference_sources: Dict[str, Set[Memlet]] = pipeline_results[ap.FindReferenceSources.__name__][sdfg.cfg_id]
 
         # Early exit if no references exist
         if not reference_sources:
@@ -241,8 +241,5 @@ class ReferenceToView(ppl.Pass):
             state.add_edge(node, None, view, 'views', copy.deepcopy(refsource))
 
     def change_ref_descriptors_to_views(self, sdfg: SDFG, names: Set[str]):
-        # A slightly hacky way to replace a reference class with a view.
-        # Since both classes have the same superclass, and all the fields
-        # are the same, this is safe to perform.
         for name in names:
-            sdfg.arrays[name].__class__ = data.View
+            sdfg.arrays[name] = data.View.view(sdfg.arrays[name])
