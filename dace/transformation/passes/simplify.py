@@ -14,6 +14,7 @@ from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.reference_reduction import ReferenceToView
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -24,12 +25,18 @@ SIMPLIFY_PASSES = [
     DeadDataflowElimination,
     DeadStateElimination,
     RemoveUnusedSymbols,
+    ReferenceToView,
     ArrayElimination,
     ConsolidateEdges,
 ]
 
 _nonrecursive_passes = [
-    ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination, ConsolidateEdges
+    ScalarToSymbolPromotion,
+    DeadDataflowElimination,
+    DeadStateElimination,
+    ArrayElimination,
+    ConsolidateEdges,
+    ReferenceToView,
 ]
 
 
@@ -42,11 +49,11 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
     CATEGORY: str = 'Simplification'
 
-    validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
+    validate = properties.Property(dtype=bool,
+                                   default=False,
+                                   desc='Whether to validate the SDFG at the end of the pipeline.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
-    skip = properties.SetProperty(element_type=str,
-                                  default=set(),
-                                  desc='Set of pass names to skip.')
+    skip = properties.SetProperty(element_type=str, default=set(), desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
     def __init__(self,
@@ -77,7 +84,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
             for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
-                    ret[sd.sdfg_id] = subret
+                    ret[sd.cfg_id] = subret
             ret = ret or None
         else:
             ret = p.apply_pass(sdfg, state)

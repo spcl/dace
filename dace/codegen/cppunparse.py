@@ -746,9 +746,9 @@ class CPPUnparser:
     def _Num(self, t):
         t_n = t.value if sys.version_info >= (3, 8) else t.n
         repr_n = repr(t_n)
-        # For complex values, use DTYPE_TO_TYPECLASS dictionary
+        # For complex values, use ``dtype_to_typeclass``
         if isinstance(t_n, complex):
-            dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
+            dtype = dtypes.dtype_to_typeclass(complex)
 
         # Handle large integer values
         if isinstance(t_n, int):

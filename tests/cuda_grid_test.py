@@ -31,18 +31,18 @@ def cudahello(V, Vout):
 
 
 def _test(sdfg):
-    N.set(52)
+    N = 52
 
-    print('Vector double CUDA %d' % (N.get()))
+    print('Vector double CUDA %d' % (N))
 
     V = dace.ndarray([N], dace.float32)
     Vout = dace.ndarray([N], dace.float32)
-    V[:] = np.random.rand(N.get()).astype(dace.float32.type)
+    V[:] = np.random.rand(N).astype(dace.float32.type)
     Vout[:] = dace.float32(0)
 
     sdfg(V=V, Vout=Vout, N=N)
 
-    diff = np.linalg.norm(2 * V - Vout) / N.get()
+    diff = np.linalg.norm(2 * V - Vout) / N
     print("Difference:", diff)
     assert diff <= 1e-5
 

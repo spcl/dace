@@ -109,9 +109,9 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
         bout = state.add_access('_aout')
 
     _, _, mx = state.add_mapped_tasklet('_eye_',
-                                        dict(i="0:n", j="0:n"), {},
-                                        '_out = (i == j) ? 1 : 0;',
-                                        dict(_out=Memlet.simple(bin_name, 'i, j')),
+                                        dict(__i0="0:n", __i1="0:n"), {},
+                                        '_out = (__i0 == __i1) ? 1 : 0;',
+                                        dict(_out=Memlet.simple(bin_name, '__i0, __i1')),
                                         language=dace.dtypes.Language.CPP,
                                         external_edges=True)
     bin = state.out_edges(mx)[0].dst
