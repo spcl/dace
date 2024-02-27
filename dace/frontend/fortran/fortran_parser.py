@@ -73,6 +73,7 @@ class AST_translator:
         self.last_returns = {}
         self.module_vars = []
         self.libraries = {}
+        self.local_not_transient_because_assign={}
         self.struct_views={}
         self.last_call_expression = {}
         self.struct_view_count = 0
@@ -596,8 +597,10 @@ class AST_translator:
         variables_in_call = var2
         parameters = par2
         assigns = []
+        self.local_not_transient_because_assign[node.name.name]=[]  
         for lit, litval in zip(literals, literal_values):
             local_name = lit
+            self.local_not_transient_because_assign[node.name.name].append(local_name.name)
             assigns.append(
                 ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=local_name.name),
                                                 rval=litval,
@@ -607,6 +610,7 @@ class AST_translator:
         # This handles the case where the function is called with symbols
         for parameter, symbol in symbol_arguments:
             if parameter.name != symbol.name:
+                self.local_not_transient_because_assign[node.name.name].append(parameter.name)
                 assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
                                                     rval=ast_internal_classes.Name_Node(name=symbol.name),
@@ -1705,6 +1709,9 @@ class AST_translator:
                     name =ast_utils.get_name(i)
                     if name == node.name:
                         is_arg = True
+                        if self.local_not_transient_because_assign.get(sdfg.name) is not None:
+                            if name in self.local_not_transient_because_assign[sdfg.name]:
+                                is_arg=False
                         break
         if is_arg:
             transient=False
