@@ -214,6 +214,7 @@ class FindInputs(NodeVisitor):
     :return: List of names
     """
     def __init__(self):
+        
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
@@ -296,22 +297,27 @@ class FindOutputs(NodeVisitor):
     Finds all outputs (writes) in the AST node and its children
     :return: List of names
     """
-    def __init__(self):
+    def __init__(self,thourough=False):
+        self.thourough=thourough
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
         for i in node.args:
             if isinstance(i, ast_internal_classes.Name_Node) :
-                self.nodes.append(i)
+                if self.thourough:
+                    self.nodes.append(i)
             elif isinstance(i, ast_internal_classes.Array_Subscript_Node):
-                self.nodes.append(i.name)
+                if self.thourough:
+                    self.nodes.append(i.name)
                 for j in i.indices:
                     self.visit(j)
             elif isinstance(i, ast_internal_classes.Data_Ref_Node):
                 if isinstance(i.parent_ref, ast_internal_classes.Name_Node):
-                    self.nodes.append(i.parent_ref)    
+                    if self.thourough:
+                        self.nodes.append(i.parent_ref)    
                 elif isinstance(i.parent_ref, ast_internal_classes.Array_Subscript_Node):
-                    self.nodes.append(i.parent_ref.name)
+                    if self.thourough:
+                        self.nodes.append(i.parent_ref.name)
                     for j in i.parent_ref.indices:
                         self.visit(j)
                 self.visit(i.part_ref)        

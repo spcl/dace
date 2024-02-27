@@ -528,7 +528,7 @@ class AST_translator:
         inputnodefinder = ast_transforms.FindInputs()
         inputnodefinder.visit(node)
         input_vars = inputnodefinder.nodes
-        outputnodefinder = ast_transforms.FindOutputs()
+        outputnodefinder = ast_transforms.FindOutputs(thourough=True)
         outputnodefinder.visit(node)
         output_vars = outputnodefinder.nodes
         write_names = list(dict.fromkeys([i.name for i in output_vars]))
@@ -1511,7 +1511,7 @@ class AST_translator:
                 self.call2sdfg(augmented_call, sdfg)
                 return
 
-        outputnodefinder = ast_transforms.FindOutputs()
+        outputnodefinder = ast_transforms.FindOutputs(thourough=False)
         outputnodefinder.visit(node)
         output_vars = outputnodefinder.nodes
         output_names = []
