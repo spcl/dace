@@ -728,7 +728,9 @@ class SDFG(ControlFlowRegion):
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
-            for name, new_name in repldict.items():
+            # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
+            repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
