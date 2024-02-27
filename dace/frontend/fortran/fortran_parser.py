@@ -1472,8 +1472,50 @@ def create_sdfg_from_string(
                                  missing_modules=missing_modules,
                                  dep_graph=dep_graph,
                                  asts=asts)
+
+    for mod, blocks in interface_blocks.items():
+
+        # get incoming edges
+        for in_mod, _, data in dep_graph.in_edges(mod, data=True):
+
+            weights = data.get('obj_list')
+            if weights is None:
+                continue
+
+            new_weights = []
+            for weight in weights:
+                name = weight.string
+                if name in blocks:
+                    new_weights.extend(blocks[name])
+                else:
+                    new_weights.append(weight)
+
+            dep_graph[in_mod][mod]['obj_list'] = new_weights
+
+    complete_interface_blocks = {}
+    for mod, blocks in interface_blocks.items():
+        complete_interface_blocks.update(blocks)
+
+    for node, node_data in dep_graph.nodes(data=True):
+
+        objects = node_data.get('info_list')
+
+        if objects is None:
+            continue
+
+        new_names_in_subroutines = {}
+        for subroutine, names in objects.names_in_subroutines.items():
+
+            new_names_list = []
+            for name in names:
+                if name in complete_interface_blocks:
+                    for replacement in complete_interface_blocks[name]:
+                        new_names_list.append(replacement.string)
+                else:
+                    new_names_list.append(name)
+            new_names_in_subroutines[subroutine] = new_names_list
+        objects.names_in_subroutines = new_names_in_subroutines
     
-    print(dep_graph)
     parse_order = list(reversed(list(nx.topological_sort(dep_graph))))
     simple_graph,actually_used_in_module=ast_utils.eliminate_dependencies(dep_graph)
     
@@ -2261,6 +2303,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     #program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
+    #program = ast_transforms.TypeInterference(program).visit(program)
+    #program = ast_transforms.ReplaceInterfaceBlocks(functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
@@ -2374,8 +2418,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
-            #if j.name.name!="velocity_tendencies":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="velocity_tendencies":
                 continue
             if j.execution_part is None:
                 continue
