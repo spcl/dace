@@ -1,4 +1,4 @@
-name: NASA/NOAA Pace repository build test
+name: NASA/NOAA pyFV3 repository build test
 
 on:
   push:
