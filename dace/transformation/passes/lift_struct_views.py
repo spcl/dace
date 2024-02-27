@@ -42,7 +42,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             return self.generic_visit(node)
 
         if not node.attr in self.data.members:
-            raise RuntimeError('Structure attribute is not a member of the structure type definition')
+            raise RuntimeError(f'Structure attribute {node.attr} is not a member of the structure {self.data.name} type definition')
 
         # Gather a new connector name and add the appropriate connector.
         new_connector_name = node.value.id + '_' + node.attr
