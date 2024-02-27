@@ -14,6 +14,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace import Memlet
 from dace.sdfg.nodes import Tasklet
 from dace import dtypes
+from dace import data as dat
 from dace import symbolic as sym
 from dace import DebugInfo as di
 from dace import Language as lang
@@ -264,7 +265,17 @@ def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set
 
 
 def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_conn: str, memlet_range: str):
-    src = substate.add_access(var_name)
+    found = False
+    if isinstance(substate.parent.arrays[var_name],dat.View):
+        for i in substate.data_nodes():
+            if i.data==var_name and len(substate.out_edges(i))==0:
+                src=i
+                found=True
+                break
+    if not found:
+        src = substate.add_read(var_name)
+    
+    #src = substate.add_access(var_name)
     if memlet_range != "":
         substate.add_memlet_path(src, tasklet, dst_conn=dest_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -273,7 +284,16 @@ def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_c
 
 
 def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, source_conn: str, memlet_range: str):
-    dst = substate.add_write(var_name)
+    found = False
+    if isinstance(substate.parent.arrays[var_name],dat.View):
+        for i in substate.data_nodes():
+            if i.data==var_name and len(substate.in_edges(i))==0:
+                dst=i
+                found=True
+                break
+    if not found:
+        dst = substate.add_write(var_name)
+    #dst = substate.add_write(var_name)
     if memlet_range != "":
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -304,7 +324,10 @@ def get_name(node: ast_internal_classes.FNode):
     elif isinstance(node, ast_internal_classes.Data_Ref_Node):
         view_name=node.parent_ref.name
         while isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-            view_name=view_name+"_"+node.part_ref.parent_ref.name
+            if isinstance(node.part_ref.parent_ref, ast_internal_classes.Name_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name
+            elif isinstance(node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name.name    
             node=node.part_ref
         view_name=view_name+"_"+get_name(node.part_ref)
         return view_name            
@@ -404,6 +427,9 @@ class TaskletWriter:
 
         return_value = node.name
         name = node.name
+        if hasattr(node,"isStructMember"):
+            if node.isStructMember:
+                return node.name
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
             #print(location)
@@ -411,7 +437,10 @@ class TaskletWriter:
             if sdfg_name is None:
                 return name
             else:
-                #print(sdfg_name)
+                print(sdfg_name) 
+                print(location)
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
+                    return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return str(size)
         for i in self.sdfg.arrays:

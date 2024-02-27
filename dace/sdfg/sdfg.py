@@ -122,25 +122,6 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def _assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited
-        string of expressions. """
-
-    result = {}
-    for aitem in astr.split(';'):
-        aitem = aitem.strip()
-        m = re.search(r'([^=\s]+)\s*=\s*([^=]+)', aitem)
-        result[m.group(1)] = m.group(2)
-
-    return result
-
-
-def _assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment
-        expressions. """
-    return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
-
-
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
@@ -199,9 +180,7 @@ class InterstateEdge(object):
     """
 
     assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
@@ -506,7 +485,6 @@ class SDFG(ControlFlowRegion):
         self.symbols = {}
         self._parent_sdfg = None
         self._parent_nsdfg_node = None
-        self._sdfg_list = [self]
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
         self._labels: Set[str] = set()
@@ -539,7 +517,7 @@ class SDFG(ControlFlowRegion):
         for k, v in self.__dict__.items():
             # Skip derivative attributes
             if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_sdfg_list', '_transformation_hist'):
+                     '_cfg_list', '_transformation_hist'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
@@ -555,12 +533,12 @@ class SDFG(ControlFlowRegion):
         # Copy SDFG list and transformation history
         if hasattr(self, '_transformation_hist'):
             setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
-        result._sdfg_list = []
+        result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
             from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
 
-            result._sdfg_list = result.reset_sdfg_list()
+            result._cfg_list = result.reset_cfg_list()
             fixed = FixNestedSDFGReferences().apply_pass(result, {})
             if fixed:
                 warnings.warn(f'Fixed {fixed} nested SDFG parent references during deep copy.')
@@ -570,10 +548,11 @@ class SDFG(ControlFlowRegion):
     @property
     def sdfg_id(self):
         """
-        Returns the unique index of the current SDFG within the current
-        tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
+        Returns the unique index of the current CFG within the current tree of CFGs (Top-level CFG/SDFG is 0, nested
+        CFGs/SDFGs are greater).
+        :note: ``sdfg_id`` is deprecated, please use ``cfg_id`` instead.
         """
-        return self.sdfg_list.index(self)
+        return self.cfg_id
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
@@ -581,8 +560,9 @@ class SDFG(ControlFlowRegion):
             :return: A string representing the JSON-serialized SDFG.
         """
         # Location in the SDFG list (only for root SDFG)
-        if self.parent_sdfg is None:
-            self.reset_sdfg_list()
+        is_root = self.parent_sdfg is None
+        if is_root:
+            self.reset_cfg_list()
 
         tmp = super().to_json()
 
@@ -590,14 +570,11 @@ class SDFG(ControlFlowRegion):
         if 'constants_prop' in tmp['attributes']:
             tmp['attributes']['constants_prop'] = json.loads(dace.serialize.dumps(tmp['attributes']['constants_prop']))
 
-        tmp['sdfg_list_id'] = int(self.sdfg_id)
-        tmp['start_state'] = self._start_block
-
         tmp['attributes']['name'] = self.name
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
-        if int(self.sdfg_id) == 0:
+        if is_root:
             tmp['dace_version'] = dace.__version__
 
         return tmp
@@ -618,13 +595,11 @@ class SDFG(ControlFlowRegion):
         else:
             constants_prop = None
 
-        ret = SDFG(name=attrs['name'],
-                   constants=constants_prop,
-                   parent=context_info['sdfg'])
+        ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context_info['sdfg'])
 
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
-                                                ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -639,8 +614,8 @@ class SDFG(ControlFlowRegion):
             e = dace.serialize.from_json(e)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_state' in json_obj:
-            ret._start_block = json_obj['start_state']
+        if 'start_block' in json_obj:
+            ret._start_block = json_obj['start_block']
 
         return ret
 
@@ -658,8 +633,8 @@ class SDFG(ControlFlowRegion):
             # uniquely representing the SDFG. This, among other things, includes
             # the hash, name, transformation history, and meta attributes.
             if isinstance(json_obj, dict):
-                if 'sdfg_list_id' in json_obj:
-                    del json_obj['sdfg_list_id']
+                if 'cfg_list_id' in json_obj:
+                    del json_obj['cfg_list_id']
 
                 keys_to_delete = []
                 kv_to_recurse = []
@@ -754,7 +729,9 @@ class SDFG(ControlFlowRegion):
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
-            for name, new_name in repldict.items():
+            # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
+            repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
@@ -909,8 +886,8 @@ class SDFG(ControlFlowRegion):
         if Config.get_bool('store_history') is False:
             return
         # Make sure the transformation is appended to the root SDFG.
-        if self.sdfg_id != 0:
-            self.sdfg_list[0].append_transformation(transformation)
+        if self.cfg_id != 0:
+            self.cfg_list[0].append_transformation(transformation)
             return
 
         if not self.orig_sdfg:
@@ -1120,32 +1097,32 @@ class SDFG(ControlFlowRegion):
         del self._arrays[name]
 
     def reset_sdfg_list(self):
-        if self.parent_sdfg is not None:
-            return self.parent_sdfg.reset_sdfg_list()
-        else:
-            # Propagate new SDFG list to all children
-            all_sdfgs = list(self.all_sdfgs_recursive())
-            for sd in all_sdfgs:
-                sd._sdfg_list = all_sdfgs
-        return self._sdfg_list
+        """
+        Reset the CFG list when changes have been made to the SDFG's CFG tree.
+        This collects all control flow graphs recursively and propagates the collection to all CFGs as the new CFG list.
+        :note: ``reset_sdfg_list`` is deprecated, please use ``reset_cfg_list`` instead.
+
+        :return: The newly updated CFG list.
+        """
+        warnings.warn('reset_sdfg_list is deprecated, use reset_cfg_list instead', DeprecationWarning)
+        return self.reset_cfg_list()
 
     def update_sdfg_list(self, sdfg_list):
-        # TODO: Refactor
-        sub_sdfg_list = self._sdfg_list
-        for sdfg in sdfg_list:
-            if sdfg not in sub_sdfg_list:
-                sub_sdfg_list.append(sdfg)
-        if self._parent_sdfg is not None:
-            self._parent_sdfg.update_sdfg_list(sub_sdfg_list)
-            self._sdfg_list = self._parent_sdfg.sdfg_list
-            for sdfg in sub_sdfg_list:
-                sdfg._sdfg_list = self._sdfg_list
-        else:
-            self._sdfg_list = sub_sdfg_list
+        """
+        Given a collection of CFGs, add them all to the current SDFG's CFG list.
+        Any CFGs already in the list are skipped, and the newly updated list is propagated across all CFGs in the CFG
+        tree.
+        :note: ``update_sdfg_list`` is deprecated, please use ``update_cfg_list`` instead.
+
+        :param sdfg_list: The collection of CFGs to add to the CFG list.
+        """
+        warnings.warn('update_sdfg_list is deprecated, use update_cfg_list instead', DeprecationWarning)
+        self.update_cfg_list(sdfg_list)
 
     @property
-    def sdfg_list(self) -> List['SDFG']:
-        return self._sdfg_list
+    def sdfg_list(self) -> List['ControlFlowRegion']:
+        warnings.warn('sdfg_list is deprecated, use cfg_list instead', DeprecationWarning)
+        return self.cfg_list
 
     def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
@@ -1451,9 +1428,13 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
+</script>
+<script>
     var sdfv_{uid} = new SDFV();
     var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
@@ -1703,7 +1684,7 @@ class SDFG(ControlFlowRegion):
                  total_size=None,
                  find_new_name=False,
                  alignment=0,
-                 may_alias=False) -> Tuple[str, dt.View]:
+                 may_alias=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1718,18 +1699,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.View(dtype,
-                       shape,
-                       storage=storage,
-                       allow_conflicts=allow_conflicts,
-                       transient=True,
-                       strides=strides,
-                       offset=offset,
-                       lifetime=dtypes.AllocationLifetime.Scope,
-                       alignment=alignment,
-                       debuginfo=debuginfo,
-                       total_size=total_size,
-                       may_alias=may_alias)
+        desc = dt.ArrayView(dtype,
+                            shape,
+                            storage=storage,
+                            allow_conflicts=allow_conflicts,
+                            transient=True,
+                            strides=strides,
+                            offset=offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=total_size,
+                            may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1760,18 +1741,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Reference(dtype,
-                            shape,
-                            storage=storage,
-                            allow_conflicts=allow_conflicts,
-                            transient=True,
-                            strides=strides,
-                            offset=offset,
-                            lifetime=dtypes.AllocationLifetime.Scope,
-                            alignment=alignment,
-                            debuginfo=debuginfo,
-                            total_size=total_size,
-                            may_alias=may_alias)
+        desc = dt.ArrayReference(dtype,
+                                 shape,
+                                 storage=storage,
+                                 allow_conflicts=allow_conflicts,
+                                 transient=True,
+                                 strides=strides,
+                                 offset=offset,
+                                 lifetime=dtypes.AllocationLifetime.Scope,
+                                 alignment=alignment,
+                                 debuginfo=debuginfo,
+                                 total_size=total_size,
+                                 may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1957,6 +1938,30 @@ class SDFG(ControlFlowRegion):
         _add_symbols(datadesc)
 
         return name
+
+    def add_datadesc_view(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a view of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.View.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
+
+    def add_datadesc_reference(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a reference of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.Reference.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
 
     def add_pgrid(self,
                   shape: ShapeType = None,
@@ -2161,16 +2166,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:

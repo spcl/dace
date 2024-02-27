@@ -525,9 +525,16 @@ def test_fortran_frontend_type_arg():
 
         SUBROUTINE type_arg_test_f2(stuff)
             TYPE(simple_type) :: stuff
-
-            stuff%w(1,1) = 42
+            CALL deepest(stuff%w)
+            
         END SUBROUTINE type_arg_test_f2
+
+        SUBROUTINE deepest(my_arr)
+            REAL :: my_arr(:,:)
+
+            my_arr(1,1) = 42
+        END SUBROUTINE deepest
+
     """
     sources={}
     sources["type_arg_test"]=test_string
@@ -536,6 +543,99 @@ def test_fortran_frontend_type_arg():
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     print(a)
+
+
+
+def test_fortran_frontend_type_arg2():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+        PROGRAM type_arg2_test
+            implicit none
+
+          
+            TYPE simple_type
+                REAL :: w(5,5)
+            END TYPE simple_type
+
+             TYPE simple_type2
+                type(simple_type) :: pprog(10)
+            END TYPE simple_type2
+
+            REAL :: d(5,5)
+            CALL type_arg2_test_function(d)
+            print *, d(1,1)
+        end
+
+        SUBROUTINE type_arg2_test_function(d)
+            REAL :: d(5,5)
+            TYPE(simple_type2) :: p_prog
+
+            CALL deepest(p_prog%pprog(1)%w)
+            d(1,1) = p_prog%pprog(1)%w(1,1)
+        END SUBROUTINE type_arg2_test_function
+
+        SUBROUTINE deepest(my_arr)
+            REAL :: my_arr(:,:)
+
+            my_arr(1,1) = 42
+        END SUBROUTINE deepest
+
+    """
+    sources={}
+    sources["type_arg2_test"]=test_string
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg2_test",sources=sources, normalize_offsets=True)
+    sdfg.simplify(verbose=True)
+    a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    sdfg(d=a)
+    print(a)
+
+
+
+def test_fortran_frontend_type_view():
+    """
+    Tests that the Fortran frontend can parse the simplest type declaration and make use of it in a computation.
+    """
+    test_string = """
+                    PROGRAM type_view_test
+                    implicit none
+                    
+                    TYPE simple_type
+                        REAL:: z(5)
+                        INTEGER:: a         
+                    END TYPE simple_type
+
+                    
+                    REAL :: d(5,5)
+                    CALL type_view_test_function(d)
+                    end
+
+                    SUBROUTINE type_view_test_function(d)
+                    TYPE(simple_type) :: st 
+                    REAL :: d(5,5)
+                    st%z(1)=5.5
+                    CALL internal_function(d,st%z)
+                    
+                    END SUBROUTINE type_view_test_function
+
+                    
+                    SUBROUTINE internal_function(d,sta)
+                    REAL d(5,5)
+                    REAL sta(:)
+                    d(2,1)=2*sta(1)
+                    
+                    END SUBROUTINE internal_function
+                    """
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_view_test",sources={"type_view_test":test_string},normalize_offsets=True)
+    sdfg.validate()
+    sdfg.simplify(verbose=True)
+    a = np.full([4, 5], 42, order="F", dtype=np.float64)
+    sdfg(d=a)
+    assert (a[0, 0] == 42)
+    assert (a[1, 0] == 11)
+    assert (a[2, 0] == 42)
+
 
 if __name__ == "__main__":
     #test_fortran_frontend_basic_type()
@@ -548,4 +648,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_array()
     #test_fortran_frontend_type_array2()
     #test_fortran_frontend_type_pointer()
-    test_fortran_frontend_type_arg()
+    #test_fortran_frontend_type_arg()
+    test_fortran_frontend_type_view()
+    #test_fortran_frontend_type_arg2()

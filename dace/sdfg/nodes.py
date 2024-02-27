@@ -597,7 +597,7 @@ class NestedSDFG(CodeNode):
 
             ret.sdfg.parent_nsdfg_node = ret
 
-            ret.sdfg.update_sdfg_list([])
+        ret.sdfg.update_cfg_list([])
 
         return ret
 
@@ -1384,11 +1384,11 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = sdfg.cfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
-        transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
+        transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)

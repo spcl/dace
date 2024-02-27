@@ -214,6 +214,7 @@ class FindInputs(NodeVisitor):
     :return: List of names
     """
     def __init__(self):
+        
         self.nodes: List[ast_internal_classes.Name_Node] = []
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
@@ -296,8 +297,31 @@ class FindOutputs(NodeVisitor):
     Finds all outputs (writes) in the AST node and its children
     :return: List of names
     """
-    def __init__(self):
+    def __init__(self,thourough=False):
+        self.thourough=thourough
         self.nodes: List[ast_internal_classes.Name_Node] = []
+
+    def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
+        for i in node.args:
+            if isinstance(i, ast_internal_classes.Name_Node) :
+                if self.thourough:
+                    self.nodes.append(i)
+            elif isinstance(i, ast_internal_classes.Array_Subscript_Node):
+                if self.thourough:
+                    self.nodes.append(i.name)
+                for j in i.indices:
+                    self.visit(j)
+            elif isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i.parent_ref, ast_internal_classes.Name_Node):
+                    if self.thourough:
+                        self.nodes.append(i.parent_ref)    
+                elif isinstance(i.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                    if self.thourough:
+                        self.nodes.append(i.parent_ref.name)
+                    for j in i.parent_ref.indices:
+                        self.visit(j)
+                self.visit(i.part_ref)        
+            self.visit(i)    
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
         if node.op == "=":
@@ -1058,6 +1082,7 @@ class IndexExtractor(NodeTransformer):
         self.count = count
         self.normalize_offsets = normalize_offsets
         self.program = ast
+        self.replacements = {}
 
         if normalize_offsets:
             ParentScopeAssigner().visit(ast)
@@ -1085,6 +1110,7 @@ class IndexExtractor(NodeTransformer):
             else:
                 
                 new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
+                self.replacements["tmp_index_" + str(tmp)]=i
                 tmp = tmp + 1
         self.count = tmp
 
@@ -1099,7 +1125,7 @@ class IndexExtractor(NodeTransformer):
             res = lister.nodes
             temp = self.count
 
-
+            tmp_child=self.visit(child)
             if res is not None:
                 for j, parent_node in res:
                     for idx, i in enumerate(j.indices):
@@ -1145,7 +1171,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=i,
+                                            lval=self.replacements[tmp_name],
                                             rval=offset,
                                             line_number=child.line_number),
                                         line_number=child.line_number))
@@ -1156,11 +1182,11 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=i,
+                                            lval=self.replacements[tmp_name],
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                             line_number=child.line_number),
                                         line_number=child.line_number))
-            newbody.append(self.visit(child))
+            newbody.append(tmp_child)
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
 

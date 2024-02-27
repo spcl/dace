@@ -31,9 +31,9 @@ sdfg.fill_scope_connectors()
 def test():
     print('Thread-local stream test')
 
-    N.set(20)
+    N = 20
 
-    output = np.ndarray([N.get()], dtype=np.float32)
+    output = np.ndarray([N], dtype=np.float32)
     output[:] = dp.float32(0)
 
     code_nonspec = sdfg.generate_code()
@@ -45,7 +45,7 @@ def test():
 
     output = np.sort(output)
 
-    diff = np.linalg.norm(output - np.arange(0, N.get(), dtype=np.float32))
+    diff = np.linalg.norm(output - np.arange(0, N, dtype=np.float32))
     print("Difference:", diff)
     assert diff <= 1e-5
 

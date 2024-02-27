@@ -70,8 +70,9 @@ def test_fortran_frontend_missing_func():
     LOGICAL, INTENT(IN), OPTIONAL :: opt_acc_async
     LOGICAL, INTENT(IN), OPTIONAL :: lacc
     
-    var(1)=1.0
+    
     CALL init_contiguous_dp(var, n, 0.0, opt_acc_async, lacc)
+    var(1)=var(1)+1.0
 
   END SUBROUTINE init_zero_contiguous_dp
 
@@ -98,7 +99,7 @@ def test_fortran_frontend_missing_func():
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
     assert (a[0, 0] == 42)
-    assert (a[1, 0] == 11)
+    assert (a[1, 0] == 6.5)
     assert (a[2, 0] == 42)
 
 def test_fortran_frontend_missing_extraction():
@@ -140,6 +141,6 @@ def test_fortran_frontend_missing_extraction():
     assert (a[2, 0] == 42)
 
 if __name__ == "__main__":
-    #test_fortran_frontend_missing_func()
+    test_fortran_frontend_missing_func()
     test_fortran_frontend_missing_extraction()
     
