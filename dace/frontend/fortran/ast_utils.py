@@ -427,6 +427,9 @@ class TaskletWriter:
 
         return_value = node.name
         name = node.name
+        if hasattr(node,"isStructMember"):
+            if node.isStructMember:
+                return node.name
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
             #print(location)
