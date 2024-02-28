@@ -648,6 +648,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_array()
     #test_fortran_frontend_type_array2()
     #test_fortran_frontend_type_pointer()
-    #test_fortran_frontend_type_arg()
+    test_fortran_frontend_type_arg()
     test_fortran_frontend_type_view()
-    #test_fortran_frontend_type_arg2()
+    test_fortran_frontend_type_arg2()

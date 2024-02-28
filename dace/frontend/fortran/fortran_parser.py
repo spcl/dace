@@ -230,8 +230,33 @@ class AST_translator:
                 self.translate(i, sdfg)
             for i in node.main_program.specification_part.symbols:
                 self.translate(i, sdfg)
+               
             for i in node.main_program.specification_part.specifications:
                 self.translate(i, sdfg)
+            for i in node.main_program.specification_part.specifications:
+
+                        ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
+                        assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
+
+                        for decl in i.vardecl:
+                            if not self.structures.is_struct(decl.type):
+                                continue
+
+                            struct_type = self.structures.get_definition(decl.type)
+
+                            for var, var_type in struct_type.vars.items():
+
+                                if var_type.sizes is None or len(var_type.sizes) == 0:
+                                    continue
+
+                                # for assumed shape, all vars starts with the same prefix
+                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                                    continue
+
+                                for edge in sdfg.in_edges(assign_state):
+                                    for size in var_type.sizes:
+                                        if hasattr(size, "name"):
+                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"     
             self.translate(node.main_program.execution_part.execution, sdfg)
         else: 
             if self.startpoint is None:
@@ -248,6 +273,30 @@ class AST_translator:
 
                     for i in self.startpoint.specification_part.specifications:
                         self.translate(i, sdfg)
+                    for i in self.startpoint.specification_part.specifications:
+
+                        ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
+                        assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
+
+                        for decl in i.vardecl:
+                            if not self.structures.is_struct(decl.type):
+                                continue
+
+                            struct_type = self.structures.get_definition(decl.type)
+
+                            for var, var_type in struct_type.vars.items():
+
+                                if var_type.sizes is None or len(var_type.sizes) == 0:
+                                    continue
+
+                                # for assumed shape, all vars starts with the same prefix
+                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
+                                    continue
+
+                                for edge in sdfg.in_edges(assign_state):
+                                    for size in var_type.sizes:
+                                        if hasattr(size, "name"):
+                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"     
                 self.transient_mode=True    
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
 
@@ -2560,6 +2609,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
             print("Module " + i.children[0].children[1].string + " not needing parsing")
+        elif  i.children[0].children[1].string==top_level_ast:
+            new_children.append(i)
         else:
             types=[]
             subroutinesandfunctions=[]
@@ -2857,8 +2908,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            if j.name.name!="velocity_tendencies":
-            #if j.name.name!="cells2verts_scalar_ri":
+            #if j.name.name!="velocity_tendencies":
+            if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
