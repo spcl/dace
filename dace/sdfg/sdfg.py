@@ -2168,13 +2168,14 @@ class SDFG(ControlFlowRegion):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> 'CompiledSDFG':
+    def compile(self, output_file=None, validate=True, additional_code_obj=None) -> 'CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
 
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
+            :param additional_code_obj: If not None use these objects in the compilation process
             :return: A callable CompiledSDFG object.
         """
 
@@ -2220,11 +2221,15 @@ class SDFG(ControlFlowRegion):
 
                 # Generate code for the program by traversing the SDFG state by state
                 program_objects = codegen.generate_code(sdfg, validate=validate)
+
             except Exception:
                 fpath = os.path.join('_dacegraphs', 'failing.sdfgz')
                 self.save(fpath, compress=True)
                 print(f'Failing SDFG saved for inspection in {os.path.abspath(fpath)}')
                 raise
+
+            if additional_code_obj is not None:
+                program_objects += additional_code_obj
 
             # Generate the program folder and write the source files
             program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
