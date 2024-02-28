@@ -1206,7 +1206,7 @@ class Tensor(Structure):
         symbols = super(Tensor, self).free_symbols
         for sym in self.tensor_shape:
             symbols.add(sym)
-        
+
         return symbols
 
     @property
@@ -1219,6 +1219,46 @@ class Tensor(Structure):
             if isinstance(v, Structure):
                 result |= set(map(lambda x: f"{k}.{x}", v.keys()))
         return result
+
+    def clone(self):
+        return Tensor(
+            self.value_dtype,
+            self.tensor_shape,
+            list(zip(self.indices, self.index_ordering)),
+            self.value_count,
+            self.name,
+            self.transient,
+        )
+
+    @staticmethod
+    def CSR(shape, nnz, dtype=dtypes.float32) -> "Tensor":
+        return Tensor(
+            dtype,
+            shape,
+            [(TensorIndexDense(), 0), (TensorIndexCompressed(), 1)],
+            nnz,
+            "CSR_Matrix"
+        )
+
+    @staticmethod
+    def CSC(shape, nnz, dtype=dtypes.float32) -> "Tensor":
+        return Tensor(
+            dtype,
+            shape,
+            [(TensorIndexDense(), 1), (TensorIndexCompressed(), 0)],
+            nnz,
+            "CSC_Matrix"
+        )
+
+    @staticmethod
+    def Dense(shape, nnz, dtype=dtypes.float32) -> "Tensor":
+        return Tensor(
+            dtype,
+            shape,
+            [(TensorIndexDense(), 0), (TensorIndexDense(), 1)],
+            nnz,
+            "Dense_Matrix"
+        )
 
 
 @make_properties

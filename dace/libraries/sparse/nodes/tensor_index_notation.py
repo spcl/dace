@@ -4,15 +4,16 @@ General purpose Tensor Index Notation (TIN) library node.
 Used as initial step 
 """
 
+import subprocess
+import re
 
 from copy import deepcopy
 
-from dace import SDFG, library, nodes, transformation, dtypes, Memlet, data
+from dace import SDFG, library, nodes, transformation, dtypes, Memlet
 from dace.properties import Property
 from dace.sdfg import SDFG, SDFGState, nodes as nd
-from dace.data import TensorIndexDense, TensorIndexCompressed
-import subprocess
-import re
+from dace.data import TensorIndexDense, TensorIndexCompressed, Tensor
+from dace.frontend.common.op_repository import replaces
 
 
 @library.node
@@ -38,9 +39,7 @@ class TacoTIN(transformation.ExpandTransformation):
 
     @staticmethod
     def expansion(
-        node: TensorIndexNotation,
-        parent_state: SDFGState,
-        parent_sdfg: SDFG
+        node: TensorIndexNotation, parent_state: SDFGState, parent_sdfg: SDFG
     ) -> SDFG:
         sdfg = SDFG("tensor_index_notation")
         state = sdfg.add_state()
@@ -72,20 +71,35 @@ class TacoTIN(transformation.ExpandTransformation):
             args.append(f"-t={t_name}:float")
 
             # generating taco build flags
-            if isinstance(desc, data.Tensor):
+            if isinstance(desc, Tensor):
                 for idx in desc.indices:
                     if type(idx) not in [TensorIndexDense, TensorIndexCompressed]:
-                        raise NotImplementedError("Only supports Dense and Compressed indices at the moment")
+                        raise NotImplementedError(
+                            "Only supports Dense and Compressed indices at the moment"
+                        )
 
                 order = len(desc.tensor_shape)
 
-                encoding = ''.join([str(idx)[0] for idx in desc.indices]).lower().replace('c', 's')
+                encoding = (
+                    "".join([str(idx)[0] for idx in desc.indices])
+                    .lower()
+                    .replace("c", "s")
+                )
                 if desc.index_ordering == list(range(order)):
                     args.append(f"-f={t_name}:{encoding}")
                 else:
-                    args.append(f"-f={t_name}:{encoding}:{','.join([str(s) for s in desc.index_ordering])}")
+                    args.append(
+                        f"-f={t_name}:{encoding}:{','.join([str(s) for s in desc.index_ordering])}"
+                    )
 
-                idx_types = ['taco_mode_dense' if type(idx) is TensorIndexDense else 'taco_mode_sparse' for idx in desc.indices]
+                idx_types = [
+                    (
+                        "taco_mode_dense"
+                        if type(idx) is TensorIndexDense
+                        else "taco_mode_sparse"
+                    )
+                    for idx in desc.indices
+                ]
                 tensor_init_code += (
                     f"// init potentially sparse input tensor {t_name}\n"
                     f"int32_t {t}_dims[] = {{{', '.join([str(s) for s in desc.tensor_shape])}}};\n"
@@ -143,20 +157,35 @@ class TacoTIN(transformation.ExpandTransformation):
             args.append(f"-t={t_name}:float")
 
             # generating taco build flags
-            if isinstance(desc, data.Tensor):
+            if isinstance(desc, Tensor):
                 for idx in desc.indices:
                     if type(idx) not in [TensorIndexDense, TensorIndexCompressed]:
-                        raise NotImplementedError("Only supports Dense and Compressed indices at the moment")
+                        raise NotImplementedError(
+                            "Only supports Dense and Compressed indices at the moment"
+                        )
 
                 order = len(desc.tensor_shape)
 
-                encoding = ''.join([str(idx)[0] for idx in desc.indices]).lower().replace('c', 's')
+                encoding = (
+                    "".join([str(idx)[0] for idx in desc.indices])
+                    .lower()
+                    .replace("c", "s")
+                )
                 if desc.index_ordering == list(range(order)):
                     args.append(f"-f={t_name}:{encoding}")
                 else:
-                    args.append(f"-f={t_name}:{encoding}:{','.join([str(s) for s in desc.index_ordering])}")
+                    args.append(
+                        f"-f={t_name}:{encoding}:{','.join([str(s) for s in desc.index_ordering])}"
+                    )
 
-                idx_types = ['taco_mode_dense' if type(idx) is TensorIndexDense else 'taco_mode_sparse' for idx in desc.indices]
+                idx_types = [
+                    (
+                        "taco_mode_dense"
+                        if type(idx) is TensorIndexDense
+                        else "taco_mode_sparse"
+                    )
+                    for idx in desc.indices
+                ]
                 tensor_init_code += (
                     f"// init potentially sparse output tensor {t_name}\n"
                     f"int32_t {t}_dims[] = {{{', '.join([str(s) for s in desc.tensor_shape])}}};\n"
@@ -181,9 +210,7 @@ class TacoTIN(transformation.ExpandTransformation):
                             f"tin_{t_name}_task->idx{i}_pos = (int *) {t}->indices[{i}][0];\n"
                             f"tin_{t_name}_task->idx{i}_crd = (int *) {t}->indices[{i}][1];\n"
                         )
-                tensor_deinit_code += (
-                    f"deinit_taco_tensor_t({t});\n"
-                )
+                tensor_deinit_code += f"deinit_taco_tensor_t({t});\n"
             else:
                 output_dense = True
                 order = len(desc.shape)
@@ -214,7 +241,7 @@ class TacoTIN(transformation.ExpandTransformation):
             )
             outputs[e.src_conn] = state.add_access(e.src_conn)
 
-        print(f"DEBUG {args}")
+        # print(f"DEBUG {args}")
 
         popen = subprocess.Popen(args, stdout=subprocess.PIPE)
         popen.wait()
@@ -223,21 +250,23 @@ class TacoTIN(transformation.ExpandTransformation):
         # print(f"DEBUG TACO output:")
         # print(f"{output}")
 
-        restrict_regex = re.compile(r' restrict ')
-        glob_code = restrict_regex.sub(' __restrict__ ', output.decode("utf-8"))
+        restrict_regex = re.compile(r" restrict ")
+        glob_code = restrict_regex.sub(" __restrict__ ", output.decode("utf-8"))
 
-        function_prefix_regex = re.compile(r'(?=(assemble|compute|evaluate|pack_|unpack))')
+        function_prefix_regex = re.compile(
+            r"(?=(assemble|compute|evaluate|pack_|unpack))"
+        )
         glob_code = function_prefix_regex.sub(f"{node.name}_", glob_code)
 
-        tensor_order = [line for line in glob_code.split('\n') if 'compute(' in line][0]
-        tensor_order = tensor_order.split('(')[1]
-        tensor_order = tensor_order.split(')')[0]
-        tensor_order = tensor_order.split(',')
+        tensor_order = [line for line in glob_code.split("\n") if "compute(" in line][0]
+        tensor_order = tensor_order.split("(")[1]
+        tensor_order = tensor_order.split(")")[0]
+        tensor_order = tensor_order.split(",")
         tensor_order = [f"{t.split('*')[1]}_tensor" for t in tensor_order]
 
-        code = f'''{tensor_init_code}{node.name}_{"compute" if output_dense else "evaluate"}({', '.join(tensor_order)});
+        code = f"""{tensor_init_code}{node.name}_{"compute" if output_dense else "evaluate"}({', '.join(tensor_order)});
         
-        {tensor_deinit_code}'''
+        {tensor_deinit_code}"""
 
         tasklet = state.add_tasklet(
             "taco_code",
@@ -258,3 +287,28 @@ class TacoTIN(transformation.ExpandTransformation):
             )
 
         return sdfg
+
+
+@replaces("TensorIndexNotation")
+@replaces("dace.libraries.sparse.TensorIndexNotation")
+def gemv_libnode(
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name, tin_expr, **kwargs
+):
+
+    tin_expr: str = tin_expr.value
+    output_name = tin_expr.split("(", 1)[0]
+
+    accesses = {k: (v, state.add_access(v)) for k, v in kwargs.items()}
+
+    tin_node = TensorIndexNotation(name.value, tin_expr)
+    state.add_node(tin_node)
+
+    for name, (data, data_node) in accesses.items():
+        if name == output_name:
+            tin_node.add_out_connector(f"tin_{name}")
+            state.add_edge(tin_node, f"tin_{name}", data_node, None, Memlet(data=data))
+        else:
+            tin_node.add_in_connector(f"tin_{name}")
+            state.add_edge(data_node, None, tin_node, f"tin_{name}", Memlet(data=data))
+
+    return []
