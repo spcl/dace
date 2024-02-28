@@ -539,7 +539,8 @@ def auto_optimize(sdfg: SDFG,
                   validate: bool = True,
                   validate_all: bool = False,
                   symbols: Dict[str, int] = None,
-                  use_gpu_storage: bool = False) -> SDFG:
+                  use_gpu_storage: bool = False,
+                  move_loop_into_maps: bool = True) -> SDFG:
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
@@ -560,6 +561,7 @@ def auto_optimize(sdfg: SDFG,
     :param validate_all: If True, validates the SDFG after every step.
     :param symbols: Optional dict that maps symbols (str/symbolic) to int/float
     :param use_gpu_storage: If True, changes the storage of non-transient data to GPU global memory.
+    :param move_loop_into_maps: If True, tries to move sequential loops inside of parallel regions.
     :return: The optimized SDFG.
     :note: Operates in-place on the given SDFG.
     :note: This function is still experimental and may harm correctness in
@@ -600,8 +602,9 @@ def auto_optimize(sdfg: SDFG,
     greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
-    from dace.transformation.interstate import MoveLoopIntoMap
-    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    if move_loop_into_maps:
+        from dace.transformation.interstate import MoveLoopIntoMap
+        sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations

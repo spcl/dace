@@ -643,19 +643,8 @@ def nest_state_subgraph(sdfg: SDFG,
     state.remove_nodes_from(subgraph.nodes())
 
     # Remove subgraph transients from top-level graph
-    #transients_to_keep = set()
-    #for ie in inputs:
-    #    if ie.data.data:
-    #        transients_to_keep.add(ie.data.data)
-    #for oe in outputs:
-    #    if oe.data.data:
-    #        transients_to_keep.add(oe.data.data)
     for transient in subgraph_transients:
         del sdfg.arrays[transient]
-        #if transient not in transients_to_keep:
-        #    del sdfg.arrays[transient]
-        #else:
-        #    sdfg.arrays[transient] = copy.deepcopy(nsdfg.arrays[transient])
 
     # Remove newly isolated nodes due to memlet consolidation
     for edge in inputs:
@@ -1542,7 +1531,9 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
     if not map_dependency:
         return [False, False]
 
+    added_source = False
     if source is None:
+        added_source = True
         source = state.add_access(access.data)
 
     # Check if the union covers the output edges of `access`. Any not covered read is redirected.
@@ -1561,10 +1552,16 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
                 state.remove_edge(e)
                 redirected_read = True
 
+    if not redirected_read:
+        if added_source:
+            state.remove_node(source)
+
     # If all reads were removed, redirect connected writes to the outside as well.
     if state.out_degree(access) == 0:
         exit_node = state.exit_node(map_entry)
         outside_access = state.add_access(access.data)
         redirected_write, _ = make_map_internal_write_external(sdfg, state, exit_node, access, outside_access)
+        if not redirected_write:
+            state.remove_node(outside_access)
 
     return redirected_read, redirected_write

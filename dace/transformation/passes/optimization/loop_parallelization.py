@@ -9,7 +9,7 @@ from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion, SDFGState
-from dace.subsets import Range
+from dace.subsets import Range, SubsetUnion
 from dace.transformation import pass_pipeline as ppl, helpers as xfh
 from dace.transformation.passes.analysis import loop_analysis
 
@@ -273,30 +273,38 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                     read_deps: List[Tuple[Memlet, List[int]]] = []
                     for write in writes:
                         write_subset = write.dst_subset or write.subset
-                        if read.src_subset.dims() != write_subset.dims():
+                        if isinstance(write_subset, SubsetUnion):
+                            if len(write_subset.subset_list) == 1:
+                                write_subset = write_subset.subset_list[0]
+                            else:
+                                # TODO(later): We want a way to handle this too.
+                                can_parallelize = False
+                                break
+                        read_subset = read.src_subset or read.subset
+                        if read_subset.dims() != write_subset.dims():
                             continue
                         subsets_work_fine = True
                         dep_offsets = []
-                        for i in range(read.src_subset.dims()):
-                            if read.src_subset[i] != write_subset[i]:
+                        for i in range(read_subset.dims()):
+                            if read_subset[i] != write_subset[i]:
                                 # TODO(later): This is currently limiting to where the dependency is not more than one
                                 # element and not strided. This could be expanded later, but is a bit more complex.
-                                if read.src_subset[i][2] != 1 or write_subset[i][2] != 1:
+                                if read_subset[i][2] != 1 or write_subset[i][2] != 1:
                                     subsets_work_fine = False
                                     break
                                 if not any(loop_var in x.free_symbols for x in write_subset[i]):
                                     subsets_work_fine = False
                                     break
-                                if not any(loop_var in x.free_symbols for x in read.src_subset[i]):
+                                if not any(loop_var in x.free_symbols for x in read_subset[i]):
                                     subsets_work_fine = False
                                     break
-                                dep_start: sympy.Basic = read.src_subset[i][0] - write_subset[i][0]
-                                dep_end: sympy.Basic = read.src_subset[i][1] - write_subset[i][1]
+                                dep_start: sympy.Basic = read_subset[i][0] - write_subset[i][0]
+                                dep_end: sympy.Basic = read_subset[i][1] - write_subset[i][1]
                                 if len(dep_start.free_symbols) > 0 or len(dep_end.free_symbols) > 0:
                                     subsets_work_fine = False
                                     break
                                 if dep_end == 0 and not dep_start == 0:
-                                    dep_end -= read.src_subset[i][2]
+                                    dep_end -= read_subset[i][2]
                                 # TODO(later): This is currently limiting to exactly one dependency, but it may be
                                 # interesting to handle multiple. In that case, the guarantee that needs to be fulfilled
                                 # is just: dep_start > dep_end

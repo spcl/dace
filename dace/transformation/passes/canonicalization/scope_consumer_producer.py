@@ -139,7 +139,7 @@ class ScopeIntermediateAccessesCanonicalization(ppl.Pass):
                                     all_covered = False
                                 else:
                                     for oedge in state.out_edges(node):
-                                        if (oedge.data is not None and
+                                        if (oedge.data is not None and oedge.data.data == node.data and
                                             not cover_subset.covers_precise(oedge.data.src_subset)):
                                             all_covered = False
                                 if all_covered:

@@ -75,7 +75,7 @@ class LoopCarryDependencyAnalysis(ppl.Pass):
                         continue
 
                     for input in loop_inputs[data]:
-                        read_subset = input.src_subset
+                        read_subset = input.src_subset or input.subset
                         dep_candidates: Set[Memlet] = set()
                         if cfg.loop_variable and cfg.loop_variable in input.free_symbols:
                             # If the iteration variable is involved in an access, we need to first offset it by the loop

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 import networkx as nx
 
-from dace import SDFG, SDFGState, properties
+from dace import SDFG, SDFGState, properties, data as dt
 from dace.memlet import Memlet
 from dace.sdfg import nodes, propagation
 from dace.sdfg.analysis.writeset_underapproximation import (
@@ -74,15 +74,28 @@ class StateDataDependence(ppl.Pass):
         for anode in state.data_nodes():
             for oedge in state.out_edges(anode):
                 if not oedge.data.is_empty():
-                    root_edge = state.memlet_tree(oedge).root().edge
-                    read_subset = root_edge.data.src_subset
+                    #root_edge = state.memlet_tree(oedge).root().edge
+                    if oedge.data.data != anode.data:
+                        # Special case for memlets copying data out of the scope, which are by default aligned with the
+                        # outside data container. In this case, the source container must either be a scalar, or the
+                        # read subset is contained in the memlet's `other_subset` property.
+                        # See `dace.sdfg.propagation.align_memlet` for more.
+                        desc = state.sdfg.data(anode.data)
+                        if oedge.data.other_subset is not None:
+                            read_subset = oedge.data.other_subset
+                        elif isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and desc.total_size == 1):
+                            read_subset = Range([(0, 0, 1)] * len(desc.shape))
+                        else:
+                            raise RuntimeError('Invalid memlet range detected in StateDataDependence analysis')
+                    else:
+                        read_subset = oedge.data.src_subset or oedge.data.subset
                     covered = False
                     for [write, to] in writes[anode.data]:
                         if write.subset.covers_precise(read_subset) and nx.has_path(state.nx, to, anode):
                             covered = True
                             break
                     if not covered:
-                        not_covered_reads.append([root_edge, root_edge.data])
+                        not_covered_reads.append([oedge, oedge.data])
         # Make sure all reads are propagated if they happen inside maps. We do not need to do this for writes, because
         # it is already taken care of by the write underapproximation analysis pass.
         self._recursive_propagate_reads(state, state.scope_tree()[None], not_covered_reads)
@@ -178,7 +191,8 @@ class CFGDataDependence(ppl.Pass):
             for read, read_block in region_reads[data]:
                 covered = False
                 for write, write_block in region_writes[data]:
-                    if (write.subset.covers_precise(read.src_subset) and write_block is not read_block and
+                    if (write.subset.covers_precise(read.src_subset or read.subset) and
+                        write_block is not read_block and
                         nx.has_path(cfg.nx, write_block, read_block)):
                         covered = True
                         break
