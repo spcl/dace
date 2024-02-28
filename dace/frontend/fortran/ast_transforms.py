@@ -589,6 +589,13 @@ class CallToArray(NodeTransformer):
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
 
+        if node.name.name in self.excepted_funcs or node.name in self.funcs.names:
+            processed_args = []
+            for i in node.args:
+                arg = CallToArray(self.funcs).visit(i)
+                processed_args.append(arg)
+            node.args = processed_args
+            return node
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
         return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
 
