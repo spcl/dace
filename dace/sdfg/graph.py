@@ -407,28 +407,36 @@ class Graph(Generic[NodeT, EdgeT]):
         else:
             return nx.all_simple_paths(self._nx, source_node, dest_node)
 
-    def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
+
+    def all_nodes_between(self,
+                          begin: NodeT,
+                          end: NodeT,
+    ) -> Sequence[NodeT]:
         """Finds all nodes between begin and end. Returns None if there is any
            path starting at begin that does not reach end."""
-        to_visit = [begin]
-        seen = set()
-        while len(to_visit) > 0:
-            n = to_visit.pop()
-            if n == end:
-                continue  # We've reached the end node
-            if n in seen:
-                continue  # We've already visited this node
-            if n != begin:
-                seen.add(n)
+        to_visit: list[NodeT] = [begin]
+        seen: set[NodeT] = set()
+        foundTheEnd: bool = False
+
+        while(len(to_visit) > 0):
+            n: NodeT = to_visit.pop()
+            if n == end:        # We've reached the end node, that we ignore
+                foundTheEnd = True
+                continue
+            elif n in seen:     # We've already visited this node
+                continue
+            seen.add(n)
+
             # Keep chasing all paths to reach the end node
-            node_out_edges = self.out_edges(n)
-            if len(node_out_edges) == 0:
-                # We traversed to the end without finding the end
-                return set()
-            for e in node_out_edges:
-                next_node = e.dst
-                if next_node != end and next_node not in seen:
-                    to_visit.append(next_node)
+            for e in self.out_edges(n):
+                to_visit.append(e.dst)  # We could filter out the nodes here, but we will do that later
+
+        if(not foundTheEnd):
+            return None
+
+        # The above algorithm will never add `end` to the `seen` `set` but,
+        #  will add `begin`, it is more elegant to remove it here, as it will be never be included.
+        seen.discard(begin)
         return seen
 
 
