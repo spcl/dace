@@ -2609,6 +2609,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     
         if i.children[0].children[1].string not in parse_order and i.children[0].children[1].string!=top_level_ast:
             print("Module " + i.children[0].children[1].string + " not needing parsing")
+        elif  i.children[0].children[1].string==top_level_ast:
+            new_children.append(i)
         else:
             types=[]
             subroutinesandfunctions=[]
