@@ -422,7 +422,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Remove nested SDFG and state
         sdfg.remove_node(nsdfg_state)
 
-        sdfg._sdfg_list = sdfg.reset_sdfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
         return nsdfg.nodes()
 
