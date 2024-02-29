@@ -8,9 +8,10 @@ import subprocess
 import re
 
 from copy import deepcopy
+from typing import List
 
 from dace import SDFG, library, nodes, transformation, dtypes, Memlet
-from dace.properties import Property
+from dace.properties import Property, ListProperty
 from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.data import TensorIndexDense, TensorIndexCompressed, Tensor
 from dace.frontend.common.op_repository import replaces
@@ -27,8 +28,14 @@ class TensorIndexNotation(nodes.LibraryNode):
         desc="The Tensor Index Notation (TIN) string that describes this operation",
     )
 
-    def __init__(self, name, expr, *args, schedule=None, **kwargs):
+    extra_taco_args = ListProperty(
+        element_type=str,
+        desc="Extra arguments to pass to taco"
+    )
+
+    def __init__(self, name, expr, extra_taco_args: List[str] = [], *args, schedule=None, **kwargs):
         self.tensor_index_notation = expr
+        self.extra_taco_args = extra_taco_args
         super().__init__(name, *args, schedule=schedule, **kwargs)
 
 
@@ -241,7 +248,10 @@ class TacoTIN(transformation.ExpandTransformation):
             )
             outputs[e.src_conn] = state.add_access(e.src_conn)
 
-        # print(f"DEBUG {args}")
+
+        args.extend(node.extra_taco_args)
+
+        print(f"DEBUG {args}")
 
         popen = subprocess.Popen(args, stdout=subprocess.PIPE)
         popen.wait()
@@ -257,6 +267,9 @@ class TacoTIN(transformation.ExpandTransformation):
             r"(?=(assemble|compute|evaluate|pack_|unpack))"
         )
         glob_code = function_prefix_regex.sub(f"{node.name}_", glob_code)
+
+        calloc_regex = re.compile(r"(?=(calloc))")
+        glob_code = calloc_regex.sub("(bool*)", glob_code)
 
         tensor_order = [line for line in glob_code.split("\n") if "compute(" in line][0]
         tensor_order = tensor_order.split("(")[1]
@@ -292,15 +305,20 @@ class TacoTIN(transformation.ExpandTransformation):
 @replaces("TensorIndexNotation")
 @replaces("dace.libraries.sparse.TensorIndexNotation")
 def gemv_libnode(
-    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name, tin_expr, **kwargs
+    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name, tin_expr, extra_taco_args = [], **kwargs
 ):
+    
+    extra_taco_args = [arg.value for arg in extra_taco_args]
+    
+    print(f"DEBUG {extra_taco_args=}")
+    print(f"DEBUG {kwargs=}")
 
     tin_expr: str = tin_expr.value
     output_name = tin_expr.split("(", 1)[0]
 
     accesses = {k: (v, state.add_access(v)) for k, v in kwargs.items()}
 
-    tin_node = TensorIndexNotation(name.value, tin_expr)
+    tin_node = TensorIndexNotation(name.value, tin_expr, extra_taco_args)
     state.add_node(tin_node)
 
     for name, (data, data_node) in accesses.items():

@@ -273,12 +273,12 @@ def test_multiple_mm():
     CSC = Tensor.CSC((N, N), nnz)
 
     @dace.program
-    def tin_multiple_mm(A: dace.float32[N, N], B: CSR, C: CSC, D: CSR, E: CSC):
+    def tin_multiple_mm(A: dace.float32[N, N], B: CSR, C: CSR, D: CSR, E: CSR):
 
         BC = dace.define_local_structure(CSR)
         TensorIndexNotation("mm1", "BC(i,j) = B(i,k) * C(k,j)", BC=BC, B=B, C=C)
 
-        DE = dace.define_local_structure(CSC)
+        DE = dace.define_local_structure(CSR)
         TensorIndexNotation("mm2", "DE(i,j) = D(i,k) * E(k,j)", DE=DE, D=D, E=E)
 
         TensorIndexNotation("mm3", "A(i,j) = BC(i,k) * DE(k,j)", A=A, BC=BC, DE=DE)
@@ -293,9 +293,9 @@ def test_multiple_mm():
     rng = np.random.default_rng(42)
 
     B, BB, B_keep_alive = gen_data(rng, 20, 20, "csr")
-    C, CC, C_keep_alive = gen_data(rng, 20, 20, "csc")
+    C, CC, C_keep_alive = gen_data(rng, 20, 20, "csr")
     D, DD, D_keep_alive = gen_data(rng, 20, 20, "csr")
-    E, EE, E_keep_alive = gen_data(rng, 20, 20, "csc")
+    E, EE, E_keep_alive = gen_data(rng, 20, 20, "csr")
     A = np.zeros((20, 20), dtype=np.float32)
 
     func(A=A, B=BB, C=CC, D=DD, E=EE, N=20)
@@ -338,17 +338,17 @@ def test_mttkrp():
 
 
 if __name__ == "__main__":
-    test_basic_spmv()
-    test_basic_mm()
+    # test_basic_spmv()
+    # test_basic_mm()
     # test_mm({'B': 'dense', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'csr', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'dense', 'C': 'csc', 'A': 'dense'})
     # test_mm({'B': 'csr', 'C': 'csr', 'A': 'csr'})
     # test_mm({'B': 'csr', 'C': 'csc', 'A': 'dense'})
-    test_mm({"B": "csr", "C": "csc", "A": "csr"})
+    # test_mm({"B": "csr", "C": "csc", "A": "csr"})
     # test_mm({'B': 'csr', 'C': 'csc', 'A': 'csc'})
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'dense'})
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csr'}) # taco generates incorrect code
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csc'}) # taco generates incorrect code
     test_multiple_mm()
-    test_mttkrp()
+    # test_mttkrp()

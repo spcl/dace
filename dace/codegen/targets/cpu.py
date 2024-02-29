@@ -380,14 +380,14 @@ class CPUCodeGen(TargetCodeGenerator):
         if isinstance(nodedesc, data.Structure) and not isinstance(nodedesc, data.StructureView):
             declaration_stream.write(f"{nodedesc.ctype} {name} = new {nodedesc.dtype.base_type};\n")
             define_var(name, DefinedType.Pointer, nodedesc.ctype)
-            if allocate_nested_data:
-                for k, v in nodedesc.members.items():
-                    if isinstance(v, data.Data):
-                        ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
-                        defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
-                                            declaration_stream, allocation_stream)
+            # if allocate_nested_data:
+            #     for k, v in nodedesc.members.items():
+            #         if isinstance(v, data.Data):
+            #             ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
+            #             defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
+            #             self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
+            #             self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{name}.{k}"), v, function_stream,
+            #                                 declaration_stream, allocation_stream)
             return
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
