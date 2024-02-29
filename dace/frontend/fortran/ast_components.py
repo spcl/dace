@@ -461,11 +461,13 @@ class InternalFortranAst:
                 for k in j.vardecl:
                     if k.optional:
                         optional_args_count += 1
+        mandatory_args_count = len(name.args) - optional_args_count
 
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=name.name,
             args=name.args,
             optional_args_count=optional_args_count,
+            mandatory_args_count=mandatory_args_count,
             specification_part=specification_part,
             execution_part=execution_part,
             type=return_type,
