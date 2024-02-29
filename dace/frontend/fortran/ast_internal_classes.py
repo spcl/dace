@@ -395,7 +395,7 @@ class Else_Separator_Node(FNode):
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
-    _fields = ('expr', )
+    _fields = ('expr', 'type')
 
 
 class Nonlabel_Do_Stmt_Node(FNode):

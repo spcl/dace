@@ -843,12 +843,13 @@ class DefModuleLister:
             else:
                 self.get_defined_modules(i)
 
-def parse_module_declarations(internal_ast: ast_components.InternalFortranAst, ast, parsed_modules):
+def parse_module_declarations(program):
 
     module_level_variables = {}
 
-    for module_name, module in parsed_modules.items():
+    for module in program.modules:
 
+        module_name = module.name.name
         from dace.frontend.fortran.ast_transforms import ModuleVarsDeclarations
 
         visitor = ModuleVarsDeclarations() #module_name)

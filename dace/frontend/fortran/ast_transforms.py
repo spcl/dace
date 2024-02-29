@@ -589,7 +589,7 @@ class CallToArray(NodeTransformer):
             raise ValueError("Call_Expr_Node name is None")
             return ast_internal_classes.Char_Literal_Node(value="Error!", type="CHARACTER")
 
-        if node.name.name in self.excepted_funcs or node.name in self.funcs.names:
+        if node.name.name in self.excepted_funcs or node.name in self.funcs.names or node.name.name in self.funcs.iblocks:
             processed_args = []
             for i in node.args:
                 arg = CallToArray(self.funcs).visit(i)
@@ -597,7 +597,7 @@ class CallToArray(NodeTransformer):
             node.args = processed_args
             return node
         indices = [CallToArray(self.funcs).visit(i) for i in node.args]
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=indices, line_number=node.line_number)
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=indices, line_number=node.line_number)
 
 
 class ArgumentExtractorNodeLister(NodeVisitor):
@@ -1004,9 +1004,9 @@ class ScopeVarsDeclarations(NodeVisitor):
         if hasattr(ast, "module_declarations"):
             self.module_declarations = ast.module_declarations
         else:
-            self.module_declarations = {}    
+            self.module_declarations = {}
 
-    def get_var(self, scope: ast_internal_classes.FNode, variable_name: str) -> ast_internal_classes.FNode:
+    def get_var(self, scope: Union[ast_internal_classes.FNode, str], variable_name: str) -> ast_internal_classes.FNode:
 
         if self.contains_var(scope, variable_name):
             return self.scope_vars[(self._scope_name(scope), variable_name)]
@@ -1027,6 +1027,8 @@ class ScopeVarsDeclarations(NodeVisitor):
     def _scope_name(self, scope: ast_internal_classes.FNode) -> str:
         if isinstance(scope, ast_internal_classes.Main_Program_Node):
             return scope.name.name.name
+        elif isinstance(scope, str):
+            return scope
         else:
             return scope.name.name
 
@@ -1121,7 +1123,7 @@ class IndexExtractor(NodeTransformer):
                 tmp = tmp + 1
         self.count = tmp
 
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, indices=new_indices, line_number=node.line_number)
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=new_indices, line_number=node.line_number)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []
@@ -1959,6 +1961,58 @@ class TypeInterference(NodeTransformer):
 
         return node
 
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
+        node.type = self.scope_vars.get_var(node.parent, node.name.name).type
+        return node
+
+    def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
+
+        self.visit(node.expr)
+        node.type = node.expr.type
+        return node
+
+    def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
+
+        """
+            Simple implementation of type promotion in binary ops.
+        """
+
+        self.visit(node.lval)
+        self.visit(node.rval)
+
+        type_hierarchy = [
+            'VOID',
+            'BOOL',
+            'INTEGER',
+            'REAL',
+            'DOUBLE'
+        ]
+
+        def find_idx(node):
+
+            if isinstance(node, ast_internal_classes.Int_Literal_Node):
+                return type_hierarchy.index('INTEGER')
+            elif isinstance(node, ast_internal_classes.Real_Literal_Node):
+                return type_hierarchy.index('REAL')
+            elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
+                return type_hierarchy.index('BOOL')
+            else:
+                return type_hierarchy.index(node.type)
+
+        idx_left = find_idx(node.lval)
+        idx_right = find_idx(node.rval)
+        idx_void = type_hierarchy.index('VOID')
+
+        if idx_left == idx_void and idx_right == idx_void:
+            print(type(node.lval))
+            print(type(node.lval))
+        
+        assert idx_left != idx_void or idx_right != idx_void
+
+        node.type = type_hierarchy[max(idx_left, idx_right)]
+        return node
+
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
         if node.type != 'VOID':
@@ -1973,64 +2027,90 @@ class TypeInterference(NodeTransformer):
 class ReplaceInterfaceBlocks(NodeTransformer):
     """
     """
-    def __init__(self, funcs: FindFunctionAndSubroutines):
+    def __init__(self, program, funcs: FindFunctionAndSubroutines):
         self.funcs = funcs
+
+        ParentScopeAssigner().visit(program)
+        self.scope_vars = ScopeVarsDeclarations(program)
+        self.scope_vars.visit(program)
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
-        is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
-        is_interface_func = not is_func and node.name.name in self.funcs.iblocks
-        
-        if is_func or is_interface_func:
+        #is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
+        is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
 
-            if is_interface_func:
+        print(node.name, is_interface_func)
 
-                available_names = []
-                print("Invoke", node.name.name, available_names)
-                for name in self.funcs.iblocks[node.name.name]:
+        if is_interface_func:
 
-                    non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
+            available_names = []
+            print("Invoke", node.name.name, available_names)
+            for name in self.funcs.iblocks[node.name.name]:
 
-                    success = True
-                    for call_arg, func_arg in zip(node.args[0:non_optional_args], self.funcs.nodes[name].args[0:non_optional_args]):
-                        if call_arg.type != func_arg.type:
-                            print(f"Ignore {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
-                            success = False
-                            break
-                        else:
-                            print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
+                print("Check", name)
 
-                    #if len(self.funcs.nodes[name].args) != len(node.args):
-                    #    print(f"Ignore {name}, wrong param number {len(node.args)} instead of {len(self.funcs.nodes[name].args)}")
-                    #    continue
+                non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
 
-                    #for idx, func_arg in node.args:
-                    #    if call_arg.type != func_arg.type:
-                    #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
-                    #        success = False
-                    #        break
+                success = True
+                for call_arg, func_arg in zip(node.args[0:non_optional_args], self.funcs.nodes[name].args[0:non_optional_args]):
+                    if call_arg.type != func_arg.type:
+                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
+                        success = False
+                        break
+                    else:
+                        print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
 
-                    ## compare optional args
-                    #for idx, func_arg in node.args:
-                    #    pass
-                    #    #if isinstance()
+                optional_args = self.funcs.nodes[name].args[non_optional_args:]
+                pos = non_optional_args
+                for idx, call_arg in enumerate(node.args[non_optional_args:]):
 
-                    #for call_arg, func_arg in zip(node.args, self.funcs.nodes[name].args):
-                    #    if call_arg.type != func_arg.type:
-                    #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
-                    #        success = False
-                    #        break
+                    print(call_arg, type(call_arg))
+                    if isinstance(call_arg, ast_internal_classes.Actual_Arg_Spec_Node):
+                        func_arg_name = call_arg.arg_name
+                        func_arg = self.scope_vars.get_var(name, func_arg_name.name)
+                        print('btw', func_arg, type(func_arg), func_arg.type)
+                    else:
+                        func_arg = optional_args[pos + idx]
 
-                    if success:
-                        available_names.append(name)
+                    if call_arg.type != func_arg.type:
+                        print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
+                        success = False
+                        break
+                    else:
+                        print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
 
-                if len(available_names) == 0:
-                    raise RuntimeError("No matching function calls!")
+                #if len(self.funcs.nodes[name].args) != len(node.args):
+                #    print(f"Ignore {name}, wrong param number {len(node.args)} instead of {len(self.funcs.nodes[name].args)}")
+                #    continue
 
-                if len(available_names) != 1:
-                    print(node.name.name, available_names)
-                    raise RuntimeError("Too many matching function calls!")
+                #for idx, func_arg in node.args:
+                #    if call_arg.type != func_arg.type:
+                #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
+                #        success = False
+                #        break
 
-                node.name = available_names[0]
+                ## compare optional args
+                #for idx, func_arg in node.args:
+                #    pass
+                #    #if isinstance()
+
+                #for call_arg, func_arg in zip(node.args, self.funcs.nodes[name].args):
+                #    if call_arg.type != func_arg.type:
+                #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
+                #        success = False
+                #        break
+
+                if success:
+                    available_names.append(name)
+
+            if len(available_names) == 0:
+                raise RuntimeError("No matching function calls!")
+
+            if len(available_names) != 1:
+                print(node.name.name, available_names)
+                raise RuntimeError("Too many matching function calls!")
+
+            print(f"Selected {available_names[0]} as invocation for {node.name}")
+            node.name = available_names[0]
 
         return node
