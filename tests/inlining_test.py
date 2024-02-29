@@ -130,7 +130,7 @@ def test_multistate_inline():
 
     A = np.random.rand(20)
     expected = np.copy(A)
-    sdfg(expected)
+    outerprog.f(expected)
 
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
@@ -156,7 +156,7 @@ def test_multistate_inline_samename():
 
     A = np.random.rand(20)
     expected = np.copy(A)
-    sdfg(expected)
+    outerprog.f(expected)
 
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
@@ -200,7 +200,7 @@ def test_multistate_inline_outer_dependencies():
     B = np.random.rand(20)
     expected_a = np.copy(A)
     expected_b = np.copy(B)
-    sdfg(expected_a, expected_b)
+    outerprog.f(expected_a, expected_b)
 
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
@@ -240,7 +240,7 @@ def test_multistate_inline_concurrent_subgraphs():
     expected_a = np.copy(A)
     expected_b = np.copy(B)
     expected_c = np.copy(C)
-    sdfg(expected_a, expected_b, expected_c)
+    outerprog.f(expected_a, expected_b, expected_c)
 
     from dace.transformation.interstate import InlineMultistateSDFG
     applied = sdfg.apply_transformations(InlineMultistateSDFG)
