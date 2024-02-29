@@ -25,6 +25,7 @@ from numpy import float64 as fl
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
 import networkx as nx
+from dace.frontend.fortran import ast_transforms
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,

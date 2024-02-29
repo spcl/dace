@@ -16,7 +16,7 @@ from dace import dtypes
 from dace import subsets as subs
 from dace import Language as lang
 from dace import data as dat
-from dace import SDFG, InterstateEdge, Memlet, pointer, nodes
+from dace import SDFG, InterstateEdge, Memlet, pointer, nodes, SDFGState
 from dace import symbolic as sym
 from copy import deepcopy as dpcp
 
@@ -31,6 +31,32 @@ import os
 from os import path
 from shutil import copyfile
 import networkx as nx
+
+
+def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str):
+                            if not structures.is_struct(decl.type):
+                                return
+
+                            struct_type = structures.get_definition(decl.type)
+
+                            for var, var_type in struct_type.vars.items():
+
+                                if structures.is_struct(var_type.type):
+                                    add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}.{var_type.name}")
+
+                                if var_type.sizes is None or len(var_type.sizes) == 0:
+                                    continue    
+
+                                # for assumed shape, all vars starts with the same prefix
+                                for size in var_type.sizes:
+                                  if isinstance(size, ast_internal_classes.Name_Node) and  size.name.startswith('__f2dace_ARRAY'):
+                                    
+
+                                    for edge in sdfg.in_edges(assign_state):
+                                        
+                                            if hasattr(size, "name"):
+                                                edge.data.assignments[size.name] = f"{name}.{size.name}"    
+
 
 class AST_translator:
     """  
@@ -239,24 +265,8 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            if not self.structures.is_struct(decl.type):
-                                continue
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
 
-                            struct_type = self.structures.get_definition(decl.type)
-
-                            for var, var_type in struct_type.vars.items():
-
-                                if var_type.sizes is None or len(var_type.sizes) == 0:
-                                    continue
-
-                                # for assumed shape, all vars starts with the same prefix
-                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
-                                    continue
-
-                                for edge in sdfg.in_edges(assign_state):
-                                    for size in var_type.sizes:
-                                        if hasattr(size, "name"):
-                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"     
             self.translate(node.main_program.execution_part.execution, sdfg)
         else: 
             if self.startpoint is None:
@@ -277,26 +287,9 @@ class AST_translator:
 
                         ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
-
                         for decl in i.vardecl:
-                            if not self.structures.is_struct(decl.type):
-                                continue
-
-                            struct_type = self.structures.get_definition(decl.type)
-
-                            for var, var_type in struct_type.vars.items():
-
-                                if var_type.sizes is None or len(var_type.sizes) == 0:
-                                    continue
-
-                                # for assumed shape, all vars starts with the same prefix
-                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
-                                    continue
-
-                                for edge in sdfg.in_edges(assign_state):
-                                    for size in var_type.sizes:
-                                        if hasattr(size, "name"):
-                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"     
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
+    
                 self.transient_mode=True    
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
 
@@ -1512,24 +1505,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            if not self.structures.is_struct(decl.type):
-                                continue
-
-                            struct_type = self.structures.get_definition(decl.type)
-
-                            for var, var_type in struct_type.vars.items():
-
-                                if var_type.sizes is None or len(var_type.sizes) == 0:
-                                    continue
-
-                                # for assumed shape, all vars starts with the same prefix
-                                if isinstance(var_type.sizes[0], ast_internal_classes.Var_Decl_Node) and not var_type.sizes[0].name.startswith('__f2dace_ARRAY'):
-                                    continue
-
-                                for edge in new_sdfg.in_edges(assign_state):
-                                    for size in var_type.sizes:
-                                        if hasattr(size, "name"):
-                                            edge.data.assignments[size.name] = f"{decl.name}.{size.name}"
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
     
                 for i in assigns:
                         self.translate(i, new_sdfg)
@@ -2884,7 +2860,22 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                     print("We can delete this member")
                     program=ast_transforms.StructPointerEliminator(name,member,point_name).visit(program)
                 
+    structs_lister=ast_transforms.StructLister()
+    structs_lister.visit(program)
+    struct_dep_graph=nx.DiGraph()
+    for i,name in zip(structs_lister.structs,structs_lister.names):
+        if name not in struct_dep_graph.nodes:
+            struct_dep_graph.add_node(name)
+        struct_deps_finder=ast_transforms.StructDependencyLister(structs_lister.names)
+        struct_deps_finder.visit(i)
+        struct_deps=struct_deps_finder.structs_used
+        print(struct_deps)
+        for j,pointing,point_name in zip(struct_deps,struct_deps_finder.is_pointer,struct_deps_finder.pointer_names):
+            if j not in struct_dep_graph.nodes:
+                struct_dep_graph.add_node(j)
+            struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
+    program.structures = ast_transforms.Structures(structs_lister.structs)
     program.tables=partial_ast.symbols
     program.placeholders=partial_ast.placeholders
     program.functions_and_subroutines=partial_ast.functions_and_subroutines
