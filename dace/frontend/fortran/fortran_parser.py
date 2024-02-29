@@ -51,11 +51,15 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                 for size in var_type.sizes:
                                   if isinstance(size, ast_internal_classes.Name_Node) and  size.name.startswith('__f2dace_ARRAY'):
                                     
-
-                                    for edge in sdfg.in_edges(assign_state):
-                                        
-                                            if hasattr(size, "name"):
-                                                edge.data.assignments[size.name] = f"{name}.{size.name}"    
+                                    for state in sdfg.nodes():
+                                        if state.name == assign_state.name:
+                                            for edge in sdfg.in_edges(state):
+                                                
+                                                if hasattr(size, "name"):
+                                                    if sdfg.symbols.get(size.name) is None:
+                                                        sdfg.add_symbol(size.name, dtypes.int32)
+                                                    edge.data.assignments[size.name] = f"{name}.{size.name}"    
+                                            break        
 
 
 class AST_translator:
@@ -1505,7 +1509,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, new_sdfg, assign_state, decl.name)
     
                 for i in assigns:
                         self.translate(i, new_sdfg)
@@ -2899,8 +2903,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            #if j.name.name!="velocity_tendencies":
-            if j.name.name!="cells2verts_scalar_ri":
+            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
