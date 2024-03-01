@@ -32,6 +32,33 @@ from os import path
 from shutil import copyfile
 import networkx as nx
 
+def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain=[]):    
+    for i in datatype_to_add.members:
+        current_dtype=datatype_to_add.members[i].dtype
+        for other_type in registered_types:
+            if current_dtype.dtype==registered_types[other_type].dtype:
+                other_type_obj=registered_types[other_type]
+                add_views_recursive(sdfg,name,other_type_obj,struct_views,name_mapping,registered_types,chain=chain+[i])
+                #for j in other_type_obj.members:
+                #    sdfg.add_view(name_mapping[name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                #    name_mapping[name + "_" + i +"_"+ j] = name_mapping[name] + "_" + i +"_"+ j
+                #    struct_views[name_mapping[name] + "_" + i+"_"+ j]=[name_mapping[name],i,j]
+        if len(chain)>0:
+            join_chain="_"+"_".join(chain)
+        else:
+            join_chain="" 
+        current_member=datatype_to_add.members[i]    
+        
+        if str(datatype_to_add.members[i].dtype.base_type) in registered_types: 
+            print(i)   
+            print(datatype_to_add.members[i].dtype.base_type)
+
+            view_to_member = dat.View.view(datatype_to_add.members[i])
+            sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
+        else:    
+            sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+        name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
+        struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
 
 def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str):
                             if not structures.is_struct(decl.type):
@@ -1006,18 +1033,8 @@ class AST_translator:
                                 
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
-                                for i in datatype_to_add.members:
-                                    current_dtype=datatype_to_add.members[i].dtype
-                                    for other_type in self.registered_types:
-                                        if current_dtype.dtype==self.registered_types[other_type].dtype:
-                                            other_type_obj=self.registered_types[other_type]
-                                            for j in other_type_obj.members:
-                                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                                                self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
-                                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
-                                    new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-                                    self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
-                                    self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[])    
+                                
                             else:
                                 new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)            
                         else:
@@ -1126,18 +1143,8 @@ class AST_translator:
                                 
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
-                                for i in datatype_to_add.members:
-                                    current_dtype=datatype_to_add.members[i].dtype
-                                    for other_type in self.registered_types:
-                                        if current_dtype.dtype==self.registered_types[other_type].dtype:
-                                            other_type_obj=self.registered_types[other_type]
-                                            for j in other_type_obj.members:
-                                                new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                                                self.name_mapping[new_sdfg][local_name.name + "_" + i +"_"+ j] = self.name_mapping[new_sdfg][local_name.name] + "_" + i +"_"+ j
-                                                self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i+"_"+ j]=[self.name_mapping[new_sdfg][local_name.name],j]
-                                    new_sdfg.add_view(self.name_mapping[new_sdfg][local_name.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-                                    self.name_mapping[new_sdfg][local_name.name + "_" + i] = self.name_mapping[new_sdfg][local_name.name] + "_" + i
-                                    self.struct_views[new_sdfg][self.name_mapping[new_sdfg][local_name.name] + "_" + i]=[self.name_mapping[new_sdfg][local_name.name],i]
+                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[])        
+                                
                             else:
                                 new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
                         else:
@@ -1585,8 +1592,16 @@ class AST_translator:
             if self.struct_views.get(sdfg) is not None:
               if self.struct_views[sdfg].get(i) is not None:
                 chain= self.struct_views[sdfg][i]
-                access=substate.add_access(chain[0])
-                substate.add_edge(access, None,src,'views',  Memlet(data=chain[0], subset=memlet_range))
+                access_parent=substate.add_access(chain[0])
+                name=chain[0]
+                for i in range(1,len(chain)):
+                    view_name=name+"_"+chain[i]
+                    access_child=substate.add_access(view_name)
+                    substate.add_edge(access_parent, None,access_child, 'views',  Memlet.simple(name+"."+chain[i],subs.Range.from_array(sdfg.arrays[view_name])))
+                    name=view_name
+                    access_parent=access_child
+                
+                substate.add_edge(access_parent, None,src,'views',  Memlet(data=name, subset=memlet_range))
 
 
         for i, j, k in zip(output_names, output_names_tasklet, output_names_changed):
@@ -1799,18 +1814,19 @@ class AST_translator:
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
-                for i in datatype_to_add.members:
-                    current_dtype=datatype_to_add.members[i].dtype
-                    for other_type in self.registered_types:
-                        if current_dtype.dtype==self.registered_types[other_type].dtype:
-                            other_type_obj=self.registered_types[other_type]
-                            for j in other_type_obj.members:
-                                sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
-                                self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
-                                self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
-                    sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-                    self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
-                    self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
+                add_views_recursive(sdfg,node.name,datatype_to_add,self.struct_views[sdfg],self.name_mapping[sdfg],self.registered_types,[])        
+                # for i in datatype_to_add.members:
+                #     current_dtype=datatype_to_add.members[i].dtype
+                #     for other_type in self.registered_types:
+                #         if current_dtype.dtype==self.registered_types[other_type].dtype:
+                #             other_type_obj=self.registered_types[other_type]
+                #             for j in other_type_obj.members:
+                #                 sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
+                #                 self.name_mapping[sdfg][node.name + "_" + i +"_"+ j] = self.name_mapping[sdfg][node.name] + "_" + i +"_"+ j
+                #                 self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i+"_"+ j]=[self.name_mapping[sdfg][node.name],j]
+                #     sdfg.add_view(self.name_mapping[sdfg][node.name] + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+                #     self.name_mapping[sdfg][node.name + "_" + i] = self.name_mapping[sdfg][node.name] + "_" + i
+                #     self.struct_views[sdfg][self.name_mapping[sdfg][node.name] + "_" + i]=[self.name_mapping[sdfg][node.name],i]
 
             else:
                 sdfg.add_scalar(self.name_mapping[sdfg][node.name], dtype=datatype, transient=transient)
@@ -2903,8 +2919,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            if j.name.name!="velocity_tendencies":
-            #if j.name.name!="cells2verts_scalar_ri":
+            #if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
+            if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
