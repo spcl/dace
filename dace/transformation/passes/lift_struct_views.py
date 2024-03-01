@@ -208,22 +208,23 @@ class LiftStructViews(ppl.Pass):
         results = dict()
 
         lifted_something = False
-        for state in sdfg.states():
-            for node in state.data_nodes():
-                container = sdfg.data(node.data)
-                if (isinstance(container, dt.Structure) or
-                    (isinstance(container, dt.ContainerView) and
-                     isinstance(container.stype, dt.Structure))):
-                    for oedge in state.out_edges(node):
-                        if isinstance(oedge.dst, nd.Tasklet):
-                            self._lift_tasklet_accesses(state, node, oedge.dst, oedge, container, oedge.dst_conn,
-                                                        'in')
-                            lifted_something = True
-                    for iedge in state.in_edges(node):
-                        if isinstance(iedge.src, nd.Tasklet):
-                            self._lift_tasklet_accesses(state, node, iedge.src, iedge, container, iedge.src_conn,
-                                                        'out')
-                            lifted_something = True
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.data_nodes():
+                    container = nsdfg.data(node.data)
+                    if (isinstance(container, dt.Structure) or
+                        (isinstance(container, dt.ContainerView) and
+                        isinstance(container.stype, dt.Structure))):
+                        for oedge in state.out_edges(node):
+                            if isinstance(oedge.dst, nd.Tasklet):
+                                self._lift_tasklet_accesses(state, node, oedge.dst, oedge, container, oedge.dst_conn,
+                                                            'in')
+                                lifted_something = True
+                        for iedge in state.in_edges(node):
+                            if isinstance(iedge.src, nd.Tasklet):
+                                self._lift_tasklet_accesses(state, node, iedge.src, iedge, container, iedge.src_conn,
+                                                            'out')
+                                lifted_something = True
 
         if not lifted_something:
             return None
