@@ -268,7 +268,7 @@ class TacoTIN(transformation.ExpandTransformation):
 
         args.extend(node.extra_taco_args)
 
-        print(f"DEBUG {args}")
+        # print(f"DEBUG {args}")
 
         popen = subprocess.Popen(args, stdout=subprocess.PIPE)
         popen.wait()
@@ -326,9 +326,6 @@ def gemv_libnode(
 ):
     
     extra_taco_args = [arg.value for arg in extra_taco_args]
-    
-    print(f"DEBUG {extra_taco_args=}")
-    print(f"DEBUG {kwargs=}")
 
     tin_expr: str = tin_expr.value
     output_name = tin_expr.split("(", 1)[0]
