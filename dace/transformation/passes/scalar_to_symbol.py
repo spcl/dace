@@ -186,6 +186,9 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
+                    if edge.src.has_side_effects(sdfg):
+                        candidates.remove(candidate)
+                        continue
                     if cb.language is dtypes.Language.Python:
                         if (len(cb.code) > 1 or not isinstance(cb.code[0], ast.Assign)):
                             candidates.remove(candidate)
