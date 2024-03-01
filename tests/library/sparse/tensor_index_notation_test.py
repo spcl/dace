@@ -227,6 +227,44 @@ def test_basic_mm():
     print("basic mm: SUCCESS")
 
 
+def test_basic_mm_double():
+    M, K, N, nnz = (dace.symbol(s) for s in ("M", "K", "N", "nnz"))
+
+    CSR = Tensor.CSR((M, K), nnz, dtype=dace.float64)
+
+    @dace.program
+    def tin_mm_csr_double(A: dace.float64[M, N], B: CSR, C: dace.float64[K, N]):
+        TensorIndexNotation("test", "A(i,j) = B(i,k) * C(k,j)", A=A, B=B, C=C)
+
+    sdfg = tin_mm_csr_double.to_sdfg()
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.apply_transformations_repeated(InlineSDFG)
+
+    func = sdfg.compile()
+
+    rng = np.random.default_rng(42)
+    B = sparse.random(
+        20, 30, density=0.1, format="csr", dtype=np.float64, random_state=rng
+    )
+    C = rng.random((30, 40), dtype=np.float64)
+    A = np.zeros((20, 40), dtype=np.float64)
+
+    inpB = CSR.dtype._typeclass.as_ctypes()(
+        order=2,
+        dim_sizes=0,
+        values=B.data.__array_interface__["data"][0],
+        idx1_pos=B.indptr.__array_interface__["data"][0],
+        idx1_crd=B.indices.__array_interface__["data"][0],
+    )
+
+    func(A=A, B=inpB, C=C, N=40, M=20, K=30, nnz=B.nnz)
+    ref = B.dot(C)
+
+    assert np.allclose(A, ref)
+    print("basic mm double: SUCCESS")
+
+
 def test_basic_spmv():
     M, N, nnz = (dace.symbol(s) for s in ("M", "N", "nnz"))
 
@@ -339,7 +377,8 @@ def test_mttkrp():
 
 if __name__ == "__main__":
     # test_basic_spmv()
-    # test_basic_mm()
+    test_basic_mm()
+    test_basic_mm_double()
     # test_mm({'B': 'dense', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'csr', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'dense', 'C': 'csc', 'A': 'dense'})
@@ -350,5 +389,5 @@ if __name__ == "__main__":
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'dense'})
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csr'}) # taco generates incorrect code
     # test_mm({'B': 'csc', 'C': 'csr', 'A': 'csc'}) # taco generates incorrect code
-    test_multiple_mm()
+    # test_multiple_mm()
     # test_mttkrp()

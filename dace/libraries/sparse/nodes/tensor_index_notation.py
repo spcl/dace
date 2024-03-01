@@ -75,7 +75,7 @@ class TacoTIN(transformation.ExpandTransformation):
             t_name = str(e.dst_conn)[4:]
             t = f"{t_name}_tensor"
 
-            args.append(f"-t={t_name}:float")
+            tensor_dtype = None
 
             # generating taco build flags
             if isinstance(desc, Tensor):
@@ -86,6 +86,7 @@ class TacoTIN(transformation.ExpandTransformation):
                         )
 
                 order = len(desc.tensor_shape)
+                tensor_dtype = desc.value_dtype
 
                 encoding = (
                     "".join([str(idx)[0] for idx in desc.indices])
@@ -127,6 +128,7 @@ class TacoTIN(transformation.ExpandTransformation):
                 )
             else:
                 order = len(desc.shape)
+                tensor_dtype = desc.dtype
                 tensor_init_code += (
                     f"// init dense input tensor {t_name}\n"
                     f"int32_t {t}_dims[] = {{{', '.join([str(s) for s in desc.shape])}}};\n"
@@ -139,6 +141,13 @@ class TacoTIN(transformation.ExpandTransformation):
                     f"// deinit dense input tensor {t_name}\n"
                     f"deinit_taco_tensor_t({t});\n"
                 )
+
+            if tensor_dtype == dtypes.float32:
+                args.append(f"-t={t_name}:float")
+            elif tensor_dtype == dtypes.float64:
+                args.append(f"-t={t_name}:double")
+            else:
+                assert False
 
             tensor_init_code += "\n"
             tensor_deinit_code += "\n"
@@ -161,7 +170,7 @@ class TacoTIN(transformation.ExpandTransformation):
             t_name = str(e.src_conn)[4:]
             t = f"{t_name}_tensor"
 
-            args.append(f"-t={t_name}:float")
+            tensor_dtype = None
 
             # generating taco build flags
             if isinstance(desc, Tensor):
@@ -172,6 +181,7 @@ class TacoTIN(transformation.ExpandTransformation):
                         )
 
                 order = len(desc.tensor_shape)
+                tensor_dtype = desc.value_dtype
 
                 encoding = (
                     "".join([str(idx)[0] for idx in desc.indices])
@@ -221,6 +231,7 @@ class TacoTIN(transformation.ExpandTransformation):
             else:
                 output_dense = True
                 order = len(desc.shape)
+                tensor_dtype = desc.dtype
                 tensor_init_code += (
                     f"// init dense output tensor {t_name}\n"
                     f"int32_t {t}_dims[] = {{{', '.join([str(s) for s in desc.shape])}}};\n"
@@ -233,6 +244,13 @@ class TacoTIN(transformation.ExpandTransformation):
                     f"// deinit dense output tensor {t_name}\n"
                     f"deinit_taco_tensor_t({t});\n"
                 )
+
+            if tensor_dtype == dtypes.float32:
+                args.append(f"-t={t_name}:float")
+            elif tensor_dtype == dtypes.float64:
+                args.append(f"-t={t_name}:double")
+            else:
+                assert False
 
             tensor_init_code += "\n"
             tensor_deinit_code += "\n"
@@ -247,7 +265,6 @@ class TacoTIN(transformation.ExpandTransformation):
                 storage=desc.storage,
             )
             outputs[e.src_conn] = state.add_access(e.src_conn)
-
 
         args.extend(node.extra_taco_args)
 
