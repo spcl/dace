@@ -479,9 +479,17 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
-                state_id, node)
+            
+            # NOTE: Special case: double pointer
+            ctype_str = nodedesc.dtype.ctype
+            format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
+            if (isinstance(nodedesc.dtype, dtypes.pointer) and
+                isinstance(nodedesc.dtype.base_type, (dtypes.pointer, dtypes.struct))):
+                ctype_str = nodedesc.dtype.base_type.ctype
+                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"    
+            
+            allocation_stream.write(format_str.format(name=alloc_name, ctype=ctype_str, size=cpp.sym2cpp(arrsize)),
+                                    sdfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
