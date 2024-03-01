@@ -83,6 +83,9 @@ def parse_csr(data, M, N):
     val_ptr = ctypes.cast(data.values, ctypes.POINTER(ctypes.c_float))
 
     pos = np.ctypeslib.as_array(pos_ptr, shape=(M + 1,))
+    if pos[-1] == 0:
+        return np.zeros((M, N), np.float32)
+
     crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
     val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
 
@@ -95,6 +98,9 @@ def parse_csc(data, M, N):
     val_ptr = ctypes.cast(data.values, ctypes.POINTER(ctypes.c_float))
 
     pos = np.ctypeslib.as_array(pos_ptr, shape=(N + 1,))
+    if pos[-1] == 0:
+        return np.zeros((M, N), np.float32)
+
     crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
     val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
 
@@ -265,6 +271,71 @@ def test_basic_mm_double():
     print("basic mm double: SUCCESS")
 
 
+def test_basic_mm_csr_csc_csr_param():
+    M, K, N, nnz = (dace.symbol(s) for s in ("M", "K", "N", "nnz"))
+
+    CSR = Tensor.CSR((M, K), nnz)
+    CSC = Tensor.CSC((K, N), nnz)
+    CSR_out = Tensor.CSR((M, N), nnz)
+
+    @dace.program
+    def tin_mm_csr_csc_param(A: CSR_out, B: CSR, C: CSC):
+        TensorIndexNotation(
+            "test",
+            "A(i,j) = B(i,k) * C(k,j)",
+            ["-s=reorder(i,j,k)", '-s=assemble(A,Insert)'],
+            A=A,
+            B=B,
+            C=C,
+        )
+
+    sdfg = tin_mm_csr_csc_param.to_sdfg()
+
+    sdfg.expand_library_nodes(recursive=True)
+    sdfg.apply_transformations_repeated(InlineSDFG)
+
+    func = sdfg.compile()
+
+    rng = np.random.default_rng(42)
+    B = sparse.random(
+        20, 30, density=0.1, format="csr", dtype=np.float32, random_state=rng
+    )
+    C = sparse.random(
+        30, 40, density=0.1, format="csc", dtype=np.float32, random_state=rng
+    )
+    # A = np.zeros((20, 40), dtype=np.float32)
+
+    inpB = CSR.dtype._typeclass.as_ctypes()(
+        order=2,
+        dim_sizes=0,
+        values=B.data.__array_interface__["data"][0],
+        idx1_pos=B.indptr.__array_interface__["data"][0],
+        idx1_crd=B.indices.__array_interface__["data"][0],
+    )
+    inpC = CSR.dtype._typeclass.as_ctypes()(
+        order=2,
+        dim_sizes=0,
+        values=C.data.__array_interface__["data"][0],
+        idx1_pos=C.indptr.__array_interface__["data"][0],
+        idx1_crd=C.indices.__array_interface__["data"][0],
+    )
+    inpA = CSR_out.dtype._typeclass.as_ctypes()(
+        order=2,
+        dim_sizes=0,
+        values=C.data.__array_interface__["data"][0],
+        idx1_pos=C.indptr.__array_interface__["data"][0],
+        idx1_crd=C.indices.__array_interface__["data"][0],
+    )
+
+    func(A=inpA, B=inpB, C=inpC, N=40, M=20, K=30, nnz=B.nnz)
+
+    A = parse_data(inpA, 20, 40, "csr")
+    ref = B.dot(C).toarray()
+
+    assert np.allclose(A, ref)
+    print("mm CSR x CSC (with tuning): SUCCESS")
+
+
 def test_basic_spmv():
     M, N, nnz = (dace.symbol(s) for s in ("M", "N", "nnz"))
 
@@ -377,8 +448,9 @@ def test_mttkrp():
 
 if __name__ == "__main__":
     # test_basic_spmv()
-    test_basic_mm()
-    test_basic_mm_double()
+    # test_basic_mm()
+    # test_basic_mm_double()
+    test_basic_mm_csr_csc_csr_param()
     # test_mm({'B': 'dense', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'csr', 'C': 'dense', 'A': 'dense'})
     # test_mm({'B': 'dense', 'C': 'csc', 'A': 'dense'})

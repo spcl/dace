@@ -68,6 +68,12 @@ class TacoTIN(transformation.ExpandTransformation):
         tensor_init_code = "// INIT\n"
         tensor_deinit_code = "// DE-INIT\n"
 
+        PROFILE = False
+
+        if PROFILE:
+            tensor_init_code += "auto __tin_init = std::chrono::high_resolution_clock::now();\n"
+            tensor_deinit_code+= "auto __tin_end = std::chrono::high_resolution_clock::now();\n"
+
         for e in parent_state.in_edges(node):
             desc = parent_sdfg.arrays[e.data.data]
             # print(f"DEBUG input {e.dst_conn} of type {desc} {type(desc)}")
@@ -293,6 +299,14 @@ class TacoTIN(transformation.ExpandTransformation):
         tensor_order = tensor_order.split(")")[0]
         tensor_order = tensor_order.split(",")
         tensor_order = [f"{t.split('*')[1]}_tensor" for t in tensor_order]
+
+        if PROFILE:
+            tensor_init_code+= "auto __tin_begin = std::chrono::high_resolution_clock::now();\n"
+            tensor_deinit_code+= "auto __tin_deinit = std::chrono::high_resolution_clock::now();\n"
+            tensor_deinit_code += "const std::chrono::duration<double> _tin_init = __tin_begin - __tin_init;\n"
+            tensor_deinit_code += "const std::chrono::duration<double> _tin_run = __tin_end - __tin_begin;\n"
+            tensor_deinit_code += "const std::chrono::duration<double> _tin_deinit = __tin_deinit - __tin_end;\n"
+            tensor_deinit_code+= f'printf("{node.name}: init: %f ms; run: %f ms; deinit: %f ms;\\n", _tin_init * 1000, _tin_run * 1000, _tin_deinit * 1000);\n'
 
         code = f"""{tensor_init_code}{node.name}_{"compute" if output_dense else "evaluate"}({', '.join(tensor_order)});
         
