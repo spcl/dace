@@ -621,7 +621,7 @@ class ArgumentExtractorNodeLister(NodeVisitor):
                 "malloc", "pow", "cbrt", "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()
         ]:
             for i in node.args:
-                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node):
+                if isinstance(i, ast_internal_classes.Name_Node) or isinstance(i, ast_internal_classes.Literal) or isinstance(i, ast_internal_classes.Array_Subscript_Node) or isinstance(i, ast_internal_classes.Data_Ref_Node) or isinstance(i, ast_internal_classes.Actual_Arg_Spec_Node):
                     continue
                 else:
                     self.nodes.append(i)
@@ -662,10 +662,10 @@ class ArgumentExtractor(NodeTransformer):
                                                    line_number=node.line_number)
         for i, arg in enumerate(node.args):
             # Ensure we allow to extract function calls from arguments
-            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node):
+            if isinstance(arg, ast_internal_classes.Name_Node) or isinstance(arg, ast_internal_classes.Literal) or isinstance(arg, ast_internal_classes.Array_Subscript_Node) or isinstance(arg, ast_internal_classes.Data_Ref_Node) or isinstance(arg, ast_internal_classes.Actual_Arg_Spec_Node):
                 result.args.append(arg)
             else:
-                result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp)))
+                result.args.append(ast_internal_classes.Name_Node(name="tmp_arg_" + str(tmp), type='VOID'))
                 tmp = tmp + 1    
         self.count = tmp
         return result
@@ -682,6 +682,7 @@ class ArgumentExtractor(NodeTransformer):
                     res.pop(res.index(i))
 
             if res is not None:
+
                 # Variables are counted from 0...end, starting from main node, to all calls nested
                 # in main node arguments.
                 # However, we need to define nested ones first.
@@ -697,7 +698,7 @@ class ArgumentExtractor(NodeTransformer):
                     else:
                         var_type = res[i].type
 
-                    newbody.append(
+                    node.parent.specification_part.specifications.append(
                         ast_internal_classes.Decl_Stmt_Node(vardecl=[
                             ast_internal_classes.Var_Decl_Node(
                                 name="tmp_arg_" + str(temp),
@@ -705,7 +706,8 @@ class ArgumentExtractor(NodeTransformer):
                                 sizes=None,
                                 init=None
                             )
-                        ]))
+                        ])
+                    )
                     newbody.append(
                         ast_internal_classes.BinOp_Node(op="=",
                                                         lval=ast_internal_classes.Name_Node(name="tmp_arg_" +
@@ -761,8 +763,11 @@ class FunctionToSubroutineDefiner(NodeTransformer):
     Transforms all function definitions into subroutine definitions
     """
     def visit_Function_Subprogram_Node(self, node: ast_internal_classes.Function_Subprogram_Node):
+
         if node.ret!=None:
             ret=node.ret
+
+        found = False
         if node.specification_part is not None:    
           for j in node.specification_part.specifications:
             
@@ -770,10 +775,31 @@ class FunctionToSubroutineDefiner(NodeTransformer):
                 if node.ret!=None:
                     if k.name == ret.name:
                         j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret"
+                        found = True
                 if k.name == node.name.name:
-                    j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret"
-                    
+                    j.vardecl[j.vardecl.index(k)].name=node.name.name+"__ret" 
+                    found = True
                     break
+
+        if not found:
+
+            var = ast_internal_classes.Var_Decl_Node(
+                name=node.name.name+"__ret",
+                type='VOID'
+            )
+            stmt_node = ast_internal_classes.Decl_Stmt_Node(vardecl=[var], line_number=node.line_number)
+
+            if node.specification_part is not None:
+                node.specification_part.specifications.append(stmt_node)
+            else:
+                node.specification_part = ast_internal_classes.Specification_Part_Node(
+                    specifications=[stmt_node],
+                    symbols=None,
+                    interface_blocks=None,
+                    uses=None,
+                    typedecls=None
+                )
+
         execution_part=NameReplacer(node.name.name,node.name.name+"__ret").visit(node.execution_part)
         if node.ret!=None:
             
@@ -991,6 +1017,11 @@ class ModuleVarsDeclarations(NodeVisitor):
         var_name = node.name
         self.scope_vars[var_name] = node
 
+    def visit_Symbol_Decl_Node(self, node: ast_internal_classes.Symbol_Decl_Node):
+
+        var_name = node.name
+        self.scope_vars[var_name] = node
+
 class ScopeVarsDeclarations(NodeVisitor):
     """
         Creates a mapping (scope name, variable name) -> variable declaration.
@@ -1006,9 +1037,9 @@ class ScopeVarsDeclarations(NodeVisitor):
         else:
             self.module_declarations = {}
 
-    def get_var(self, scope: Union[ast_internal_classes.FNode, str], variable_name: str) -> ast_internal_classes.FNode:
+    def get_var(self, scope: Optional[Union[ast_internal_classes.FNode, str]], variable_name: str) -> ast_internal_classes.FNode:
 
-        if self.contains_var(scope, variable_name):
+        if scope is not None and self.contains_var(scope, variable_name):
             return self.scope_vars[(self._scope_name(scope), variable_name)]
         elif variable_name in self.module_declarations:
             return self.module_declarations[variable_name]
@@ -1019,6 +1050,12 @@ class ScopeVarsDeclarations(NodeVisitor):
         return (self._scope_name(scope), variable_name) in self.scope_vars
 
     def visit_Var_Decl_Node(self, node: ast_internal_classes.Var_Decl_Node):
+
+        parent_name = self._scope_name(node.parent)
+        var_name = node.name
+        self.scope_vars[(parent_name, var_name)] = node
+
+    def visit_Symbol_Decl_Node(self, node: ast_internal_classes.Symbol_Decl_Node):
 
         parent_name = self._scope_name(node.parent)
         var_name = node.name
@@ -1304,7 +1341,7 @@ def optionalArgsHandleFunction(func):
         return 0
     for spec in func.specification_part.specifications:
         for var in spec.vardecl:
-            if var.optional:
+            if hasattr(var, "optional") and var.optional:
                 func.optional_args.append((var.name, var.type))
 
     vardecls = []
@@ -1939,11 +1976,11 @@ class ElementalFunctionExpander(NodeTransformer):
                 newbody.append(self.visit(child))
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
 
-class TypeInterference(NodeTransformer):
+class TypeInference(NodeTransformer):
     """
     """
-    def __init__(self, ast):
-        self.count = 0
+    def __init__(self, ast, assert_voids = True):
+        self.assert_voids = assert_voids
 
         self.ast = ast
         ParentScopeAssigner().visit(ast)
@@ -1989,28 +2026,19 @@ class TypeInterference(NodeTransformer):
             'DOUBLE'
         ]
 
-        def find_idx(node):
-
-            if isinstance(node, ast_internal_classes.Int_Literal_Node):
-                return type_hierarchy.index('INTEGER')
-            elif isinstance(node, ast_internal_classes.Real_Literal_Node):
-                return type_hierarchy.index('REAL')
-            elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
-                return type_hierarchy.index('BOOL')
-            else:
-                return type_hierarchy.index(node.type)
-
-        idx_left = find_idx(node.lval)
-        idx_right = find_idx(node.rval)
+        idx_left = type_hierarchy.index(self._get_type(node.lval))
+        idx_right = type_hierarchy.index(self._get_type(node.rval))
         idx_void = type_hierarchy.index('VOID')
 
-        if idx_left == idx_void and idx_right == idx_void:
-            print(type(node.lval))
-            print(type(node.lval))
-        
-        assert idx_left != idx_void or idx_right != idx_void
+        if self.assert_voids:
+            assert idx_left != idx_void or idx_right != idx_void
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
+        if node.op == '=' and idx_left == idx_void:
+            lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
+            lval_definition.type = node.type
+            node.lval.type = node.type
+
         return node
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
@@ -2023,6 +2051,36 @@ class TypeInterference(NodeTransformer):
         )
         node.type = variable.type
         return node
+
+    def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
+
+        if node.type != 'VOID':
+            return node
+
+        self.visit(node.arg)
+
+        func_arg_name_type = self._get_type(node.arg)
+        if func_arg_name_type == 'VOID':
+
+            func_arg = self.scope_vars.get_var(node.parent, node.arg.name)
+            node.type = func_arg.type
+            node.arg.type = func_arg.type
+
+        else:
+            node.type = func_arg_name_type
+
+        return node
+
+    def _get_type(self, node):
+
+        if isinstance(node, ast_internal_classes.Int_Literal_Node):
+            return 'INTEGER'
+        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
+            return 'REAL'
+        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
+            return 'BOOL'
+        else:
+            return node.type
 
 class ReplaceInterfaceBlocks(NodeTransformer):
     """
@@ -2039,20 +2097,20 @@ class ReplaceInterfaceBlocks(NodeTransformer):
         #is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
         is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
 
-        print(node.name, is_interface_func)
-
         if is_interface_func:
 
             available_names = []
             print("Invoke", node.name.name, available_names)
             for name in self.funcs.iblocks[node.name.name]:
 
-                print("Check", name)
 
-                non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
+                #non_optional_args = len(self.funcs.nodes[name].args) - self.funcs.nodes[name].optional_args_count
+                non_optional_args = self.funcs.nodes[name].mandatory_args_count
+                print("Check", name, non_optional_args, self.funcs.nodes[name].optional_args_count)
 
                 success = True
                 for call_arg, func_arg in zip(node.args[0:non_optional_args], self.funcs.nodes[name].args[0:non_optional_args]):
+                    print("Mandatory arg", call_arg, type(call_arg))
                     if call_arg.type != func_arg.type:
                         print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
                         success = False
@@ -2064,13 +2122,18 @@ class ReplaceInterfaceBlocks(NodeTransformer):
                 pos = non_optional_args
                 for idx, call_arg in enumerate(node.args[non_optional_args:]):
 
-                    print(call_arg, type(call_arg))
+                    print("Optional arg", call_arg, type(call_arg))
                     if isinstance(call_arg, ast_internal_classes.Actual_Arg_Spec_Node):
                         func_arg_name = call_arg.arg_name
-                        func_arg = self.scope_vars.get_var(name, func_arg_name.name)
+                        try:
+                            func_arg = self.scope_vars.get_var(name, func_arg_name.name)
+                        except:
+                            # this keyword parameter is not available in this function
+                            success = False
+                            break
                         print('btw', func_arg, type(func_arg), func_arg.type)
                     else:
-                        func_arg = optional_args[pos + idx]
+                        func_arg = optional_args[idx]
 
                     if call_arg.type != func_arg.type:
                         print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
@@ -2078,27 +2141,6 @@ class ReplaceInterfaceBlocks(NodeTransformer):
                         break
                     else:
                         print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
-
-                #if len(self.funcs.nodes[name].args) != len(node.args):
-                #    print(f"Ignore {name}, wrong param number {len(node.args)} instead of {len(self.funcs.nodes[name].args)}")
-                #    continue
-
-                #for idx, func_arg in node.args:
-                #    if call_arg.type != func_arg.type:
-                #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
-                #        success = False
-                #        break
-
-                ## compare optional args
-                #for idx, func_arg in node.args:
-                #    pass
-                #    #if isinstance()
-
-                #for call_arg, func_arg in zip(node.args, self.funcs.nodes[name].args):
-                #    if call_arg.type != func_arg.type:
-                #        print(f"Ignore {name}, wrong param type {call_arg} instead of {func_arg}")
-                #        success = False
-                #        break
 
                 if success:
                     available_names.append(name)
