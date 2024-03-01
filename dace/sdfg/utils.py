@@ -1310,7 +1310,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sdfg=parent_sdfg,
-                                sdfg_id=parent_sdfg.sdfg_id,
+                                cfg_id=parent_sdfg.sdfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1325,7 +1325,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         }
         inliner = InlineSDFG()
         inliner.setup_match(sdfg=parent_sdfg,
-                            sdfg_id=parent_sdfg.sdfg_id,
+                            cfg_id=parent_sdfg.sdfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
