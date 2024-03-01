@@ -50,8 +50,8 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
         current_member=datatype_to_add.members[i]    
         
         if str(datatype_to_add.members[i].dtype.base_type) in registered_types: 
-            print(i)   
-            print(datatype_to_add.members[i].dtype.base_type)
+            #print(i)   
+            #print(datatype_to_add.members[i].dtype.base_type)
 
             view_to_member = dat.View.view(datatype_to_add.members[i])
             sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
@@ -2920,8 +2920,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri":
-            #if j.name.name!="velocity_tendencies":
-            if j.name.name!="cells2verts_scalar_ri":
+            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
