@@ -2791,8 +2791,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     #program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.CallToArray(functions_and_subroutines_builder).visit(program)
-    program = ast_transforms.TypeInterference(program).visit(program)
-    program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
+    #program = ast_transforms.TypeInterference(program).visit(program)
+    #program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
     program = ast_transforms.CallExtractor().visit(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
@@ -2822,11 +2822,18 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program.function_definitions=[]
     program = ast_transforms.SignToIf().visit(program)
     program = ast_transforms.ArrayToLoop(program).visit(program)
+
+    program = ast_transforms.TypeInference(program, assert_voids = False).visit(program)
+
     print("Before intrinsics")
     for transformation in partial_ast.fortran_intrinsics().transformations():
         transformation.initialize(program)
         program = transformation.visit(program)
     print("After intrinsics")
+
+    program = ast_transforms.TypeInference(program).visit(program)
+    program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
+
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     print("After index extractor")
