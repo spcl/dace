@@ -54,8 +54,13 @@ class IntrinsicNodeTransformer(NodeTransformer):
 
     @staticmethod
     @abstractmethod
-    def func_name(self) -> str:
+    def func_name() -> str:
         pass
+
+    #@staticmethod
+    #@abstractmethod
+    #def transformation_name(self) -> str:
+    #    pass
 
 class DirectReplacement(IntrinsicTransformation):
 
@@ -1500,10 +1505,10 @@ class FortranIntrinsics:
     ]
 
     def __init__(self):
-        self._transformations_to_run = set()
+        self._transformations_to_run = {}
 
-    def transformations(self) -> Set[Type[NodeTransformer]]:
-        return self._transformations_to_run
+    def transformations(self) -> List[NodeTransformer]:
+        return list(self._transformations_to_run.values())
 
     @staticmethod
     def function_names() -> List[str]:
@@ -1532,19 +1537,31 @@ class FortranIntrinsics:
         if func_name in replacements:
             return ast_internal_classes.Name_Node(name=replacements[func_name])
         elif DirectReplacement.replacable_name(func_name):
+
             if DirectReplacement.has_transformation(func_name):
-                self._transformations_to_run.add(DirectReplacement.get_transformation())
+                #self._transformations_to_run.add(DirectReplacement.get_transformation())
+                transformation = DirectReplacement.get_transformation()
+                if transformation.func_name() not in self._transformations_to_run:
+                    self._transformations_to_run[transformation.func_name()] = transformation
+
             return DirectReplacement.replace_name(func_name)
         elif MathFunctions.replacable(func_name):
-            self._transformations_to_run.add(MathFunctions.get_transformation())
+
+            transformation = MathFunctions.get_transformation()
+            if transformation.func_name() not in self._transformations_to_run:
+                self._transformations_to_run[transformation.func_name()] = transformation
+
             return MathFunctions.replace(func_name)
 
         if self.IMPLEMENTATIONS_AST[func_name].has_transformation():
 
             if hasattr(self.IMPLEMENTATIONS_AST[func_name], "Transformation"):
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].Transformation())
+                transformation = self.IMPLEMENTATIONS_AST[func_name].Transformation()
             else:
-                self._transformations_to_run.add(self.IMPLEMENTATIONS_AST[func_name].get_transformation(func_name))
+                transformation = self.IMPLEMENTATIONS_AST[func_name].get_transformation(func_name)
+
+            if transformation.func_name() not in self._transformations_to_run:
+                self._transformations_to_run[transformation.func_name()] = transformation
 
         return ast_internal_classes.Name_Node(name=self.IMPLEMENTATIONS_AST[func_name].replaced_name(func_name))
 
