@@ -1990,23 +1990,30 @@ class TypeInference(NodeTransformer):
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
-        if not hasattr(node, 'type') or node.type == 'VOID':
+        if not hasattr(node, 'type') or node.type == 'VOID' or not hasattr(node, 'dims'):
             try:
-                node.type = self.scope_vars.get_var(node.parent, node.name).type
-            except:
+                var_def = self.scope_vars.get_var(node.parent, node.name)
+                node.type = var_def.type
+                node.dims = len(var_def.sizes) if hasattr(var_def, 'sizes') and var_def.sizes is not None else 1
+            except Exception as e:
                 print(f"Ignore type inference for {node.name}")
+                print(e)
 
         return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
-        node.type = self.scope_vars.get_var(node.parent, node.name.name).type
+        var_def = self.scope_vars.get_var(node.parent, node.name.name)
+        node.type = var_def.type
+        node.dims = len(var_def.sizes) if var_def.sizes is not None else 1
         return node
 
     def visit_Parenthesis_Expr_Node(self, node: ast_internal_classes.Parenthesis_Expr_Node):
 
         self.visit(node.expr)
         node.type = node.expr.type
+        if hasattr(node.expr, 'dims'):
+            node.dims = node.expr.dims
         return node
 
     def visit_BinOp_Node(self, node: ast_internal_classes.BinOp_Node):
@@ -2030,14 +2037,22 @@ class TypeInference(NodeTransformer):
         idx_right = type_hierarchy.index(self._get_type(node.rval))
         idx_void = type_hierarchy.index('VOID')
 
-        if self.assert_voids:
-            assert idx_left != idx_void or idx_right != idx_void
+        #if self.assert_voids:
+        #    assert idx_left != idx_void or idx_right != idx_void
+        #    #assert self._get_dims(node.lval) == self._get_dims(node.rval)
 
         node.type = type_hierarchy[max(idx_left, idx_right)]
-        if node.op == '=' and idx_left == idx_void:
+        if hasattr(node.lval, "dims"):
+            node.dims = self._get_dims(node.lval)
+        elif hasattr(node.lval, "dims"):
+            node.dims = self._get_dims(node.rval)
+
+        if node.op == '=' and idx_left == idx_void and idx_left != idx_void:
             lval_definition = self.scope_vars.get_var(node.parent, node.lval.name)
             lval_definition.type = node.type
+            lval_definition.dims = node.dims
             node.lval.type = node.type
+            node.lval.dims = node.dims
 
         return node
 
@@ -2050,6 +2065,7 @@ class TypeInference(NodeTransformer):
             self.scope_vars, node
         )
         node.type = variable.type
+        node.dims = len(variable.sizes) if variable.sizes is not None else 1
         return node
 
     def visit_Actual_Arg_Spec_Node(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
@@ -2065,9 +2081,13 @@ class TypeInference(NodeTransformer):
             func_arg = self.scope_vars.get_var(node.parent, node.arg.name)
             node.type = func_arg.type
             node.arg.type = func_arg.type
+            dims = len(func_arg.sizes) if func_arg.sizes is not None else 1
+            node.dims = dims
+            node.arg.dims = dims
 
         else:
             node.type = func_arg_name_type
+            node.dims = self._get_dims(node.arg)
 
         return node
 
@@ -2082,6 +2102,17 @@ class TypeInference(NodeTransformer):
         else:
             return node.type
 
+    def _get_dims(self, node):
+
+        if isinstance(node, ast_internal_classes.Int_Literal_Node):
+            return 1
+        elif isinstance(node, ast_internal_classes.Real_Literal_Node):
+            return 1
+        elif isinstance(node, ast_internal_classes.Bool_Literal_Node):
+            return 1
+        else:
+            return node.dims
+
 class ReplaceInterfaceBlocks(NodeTransformer):
     """
     """
@@ -2091,6 +2122,16 @@ class ReplaceInterfaceBlocks(NodeTransformer):
         ParentScopeAssigner().visit(program)
         self.scope_vars = ScopeVarsDeclarations(program)
         self.scope_vars.visit(program)
+
+    def _get_dims(self, node):
+
+        if hasattr(node, "dims"):
+            return node.dims
+
+        if isinstance(node, ast_internal_classes.Var_Decl_Node):
+            return len(node.sizes) if node.sizes is not None else 1
+
+        raise RuntimeError()
 
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
@@ -2111,12 +2152,12 @@ class ReplaceInterfaceBlocks(NodeTransformer):
                 success = True
                 for call_arg, func_arg in zip(node.args[0:non_optional_args], self.funcs.nodes[name].args[0:non_optional_args]):
                     print("Mandatory arg", call_arg, type(call_arg))
-                    if call_arg.type != func_arg.type:
+                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
                         print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
                         success = False
                         break
                     else:
-                        print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
+                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
 
                 optional_args = self.funcs.nodes[name].args[non_optional_args:]
                 pos = non_optional_args
@@ -2135,12 +2176,13 @@ class ReplaceInterfaceBlocks(NodeTransformer):
                     else:
                         func_arg = optional_args[idx]
 
-                    if call_arg.type != func_arg.type:
+                    #if call_arg.type != func_arg.type:
+                    if call_arg.type != func_arg.type or self._get_dims(call_arg) != self._get_dims(func_arg):
                         print(f"Ignore function {name}, wrong param type {call_arg.type} instead of {func_arg.type}")
                         success = False
                         break
                     else:
-                        print(type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
+                        print(self._get_dims(call_arg), self._get_dims(func_arg), type(call_arg), call_arg.type, func_arg.name, type(func_arg), func_arg.type)
 
                 if success:
                     available_names.append(name)
@@ -2153,6 +2195,6 @@ class ReplaceInterfaceBlocks(NodeTransformer):
                 raise RuntimeError("Too many matching function calls!")
 
             print(f"Selected {available_names[0]} as invocation for {node.name}")
-            node.name = available_names[0]
+            node.name = ast_internal_classes.Name_Node(name=available_names[0])
 
         return node
