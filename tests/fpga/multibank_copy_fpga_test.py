@@ -28,7 +28,7 @@ def mkc(sdfg: dace.SDFG,
     if copy_expr is None:
         copy_expr = src_name
     if (state_before == None):
-        state = sdfg.add_state(is_start_state=True)
+        state = sdfg.add_state(is_start_block=True)
     else:
         state = sdfg.add_state_after(state_before)
 

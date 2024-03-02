@@ -34,17 +34,17 @@ def duplicate_naming(A, B):
 
 
 def test():
-    W.set(3)
+    W = 3
 
     A = dace.ndarray([W])
     B = dace.ndarray([W])
 
-    A[:] = np.mgrid[0:W.get()]
+    A[:] = np.mgrid[0:W]
     B[:] = dace.float32(0.0)
 
     duplicate_naming(A, B, W=W)
 
-    diff = np.linalg.norm(4 * A - B) / W.get()
+    diff = np.linalg.norm(4 * A - B) / W
     print("Difference:", diff)
     assert diff <= 1e-5
 

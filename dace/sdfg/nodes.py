@@ -258,6 +258,10 @@ class AccessNode(Node):
     @property
     def label(self):
         return self.data
+    
+    @property
+    def root_data(self):
+        return self.data.split('.')[0]
 
     def __label__(self, sdfg, state):
         return self.data
@@ -266,6 +270,12 @@ class AccessNode(Node):
         if isinstance(sdfg, (dace.sdfg.SDFGState, dace.sdfg.ScopeSubgraphView)):
             sdfg = sdfg.parent
         return sdfg.arrays[self.data]
+    
+    def root_desc(self, sdfg):
+        from dace.sdfg import SDFGState, ScopeSubgraphView
+        if isinstance(sdfg, (SDFGState, ScopeSubgraphView)):
+            sdfg = sdfg.parent
+        return sdfg.arrays[self.data.split('.')[0]]
 
     def validate(self, sdfg, state):
         if self.data not in sdfg.arrays:
@@ -585,7 +595,7 @@ class NestedSDFG(CodeNode):
 
         ret.sdfg.parent_nsdfg_node = ret
 
-        ret.sdfg.update_sdfg_list([])
+        ret.sdfg.update_cfg_list([])
 
         return ret
 
@@ -1372,11 +1382,11 @@ class LibraryNode(CodeNode):
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
-        sdfg_id = sdfg.sdfg_id
+        cfg_id = sdfg.cfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
         transformation: ExpandTransformation = transformation_type()
-        transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
+        transformation.setup_match(sdfg, cfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
             raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)

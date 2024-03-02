@@ -1449,8 +1449,10 @@ def validate_name(name):
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if namere.match(name) is None:
-        return False
+    tokens = name.split('.')
+    for token in tokens:
+        if namere.match(token) is None:
+            return False
     return True
 
 
@@ -1550,6 +1552,8 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
+    if isinstance(obj, ctypes.Array):
+        return True
     if hasattr(obj, '__array_interface__'):
         return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
     if hasattr(obj, 'data_ptr'):
@@ -1557,6 +1561,8 @@ def is_array(obj: Any) -> bool:
             return hasattr(obj, 'shape') and len(obj.shape) > 0
         except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        return True
     return False
 
 
@@ -1577,4 +1583,9 @@ def is_gpu_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return False
+
+    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+        if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
+            return True
+
     return False

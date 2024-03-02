@@ -45,12 +45,6 @@ def softmax(X_in: dace_dtype[H, B, SN, SM]):
     return out
 
 
-H.set(10)
-B.set(10)
-SN.set(20)
-SM.set(20)
-
-
 def get_partition(sdfg, graph):
     subgraph1 = SubgraphView(graph, [])
     subgraph2 = SubgraphView(graph, [])
@@ -78,10 +72,10 @@ def test_2fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_2part'
     sdfg.simplify()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
+    X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
     csdfg = sdfg.compile()
-    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res1 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     subgraph = get_partition(sdfg, sdfg.nodes()[0])
@@ -90,7 +84,7 @@ def test_2fuse():
     fusion(sdfg, sdfg.nodes()[0], subgraph)
 
     csdfg = sdfg.compile()
-    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     assert np.allclose(res1, res2)
@@ -102,10 +96,10 @@ def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
     sdfg.simplify()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
+    X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
     csdfg = sdfg.compile()
-    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res1 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     expand_reduce(sdfg, sdfg.nodes()[0])
@@ -113,7 +107,7 @@ def test_1fuse():
     fusion(sdfg, sdfg.nodes()[0])
 
     csdfg = sdfg.compile()
-    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     print(np.linalg.norm(res1))
@@ -127,10 +121,10 @@ def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
     sdfg.simplify()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
+    X_in = np.random.rand(10, 10, 20, 20).astype(np.float32)
 
     csdfg = sdfg.compile()
-    res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res1 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     expand_reduce(sdfg, sdfg.nodes()[0])
@@ -139,7 +133,7 @@ def test_1fuse():
 
     #sdfg.specialize({'SM':SM})
     csdfg = sdfg.compile()
-    res2 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
+    res2 = csdfg(X_in=X_in, H=10, B=10, SN=20, SM=20)
     del csdfg
 
     print(np.linalg.norm(res1))

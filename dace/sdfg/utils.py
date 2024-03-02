@@ -1215,7 +1215,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     start = time.time()
 
     for sd in sdfg.all_sdfgs_recursive():
-        id = sd.sdfg_id
+        id = sd.cfg_id
 
         for cfg in sd.all_control_flow_regions():
             while True:
@@ -1258,8 +1258,8 @@ def inline_loop_blocks(sdfg: SDFG, permissive: bool = False, progress: bool = No
     for _block, _graph in optional_progressbar(reversed(blocks), title='Inlining Loops',
                                                n=len(blocks), progress=progress):
         block: ControlFlowBlock = _block
-        graph: SomeGraphT = _graph
-        id = block.sdfg.sdfg_id
+        graph: GraphT = _graph
+        id = block.sdfg.cfg_id
 
         # We have to reevaluate every time due to changing IDs
         block_id = graph.node_id(block)
@@ -1310,7 +1310,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sdfg=parent_sdfg,
-                                sdfg_id=parent_sdfg.sdfg_id,
+                                cfg_id=parent_sdfg.sdfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1325,7 +1325,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         }
         inliner = InlineSDFG()
         inliner.setup_match(sdfg=parent_sdfg,
-                            sdfg_id=parent_sdfg.sdfg_id,
+                            cfg_id=parent_sdfg.sdfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
@@ -1422,7 +1422,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     # Build a unique representation
     sdfg = graph.parent
     state = graph if isinstance(graph, SDFGState) else graph._graph
-    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
+    return str(sdfg.cfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
 def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
@@ -1437,7 +1437,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     :param state: the state that contains the node
     :param fsymbols: the free symbols to check against
     """
-    if isinstance(desc, (dt.StructureView, dt.View)):
+    if isinstance(desc, (dt.View)):
         # Views can be non-free symbol dependent due to the adjacent edges.
         e = get_view_edge(state, node)
         if e.data:

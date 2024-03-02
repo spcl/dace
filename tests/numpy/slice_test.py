@@ -19,10 +19,10 @@ def test():
     A = np.random.rand(5, 4)
     B = np.random.rand(4, 5)
     C = np.random.rand(4, 4)
-    N.set(5)
+    N = 5
 
     slicetest(A, B, C)
-    diff = np.linalg.norm(C - (A[1:N.get()] * B[:, 0:N.get() - 1]))
+    diff = np.linalg.norm(C - (A[1:N] * B[:, 0:N - 1]))
     print('Difference:', diff)
     assert diff <= 1e-5
 
