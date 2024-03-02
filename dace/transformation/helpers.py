@@ -16,6 +16,7 @@ from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
+from dace.sdfg.utils import get_all_view_nodes, get_view_edge
 
 
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
@@ -717,6 +718,13 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                 for e in state.memlet_path(iedge):
                     nodes_to_move.add(e.src)
                     orig_edges.add(e)
+
+    for n in list(nodes_to_move):
+        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
+            for view_node in get_all_view_nodes(state, n):
+                nodes_to_move.add(view_node)
+                orig_edges.add(get_view_edge(state, view_node))
+
 
     # Define boundary nodes
     for node in set(nodes_to_move):
