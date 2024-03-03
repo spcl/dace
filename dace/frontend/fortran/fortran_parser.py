@@ -332,7 +332,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,sdfg.arrays[self.name_mapping[decl.name]])
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,sdfg.arrays[self.name_mapping[sdfg][decl.name]])
 
             self.translate(node.main_program.execution_part.execution, sdfg)
         else: 
@@ -2961,8 +2961,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
-            if j.name.name!="rot_vertex_ri":
+            if j.name.name!="solve_nh":
+            #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
