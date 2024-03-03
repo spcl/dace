@@ -1107,6 +1107,8 @@ class AST_translator:
 
                                     memlet = Memlet(f'{last_view_name}[{subset}]->{smallsubset}')
                                     memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                    #memlet = Memlet(f'{last_view_name}[{smallsubset}]')
+                                    #memlet2 = Memlet(f'{viewname}[{smallsubset}]')
                                     wv = None
                                     rv = None
                                     if local_name.name in read_names:
@@ -1208,6 +1210,8 @@ class AST_translator:
 
                                 memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
                                 memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                #memlet = Memlet(f'{array_name}[{smallsubset}]')
+                                #memlet2 = Memlet(f'{array_name}[{smallsubset}]')
                                 wv = None
                                 rv = None
                                 if local_name.name in read_names:

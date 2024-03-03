@@ -98,32 +98,32 @@ def test_fortran_frontend_size_arbitrary():
                     integer :: arrsize
                     integer :: arrsize2
                     integer :: res(arrsize, arrsize2)
-                    CALL intrinsic_basic_size_arbitrary_function(res)
+                    CALL intrinsic_basic_size_arbitrary_test_function(res)
                     end
 
-                    SUBROUTINE intrinsic_basic_size_arbitrary_function(res)
+                    SUBROUTINE intrinsic_basic_size_arbitrary_test_function(res)
                     implicit none
                     integer :: res(:, :)
 
-                    res(1) = SIZE(res)
-                    res(2) = SIZE(res, 1)
-                    res(3) = SIZE(res, 2)
+                    res(1,1) = SIZE(res)
+                    res(2,1) = SIZE(res, 1)
+                    res(3,1) = SIZE(res, 2)
 
-                    END SUBROUTINE intrinsic_basic_size_arbitrary_function
+                    END SUBROUTINE intrinsic_basic_size_arbitrary_test_function
                     """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True,)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7
     size2 = 5
     res = np.full([size, size2], 42, order="F", dtype=np.int32)
-    sdfg(res=res)
+    sdfg(res=res,arrsize=size,arrsize2=size2)
 
-    assert res[0] == size*size2
-    assert res[1] == size
-    assert res[2] == size2
+    assert res[0,0] == size*size2
+    assert res[1,0] == size
+    assert res[2,0] == size2
 
 def test_fortran_frontend_present():
     test_string = """
