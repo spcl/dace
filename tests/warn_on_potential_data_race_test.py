@@ -40,7 +40,8 @@ def test_memlet_range_not_overlap_ranges():
     B = np.zeros((N,), dtype=np.int32)
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        sdfg(N=N, A=A, B=B)
+        with dace.config.set_temporary("check_race_conditions", value=True):
+            sdfg(N=N, A=A, B=B)
 
 
 def test_memlet_range_overlap_ranges():
@@ -76,7 +77,8 @@ def test_memlet_range_overlap_ranges():
     A = np.arange(N, dtype=np.int32)
     B = np.zeros((N,), dtype=np.int32)
     with pytest.warns(UserWarning):
-        sdfg(N=N, A=A, B=B)
+        with dace.config.set_temporary("check_race_conditions", value=True):
+            sdfg(N=N, A=A, B=B)
 
 
 if __name__ == '__main__':

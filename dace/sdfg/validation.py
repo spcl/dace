@@ -790,6 +790,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     continue
                 raise error
 
+        if Config.get_bool("check_race_conditions"):
+            pass
+
     ########################################
 
 

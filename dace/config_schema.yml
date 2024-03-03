@@ -904,6 +904,12 @@ required:
             be called before every compiled SDFG's generated code is invoked. Used
             for functionality such as low-level profiling.
 
+    check_race_conditions:
+        type: bool
+        default: false
+        title: Check race conditions
+        description: Check for probable race conditions during the program's execution.
+
     #############################################
     # Experimental features
 
