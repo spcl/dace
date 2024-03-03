@@ -83,6 +83,7 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
+            #TODO LATER: all_symbols was False but caused members in structs that are not transient to lose the last dimension
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -236,8 +237,10 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        initparams = sdfg.signature(arglist=self.arglist)
+        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():

@@ -205,6 +205,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
         nsdfg.replace_dict(sym_replacements)
+        #walk over nsdfg_node symbol_mapping and replace sym_replacements
+        for k,v in list(nsdfg_node.symbol_mapping.items()):
+            if str(v) in sym_replacements:
+                nsdfg_node.symbol_mapping[k] = sym_replacements[str(v)]
 
         #######################################################
         # Collect and modify access nodes as necessary
@@ -350,10 +354,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         source = nsdfg.start_state
         sinks = nsdfg.sink_nodes()
-
+        intermediary=sdfg.add_state()
         # Reconnect state machine
         for e in sdfg.in_edges(outer_state):
-            sdfg.add_edge(e.src, source, e.data)
+            sdfg.add_edge(e.src, intermediary, e.data)
+
+        sdfg.add_edge(intermediary, source, InterstateEdge(assignments={v:k for k,v in sym_replacements.items()}))
+        for k,v in sym_replacements.items():
+            sdfg.add_symbol(v,sdfg.symbols[k].dtype)
         for e in sdfg.out_edges(outer_state):
             for sink in sinks:
                 sdfg.add_edge(sink, e.dst, dc(e.data))
@@ -364,7 +372,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         # Modify start state as necessary
         if outer_start_state is outer_state:
-            sdfg.start_state = sdfg.node_id(source)
+            sdfg.start_state = sdfg.node_id(intermediary)
 
         # TODO: Modify memlets by offsetting
         # If both source and sink nodes are inputs/outputs, reconnect once

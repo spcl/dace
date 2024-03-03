@@ -32,6 +32,8 @@ from os import path
 from shutil import copyfile
 import networkx as nx
 
+global_struct_instance_counter=0
+
 def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain=[]):    
     for i in datatype_to_add.members:
         current_dtype=datatype_to_add.members[i].dtype
@@ -60,33 +62,67 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
         name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
         struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
 
-def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str):
+def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str,name_:str,placeholders,object):
                             if not structures.is_struct(decl.type):
                                 return
 
-                            struct_type = structures.get_definition(decl.type)
 
+                            struct_type = structures.get_definition(decl.type)
+                            global global_struct_instance_counter
+                            local_counter=global_struct_instance_counter
+                            global_struct_instance_counter+=1
                             for var, var_type in struct_type.vars.items():
 
                                 if structures.is_struct(var_type.type):
-                                    add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}.{var_type.name}")
+                                    add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}->{var_type.name}",f"{var_type.name}_{name_}",placeholders,object.members[var_type.name])
 
                                 if var_type.sizes is None or len(var_type.sizes) == 0:
                                     continue    
 
                                 # for assumed shape, all vars starts with the same prefix
                                 for size in var_type.sizes:
-                                  if isinstance(size, ast_internal_classes.Name_Node) and  size.name.startswith('__f2dace_ARRAY'):
-                                    
-                                    for state in sdfg.nodes():
-                                        if state.name == assign_state.name:
-                                            for edge in sdfg.in_edges(state):
+                                    if isinstance(size, ast_internal_classes.Name_Node):# and  size.name.startswith('__f2dace_ARRAY'):
+                                        
+                                        
+                                        if hasattr(size, "name"):
+                                            if sdfg.symbols.get(size.name) is None:
+                                                #new_name=sdfg._find_new_name(size.name)
+                                                sdfg.add_symbol(size.name, dtypes.int32)
+                        
+                                            if  size.name.startswith('__f2dace_STRUCTARRAY'):  
+                                                #newsize=ast_internal_classes.Name_Node(name=size.name+"_"+str(local_counter),parent=size.parent,type=size.type)                                             
+                                                newsize=  size.name+"_"+name_+"_"+str(local_counter)
+                                                #var_type.sizes[var_type.sizes.index(size)]=newsize
+                                                sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n") 
+                                                sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                                                sdfg.add_symbol(newsize, dtypes.int32)
+                                                shape2=dpcp(object.members[var_type.name].shape)
+                                                shapelist=list(shape2)
+                                                shapelist[var_type.sizes.index(size)]= sym.pystr_to_symbolic(newsize)
+                                                shape_replace=tuple(shapelist)
+                                                viewname= f"{name}->{var_type.name}"
+
+                                                viewname=viewname.replace("->","_")
+                                                view=sdfg.arrays[viewname]
+
+                                                if isinstance(object.members[var_type.name],dat.Array):
+                                                    tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace)
+                                                    
                                                 
-                                                if hasattr(size, "name"):
-                                                    if sdfg.symbols.get(size.name) is None:
-                                                        sdfg.add_symbol(size.name, dtypes.int32)
-                                                    edge.data.assignments[size.name] = f"{name}.{size.name}"    
-                                            break        
+                                                    
+                                                elif isinstance(object.members[var_type.name],dat.ContainerArray):
+                                                    tmpobject=dat.ContainerArray(object.members[var_type.name].stype,shape_replace)    
+                                                else:
+                                                    raise ValueError("Unknown type"+str(tmpobject.__class__))
+                                                object.members.pop(var_type.name)
+                                                object.members[var_type.name]=tmpobject
+                                                tmpview=dat.View.view(object.members[var_type.name])
+                                                del sdfg.arrays[viewname]
+                                                sdfg.arrays[viewname]=tmpview    
+                                                #if placeholders.get(size.name) is not None:
+                                                #    placeholders[newsize]=placeholders[size.name]
+                                                
+
 
 
 class AST_translator:
@@ -296,7 +332,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,sdfg.arrays[self.name_mapping[decl.name]])
 
             self.translate(node.main_program.execution_part.execution, sdfg)
         else: 
@@ -319,8 +355,8 @@ class AST_translator:
                         ast_utils.add_simple_state_to_sdfg(self, sdfg, "start_struct_size")
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
                         for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name)
-    
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,sdfg.arrays[self.name_mapping[sdfg][decl.name]])
+
                 self.transient_mode=True    
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
 
@@ -1027,7 +1063,7 @@ class AST_translator:
                             element_type=array.dtype.base_type    
                             if str(element_type) in self.registered_types:
                                 datatype=self.get_dace_type(str(element_type))
-                                datatype_to_add=copy.deepcopy(datatype)
+                                datatype_to_add=copy.deepcopy(element_type)
                                 datatype_to_add.transient = False
                                 new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
                                 
@@ -1137,7 +1173,7 @@ class AST_translator:
                         if shape == () or shape == (1, ) or shape == [] or shape == [1]:
                             if hasattr(array,"name") and array.name in self.registered_types:
                                 datatype=self.get_dace_type(array.name)
-                                datatype_to_add=copy.deepcopy(datatype)
+                                datatype_to_add=copy.deepcopy(array)
                                 datatype_to_add.transient = False
                                 new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
                                 
@@ -1510,13 +1546,13 @@ class AST_translator:
                     # get these from either additional fields in the structure of additional arguments for arrays
                     #if self.toplevel_subroutine is not None and self.toplevel_subroutine == node.name.name and node.specification_part is not None:
                     #if node.specification_part is not None:
-                    for i in node.specification_part.specifications:
+                    # for i in node.specification_part.specifications:
 
-                        ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
-                        assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
+                    #     ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "start_struct_size")
+                    #     assign_state = ast_utils.add_simple_state_to_sdfg(self, new_sdfg, "assign_struct_sizes")
 
-                        for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, new_sdfg, assign_state, decl.name)
+                    #     for decl in i.vardecl:
+                    #         add_deferred_shape_assigns_for_structs(self.structures,decl, new_sdfg, assign_state, decl.name)
     
                 for i in assigns:
                         self.translate(i, new_sdfg)
@@ -2919,8 +2955,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue

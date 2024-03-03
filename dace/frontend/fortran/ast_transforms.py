@@ -1,6 +1,6 @@
 # Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
-from dace.frontend.fortran import ast_components, ast_internal_classes, ast_utils
+from dace.frontend.fortran import ast_internal_classes, ast_utils
 from typing import Dict, List, Optional, Tuple, Set, Union
 import copy
 
@@ -1830,6 +1830,20 @@ class RenameVar(NodeTransformer):
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
         return ast_internal_classes.Name_Node(name=self.newname) if node.name == self.oldname else node
 
+class PartialRenameVar(NodeTransformer):
+    def __init__(self, oldname: str, newname: str):
+        self.oldname = oldname
+        self.newname = newname
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+        if hasattr(node,"type"):
+            return ast_internal_classes.Name_Node(name=node.name.replace(self.oldname,self.newname),parent=node.parent,type=node.type) if self.oldname in node.name else node
+        else:
+            type="VOID"
+            return ast_internal_classes.Name_Node(name=node.name.replace(self.oldname,self.newname),parent=node.parent,type="VOID") if self.oldname in node.name else node
+    
+    def visit_Symbol_Decl_Node(self, node: ast_internal_classes.Symbol_Decl_Node):
+        return ast_internal_classes.Symbol_Decl_Node(name=node.name.replace(self.oldname,self.newname), type=node.type, sizes=node.sizes, init=node.init,line_number=node.line_number,kind=node.kind,alloc=node.alloc,offsets=node.offsets)
 
 class ForDeclarer(NodeTransformer):
     """

@@ -8,6 +8,7 @@ from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
 from typing import Any, List, Optional, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
 
@@ -379,6 +380,16 @@ class InternalFortranAst:
         children = self.create_children(node)
         name = children[0].name
         component_part = get_child(children, ast_internal_classes.Component_Part_Node)
+        from dace.frontend.fortran.ast_transforms import PartialRenameVar
+        if component_part is not None:
+            component_part=PartialRenameVar(oldname="__f2dace_ARRAY", newname="__f2dace_STRUCTARRAY").visit(component_part)
+            new_placeholder={}
+            for k,v in self.placeholders.items():
+                if "__f2dace_ARRAY" in k:
+                    new_placeholder[k.replace("__f2dace_ARRAY","__f2dace_STRUCTARRAY")]=self.placeholders[k]
+                else:
+                    new_placeholder[k]=self.placeholders[k]
+            self.placeholders=new_placeholder            
         return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
 
     def derived_type_stmt(self, node: FASTNode):

@@ -687,6 +687,7 @@ class NestedSDFG(CodeNode):
         symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
         missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
         if missing_symbols:
+            print(sdfg.name)
             raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
         extra_symbols = self.symbol_mapping.keys() - symbols
         if len(extra_symbols) > 0:
