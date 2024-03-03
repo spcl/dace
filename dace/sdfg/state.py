@@ -751,12 +751,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
+                        if e.dst_conn == "views":
+                            continue
+
                         # Store all subsets that have been written
                         ws[n.data].append(e.data.subset)
                     for e in out_edges:
                         # skip empty memlets
                         if e.data.is_empty():
                             continue
+                        if e.src_conn == "views":
+                            continue
+
                         rs[n.data].append(e.data.subset)
             # Union all subgraphs, so an array that was excluded from the read
             # set because it was written first is still included if it is read
