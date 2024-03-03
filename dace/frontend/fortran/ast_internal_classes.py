@@ -295,6 +295,9 @@ class Int_Literal_Node(Literal):
 class Real_Literal_Node(Literal):
     pass
 
+class Double_Literal_Node(Literal):
+    pass
+
 class Bool_Literal_Node(Literal):
     pass
 

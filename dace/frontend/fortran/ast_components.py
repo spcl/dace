@@ -1544,10 +1544,17 @@ class InternalFortranAst:
 
     def real_literal_constant(self, node: FASTNode):
         value=node.children[0].lower()
+        if len(node.children)==2:
+            if node.children[1].lower()=="wp":
+                return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
         if value.find("_")!=-1:
             x=value.split("_")
             value=x[0]
+            print(x[1])
+            if (x[1]=="wp"):
+                return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
         return ast_internal_classes.Real_Literal_Node(value=value,type="REAL")
+        
     
     def char_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Char_Literal_Node(value=node.string,type="CHAR")
