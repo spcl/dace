@@ -110,6 +110,7 @@ class Subroutine_Subprogram_Node(FNode):
     _attributes = ('name', 'type')
     _fields = (
         'args',
+        'mandatory_args_count',
         'optional_args_count',
         'specification_part',
         'execution_part',
@@ -395,7 +396,7 @@ class Else_Separator_Node(FNode):
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
-    _fields = ('expr', )
+    _fields = ('expr', 'type')
 
 
 class Nonlabel_Do_Stmt_Node(FNode):
