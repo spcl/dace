@@ -1405,28 +1405,44 @@ class OptionalArgsTransformer(NodeTransformer):
         mandatory_args = should_be_args - optional_args*2
 
         present_args = len(node.args)
+
         # Remove the deduplicated variable entries acting as flags for optional args
         missing_args_count = should_be_args - present_args - optional_args
         present_optional_args = present_args - mandatory_args
+        new_args=[None]*should_be_args
+        for i in range(mandatory_args):
+            new_args[i] = node.args[i]
+        for i in range(mandatory_args,mandatory_args+missing_args_count):
+            if len(node.args)>i:
+                current_arg = node.args[i]
+                if not isinstance(current_arg, ast_internal_classes.Actual_Arg_Spec_Node):
+                    new_args[i] = current_arg
+                else:
+                    name=current_arg.arg_name    
+                    index=0
+                    for j in func_decl.optional_args:
+                        if j[0]==name.name:
+                            break
+                        index=index+1
+                    new_args[mandatory_args+index]=current_arg.arg    
 
-        for i in range(missing_args_count):
-            relative_position = i + present_optional_args
-            dtype = func_decl.optional_args[relative_position][1]
-            if dtype == 'INTEGER':
-                node.args.append(ast_internal_classes.Int_Literal_Node(value='0'))
-            elif dtype == 'BOOL':
-                node.args.append(ast_internal_classes.Bool_Literal_Node(value='0'))
-            elif dtype == 'DOUBLE':
-                node.args.append(ast_internal_classes.Real_Literal_Node(value='0'))
+        for i in range(mandatory_args,mandatory_args+optional_args):
+            relative_position = i - mandatory_args
+            if new_args[i] is None:
+                dtype = func_decl.optional_args[relative_position][1]
+                if dtype == 'INTEGER':
+                    new_args[i]=ast_internal_classes.Int_Literal_Node(value='0')
+                elif dtype == 'BOOL':
+                    new_args[i]=ast_internal_classes.Bool_Literal_Node(value='0')
+                elif dtype == 'DOUBLE':
+                    new_args[i]=ast_internal_classes.Real_Literal_Node(value='0')
+                else:
+                    raise NotImplementedError()
+                new_args[i+optional_args]=ast_internal_classes.Bool_Literal_Node(value='0')
             else:
-                raise NotImplementedError()
+                new_args[i+optional_args]=ast_internal_classes.Bool_Literal_Node(value='1')    
 
-        # Now pass the 'present' flags
-        for i in range(optional_args - missing_args_count):
-            node.args.append(ast_internal_classes.Bool_Literal_Node(value='1'))
-        for i in range(missing_args_count):
-            node.args.append(ast_internal_classes.Bool_Literal_Node(value='0'))
-
+        node.args = new_args
         return node
 
 def optionalArgsExpander(node=ast_internal_classes.Program_Node):

@@ -2835,6 +2835,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.optionalArgsExpander(program)
+    program = ast_transforms.ArgumentExtractor(program).visit(program)
 
     
     count=0

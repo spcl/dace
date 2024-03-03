@@ -132,26 +132,26 @@ def test_fortran_frontend_present():
                     integer, dimension(4) :: res
                     integer, dimension(4) :: res2
                     integer :: a
-                    CALL test_function(res, res2, a)
+                    CALL intrinsic_basic_present_test_function(res, res2, a)
                     end
 
-                    SUBROUTINE test_function(res, res2, a)
+                    SUBROUTINE intrinsic_basic_present_test_function(res, res2, a)
                     integer, dimension(4) :: res
                     integer, dimension(4) :: res2
                     integer :: a
 
-                    CALL test_function2(res, a)
-                    CALL test_function2(res2)
+                    CALL tf2(res, a=a)
+                    CALL tf2(res2)
 
-                    END SUBROUTINE test_function
+                    END SUBROUTINE intrinsic_basic_present_test_function
 
-                    SUBROUTINE test_function2(res, a)
+                    SUBROUTINE tf2(res, a)
                     integer, dimension(4) :: res
                     integer, optional :: a
 
                     res(1) = PRESENT(a)
 
-                    END SUBROUTINE test_function2
+                    END SUBROUTINE tf2
                     """
     #test_string = """
     #                PROGRAM intrinsic_basic_present
@@ -199,7 +199,8 @@ def test_fortran_frontend_present():
     #                !END SUBROUTINE intrinsic_basic_present_function2
     #                """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present", False)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present_test", False)
+    sdfg.view()
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -215,5 +216,5 @@ if __name__ == "__main__":
 
     #test_fortran_frontend_bit_size()
     #test_fortran_frontend_bit_size_symbolic()
-    test_fortran_frontend_size_arbitrary()
-    #test_fortran_frontend_present()
+    #test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_present()
