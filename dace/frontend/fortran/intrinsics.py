@@ -69,6 +69,10 @@ class DirectReplacement(IntrinsicTransformation):
 
     class ASTTransformation(IntrinsicNodeTransformer):
 
+        @staticmethod
+        def func_name() -> str:
+            return "direct_replacement"
+
         def visit_BinOp_Node(self, binop_node: ast_internal_classes.BinOp_Node):
 
             if not isinstance(binop_node.rval, ast_internal_classes.Call_Expr_Node):
