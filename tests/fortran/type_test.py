@@ -602,19 +602,19 @@ def test_fortran_frontend_type_view():
                     implicit none
                     
                     TYPE simple_type
-                        REAL:: z(5)
+                        REAL:: z(:,:)
                         INTEGER:: a         
                     END TYPE simple_type
-
+                    TYPE(simple_type) :: st 
                     
                     REAL :: d(5,5)
-                    CALL type_view_test_function(d)
+                    CALL type_view_test_function(d,st)
                     end
 
-                    SUBROUTINE type_view_test_function(d)
+                    SUBROUTINE type_view_test_function(d,st)
                     TYPE(simple_type) :: st 
                     REAL :: d(5,5)
-                    st%z(1)=5.5
+                    st%z(1,1)=5.5
                     CALL internal_function(d,st%z)
                     
                     END SUBROUTINE type_view_test_function
@@ -622,8 +622,8 @@ def test_fortran_frontend_type_view():
                     
                     SUBROUTINE internal_function(d,sta)
                     REAL d(5,5)
-                    REAL sta(:)
-                    d(2,1)=2*sta(1)
+                    REAL sta(:,:)
+                    d(2,1)=2*sta(1,1)
                     
                     END SUBROUTINE internal_function
                     """
@@ -650,4 +650,4 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_pointer()
     #test_fortran_frontend_type_arg()
     test_fortran_frontend_type_view()
-    test_fortran_frontend_type_arg2()
+   # test_fortran_frontend_type_arg2()
