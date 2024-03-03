@@ -34,13 +34,15 @@ import networkx as nx
 
 global_struct_instance_counter=0
 
-def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain=[]):    
+def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain=[]): 
+    if not isinstance(datatype_to_add,dat.Structure):
+        return   
     for i in datatype_to_add.members:
         current_dtype=datatype_to_add.members[i].dtype
         for other_type in registered_types:
             if current_dtype.dtype==registered_types[other_type].dtype:
                 other_type_obj=registered_types[other_type]
-                add_views_recursive(sdfg,name,other_type_obj,struct_views,name_mapping,registered_types,chain=chain+[i])
+                add_views_recursive(sdfg,name,datatype_to_add.members[i],struct_views,name_mapping,registered_types,chain=chain+[i])
                 #for j in other_type_obj.members:
                 #    sdfg.add_view(name_mapping[name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
                 #    name_mapping[name + "_" + i +"_"+ j] = name_mapping[name] + "_" + i +"_"+ j
@@ -1840,6 +1842,16 @@ class AST_translator:
             sizes = None
         # create and check name - if variable is already defined (function argument and defined in declaration part) simply stop
         if self.name_mapping[sdfg].get(node.name) is not None:
+            #here we must replace local placeholder sizes that have already made it to tasklets via size and ubound calls
+            if sizes is not None:
+                actual_sizes=sdfg.arrays[self.name_mapping[sdfg][node.name]].shape
+                index=0
+                for i in node.sizes:
+                    if isinstance(i,ast_internal_classes.Name_Node):
+                        if i.name.startswith("__f2dace_ARRAY"):
+                            node.parent.execution_part=ast_transforms.RenameVar(i.name,str(actual_sizes[index])).visit(node.parent.execution_part)
+                    index+=1        
+
             return
 
         if node.name in sdfg.symbols:
@@ -2966,9 +2978,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri":
-            #if j.name.name!="velocity_tendencies":
+            if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
