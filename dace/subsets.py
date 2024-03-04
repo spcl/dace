@@ -813,6 +813,17 @@ class Range(Subset):
 
         return True
 
+    @staticmethod
+    def are_intersecting(ranges: List['Range']) -> bool:
+        """ Check if any of the given ranges are intersecting
+            :param ranges: the ranges to be checked.
+        """
+        for i in range(len(ranges)):
+            for j in range(i+1, len(ranges)):
+                if ranges[i].intersects(ranges[j]):
+                    return True
+        return False
+
 
 @dace.serialize.serializable
 class Indices(Subset):
