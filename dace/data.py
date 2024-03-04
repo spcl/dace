@@ -1179,7 +1179,7 @@ class Tensor(Structure):
             order=Scalar(dtypes.int32),
             dim_sizes=dtypes.int32[num_dims],
             # value_count=value_count,
-            values=dtypes.float32[value_count],
+            values=self.value_dtype[value_count],
         )
 
         for (lvl, index) in enumerate(indices):
