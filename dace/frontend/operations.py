@@ -51,19 +51,21 @@ class CompiledSDFGProfiler:
 
         times = [start] * (self.repetitions + 1)
         ret = None
-        print('\nProfiling...')
 
         iterator = range(self.warmup + self.repetitions)
         if Config.get_bool('profiling_status'):
             try:
                 from tqdm import tqdm
-                iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
+                iterator = tqdm(iterator, desc="Profiling", file=sys.stdout, leave=False)
             except ImportError:
                 print('WARNING: Cannot show profiling progress, missing optional '
                       'dependency tqdm...\n\tTo see a live progress bar please install '
                       'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
                       'this warning) set `profiling_status` to false in the dace '
                       'config (~/.dace.conf).')
+                print('\nProfiling...')
+        else:
+            print('\nProfiling...')
 
         offset = 1 - self.warmup
         start_time = int(time.time())
@@ -88,8 +90,9 @@ class CompiledSDFGProfiler:
         self.report.durations[(0, -1, -1)][f'Python call to {compiled_sdfg.sdfg.name}'][-1].extend(diffs)
 
         # Print profiling results
-        time_msecs = np.median(diffs)
-        print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
+        if not Config.get_bool('profiling_status'):
+            time_msecs = np.median(diffs)
+            print(compiled_sdfg.sdfg.name, time_msecs, 'ms')
 
         # Save every call separately
         self.times.append((compiled_sdfg.sdfg, diffs))
