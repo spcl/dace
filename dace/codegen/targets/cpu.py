@@ -333,7 +333,7 @@ class CPUCodeGen(TargetCodeGenerator):
         alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
         name = alloc_name
 
-        if nodedesc.transient is False:
+        if not nodedesc.transient and nodedesc.lifetime != dtypes.AllocationLifetime.Global:
             return
 
         # Check if array is already allocated
@@ -347,6 +347,23 @@ class CPUCodeGen(TargetCodeGenerator):
         if nodedesc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
             define_var = self._dispatcher.defined_vars.add_global
             nodedesc = update_persistent_desc(nodedesc, sdfg)
+
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Global:
+            self._dispatcher.defined_vars.add_global(
+                name,
+                (DefinedType.Pointer if isinstance(nodedesc.dtype, dtypes.pointer) else DefinedType.Scalar),
+                nodedesc.as_arg(name=''),
+            )
+            if not nodedesc.transient: # Global globals are declared as extern
+                definition = 'extern ' + nodedesc.as_arg(name=name) + ';'
+                declaration_stream.write(
+                        definition,
+                        sdfg,
+                        state_id,
+                        -1,
+                )
+                return
+
 
         # Compute array size
         arrsize = nodedesc.total_size

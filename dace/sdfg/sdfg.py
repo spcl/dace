@@ -1326,12 +1326,14 @@ class SDFG(ControlFlowRegion):
         if scalars_only:
             data_args = {}
         else:
-            data_args = {k: v for k, v in self.arrays.items() if not v.transient and not isinstance(v, dt.Scalar)}
+            data_args = {k: v for k, v in self.arrays.items() if not v.transient and not isinstance(v, dt.Scalar)
+                         and v.lifetime != dtypes.AllocationLifetime.Global}
 
         scalar_args = {
             k: v
             for k, v in self.arrays.items()
             if not v.transient and isinstance(v, dt.Scalar) and not k.startswith('__dace')
+            and v.lifetime != dtypes.AllocationLifetime.Global
         }
 
         # Add global free symbols used in the generated code to scalar arguments

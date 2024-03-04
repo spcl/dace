@@ -47,6 +47,7 @@ class DaCeCodeGenerator(object):
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
+        self.global_variables: Set[str] = set()
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -615,20 +616,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
-            elif desc.lifetime is dtypes.AllocationLifetime.Global:
-                # Global memory is allocated in the beginning of the program
-                # exists in the library state structure (to be passed along
-                # to the right SDFG)
-
-                # If unused, skip
-                if first_node_instance is None:
-                    continue
-
-                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
-                self.statestruct.append(definition)
-
-                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
-                self.where_allocated[(sdfg, name)] = top_sdfg
+            elif desc.lifetime == dtypes.AllocationLifetime.Global:
+                # Global memory is allocated in the global scope.
+                # If multiple SDFGs contain the same global memory, it will only
+                # appear once. If data descriptors differ, an error is thrown.
+                # See ``allocate_globals`` for implementation.
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -810,6 +802,24 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
                                                declare, allocate)
 
+    def allocate_globals(self, sdfg: SDFG, global_stream: CodeIOStream):
+        """
+        Allocate globals for SDFG and all nested SDFGs.
+        """
+        allocated: Dict[str, data.Data] = {}
+        for tsdfg, aname, desc in sdfg.arrays_recursive():
+            if desc.lifetime == dtypes.AllocationLifetime.Global:
+                if aname in allocated and allocated[aname] != desc:
+                    raise TypeError(f'Global "{aname}" was already allocated as {allocated[aname]}. Definition '
+                                    f'in SDFG {tsdfg.name} overrides it as {desc}.')
+                elif aname in allocated:
+                    continue  # Do not define same global more than once
+
+                node = nodes.AccessNode(aname)
+                self._dispatcher.dispatch_allocate(tsdfg, None, -1, node, desc, global_stream, global_stream,
+                                                    True, True)
+                allocated[aname] = desc
+
     def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
@@ -851,6 +861,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Analyze allocation lifetime of SDFG and all nested SDFGs
         if is_top_level:
             self.determine_allocation_lifetime(sdfg)
+            self.allocate_globals(sdfg, global_stream)
 
         # Generate code
         ###########################
