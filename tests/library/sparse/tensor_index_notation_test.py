@@ -89,7 +89,7 @@ def parse_csr(data, M, N):
     crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
     val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
 
-    return sparse.csr_matrix((val, crd, pos)).toarray(order="C")
+    return sparse.csr_matrix((val, crd, pos), shape=(M, N)).toarray(order="C")
 
 
 def parse_csc(data, M, N):
@@ -104,7 +104,7 @@ def parse_csc(data, M, N):
     crd = np.ctypeslib.as_array(crd_ptr, shape=(pos[-1],))
     val = np.ctypeslib.as_array(val_ptr, shape=(pos[-1],))
 
-    return sparse.csc_matrix((val, crd, pos)).toarray(order="C")
+    return sparse.csc_matrix((val, crd, pos), shape=(M, N)).toarray(order="C")
 
 
 def parse_data(data, M, N, format):
