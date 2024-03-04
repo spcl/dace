@@ -372,6 +372,7 @@ class TaskletWriter:
             ast_internal_classes.Name_Range_Node: self.name2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
+            ast_internal_classes.Double_Literal_Node: self.doublelit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
             ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,
@@ -472,6 +473,10 @@ class TaskletWriter:
         return "".join(map(str, node.value))
 
     def floatlit2string(self, node: ast_internal_classes.Real_Literal_Node):
+
+        return "".join(map(str, node.value))
+    
+    def doublelit2string(self, node: ast_internal_classes.Double_Literal_Node):
 
         return "".join(map(str, node.value))
     
@@ -580,6 +585,7 @@ class ProcessedWriter(TaskletWriter):
             ast_internal_classes.Name_Range_Node: self.namerange2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
+            ast_internal_classes.Double_Literal_Node: self.doublelit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
             ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,

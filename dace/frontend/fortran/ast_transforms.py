@@ -1946,12 +1946,14 @@ class ElementalFunctionExpander(NodeTransformer):
                 arrays=False
                 for i in self.func_list:
                     if child.name.name==i.name or child.name.name==i.name+"_srt":
-                        if i.elemental is True:
-                            if len(child.args)>0:
-                                for j in child.args:
-                                    #THIS Needs a proper check
-                                    if j.name=="z":
-                                        arrays=True
+                        if hasattr(i,"elemental"):
+                            if i.elemental is True:
+                                if len(child.args)>0:
+                                    for j in child.args:
+                                        #THIS Needs a proper check
+                                        if j.name=="z":
+                                            arrays=True
+                                            
                 if not arrays:       
                     newbody.append(self.visit(child))
                 else:
