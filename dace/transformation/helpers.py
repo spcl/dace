@@ -912,12 +912,13 @@ def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     for desc in sdfg.arrays.values():
         if sym in map(str, desc.free_symbols):
             return False
-    for state in sdfg.nodes():
-        if sym in state.free_symbols:
-            return False
-    for e in sdfg.edges():
-        if sym in e.data.free_symbols:
-            return False
+    for cfg in sdfg.all_control_flow_regions():
+        for node in cfg.nodes():
+            if sym in node.free_symbols:
+                return False
+        for e in cfg.edges():
+            if sym in e.data.free_symbols:
+                return False
 
     # Not found, symbol can be removed
     return True

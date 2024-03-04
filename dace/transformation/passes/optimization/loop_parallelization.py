@@ -22,6 +22,9 @@ class ParallelizeDoacrossLoops(ppl.Pass):
 
     CATEGORY: str = 'Loop Parallelization'
 
+    use_doacross = properties.Property(dtype=bool, default=False,
+                                       desc='Parallelize loops with sequential dependencies using doacross parallelism')
+
     def __init__(self):
         self._non_analyzable_loops = set()
         super().__init__()
@@ -76,11 +79,16 @@ class ParallelizeDoacrossLoops(ppl.Pass):
                     continue
                 intermediate_nodes.append(node)
 
-        map_entry, map_exit = body.add_map(loop.name + '_doacross',
-                                           [[loop.loop_variable, Range([(loop_start, loop_end, loop_stride)])]],
-                                           schedule=dtypes.ScheduleType.CPU_Multicore_Doacross)
-        map_entry.map.omp_schedule = dtypes.OMPScheduleType.Static
-        map_entry.map.omp_chunk_size = 1
+        if doacross_deps:
+            map_entry, map_exit = body.add_map(loop.name + '_doacross',
+                                               [[loop.loop_variable, Range([(loop_start, loop_end, loop_stride)])]],
+                                               schedule=dtypes.ScheduleType.CPU_Multicore_Doacross)
+            map_entry.map.omp_schedule = dtypes.OMPScheduleType.Static
+            map_entry.map.omp_chunk_size = 1
+        else:
+            map_entry, map_exit = body.add_map(loop.name + '_parallel',
+                                               [[loop.loop_variable, Range([(loop_start, loop_end, loop_stride)])]],
+                                               schedule=dtypes.ScheduleType.Default)
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = map_entry.free_symbols & loop.sdfg.arrays.keys()
@@ -254,87 +262,99 @@ class ParallelizeDoacrossLoops(ppl.Pass):
 
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             if isinstance(cfg, LoopRegion):
+                # We can currently only parallelize a loop with a single state as the loop body.
+                if len(cfg.nodes()) > 1 or not isinstance(cfg.nodes()[0], SDFGState):
+                    continue
+
                 loop: LoopRegion = cfg
                 loop_var = symbolic.symbol(loop.loop_variable)
 
-                # TODO: check that there are no sympy functions in the loop expressions.
+                start_expr = loop_analysis.get_init_assignment(loop)
+                end_expr = loop_analysis.get_loop_end(loop)
+                stride_expr = loop_analysis.get_loop_stride(loop)
+                for expr in (start_expr, end_expr, stride_expr):
+                    if symbolic.contains_sympy_functions(expr):
+                        continue
 
                 sdfg = loop.sdfg
                 sdfg_id = sdfg.cfg_id
                 loop_deps: Dict[Memlet, Set[Memlet]] = loop_deps_dict[sdfg_id][loop]
 
-                # Check that no dependencies can not be parallelized via do-across, and that there is at least one such
-                # parallelizable dependency
-                can_parallelize = True
-                doacross_deps: Dict[Memlet, Tuple[Memlet, List[int]]] = dict()
-                for read, writes in loop_deps.items():
-                    do_acrossable = False
-                    violating_dependency = False
-                    read_deps: List[Tuple[Memlet, List[int]]] = []
-                    for write in writes:
-                        write_subset = write.dst_subset or write.subset
-                        if isinstance(write_subset, SubsetUnion):
-                            if len(write_subset.subset_list) == 1:
-                                write_subset = write_subset.subset_list[0]
-                            else:
-                                # TODO(later): We want a way to handle this too.
-                                can_parallelize = False
+                if not loop_deps:
+                    # No dependencies, this loop can be parallelized as a doall loop.
+                    self._parallelize_loop(loop, dict())
+                elif self.use_doacross:
+                    # Check that no dependencies can not be parallelized via do-across, and that there is at least one
+                    # such parallelizable dependency
+                    can_parallelize = True
+                    doacross_deps: Dict[Memlet, Tuple[Memlet, List[int]]] = dict()
+                    for read, writes in loop_deps.items():
+                        do_acrossable = False
+                        violating_dependency = False
+                        read_deps: List[Tuple[Memlet, List[int]]] = []
+                        for write in writes:
+                            write_subset = write.dst_subset or write.subset
+                            if isinstance(write_subset, SubsetUnion):
+                                if len(write_subset.subset_list) == 1:
+                                    write_subset = write_subset.subset_list[0]
+                                else:
+                                    # TODO(later): We want a way to handle this too.
+                                    can_parallelize = False
+                                    break
+                            read_subset = read.src_subset or read.subset
+                            if read_subset.dims() != write_subset.dims():
+                                continue
+                            subsets_work_fine = True
+                            dep_offsets = []
+                            for i in range(read_subset.dims()):
+                                if read_subset[i] != write_subset[i]:
+                                    # TODO(later): This is currently limiting to where the dependency is not more than
+                                    # one element and not strided. This could be expanded later, but is a bit more
+                                    # complex.
+                                    if read_subset[i][2] != 1 or write_subset[i][2] != 1:
+                                        subsets_work_fine = False
+                                        break
+                                    if not any(loop_var in x.free_symbols for x in write_subset[i]):
+                                        subsets_work_fine = False
+                                        break
+                                    if not any(loop_var in x.free_symbols for x in read_subset[i]):
+                                        subsets_work_fine = False
+                                        break
+                                    dep_start: sympy.Basic = read_subset[i][0] - write_subset[i][0]
+                                    dep_end: sympy.Basic = read_subset[i][1] - write_subset[i][1]
+                                    if len(dep_start.free_symbols) > 0 or len(dep_end.free_symbols) > 0:
+                                        subsets_work_fine = False
+                                        break
+                                    if dep_end == 0 and not dep_start == 0:
+                                        dep_end -= read_subset[i][2]
+                                    # TODO(later): This is currently limiting to exactly one dependency, but it may be
+                                    # interesting to handle multiple. In that case, the guarantee that needs to be
+                                    # fulfilled is just: dep_start > dep_end
+                                    if dep_start != dep_end:
+                                        subsets_work_fine = False
+                                        break
+                                    dep_offsets.append(loop_var + dep_start)
+                            if not subsets_work_fine:
+                                violating_dependency = True
                                 break
-                        read_subset = read.src_subset or read.subset
-                        if read_subset.dims() != write_subset.dims():
-                            continue
-                        subsets_work_fine = True
-                        dep_offsets = []
-                        for i in range(read_subset.dims()):
-                            if read_subset[i] != write_subset[i]:
-                                # TODO(later): This is currently limiting to where the dependency is not more than one
-                                # element and not strided. This could be expanded later, but is a bit more complex.
-                                if read_subset[i][2] != 1 or write_subset[i][2] != 1:
-                                    subsets_work_fine = False
-                                    break
-                                if not any(loop_var in x.free_symbols for x in write_subset[i]):
-                                    subsets_work_fine = False
-                                    break
-                                if not any(loop_var in x.free_symbols for x in read_subset[i]):
-                                    subsets_work_fine = False
-                                    break
-                                dep_start: sympy.Basic = read_subset[i][0] - write_subset[i][0]
-                                dep_end: sympy.Basic = read_subset[i][1] - write_subset[i][1]
-                                if len(dep_start.free_symbols) > 0 or len(dep_end.free_symbols) > 0:
-                                    subsets_work_fine = False
-                                    break
-                                if dep_end == 0 and not dep_start == 0:
-                                    dep_end -= read_subset[i][2]
-                                # TODO(later): This is currently limiting to exactly one dependency, but it may be
-                                # interesting to handle multiple. In that case, the guarantee that needs to be fulfilled
-                                # is just: dep_start > dep_end
-                                if dep_start != dep_end:
-                                    subsets_work_fine = False
-                                    break
-                                dep_offsets.append(loop_var + dep_start)
-                            #else:
-                            #    dep_offsets.append(0)
-                        if not subsets_work_fine:
-                            violating_dependency = True
+                            read_deps.append([write, dep_offsets])
+                            do_acrossable = True
+                        if not do_acrossable or violating_dependency or len(read_deps) == 0:
+                            can_parallelize = False
                             break
-                        read_deps.append([write, dep_offsets])
-                        do_acrossable = True
-                    if not do_acrossable or violating_dependency or len(read_deps) == 0:
-                        can_parallelize = False
-                        break
 
-                    resolving_write = None
-                    if len(read_deps) > 1:
-                        # TODO: get the last one of the writes to determine which one is the resolving write.
-                        raise NotImplementedError()
-                    else:
-                        resolving_write = read_deps[0]
+                        resolving_write = None
+                        if len(read_deps) > 1:
+                            # TODO: get the last one of the writes to determine which one is the resolving write.
+                            raise NotImplementedError()
+                        else:
+                            resolving_write = read_deps[0]
 
-                    if resolving_write == None:
-                        can_parallelize = False
-                        break
-                    doacross_deps[read] = resolving_write
-                if can_parallelize and doacross_deps:
-                    self._parallelize_loop(loop, doacross_deps)
+                        if resolving_write == None:
+                            can_parallelize = False
+                            break
+                        doacross_deps[read] = resolving_write
+                    if can_parallelize and doacross_deps:
+                        self._parallelize_loop(loop, doacross_deps)
 
         return results

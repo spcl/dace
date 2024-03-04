@@ -74,7 +74,6 @@ class StateDataDependence(ppl.Pass):
         for anode in state.data_nodes():
             for oedge in state.out_edges(anode):
                 if not oedge.data.is_empty():
-                    #root_edge = state.memlet_tree(oedge).root().edge
                     if oedge.data.data != anode.data:
                         # Special case for memlets copying data out of the scope, which are by default aligned with the
                         # outside data container. In this case, the source container must either be a scalar, or the
@@ -95,6 +94,8 @@ class StateDataDependence(ppl.Pass):
                             covered = True
                             break
                     if not covered:
+                        #root_edge = state.memlet_tree(oedge).root().edge
+                        #not_covered_reads.append([root_edge, root_edge.data])
                         not_covered_reads.append([oedge, oedge.data])
         # Make sure all reads are propagated if they happen inside maps. We do not need to do this for writes, because
         # it is already taken care of by the write underapproximation analysis pass.

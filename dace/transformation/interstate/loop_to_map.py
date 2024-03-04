@@ -15,6 +15,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
+from dace.sdfg.state import ControlFlowBlock
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
@@ -72,6 +73,102 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
 def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
     """ Keeps the indices or ranges of subsets that are in `indices`. """
     return type(subset)([t for i, t in enumerate(subset) if i in indices])
+
+
+def _test_read_memlet(sdfg: SDFG, state: SDFGState, edge: gr.MultiConnectorEdge[memlet.Memlet],
+                      itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
+                      end: symbolic.SymbolicType, step: symbolic.SymbolicType,
+                      write_memlets: Dict[str, List[memlet.Memlet]], mmlt: memlet.Memlet, src_subset: subsets.Range):
+    # Import as necessary
+    from dace.sdfg.propagation import propagate_subset, align_memlet
+
+    a = sp.Wild('a', exclude=[itersym])
+    b = sp.Wild('b', exclude=[itersym])
+    data = mmlt.data
+
+    if (mmlt.dynamic and mmlt.src_subset.num_elements() != 1):
+        # If pointers are involved, give up
+        return False
+    if not _check_range(src_subset, a, itersym, b, step):
+        return False
+
+    # Always use the source data container for the memlet test
+    if state is not None and edge is not None:
+        mmlt = align_memlet(state, edge, dst=False)
+        data = mmlt.data
+
+    pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
+    for candidate in write_memlets[data]:
+        # Simple case: read and write are in the same subset
+        read = src_subset
+        write = candidate.dst_subset
+        if read == write:
+            continue
+        ridx = _dependent_indices(itervar, read)
+        widx = _dependent_indices(itervar, write)
+        indices = set(ridx) | set(widx)
+        if not indices:
+            indices = set(range(len(read)))
+        read = _sanitize_by_index(indices, read)
+        write = _sanitize_by_index(indices, write)
+        if read == write:
+            continue
+        # Propagated read does not overlap with propagated write
+        pwrite = propagate_subset([candidate],
+                                    sdfg.arrays[data], [itervar],
+                                    subsets.Range([(start, end, step)]),
+                                    use_dst=True)
+        t_pread = _sanitize_by_index(indices, pread.src_subset)
+        pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
+        if subsets.intersects(t_pread, pwrite) is False:
+            continue
+        return False
+
+    return True
+
+
+def _is_array_thread_local(name: str, itervar: str, sdfg: SDFG, blocks: List[ControlFlowBlock]) -> bool:
+    """
+    This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
+    i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
+
+    For simplicity, it is assumed that the for-loop can be safely transformed to a Map. The method applies only to
+    bodies that become a NestedSDFG.
+
+    :param name: The name of array.
+    :param itervar: The for-loop iteration variable.
+    :param sdfg: The SDFG containing the states that comprise the body of the for-loop.
+    :param states: A list of control flow blocks that comprise the body of the for-loop.
+    :return: True if the array is thread-local, otherwise False.
+    """
+
+    desc = sdfg.arrays[name]
+    if not isinstance(desc, dt.Array):
+        # Scalars are always thread-local.
+        return True
+    if itervar in (str(s) for s in desc.free_symbols):
+        # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
+        return True
+    for state in blocks:
+        if isinstance(state, SDFGState):
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                for e in state.out_edges(node):
+                    src_subset = e.data.get_src_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if src_subset and itervar in src_subset.free_symbols:
+                        return False
+                for e in state.in_edges(node):
+                    dst_subset = e.data.get_dst_subset(e, state)
+                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
+                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
+                    # carrying the array depend on the iteration variable in a consistent manner.
+                    if dst_subset and itervar in dst_subset.free_symbols:
+                        return False
+    return True
 
 
 @make_properties
@@ -205,8 +302,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
-                        if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
-                                                     e.data, src_subset):
+                        if not _test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
+                                                 e.data, src_subset):
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -216,8 +313,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
             if mmlt.data in write_memlets:
-                if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
-                                             mmlt.subset):
+                if not _test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
+                                         mmlt.subset):
                     return False
 
         # Check that the iteration variable and other symbols are not used on other edges or states
@@ -250,99 +347,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if reassigned_symbols is not None:
                 symbols_that_may_be_used -= reassigned_symbols
 
-        return True
-
-    def test_read_memlet(self, sdfg: SDFG, state: SDFGState, edge: gr.MultiConnectorEdge[memlet.Memlet],
-                         itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
-                         end: symbolic.SymbolicType, step: symbolic.SymbolicType,
-                         write_memlets: Dict[str, List[memlet.Memlet]], mmlt: memlet.Memlet, src_subset: subsets.Range):
-        # Import as necessary
-        from dace.sdfg.propagation import propagate_subset, align_memlet
-
-        a = sp.Wild('a', exclude=[itersym])
-        b = sp.Wild('b', exclude=[itersym])
-        data = mmlt.data
-
-        if (mmlt.dynamic and mmlt.src_subset.num_elements() != 1):
-            # If pointers are involved, give up
-            return False
-        if not _check_range(src_subset, a, itersym, b, step):
-            return False
-
-        # Always use the source data container for the memlet test
-        if state is not None and edge is not None:
-            mmlt = align_memlet(state, edge, dst=False)
-            data = mmlt.data
-
-        pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
-        for candidate in write_memlets[data]:
-            # Simple case: read and write are in the same subset
-            read = src_subset
-            write = candidate.dst_subset
-            if read == write:
-                continue
-            ridx = _dependent_indices(itervar, read)
-            widx = _dependent_indices(itervar, write)
-            indices = set(ridx) | set(widx)
-            if not indices:
-                indices = set(range(len(read)))
-            read = _sanitize_by_index(indices, read)
-            write = _sanitize_by_index(indices, write)
-            if read == write:
-                continue
-            # Propagated read does not overlap with propagated write
-            pwrite = propagate_subset([candidate],
-                                      sdfg.arrays[data], [itervar],
-                                      subsets.Range([(start, end, step)]),
-                                      use_dst=True)
-            t_pread = _sanitize_by_index(indices, pread.src_subset)
-            pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
-            if subsets.intersects(t_pread, pwrite) is False:
-                continue
-            return False
-
-        return True
-
-    def _is_array_thread_local(self, name: str, itervar: str, sdfg: SDFG, states: List[SDFGState]) -> bool:
-        """
-        This helper method checks whether an array used exclusively in the body of a detected for-loop is thread-local,
-        i.e., its whole range is may be used in every loop iteration, or is can be shared by multiple iterations.
-
-        For simplicity, it is assumed that the for-loop can be safely transformed to a Map. The method applies only to
-        bodies that become a NestedSDFG.
-
-        :param name: The name of array.
-        :param itervar: The for-loop iteration variable.
-        :param sdfg: The SDFG containing the states that comprise the body of the for-loop.
-        :param states: A list of states that comprise the body of the for-loop.
-        :return: True if the array is thread-local, otherwise False.
-        """
-
-        desc = sdfg.arrays[name]
-        if not isinstance(desc, dt.Array):
-            # Scalars are always thread-local.
-            return True
-        if itervar in (str(s) for s in desc.free_symbols):
-            # If the shape or strides of the array depend on the iteration variable, then the array is thread-local.
-            return True
-        for state in states:
-            for node in state.data_nodes():
-                if node.data != name:
-                    continue
-                for e in state.out_edges(node):
-                    src_subset = e.data.get_src_subset(e, state)
-                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
-                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
-                    # carrying the array depend on the iteration variable in a consistent manner.
-                    if src_subset and itervar in src_subset.free_symbols:
-                        return False
-                for e in state.in_edges(node):
-                    dst_subset = e.data.get_dst_subset(e, state)
-                    # If the iteration variable is in the subsets symbols, then the array cannot be thread-local.
-                    # Here we use the assumption that the for-loop can be turned to a valid Map, i.e., all other edges
-                    # carrying the array depend on the iteration variable in a consistent manner.
-                    if dst_subset and itervar in dst_subset.free_symbols:
-                        return False
         return True
 
     def apply(self, _, sdfg: sd.SDFG):
@@ -411,7 +415,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if (isinstance(node, nodes.AccessNode) and node.data == name):
                             found = True
                             break
-                if not found and self._is_array_thread_local(name, itervar, sdfg, states):
+                if not found and _is_array_thread_local(name, itervar, sdfg, states):
                     unique_set.add(name)
 
             # Find NestedSDFG's connectors
@@ -511,7 +515,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     nsdfg.sdfg.add_datadesc(sym, desc)
                     body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
             for name, desc in nsdfg.sdfg.arrays.items():
-                if desc.transient and not self._is_array_thread_local(name, itervar, nsdfg.sdfg, nsdfg.sdfg.states()):
+                if desc.transient and not _is_array_thread_local(name, itervar, nsdfg.sdfg, nsdfg.sdfg.states()):
                     odesc = copy.deepcopy(desc)
                     sdfg.arrays[name] = odesc
                     desc.transient = False

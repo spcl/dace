@@ -973,6 +973,7 @@ class UnderapproximateWrites(ppl.Pass):
                 for iedge in state.in_edges(dn):
                     if not iedge in self.approximation_dict:
                         self.approximation_dict[iedge] = copy.deepcopy(iedge.data)
+                        self.approximation_dict[iedge]._edge = iedge
 
     def _find_live_iteration_variables(self,
                                        nsdfg: nodes.NestedSDFG,
@@ -1348,6 +1349,7 @@ class UnderapproximateWrites(ppl.Pass):
                 new_memlet = self._underapproximate_memlets(dfg_state, aligned_memlet, node, True,
                                                             connector=geteconn(edge),
                                                             surrounding_itvars=surrounding_itvars)
+            new_memlet._edge = edge
             self.approximation_dict[edge] = new_memlet
 
     def _align_memlet(self, state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:

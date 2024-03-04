@@ -1660,9 +1660,10 @@ def map_view_to_array(vdesc: dt.View, adesc: dt.Array,
     unsqueezed: List[int] = []
     squeezed: List[int] = []
 
-    # First, remove shape=1 dimensions (unsqueezed or squeezed)
-    non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1]
-    non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1]
+    # First, remove shape=1 dimensions (unsqueezed or squeezed) or dimensions that are effectively ignored through
+    # 0 strides.
+    non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1 and vdesc.strides[i] != 0]
+    non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1 and adesc.strides[i] != 0]
     astrides = [adesc.strides[i] for i in non_squeeze_adims]
 
     # Find matching strides
