@@ -1,6 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the map-dim shuffle transformation. """
 
+from typing import List
+from dace import dtypes
+from dace.memlet import Memlet
 from dace.sdfg import SDFG
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -27,18 +30,28 @@ class MapDimShuffle(transformation.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry: nodes.MapEntry = self.map_entry
+        if self.parameters is None:
+            return False
+        if len(self.parameters) != len(map_entry.map.params):
+            return False
+        if set(self.parameters) != set(map_entry.map.params):
+            return False
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        map_entry = self.map_entry
-        if self.parameters is None:
-            return
+        map_entry: nodes.MapEntry = self.map_entry
+        new_map_order: List[int] = [map_entry.map.params.index(param) for param in self.parameters]
+        map_entry.map.range.ranges = [map_entry.map.range.ranges[new_pos] for new_pos in new_map_order]
+        map_entry.map.range.tile_sizes = [map_entry.map.range.tile_sizes[new_pos] for new_pos in new_map_order]
+        map_entry.map.params = [map_entry.map.params[new_pos] for new_pos in new_map_order]
 
-        if set(self.parameters) != set(map_entry.map.params):
-            return
-
-        map_entry.range.ranges = [
-            r for list_param in self.parameters for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
-            if list_param == map_param
-        ]
-        map_entry.map.params = self.parameters
+        if map_entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+            # For doacross maps, we need to make sure all memlets that carry doacross dependencies are also equally
+            # permuted.
+            scope_subgraph = graph.scope_subgraph(map_entry)
+            for e in scope_subgraph.edges():
+                memlet: Memlet = e.data
+                if memlet.schedule == dtypes.MemletScheduleType.Doacross_Sink:
+                    new_offset = [memlet.doacross_dependency_offset[new_pos] for new_pos in new_map_order]
+                    memlet.doacross_dependency_offset = new_offset

@@ -20,7 +20,7 @@ class ParallelizeDoacrossLoops(ppl.Pass):
     TODO
     """
 
-    CATEGORY: str = 'Loop Parallelization'
+    CATEGORY: str = 'Parallelization'
 
     use_doacross = properties.Property(dtype=bool, default=False,
                                        desc='Parallelize loops with sequential dependencies using doacross parallelism')
