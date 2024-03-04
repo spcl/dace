@@ -68,7 +68,8 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                             if not structures.is_struct(decl.type):
                                 return
 
-
+                            if isinstance(object,dat.ContainerArray):
+                                return
                             struct_type = structures.get_definition(decl.type)
                             global global_struct_instance_counter
                             local_counter=global_struct_instance_counter
@@ -76,7 +77,8 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                             for var, var_type in struct_type.vars.items():
 
                                 if structures.is_struct(var_type.type):
-                                    add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}->{var_type.name}",f"{var_type.name}_{name_}",placeholders,object.members[var_type.name])
+                                    if not isinstance(object.members[var_type.name],dat.Structure):
+                                        add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}->{var_type.name}",f"{var_type.name}_{name_}",placeholders,object.members[var_type.name])
 
                                 if var_type.sizes is None or len(var_type.sizes) == 0:
                                     continue    
@@ -98,22 +100,25 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n") 
                                                 sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                                                 sdfg.add_symbol(newsize, dtypes.int32)
-                                                shape2=dpcp(object.members[var_type.name].shape)
+                                                if isinstance(object,dat.Structure):
+                                                    shape2=dpcp(object.members[var_type.name].shape)
+                                                else:
+                                                    shape2=dpcp(object.stype.members[var_type.name].shape)
                                                 shapelist=list(shape2)
                                                 shapelist[var_type.sizes.index(size)]= sym.pystr_to_symbolic(newsize)
                                                 shape_replace=tuple(shapelist)
                                                 viewname= f"{name}->{var_type.name}"
 
                                                 viewname=viewname.replace("->","_")
-                                                view=sdfg.arrays[viewname]
+                                                #view=sdfg.arrays[viewname]
 
                                                 if isinstance(object.members[var_type.name],dat.Array):
                                                     tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace)
                                                     
                                                 
                                                     
-                                                elif isinstance(object.members[var_type.name],dat.ContainerArray):
-                                                    tmpobject=dat.ContainerArray(object.members[var_type.name].stype,shape_replace)    
+                                                elif isinstance(object,dat.ContainerArray):
+                                                    tmpobject=dat.ContainerArray(object.stype.members[var_type.name],shape_replace)    
                                                 else:
                                                     raise ValueError("Unknown type"+str(tmpobject.__class__))
                                                 object.members.pop(var_type.name)
@@ -2835,6 +2840,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     functions_and_subroutines_builder = ast_transforms.FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
+    listnames=[i.name for i in functions_and_subroutines_builder.names]
+    for i in functions_and_subroutines_builder.iblocks:
+        if i not in listnames:
+            functions_and_subroutines_builder.names.append(ast_internal_classes.Name_Node(name=i,type="VOID"))
+        
     partial_ast.functions_and_subroutines = functions_and_subroutines_builder.names
     #program = ast_transforms.functionStatementEliminator(program)
     program = ast_transforms.StructConstructorToFunctionCall(functions_and_subroutines_builder.names).visit(program)
@@ -2845,7 +2855,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
 
@@ -2882,7 +2892,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
     program = ast_transforms.TypeInference(program).visit(program)
     program = ast_transforms.ReplaceInterfaceBlocks(program, functions_and_subroutines_builder).visit(program)
-
+    program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     print("After index extractor")
@@ -2978,9 +2988,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
+            if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue

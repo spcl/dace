@@ -1369,6 +1369,8 @@ class MathFunctions(IntrinsicTransformation):
             arg = node.args[0]
             if isinstance(arg, ast_internal_classes.Real_Literal_Node):
                 return 'REAL'
+            elif isinstance(arg, ast_internal_classes.Double_Literal_Node):
+                return 'DOUBLE'
             elif isinstance(arg, ast_internal_classes.Int_Literal_Node):
                 return 'INTEGER'
             elif isinstance(arg, ast_internal_classes.Call_Expr_Node):
