@@ -455,22 +455,33 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             # Add NestedSDFG arrays
             for name in read_set | write_set:
                 nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
-                nsdfg.arrays[name].transient = False
+                if not isinstance(nsdfg.arrays[name], dt.View):
+                    nsdfg.arrays[name].transient = False
             for name in unique_set:
                 nsdfg.arrays[name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
 
             # Add NestedSDFG node
-            cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
+            inputs = {data for data in read_set if not isinstance(nsdfg.arrays[data], dt.View)}
+            outputs = {data for data in write_set if not isinstance(nsdfg.arrays[data], dt.View)}
+            cnode = new_body.add_nested_sdfg(nsdfg, None, inputs, outputs)
             if sdfg.parent:
                 for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
                     if s not in cnode.symbol_mapping:
                         cnode.symbol_mapping[s] = m
                         nsdfg.add_symbol(s, sdfg.symbols[s])
+            
             for name in read_set:
+                if isinstance(nsdfg.arrays[name], dt.View):
+                    continue
+
                 r = new_body.add_read(name)
                 new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+
             for name in write_set:
+                if isinstance(nsdfg.arrays[name], dt.View):
+                    continue
+
                 w = new_body.add_write(name)
                 new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
@@ -549,9 +560,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 intermediate_nodes.append(node)
 
-        map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
-        entry = nodes.MapEntry(map)
-        exit = nodes.MapExit(map)
+        map_node = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
+        entry = nodes.MapEntry(map_node)
+        exit = nodes.MapExit(map_node)
         body.add_node(entry)
         body.add_node(exit)
 
