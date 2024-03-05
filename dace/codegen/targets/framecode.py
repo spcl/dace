@@ -48,6 +48,7 @@ class DaCeCodeGenerator(object):
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants
