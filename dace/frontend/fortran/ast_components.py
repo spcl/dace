@@ -1544,9 +1544,8 @@ class InternalFortranAst:
 
     def real_literal_constant(self, node: FASTNode):
         value=node.children[0].lower()
-        if len(node.children)==2:
-            if node.children[1].lower()=="wp":
-                return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
+        if len(node.children) == 2 and node.children[1] is not None and node.children[1].lower()=="wp":
+            return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
         if value.find("_")!=-1:
             x=value.split("_")
             value=x[0]
