@@ -52,6 +52,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if oedge.data.data is None:
                 return False
 
+        return False
         return True
 
     def apply(self, outer_state: SDFGState, sdfg: SDFG):
