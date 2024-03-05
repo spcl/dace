@@ -179,8 +179,15 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                         break
                     # If input array has inputs of its own (cannot promote within same state), skip
                     if state.in_degree(tinput.src) > 0:
-                        candidates.remove(candidate)
-                        break
+                        if isinstance(sdfg.arrays[tinput.src.data], dt.View):
+                            # Trivial views should be removed first
+                            viewing_node = sdutils.get_view_node(state, tinput.src)
+                            if viewing_node.data == tinput.src.data:
+                                candidates.remove(candidate)
+                                break         
+                        else:
+                            candidates.remove(candidate)
+                            break
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
@@ -652,7 +659,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                 input = in_edge.src
 
                 # There is only zero or one incoming edges by definition
-                tasklet_inputs = [e.src for e in state.in_edges(input)]
+                tasklet_inputs = [e.src for e in state.bfs_edges(input, reverse=True)]
                 # Step 2.1
                 new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
                 new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
@@ -672,8 +679,31 @@ class ScalarToSymbolPromotion(passes.Pass):
 
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):
-                        memlet_str: str = e.data.data
-                        if (e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
+                        view_nodes = sdutils.get_all_view_nodes(new_state, e.src)
+                        if len(view_nodes) > 1:
+                            view_nodes = view_nodes[::-1]
+                            view_nodes.pop(0)
+                            memlet_chain = []
+                            
+                            view_edge = sdutils.get_view_edge(new_state, view_nodes[0])
+                            view_name = view_edge.data.data
+                            if len(view_nodes) > 1:
+                                view_name += "[" + view_edge.data.subset.__str__() + "]"
+                            memlet_chain.append(view_name)
+
+                            for i in range(1, len(view_nodes)):
+                                view_edge = sdutils.get_view_edge(new_state, view_nodes[i])
+                                view_name = view_edge.data.data
+                                view_name = view_name.split(".")[-1]
+                                if i < len(view_nodes) - 1:
+                                    view_name += "[" + view_edge.data.subset.__str__() + "]"
+                                memlet_chain.append(view_name)
+
+                            memlet_str = ".".join(memlet_chain)
+                        else:
+                            memlet_str: str = e.data.data
+
+                        if (e.data.subset is not None and not isinstance(sdfg.arrays[e.data.data], dt.Scalar)):
                             memlet_str += '[%s]' % e.data.subset
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment

@@ -217,13 +217,21 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit memlet as a reference and register defined variable
         conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+        #                                                 sdfg,
+        #                                                 memlet,
+        #                                                 name,
+        #                                                 conntype,
+        #                                                 ancestor=0,
+        #                                                 is_write=is_write)
+        # NOTE: IMPORTANT!!! This is a temporary fix for Views that are used for both reading and writing
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
                                                         name,
                                                         conntype,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=True)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -1588,7 +1596,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
-        fsyms=set(filter(lambda x: not str(x).startswith("__f2dace_STRUCTARRAY"), fsyms))
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_STRUCTARRAY") or str(x).startswith("__f2dace_STRUCTOFFSETARRAY")), fsyms))
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
@@ -1601,7 +1609,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
-        fsyms=set(filter(lambda x: not str(x).startswith("__f2dace_STRUCTARRAY"), fsyms))
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_STRUCTARRAY") or str(x).startswith("__f2dace_STRUCTOFFSETARRAY")), fsyms))
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
