@@ -123,6 +123,7 @@ class InternalFortranAst:
         self.intrinsics_list = []
         self.rename_list = {}
         self.placeholders = {}
+        self.placeholders_offsets = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -382,14 +383,22 @@ class InternalFortranAst:
         component_part = get_child(children, ast_internal_classes.Component_Part_Node)
         from dace.frontend.fortran.ast_transforms import PartialRenameVar
         if component_part is not None:
-            component_part=PartialRenameVar(oldname="__f2dace_ARRAY", newname="__f2dace_STRUCTARRAY").visit(component_part)
+            component_part=PartialRenameVar(oldname="__f2dace_A", newname="__f2dace_SA").visit(component_part)
+            component_part=PartialRenameVar(oldname="__f2dace_OA", newname="__f2dace_SOA").visit(component_part)
             new_placeholder={}
+            new_placeholder_offsets={}
             for k,v in self.placeholders.items():
-                if "__f2dace_ARRAY" in k:
-                    new_placeholder[k.replace("__f2dace_ARRAY","__f2dace_STRUCTARRAY")]=self.placeholders[k]
+                if "__f2dace_A" in k:
+                    new_placeholder[k.replace("__f2dace_A","__f2dace_SA")]=self.placeholders[k]
                 else:
                     new_placeholder[k]=self.placeholders[k]
             self.placeholders=new_placeholder            
+            for k,v in self.placeholders_offsets.items():
+                if "__f2dace_OA" in k:
+                    new_placeholder_offsets[k.replace("__f2dace_OA","__f2dace_SOA")]=self.placeholders_offsets[k]
+                else:
+                    new_placeholder_offsets[k]=self.placeholders_offsets[k]
+            self.placeholders_offsets=new_placeholder_offsets            
         return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
 
     def derived_type_stmt(self, node: FASTNode):
@@ -787,14 +796,18 @@ class InternalFortranAst:
                 raise NotImplementedError("Assumed array shape not supported yet if array name missing")
 
             sizes = []
+            offsets =[]
             for actual_array in processed_array_names:
 
                 size = []
+                offset = []
                 for i in range(dims_count):
 
-                    name = f'__f2dace_ARRAY_{actual_array}_dim_{i}_size_{self.type_arbitrary_array_variable_count}'
+                    name = f'__f2dace_A_{actual_array}_d_{i}_s_{self.type_arbitrary_array_variable_count}'
+                    offset_name= f'__f2dace_OA_{actual_array}_d_{i}_s_{self.type_arbitrary_array_variable_count}'
                     self.type_arbitrary_array_variable_count += 1
                     self.placeholders[name] = [actual_array, i, self.type_arbitrary_array_variable_count]
+                    self.placeholders_offsets[name] = [actual_array, i, self.type_arbitrary_array_variable_count]
 
                     var = ast_internal_classes.Symbol_Decl_Node(name=name,
                                                     type='INTEGER',
@@ -804,14 +817,26 @@ class InternalFortranAst:
                                                     init=None,
                                                     kind=None,
                                                     line_number=linenumber)
+                    var2 = ast_internal_classes.Symbol_Decl_Node(name=offset_name,
+                                                    type='INTEGER',
+                                                    alloc=False,
+                                                    sizes=None,
+                                                    offsets=None,
+                                                    init=None,
+                                                    kind=None,
+                                                    line_number=linenumber)
                     size.append(ast_internal_classes.Name_Node(name=name))
+                    offset.append(ast_internal_classes.Name_Node(name=offset_name))
+
                     self.symbols[name] = None
                     vardecls.append(var)
+                    vardecls.append(var2)
                 sizes.append(size)
+                offsets.append(offset)
 
-            return sizes, vardecls
+            return sizes, vardecls ,offsets
         else:
-            return None, []
+            return None, [] ,None
 
     def type_declaration_stmt(self, node: FASTNode):
 
@@ -920,10 +945,8 @@ class InternalFortranAst:
                     attr_size = [attr_size] * len(names)
                     attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
-                    attr_offset = []
-                    for size in attr_size:
-                        attr_offset.append([1] * len(size))
+                    attr_size, assumed_vardecls,attr_offset = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
+                    
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
@@ -951,10 +974,7 @@ class InternalFortranAst:
                     attr_size = [attr_size] * len(names)
                     attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
-                    attr_offset = []
-                    for size in attr_size:
-                        attr_offset.append([1] * len(size))
+                    attr_size, assumed_vardecls, attr_offset = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
@@ -999,13 +1019,14 @@ class InternalFortranAst:
 
                     if size is None:
 
-                        size, assumed_vardecls = self.assumed_array_shape(var, actual_name.name, node.item.span)
+                        size, assumed_vardecls ,offset = self.assumed_array_shape(var, actual_name.name, node.item.span)
                         if size is None:
                             offset = None
                         else:
                             # only one array
                             size = size[0]
-                            offset = [1] * len(size)
+                            offset = offset[0]
+                            #offset = [1] * len(size)
                         vardecls.extend(assumed_vardecls)
 
                     vardecls.append(

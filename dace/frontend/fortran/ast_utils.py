@@ -355,15 +355,19 @@ class TaskletWriter:
                  name_mapping=None,
                  input: List[str] = None,
                  input_changes: List[str] = None,
-                 placeholders=None
+                 placeholders=None,
+                 placeholders_offsets=None,
+                 rename_dict=None
     ):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
         self.placeholders = placeholders
+        self.placeholders_offsets = placeholders_offsets
         self.mapping = name_mapping
         self.input = input
         self.input_changes = input_changes
+        self.rename_dict = rename_dict
 
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
@@ -432,6 +436,9 @@ class TaskletWriter:
         if hasattr(node,"isStructMember"):
             if node.isStructMember:
                 return node.name
+            
+        if name in self.rename_dict:    
+            return str(self.rename_dict[name])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
             #print(location)
@@ -445,6 +452,20 @@ class TaskletWriter:
                     return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return str(size)
+        
+        if self.placeholders_offsets.get(name) is not None:
+            location=self.placeholders_offsets.get(name)
+            #print(location)
+            sdfg_name = self.mapping.get(self.sdfg).get(location[0])
+            if sdfg_name is None:
+                return name
+            else:
+                print(sdfg_name) 
+                print(location)
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
+                    return "0"
+                offset=self.sdfg.arrays[sdfg_name].offset[location[1]]
+                return str(offset)    
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
@@ -552,7 +573,7 @@ def generate_memlet(op, top_sdfg, state, offset_normalization = False):
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for i in op.indices:
-            tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders)
+            tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders, placeholders_offsets=state.placeholders_offsets)
             text = tw.write_code(i)
             #This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(sym.pystr_to_symbolic(text))
@@ -574,10 +595,12 @@ class ProcessedWriter(TaskletWriter):
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
     :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
     """
-    def __init__(self, sdfg: SDFG, mapping, placeholders):
+    def __init__(self, sdfg: SDFG, mapping, placeholders, placeholders_offsets,rename_dict):
         self.sdfg = sdfg
         self.mapping = mapping
         self.placeholders = placeholders
+        self.placeholders_offsets = placeholders_offsets
+        self.rename_dict = rename_dict
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
@@ -598,6 +621,8 @@ class ProcessedWriter(TaskletWriter):
 
     def name2string(self, node: ast_internal_classes.Name_Node):
         name = node.name
+        if name in self.rename_dict:    
+            return str(self.rename_dict[name])
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
