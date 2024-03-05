@@ -217,13 +217,21 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit memlet as a reference and register defined variable
         conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+        #                                                 sdfg,
+        #                                                 memlet,
+        #                                                 name,
+        #                                                 conntype,
+        #                                                 ancestor=0,
+        #                                                 is_write=is_write)
+        # NOTE: IMPORTANT!!! This is a temporary fix for Views that are used for both reading and writing
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
                                                         name,
                                                         conntype,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=True)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
