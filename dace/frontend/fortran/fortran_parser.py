@@ -1872,7 +1872,7 @@ class AST_translator:
                 if len(stuff)>0:
                     count=self.count_of_struct_symbols_lifted
                     sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
-                    sdfg.init_code
+                    symname="tmp_struct_symbol_"+str(count)
                     if sdfg.parent_sdfg is not None:
                         sdfg.parent_sdfg.add_symbol("tmp_struct_symbol_"+str(count),dtypes.int32)
                         sdfg.parent_nsdfg_node.symbol_mapping["tmp_struct_symbol_"+str(count)]="tmp_struct_symbol_"+str(count)
@@ -1880,6 +1880,11 @@ class AST_translator:
                             assign= ast_utils.ProcessedWriter(sdfg.parent_sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(i)
                             edge.data.assignments["tmp_struct_symbol_"+str(count)]=assign
                             #print(edge)
+                    else:
+                        assign= ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(i)
+                        
+                        sdfg.append_global_code(f"{dtypes.int32.ctype} {symname};\n")
+                        sdfg.append_init_code("tmp_struct_symbol_"+str(count)+"="+assign.replace(".","->")+";\n")       
                     tw = ast_utils.TaskletWriter([], [], sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names)
                     text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
                     sizes.append(sym.pystr_to_symbolic(text))

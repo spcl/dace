@@ -258,6 +258,7 @@ class Var_Decl_Node(Statement_Node):
     _fields = (
         'sizes',
         'offsets',
+        'actual_offsets'
         'typeref',
         'init',
     )
