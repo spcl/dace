@@ -687,29 +687,36 @@ class ScalarToSymbolPromotion(passes.Pass):
 
                     # Replace tasklet inputs with incoming edges
                     for e in new_state.in_edges(input):
-                        view_nodes = sdutils.get_all_view_nodes(new_state, e.src)
-                        if len(view_nodes) > 1:
-                            view_nodes = view_nodes[::-1]
-                            view_nodes.pop(0)
-                            memlet_chain = []
+                        view_nodes = sdutils.get_all_view_nodes(new_state, e.src)[::-1]
+                        
+                        current_node = view_nodes[0]
+                        current_desc = sdfg.arrays[current_node.data]
+                        memlet_path = [current_node.data]
+                        for i in range(1, len(view_nodes)):
+                            view_node = view_nodes[i]
+                            view_edge = sdutils.get_view_edge(new_state, view_node)
                             
-                            view_edge = sdutils.get_view_edge(new_state, view_nodes[0])
-                            view_name = view_edge.data.data
-                            if len(view_nodes) > 1:
-                                view_name += "[" + view_edge.data.subset.__str__() + "]"
-                            memlet_chain.append(view_name)
-
-                            for i in range(1, len(view_nodes)):
-                                view_edge = sdutils.get_view_edge(new_state, view_nodes[i])
-                                view_name = view_edge.data.data
-                                view_name = view_name.split(".")[-1]
+                            # View on a member?
+                            if "." in view_edge.data.data:
+                                member_name = view_edge.data.data.split(".")[-1]
+                                memlet_part = member_name
                                 if i < len(view_nodes) - 1:
-                                    view_name += "[" + view_edge.data.subset.__str__() + "]"
-                                memlet_chain.append(view_name)
+                                    memlet_part += "[" + view_edge.data.subset.__str__() + "]"
+                                
+                                memlet_path.append(memlet_part)
 
-                            memlet_str = ".".join(memlet_chain)
-                        else:
-                            memlet_str: str = e.data.data
+                                current_node = view_node
+                                current_desc = current_desc.members[member_name]
+                            else:
+                                # View on a subset
+                                if view_edge.data.subset != mm.Memlet.from_array(current_node.data, current_desc).subset:
+                                    # TODO: Non-trivial, memlet offsetting required
+                                    raise NotImplementedError
+                                else:
+                                    # We can simply skip
+                                    continue
+
+                        memlet_str = ".".join(memlet_path)
 
                         if (e.data.subset is not None and not isinstance(sdfg.arrays[e.data.data], dt.Scalar)):
                             memlet_str += '[%s]' % e.data.subset
