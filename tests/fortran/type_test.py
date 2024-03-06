@@ -503,11 +503,11 @@ def test_fortran_frontend_type_arg():
 
           
             TYPE simple_type
-                REAL :: w(5,5)
+                REAL, POINTER, CONTIGUOUS :: w(:,:)
             END TYPE simple_type
 
              TYPE simple_type2
-                type(simple_type) :: pprog(10)
+                type(simple_type), allocatable :: pprog(:)
             END TYPE simple_type2
 
             REAL :: d(5,5)
@@ -539,6 +539,7 @@ def test_fortran_frontend_type_arg():
     sources={}
     sources["type_arg_test"]=test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg_test",sources=sources, normalize_offsets=True)
+    sdfg.view()
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -648,6 +649,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_array()
     #test_fortran_frontend_type_array2()
     #test_fortran_frontend_type_pointer()
-    #test_fortran_frontend_type_arg()
-    test_fortran_frontend_type_view()
+    test_fortran_frontend_type_arg()
+    #test_fortran_frontend_type_view()
    # test_fortran_frontend_type_arg2()

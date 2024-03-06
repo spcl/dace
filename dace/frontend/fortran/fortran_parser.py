@@ -34,7 +34,7 @@ import networkx as nx
 
 global_struct_instance_counter=0
 
-def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain,actual_offsets_per_sdfg): 
+def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain,actual_offsets_per_sdfg,names_of_object_in_parent_sdfg,actual_offsets_per_parent_sdfg): 
     if not isinstance(datatype_to_add,dat.Structure):
         return   
     for i in datatype_to_add.members:
@@ -42,7 +42,7 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
         for other_type in registered_types:
             if current_dtype.dtype==registered_types[other_type].dtype:
                 other_type_obj=registered_types[other_type]
-                add_views_recursive(sdfg,name,datatype_to_add.members[i],struct_views,name_mapping,registered_types,chain+[i],actual_offsets_per_sdfg)
+                add_views_recursive(sdfg,name,datatype_to_add.members[i],struct_views,name_mapping,registered_types,chain+[i],actual_offsets_per_sdfg,names_of_object_in_parent_sdfg,actual_offsets_per_parent_sdfg)
                 #for j in other_type_obj.members:
                 #    sdfg.add_view(name_mapping[name] + "_" + i +"_"+ j,other_type_obj.members[j].shape,other_type_obj.members[j].dtype)
                 #    name_mapping[name + "_" + i +"_"+ j] = name_mapping[name] + "_" + i +"_"+ j
@@ -61,11 +61,13 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
             sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
         else:    
             sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
-        actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]=datatype_to_add.members[i].offset
+        if names_of_object_in_parent_sdfg.get(name_mapping[name]) is not None:
+            if actual_offsets_per_parent_sdfg.get(names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i) is not None:
+                actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]= actual_offsets_per_parent_sdfg[names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i]
         name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
         struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
 
-def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str,name_:str,placeholders,placeholders_offsets,object,names_to_replace):
+def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str,name_:str,placeholders,placeholders_offsets,object,names_to_replace,actual_offsets_per_sdfg):
                             if not structures.is_struct(decl.type):
                                 return
 
@@ -79,23 +81,36 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
 
                                 if structures.is_struct(var_type.type):
                                     if isinstance(object.members[var_type.name],dat.Structure):
-                                        add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}->{var_type.name}",f"{var_type.name}_{name_}",placeholders,placeholders_offsets,object.members[var_type.name],names_to_replace)
+                                        add_deferred_shape_assigns_for_structs(structures, var_type, sdfg, assign_state, f"{name}->{var_type.name}",f"{var_type.name}_{name_}",placeholders,placeholders_offsets,object.members[var_type.name],names_to_replace,actual_offsets_per_sdfg)
 
                                 if var_type.sizes is None or len(var_type.sizes) == 0:
                                     continue    
                                 offsets_to_replace=[]
+                                sanity_count=0
                                 for offset in var_type.offsets:
                                     if isinstance(offset,ast_internal_classes.Name_Node):
                                         if hasattr(offset, "name"):
                                             if sdfg.symbols.get(offset.name) is None:
                                                 sdfg.add_symbol(offset.name, dtypes.int32)
+                                        sanity_count+=1        
                                         if offset.name.startswith('__f2dace_SOA'):
                                             newoffset=offset.name+"_"+name_+"_"+str(local_counter)
                                             sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
                                             sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
                                             sdfg.add_symbol(newoffset, dtypes.int32)
                                             offsets_to_replace.append(newoffset)
-                                        names_to_replace[offset.name]=newoffset
+                                            names_to_replace[offset.name]=newoffset
+                                        else:
+                                            print("not replacing",offset.name)
+                                            offsets_to_replace.append(offset.name)    
+                                    else:
+                                        sanity_count+=1 
+                                        print("not replacing not namenode",offset)
+                                        offsets_to_replace.append(offset)        
+                                if sanity_count==len(var_type.offsets):
+                                    print(offsets_to_replace)
+                                    actual_offsets_per_sdfg[name.replace("->","_")+"_"+var_type.name]=offsets_to_replace
+                                        
                                 # for assumed shape, all vars starts with the same prefix
                                 for size in var_type.sizes:
                                     if isinstance(size, ast_internal_classes.Name_Node):# and  size.name.startswith('__f2dace_A'):
@@ -126,13 +141,13 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 viewname=viewname.replace("->","_")
                                                 #view=sdfg.arrays[viewname]
 
-                                                if isinstance(object.members[var_type.name],dat.Array):
-                                                    tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace)
+                                                if isinstance(object,dat.ContainerArray):
+                                                    tmpobject=dat.ContainerArray(object.stype.members[var_type.name],shape_replace)
                                                     
                                                 
-                                                    
-                                                elif isinstance(object,dat.ContainerArray):
-                                                    tmpobject=dat.ContainerArray(object.stype.members[var_type.name],shape_replace)    
+                                                elif isinstance(object.members[var_type.name],dat.Array):  
+                                                    tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace)
+                                                        
                                                 else:
                                                     raise ValueError("Unknown type"+str(tmpobject.__class__))
                                                 object.members.pop(var_type.name)
@@ -357,7 +372,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
 
                         for decl in i.vardecl:
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names)
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names,self.actual_offsets_per_sdfg[sdfg])
 
             self.translate(node.main_program.execution_part.execution, sdfg)
         else: 
@@ -381,7 +396,7 @@ class AST_translator:
                         assign_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, "assign_struct_sizes")
                         for decl in i.vardecl:
 
-                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names)
+                            add_deferred_shape_assigns_for_structs(self.structures,decl, sdfg, assign_state, decl.name,decl.name,self.placeholders,self.placeholders_offsets,sdfg.arrays[self.name_mapping[sdfg][decl.name]],self.replace_names,self.actual_offsets_per_sdfg[sdfg])
 
                 self.transient_mode=True    
                 self.translate(self.startpoint.execution_part.execution, sdfg)   
@@ -417,8 +432,10 @@ class AST_translator:
                 self.name_mapping[sdfg][node.name_pointer.name] = self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
                 #self.replace_names[node.name_pointer.name]=self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
                 target=sdfg.arrays[self.name_mapping[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]]        
+                #for i in self.actual_offsets_per_sdfg[sdfg]:
+                #    print(i)
                 actual_offsets=self.actual_offsets_per_sdfg[sdfg][node.name_target.parent_ref.name+"_"+node.name_target.part_ref.parent_ref.name+"_"+node.name_target.part_ref.part_ref.name]
-
+                
                 for i in shapenames:
                     self.replace_names[str(i)]=str(target.shape[shapenames.index(i)])
                 for i in offsetnames:
@@ -1113,9 +1130,17 @@ class AST_translator:
                             shape = list(array.shape)
                         else:
                             raise NotImplementedError("Unknown part_ref type")
+                        
                         if shape == () or shape == (1, ) or shape == [] or shape == [1]:
-                            element_type=array.stype
-                            if str(element_type) in self.registered_types:
+                            #FIXME 6.03.2024
+                            if isinstance(array,dat.ContainerArray):
+                                element_type=array.stype
+                            elif isinstance(array,pointer):
+                                element_type=array.dtype.base_type 
+                            else:
+                                element_type=array.dtype   
+                            print(element_type,element_type.__class__.__name__)    
+                            if element_type.name in self.registered_types:
                                 datatype=self.get_dace_type(str(element_type))
                                 datatype_to_add=copy.deepcopy(element_type)
                                 datatype_to_add.transient = False
@@ -1123,7 +1148,7 @@ class AST_translator:
                                 
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
-                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg])    
+                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg],self.names_of_object_in_parent_sdfg[new_sdfg],self.actual_offsets_per_sdfg[sdfg])    
                                 
                             else:
                                 new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)            
@@ -1235,7 +1260,7 @@ class AST_translator:
                                 
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
-                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg])        
+                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg],self.names_of_object_in_parent_sdfg[new_sdfg],self.actual_offsets_per_sdfg[sdfg])        
                                 
                             else:
                                 new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)
@@ -1950,7 +1975,7 @@ class AST_translator:
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
-                add_views_recursive(sdfg,node.name,datatype_to_add,self.struct_views[sdfg],self.name_mapping[sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[sdfg])        
+                add_views_recursive(sdfg,node.name,datatype_to_add,self.struct_views[sdfg],self.name_mapping[sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[sdfg],{},{})        
                 # for i in datatype_to_add.members:
                 #     current_dtype=datatype_to_add.members[i].dtype
                 #     for other_type in self.registered_types:
@@ -3071,8 +3096,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
