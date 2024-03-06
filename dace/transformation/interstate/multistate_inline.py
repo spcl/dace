@@ -52,7 +52,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             if oedge.data.data is None:
                 return False
 
-        return False
         return True
 
     def apply(self, outer_state: SDFGState, sdfg: SDFG):
@@ -173,7 +172,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nsdfg = nsdfg_node.sdfg
 
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+        # symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
         
         # Collect symbols that are overwritten
         inner_assignments = set()
@@ -188,7 +187,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         outer_symbols = {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.arrays.keys()) | outer_assignments
 
         assignments_to_replace = inner_assignments & outer_symbols
-        assignments_to_replace -= (set(nsdfg_node.in_connectors.keys()) | set(nsdfg_node.out_connectors.keys()))
         
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
@@ -205,26 +203,32 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         outer_symbols = set(sdfg.arrays.keys()) | {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.constants.keys())
         
-        replacements: Dict[str, str] = {}
+        transient_replacements: Dict[str, str] = {}
         for nstate in nsdfg.nodes():
             for node in nstate.nodes():
                 if isinstance(node, nodes.AccessNode):
                     datadesc = nsdfg.arrays[node.data]
-                    if node.data not in replacements and datadesc.transient:
+                    if isinstance(datadesc, View) or not datadesc.transient:
+                        continue
+
+                    if node.data not in transient_replacements:
                         new_name = node.data
-                        name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(replacements.values())))
-                        replacements[node.data] = name
+                        name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(transient_replacements.values())))
+                        transient_replacements[node.data] = name
 
             for edge in nstate.edges():
                 if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
                     if edge.data.data is not None:
                         datadesc = nsdfg.arrays[edge.data.data]
-                        if edge.data.data not in replacements and datadesc.transient:
-                            new_name = edge.data.data
-                            name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(replacements.values())))
-                            replacements[edge.data.data] = name
+                        if isinstance(datadesc, View) or not datadesc.transient:
+                            continue
 
-        symbolic.safe_replace(replacements, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
+                        if edge.data.data not in transient_replacements:
+                            new_name = edge.data.data
+                            name = find_new_name(new_name, outer_symbols | set(nsdfg.arrays.keys() | set(transient_replacements.values())))
+                            transient_replacements[edge.data.data] = name
+
+        replace_datadesc_names(nsdfg, transient_replacements)
 
 
     def _rename_nested_constants(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG) -> None:
@@ -272,26 +276,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Make arguments unique in inner and outer sdfg
         replacements = {}
         for inp in list(nsdfg_node.in_connectors):
-            # TODO: Integer argument handling? Pass by value/reference
-            desc = nsdfg.arrays[inp]
-            if desc.dtype in [
-                dtypes.bool, dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64
-            ]:
-                continue
-
             new_name = find_new_name(inp, used_symbol_names)
             used_symbol_names.add(new_name)
             replacements[inp] = new_name
 
         for outp in list(nsdfg_node.out_connectors):
             if outp in replacements:
-                continue
-
-            # TODO: Integer argument handling? Pass by value/reference
-            desc = nsdfg.arrays[outp]
-            if desc.dtype in [
-                dtypes.bool, dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64
-            ]:
                 continue
 
             new_name = find_new_name(outp, used_symbol_names)
@@ -337,24 +327,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         input_viewed_nodes = {}
         for argument, in_edge in input_memlets.items():
             # Replace argument by view
-            inner_desc = nsdfg.arrays[argument]
-            if inner_desc.dtype in [
-                dtypes.bool, dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64
-            ]:
-                if argument not in sdfg.arrays:
-                    desc = dc(inner_desc)
-                    desc.transient = True
-                    sdfg.add_datadesc(argument, desc)
-                continue
-
             del nsdfg.arrays[argument]
-            _ = nsdfg.add_view(argument,
-                                inner_desc.shape,
-                                inner_desc.dtype,
-                                strides=inner_desc.strides,
-                                offset=inner_desc.offset,
-                                debuginfo=inner_desc.debuginfo,
-                                find_new_name=False)
+            nsdfg.arrays[argument] = View.view(sdfg.arrays[in_edge.src.data])
 
             # Add outer data to nsdfg
             outer_node: nodes.AccessNode = in_edge.src
@@ -399,25 +373,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         output_viewed_nodes = {}
         for argument, out_edge in output_memlets.items():
             # Replace argument by view
-            inner_desc = nsdfg.arrays[argument]
-            if inner_desc.dtype in [
-                dtypes.bool, dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64
-            ]:
-                if argument not in input_memlets and argument not in sdfg.arrays:
-                    desc = dc(inner_desc)
-                    desc.transient = True
-                    sdfg.add_datadesc(argument, desc)
-                continue
-
             if argument not in input_memlets:
                 del nsdfg.arrays[argument]
-                _ = nsdfg.add_view(argument,
-                                    inner_desc.shape,
-                                    inner_desc.dtype,
-                                    strides=inner_desc.strides,
-                                    offset=inner_desc.offset,
-                                    debuginfo=inner_desc.debuginfo,
-                                    find_new_name=False)
+                nsdfg.arrays[argument] = View.view(sdfg.arrays[out_edge.dst.data])
 
             # Add outer data to nsdfg
             outer_node: nodes.AccessNode = out_edge.dst
@@ -509,26 +467,26 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for argument, edge in output_memlets.items():
             outer_state.remove_memlet_path(edge)
 
-        # Replace original arguments on interstate edges
-        for arg, views in input_viewed_nodes.items():
-            view_edges = list(tuple(zip(*views))[1])
-            view_edges = view_edges[::-1]
-            memlet_chain = []
+        # # Replace original arguments on interstate edges
+        # for arg, views in input_viewed_nodes.items():
+        #     view_edges = list(tuple(zip(*views))[1])
+        #     view_edges = view_edges[::-1]
+        #     memlet_chain = []
             
-            view_name = view_edges[0].data.data
-            if len(view_edges) > 1:
-                view_name += "[" + view_edges[0].data.subset.__str__() + "]"
-            memlet_chain.append(view_name)
+        #     view_name = view_edges[0].data.data
+        #     if len(view_edges) > 1:
+        #         view_name += "[" + view_edges[0].data.subset.__str__() + "]"
+        #     memlet_chain.append(view_name)
 
-            for i in range(1, len(view_edges)):
-                view_edge = view_edges[i]
-                view_name = view_edge.data.data
-                view_name = view_name.split(".")[-1]
-                if i < len(view_edges) - 1:
-                    view_name += "[" + view_edge.data.subset.__str__() + "]"
-                memlet_chain.append(view_name)
+        #     for i in range(1, len(view_edges)):
+        #         view_edge = view_edges[i]
+        #         view_name = view_edge.data.data
+        #         view_name = view_name.split(".")[-1]
+        #         if i < len(view_edges) - 1:
+        #             view_name += "[" + view_edge.data.subset.__str__() + "]"
+        #         memlet_chain.append(view_name)
 
-            viewed_arg = ".".join(memlet_chain)
-            for edge in nsdfg.edges():
-                edge.data.replace(arg, viewed_arg)
+        #     viewed_arg = ".".join(memlet_chain)
+        #     for edge in nsdfg.edges():
+        #         edge.data.replace(arg, viewed_arg)
 
