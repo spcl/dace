@@ -1086,14 +1086,15 @@ class IndexExtractorNodeLister(NodeVisitor):
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
 
-        self.nodes.append((node, self.current_parent))
-
-        # disable structure parent node for array indices
         old_current_parent = self.current_parent
         self.current_parent = None
         for i in node.indices:
             self.visit(i)
         self.current_parent = old_current_parent
+
+        self.nodes.append((node, self.current_parent))
+
+        # disable structure parent node for array indices
 
     def visit_Data_Ref_Node(self, node: ast_internal_classes.Data_Ref_Node):
 
@@ -1157,7 +1158,7 @@ class IndexExtractor(NodeTransformer):
             else:
                 
                 newer_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
-                self.replacements["tmp_index_" + str(tmp)]=i
+                self.replacements["tmp_index_" + str(tmp)]=(i,node.name.name)
                 tmp = tmp + 1
         self.count = tmp
 
@@ -1218,7 +1219,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=self.replacements[tmp_name],
+                                            lval=self.replacements[tmp_name][0],
                                             rval=offset,
                                             line_number=child.line_number),
                                         line_number=child.line_number))
@@ -1229,7 +1230,7 @@ class IndexExtractor(NodeTransformer):
                                         lval=ast_internal_classes.Name_Node(name=tmp_name),
                                         rval=ast_internal_classes.BinOp_Node(
                                             op="-",
-                                            lval=self.replacements[tmp_name],
+                                            lval=self.replacements[tmp_name][0],
                                             rval=ast_internal_classes.Int_Literal_Node(value="1"),
                                             line_number=child.line_number),
                                         line_number=child.line_number))
