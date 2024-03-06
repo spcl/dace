@@ -1144,23 +1144,24 @@ class IndexExtractor(NodeTransformer):
             return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
-
+        new_indices = []
+        
         for i in node.indices:
-            self.visit(i)
+            new_indices.append(self.visit(i))
 
         tmp = self.count
-        new_indices = []
-        for i in node.indices:
+        newer_indices = []
+        for i in new_indices:
             if isinstance(i, ast_internal_classes.ParDecl_Node):
-                new_indices.append(i)
+                newer_indices.append(i)
             else:
                 
-                new_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
+                newer_indices.append(ast_internal_classes.Name_Node(name="tmp_index_" + str(tmp)))
                 self.replacements["tmp_index_" + str(tmp)]=i
                 tmp = tmp + 1
         self.count = tmp
 
-        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=new_indices, line_number=node.line_number)
+        return ast_internal_classes.Array_Subscript_Node(name=node.name, type=node.type, indices=newer_indices, line_number=node.line_number)
 
     def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
         newbody = []

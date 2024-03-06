@@ -1998,6 +1998,7 @@ class AST_translator:
                 datatype.transient = transient
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [offset_value for _ in sizes]
+                dat.ContainerArray(stype=datatype,shape=sizes,offset=offset,transient=transient)
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
             else:    
