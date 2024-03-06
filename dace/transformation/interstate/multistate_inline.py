@@ -468,25 +468,31 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             outer_state.remove_memlet_path(edge)
 
         # # Replace original arguments on interstate edges
-        # for arg, views in input_viewed_nodes.items():
-        #     view_edges = list(tuple(zip(*views))[1])
-        #     view_edges = view_edges[::-1]
-        #     memlet_chain = []
+        args_used_assignments = set()
+        for edge in nsdfg.edges():
+            args_used_assignments |= edge.data.free_symbols
+        args_used_assignments &= input_viewed_nodes.keys()
+
+        for arg in args_used_assignments:
+            views = input_viewed_nodes[arg]
+            view_edges = list(tuple(zip(*views))[1])
+            view_edges = view_edges[::-1]
+            memlet_chain = []
             
-        #     view_name = view_edges[0].data.data
-        #     if len(view_edges) > 1:
-        #         view_name += "[" + view_edges[0].data.subset.__str__() + "]"
-        #     memlet_chain.append(view_name)
+            view_name = view_edges[0].data.data
+            if len(view_edges) > 1:
+                view_name += "[" + view_edges[0].data.subset.__str__() + "]"
+            memlet_chain.append(view_name)
 
-        #     for i in range(1, len(view_edges)):
-        #         view_edge = view_edges[i]
-        #         view_name = view_edge.data.data
-        #         view_name = view_name.split(".")[-1]
-        #         if i < len(view_edges) - 1:
-        #             view_name += "[" + view_edge.data.subset.__str__() + "]"
-        #         memlet_chain.append(view_name)
+            for i in range(1, len(view_edges)):
+                view_edge = view_edges[i]
+                view_name = view_edge.data.data
+                view_name = view_name.split(".")[-1]
+                if i < len(view_edges) - 1:
+                    view_name += "[" + view_edge.data.subset.__str__() + "]"
+                memlet_chain.append(view_name)
 
-        #     viewed_arg = ".".join(memlet_chain)
-        #     for edge in nsdfg.edges():
-        #         edge.data.replace(arg, viewed_arg)
+            viewed_arg = ".".join(memlet_chain)
+            for edge in nsdfg.edges():
+                edge.data.replace(arg, viewed_arg)
 
