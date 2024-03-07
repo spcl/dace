@@ -1929,12 +1929,13 @@ class CPUCodeGen(TargetCodeGenerator):
                 for access in ptr_increments_to_define:
                     ptr_base_name = '__dace_ptr_increment_' + access.data
                     if not self._dispatcher.defined_vars.has(ptr_base_name):
-                        if self._dispatcher.declared_arrays.has(access.data):
-                            dtype, ctype = self._dispatcher.declared_arrays.get(access.data)
-                        else:
-                            dtype, ctype = self._dispatcher.defined_vars.get(access.data)
-                        self._dispatcher.defined_vars.add(ptr_base_name, dtype, ctype)
                         desc = sdfg.data(access.data)
+                        ptr = cpp.ptr(access.data, desc, sdfg, self._frame)
+                        if self._dispatcher.declared_arrays.has(ptr):
+                            dtype, ctype = self._dispatcher.declared_arrays.get(ptr)
+                        else:
+                            dtype, ctype = self._dispatcher.defined_vars.get(ptr)
+                        self._dispatcher.defined_vars.add(ptr_base_name, dtype, ctype)
                         offsets_to_add = []
                         scope_stride = None
                         for involved_scope in self._frame._ptr_incremented_accesses[access][1]:
@@ -2007,7 +2008,6 @@ class CPUCodeGen(TargetCodeGenerator):
             result.write("}", sdfg, state_id, node)
         else:
             for i in range(len(map_node.map.range) - 1, -1, -1):
-            #for i, r in enumerate(map_node.map.range):
                 r = node.map.range[i]
                 param = node.map.params[i]
                 _, _, skip = r
@@ -2021,20 +2021,25 @@ class CPUCodeGen(TargetCodeGenerator):
 
                         desc = sdfg.data(access.data)
 
-                        is_innermost = False
                         involved_scopes = self._frame._ptr_incremented_accesses[access][1]
                         found_involved_scope = None
-                        for j, involved_scope in enumerate(involved_scopes):
+                        for involved_scope in involved_scopes:
                             if map_node == involved_scope[2] and param == str(involved_scope[0]):
                                 found_involved_scope = involved_scope
-                                is_innermost = j == len(involved_scopes) - 1
                                 break
 
                         if not found_involved_scope:
                             raise RuntimeError()
 
-                        if not is_innermost:
-                            raise NotImplementedError()
+                        if found_involved_scope != involved_scopes[-1]:
+                            # Subtract everything added in the loop one hierarchy down.
+                            scope_idx = involved_scopes.index(found_involved_scope)
+                            prev_param, prev_idx, prev_entry, _ = involved_scopes[scope_idx + 1]
+                            prev_range = prev_entry.map.range[prev_entry.map.params.index(str(prev_param))]
+                            prev_n_iterations = subsets.Range([prev_range]).num_elements_exact()
+                            stride_expr = cpp.sym2cpp(desc.strides[prev_idx])
+                            subtr_expr = '-= (' + cpp.sym2cpp(prev_n_iterations) + ' * ' + stride_expr + ')'
+                            result.write('%s %s;\n' % (ptr_base_name, subtr_expr), sdfg, state_id, node)
 
                         stride_expr = cpp.sym2cpp(desc.strides[found_involved_scope[1]])
                         offset_expr = '+= (' + cpp.sym2cpp(skip) + ' * ' + stride_expr + ')'
