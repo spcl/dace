@@ -87,6 +87,7 @@ class MemletScheduleType(aenum.AutoNumberEnum):
     Doacross_Sink = ()
     Doacross_Source = ()
     Doacross_Source_Deferred = ()
+    Pointer_Increment = ()
 
 
 # A subset of GPU schedule types

@@ -10,11 +10,13 @@ import numpy as np
 
 import dace
 from dace import config, data, dtypes
+from dace import memlet as mlt
+from dace import subsets
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
-from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, SDFGState, nodes
@@ -39,11 +41,14 @@ class DaCeCodeGenerator(object):
     statestruct: List[str]
     environments: List[Any]
     to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode], List[Tuple[int, int, nodes.AccessNode]]]
+    ptr_increments_to_define: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
+    ptr_increments_to_update: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
     where_allocated: Dict[Tuple[SDFG, str], SDFG]
     fsyms: Dict[int, Set[str]]
     arglist: Dict[str, data.Data]
 
     _symbols_and_constants: Dict[int, Set[str]]
+    _ptr_incremented_accesses: Dict[mlt.Memlet, Tuple[subsets.Range, Tuple[dace.symbol, int, nodes.Map, bool]]]
     _initcode: CodeIOStream
     _exitcode: CodeIOStream
     _dispatcher: disp.TargetDispatcher
@@ -57,9 +62,12 @@ class DaCeCodeGenerator(object):
         self.environments = []
         self.targets = set()
         self.to_allocate = collections.defaultdict(list)
+        self.ptr_increments_to_define = collections.defaultdict(lambda: collections.defaultdict(set))
+        self.ptr_increments_to_update = collections.defaultdict(lambda: collections.defaultdict(set))
         self.where_allocated = {}
         self.fsyms = {}
         self._symbols_and_constants = {}
+        self._ptr_incremented_accesses = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
@@ -144,7 +152,9 @@ class DaCeCodeGenerator(object):
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
+
         # Hash file include
         if backend == 'frame':
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
@@ -245,7 +255,8 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
             :param callsite_stream: Stream to write to (at call site).
         """
         import dace.library
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
@@ -371,8 +382,9 @@ DACE_EXPORTED int __dace_exit_{sdfg.name}({mangle_dace_state_struct_name(sdfg)} 
         can be ``CPU_Heap`` or any other ``dtypes.StorageType``); and (2) set the externally-allocated
         pointer to the generated code's internal state (``__dace_set_external_memory_<STORAGE>``).
         """
-        from dace.codegen.targets.cpp import mangle_dace_state_struct_name      # Avoid circular import
-        
+        from dace.codegen.targets.cpp import \
+            mangle_dace_state_struct_name  # Avoid circular import
+
         # Collect external arrays
         ext_arrays: Dict[dtypes.StorageType, List[Tuple[SDFG, str, data.Data]]] = collections.defaultdict(list)
         for subsdfg, aname, arr in sdfg.arrays_recursive():
@@ -465,10 +477,85 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 if instr is not None:
                     instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
+    def _preprocess_memlet_schedules_scope(self, state: SDFGState, scope: sdscope.ScopeTree,
+                                           map_param_list: List[Tuple[str, nodes.Map, bool]]):
+        pass_params = copy.copy(map_param_list)
+        if scope.entry:
+            if isinstance(scope.entry, nodes.MapEntry):
+                if scope.entry.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                    n_parallel_params = scope.entry.map.collapse
+                    para_params = scope.entry.map.params[:n_parallel_params]
+                    seq_params = scope.entry.map.params[n_parallel_params:]
+                else:
+                    para_params = []
+                    seq_params = scope.entry.map.params
+                for p in para_params:
+                    pass_params.append([p, scope.entry, True])
+                for p in seq_params:
+                    pass_params.append([p, scope.entry, False])
+
+                for e in state.scope_subgraph(scope.entry, include_nested_scopes=False).edges():
+                    memlet: mlt.Memlet = e.data
+                    if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+                        offs_params = []
+                        involved_scopes = []
+                        for i, dim in enumerate(memlet.subset.ranges):
+                            dim_symbols = dim[0].free_symbols | dim[1].free_symbols | dim[2].free_symbols
+                            found_param = None
+                            found_scope = None
+                            found_scope_barrier = None
+                            for pparam, pscope, is_para in pass_params:
+                                param = dace.symbol(pparam)
+                                if param in dim_symbols:
+                                    found_param = param
+                                    found_scope = pscope
+                                    found_scope_barrier = is_para
+                                    break
+                            if found_param:
+                                offs_params.append(found_param)
+                                involved_scopes.append([found_param, i, found_scope, found_scope_barrier])
+                            else:
+                                offs_params.append(0)
+                        offset_subset = memlet.subset.offset_new(offs_params, negative=True)
+                        self._ptr_incremented_accesses[memlet] = [offset_subset, involved_scopes]
+        for child in scope.children:
+            self._preprocess_memlet_schedules_scope(state, child, pass_params)
+
+    def _preprocess_memlet_schedules_state(self, state: SDFGState):
+        self._preprocess_memlet_schedules_scope(state, state.scope_tree()[None], [])
+
+    def _preprocess_memlet_schedules_sdfg(self, sdfg: SDFG):
+        # Ensure that a proper mapping to scopes is present for pointer incrementation scheduled memlets.
+        for state in sdfg.states():
+            self._preprocess_memlet_schedules_state(state)
+
+        for access in self._ptr_incremented_accesses.keys():
+            _, involved_scopes = self._ptr_incremented_accesses[access]
+            n_scopes = len(involved_scopes)
+            define_scope = None
+            define_scope_idx = None
+            for i in range(n_scopes - 1, -1, -1):
+                param, _, entry, parallel = involved_scopes[i]
+                if parallel:
+                    break
+
+                idx = entry.map.params.index(str(param))
+                self.ptr_increments_to_update[entry][idx].add(access)
+                define_scope = entry
+                define_scope_idx = idx
+
+            if define_scope is None:
+                define_scope = involved_scopes[0][2]
+                define_scope_idx = define_scope.map.params.index(str(involved_scopes[0][0]))
+                self.ptr_increments_to_update[define_scope][define_scope_idx].add(access)
+            self.ptr_increments_to_define[define_scope][define_scope_idx].add(access)
+
     def generate_states(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         states_generated = set()
 
         opbar = progress.OptionalProgressBar(len(sdfg.states()), title=f'Generating code (SDFG {sdfg.cfg_id})')
+
+        self._preprocess_memlet_schedules_sdfg(sdfg)
 
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:

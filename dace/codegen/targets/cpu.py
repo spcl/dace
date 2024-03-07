@@ -1235,7 +1235,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
 
-        ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+            ptr = '__dace_ptr_increment_' + memlet.data
+        else:
+            ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+
         types = None
         # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
@@ -1248,7 +1252,8 @@ class CPUCodeGen(TargetCodeGenerator):
         except KeyError:
             pass
         if not types:
-            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
+            is_global = memlet.schedule != dtypes.MemletScheduleType.Pointer_Increment
+            types = self._dispatcher.defined_vars.get(ptr, is_global=is_global)
         var_type, ctypedef = types
 
         if fpga.is_fpga_array(desc):
@@ -1264,8 +1269,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                 decouple_array_interfaces=decouple_array_interfaces)
 
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
-                if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
+        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+            subset: subsets.Range = self._frame._ptr_incremented_accesses[memlet][0]
+            idx = subset.at([0] * subset.dims(), desc.strides)
+            expr = cpp.sym2cpp(idx)
+        else:
+            expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
+                    if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
 
         if expr != ptr:
             expr = '%s[%s]' % (ptr, expr)
@@ -1915,6 +1925,41 @@ class CPUCodeGen(TargetCodeGenerator):
                 var = map_params[i]
                 begin, end, skip = r
 
+                ptr_increments_to_define = self._frame.ptr_increments_to_define[node][i]
+                for access in ptr_increments_to_define:
+                    ptr_base_name = '__dace_ptr_increment_' + access.data
+                    if not self._dispatcher.defined_vars.has(ptr_base_name):
+                        if self._dispatcher.declared_arrays.has(access.data):
+                            dtype, ctype = self._dispatcher.declared_arrays.get(access.data)
+                        else:
+                            dtype, ctype = self._dispatcher.defined_vars.get(access.data)
+                        self._dispatcher.defined_vars.add(ptr_base_name, dtype, ctype)
+                        desc = sdfg.data(access.data)
+                        offsets_to_add = []
+                        scope_stride = None
+                        for involved_scope in self._frame._ptr_incremented_accesses[access][1]:
+                            para, idx, _, _ = involved_scope
+                            if str(para) == var:
+                                scope_stride = desc.strides[idx]
+                                break
+                            offset_expr = '(' + cpp.sym2cpp(para) + ' * ' + cpp.sym2cpp(desc.strides[idx]) + ')'
+                            offsets_to_add.append(offset_expr)
+                        if begin != 0:
+                            if scope_stride is None:
+                                raise RuntimeError()
+                            offset_expr = '(' + cpp.sym2cpp(begin) + ' * ' + cpp.sym2cpp(scope_stride) + ')'
+                            offsets_to_add.append(offset_expr)
+                        data_ptr_expr = access.data
+                        if offsets_to_add:
+                            data_ptr_expr += ' + ' + ' + '.join(offsets_to_add)
+                        result.write(
+                            '%s %s = %s;\n' %
+                            (ctype, ptr_base_name, data_ptr_expr),
+                            sdfg,
+                            state_id,
+                            node
+                        )
+
                 if node.map.unroll:
                     result.write("#pragma unroll", sdfg, state_id, node)
 
@@ -1961,7 +2006,41 @@ class CPUCodeGen(TargetCodeGenerator):
         if map_node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
             result.write("}", sdfg, state_id, node)
         else:
-            for _ in map_node.map.range:
+            for i in range(len(map_node.map.range) - 1, -1, -1):
+            #for i, r in enumerate(map_node.map.range):
+                r = node.map.range[i]
+                param = node.map.params[i]
+                _, _, skip = r
+
+                ptr_increments_to_update = self._frame.ptr_increments_to_update[map_node][i]
+                handled = set()
+                for access in ptr_increments_to_update:
+                    ptr_base_name = '__dace_ptr_increment_' + access.data
+                    if ptr_base_name not in handled:
+                        handled.add(ptr_base_name)
+
+                        desc = sdfg.data(access.data)
+
+                        is_innermost = False
+                        involved_scopes = self._frame._ptr_incremented_accesses[access][1]
+                        found_involved_scope = None
+                        for j, involved_scope in enumerate(involved_scopes):
+                            if map_node == involved_scope[2] and param == str(involved_scope[0]):
+                                found_involved_scope = involved_scope
+                                is_innermost = j == len(involved_scopes) - 1
+                                break
+
+                        if not found_involved_scope:
+                            raise RuntimeError()
+
+                        if not is_innermost:
+                            raise NotImplementedError()
+
+                        stride_expr = cpp.sym2cpp(desc.strides[found_involved_scope[1]])
+                        offset_expr = '+= (' + cpp.sym2cpp(skip) + ' * ' + stride_expr + ')'
+
+                        result.write('%s %s;\n' % (ptr_base_name, offset_expr), sdfg, state_id, node)
+
                 result.write("}", sdfg, state_id, node)
 
         result.write(outer_stream.getvalue())

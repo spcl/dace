@@ -887,9 +887,9 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         """
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in self.arglist().items()]
 
-    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True):
+    def scope_subgraph(self, entry_node, include_entry=True, include_exit=True, include_nested_scopes=True):
         from dace.sdfg.scope import _scope_subgraph
-        return _scope_subgraph(self, entry_node, include_entry, include_exit)
+        return _scope_subgraph(self, entry_node, include_entry, include_exit, include_nested_scopes)
 
     def top_level_transients(self):
         """Iterate over top-level transients of this state."""
