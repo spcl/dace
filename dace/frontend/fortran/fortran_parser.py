@@ -140,13 +140,13 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
 
                                                 viewname=viewname.replace("->","_")
                                                 #view=sdfg.arrays[viewname]
-
+                                                strides = [dat._prod(shapelist[:i]) for i in range(len(shapelist))]
                                                 if isinstance(object,dat.ContainerArray):
-                                                    tmpobject=dat.ContainerArray(object.stype.members[var_type.name],shape_replace)
+                                                    tmpobject=dat.ContainerArray(object.stype.members[var_type.name],shape_replace,strides=strides)
                                                     
                                                 
                                                 elif isinstance(object.members[var_type.name],dat.Array):  
-                                                    tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace)
+                                                    tmpobject=dat.Array(object.members[var_type.name].dtype,shape_replace,strides=strides)
                                                         
                                                 else:
                                                     raise ValueError("Unknown type"+str(tmpobject.__class__))
@@ -1133,6 +1133,7 @@ class AST_translator:
                         
                         if shape == () or shape == (1, ) or shape == [] or shape == [1]:
                             #FIXME 6.03.2024
+                            print(array,array.__class__.__name__)
                             if isinstance(array,dat.ContainerArray):
                                 element_type=array.stype
                             elif isinstance(array,pointer):
@@ -1998,8 +1999,9 @@ class AST_translator:
                 datatype.transient = transient
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [offset_value for _ in sizes]
-                dat.ContainerArray(stype=datatype,shape=sizes,offset=offset,transient=transient)
-                sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
+                container=dat.ContainerArray(stype=datatype,shape=sizes,offset=offset,transient=transient)
+                sdfg.arrays[self.name_mapping[sdfg][node.name]]=container
+                #sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
             else:    
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
@@ -3097,7 +3099,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
-            if j.name.name!="rot_vertex_ri":
+            if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e":
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
