@@ -10,9 +10,56 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 from dace import symbolic
 
-
 @make_properties
 class InlineMap(transformation.SingleStateTransformation):
+    map_entry = transformation.PatternNode(nodes.MapEntry)
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg)]
+
+    def annotates_memlets(self) -> bool:
+        return True
+
+    def can_be_applied(
+        self, state: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive=False
+    ):
+        xform_conditions = InlineMapByConditions()
+        xform_conditions.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            sdfg.node_id(state),
+            {
+                InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
+                InlineMapByConditions.map_entry: state.node_id(self.map_entry),
+            },
+            0
+        )
+        if xform_conditions.can_be_applied(state, 0, sdfg, False):
+            return True
+
+        return False
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        xform_conditions = InlineMapByConditions()
+        xform_conditions.setup_match(
+            sdfg,
+            sdfg.cfg_id,
+            sdfg.node_id(state),
+            {
+                InlineMapByConditions.nested_sdfg: state.node_id(self.nested_sdfg),
+                InlineMapByConditions.map_entry: state.node_id(self.map_entry),
+            },
+            0
+        )
+        if xform_conditions.can_be_applied(state, 0, sdfg, False):
+            return xform_conditions.apply(state, sdfg)
+
+        return None
+
+@make_properties
+class InlineMapByConditions(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
@@ -66,32 +113,11 @@ class InlineMap(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = state.exit_node(self.map_entry)
         nsdfg_node = self.nested_sdfg
+        outer_state = state
 
         ############################################
-        # Isolate scope of map
-        # TODO
+        # Fission maps by conditions
 
-        ############################################
-        # Re-order nestes control-flow
-
-        self._fission_maps_by_conditions(nsdfg_node, state, map_entry, map_exit)
-
-        ############################################
-        # Clean up
-
-        state.remove_node(map_entry)
-        state.remove_node(nsdfg_node)
-        state.remove_node(map_exit)
-
-        sdfg.reset_cfg_list()
-
-    def _fission_maps_by_conditions(
-        self,
-        nsdfg_node: nodes.NestedSDFG,
-        outer_state: SDFGState,
-        map_entry: nodes.MapEntry,
-        map_exit: nodes.MapExit
-    ) -> None:
         nsdfg = nsdfg_node.sdfg
         start_state = nsdfg.start_state
         for oedge in nsdfg.out_edges(start_state):
@@ -156,3 +182,11 @@ class InlineMap(transformation.SingleStateTransformation):
         
             branch_map_entry.map.range[0] = (b, e, s)
 
+        ############################################
+        # Clean up
+
+        state.remove_node(map_entry)
+        state.remove_node(nsdfg_node)
+        state.remove_node(map_exit)
+
+        sdfg.reset_cfg_list()
