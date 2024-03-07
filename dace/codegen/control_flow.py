@@ -60,7 +60,7 @@ from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
 import dace
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace.sdfg.state import SDFGState
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
@@ -234,7 +234,7 @@ class GeneralBlock(ControlFlow):
                                 successor = self.elements[i + 1].first_state
                             elif i == len(self.elements) - 1:
                                 # If last edge leads to first state in next block
-                                next_block = _find_next_block(self) 
+                                next_block = _find_next_block(self)
                                 if next_block is not None:
                                     successor = next_block.first_state
 
@@ -372,8 +372,8 @@ class ForScope(ControlFlow):
                 init = self.itervar
             else:
                 init = f'{symbols[self.itervar]} {self.itervar}'
-            init += ' = ' + unparse_interstate_edge(self.init_edges[0].data.assignments[self.itervar],
-                                                    sdfg, codegen=codegen)
+            init += ' = ' + unparse_interstate_edge(
+                self.init_edges[0].data.assignments[self.itervar], sdfg, codegen=codegen)
 
         preinit = ''
         if self.init_edges:
@@ -404,6 +404,22 @@ class ForScope(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return [self.body]
+
+    def loop_range(self) -> Optional[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType]]:
+        """
+        For well-formed loops, returns a tuple of (start, end, stride). Otherwise, returns None.
+        """
+        from dace.transformation.interstate.loop_detection import find_for_loop
+        sdfg = self.guard.parent
+        for e in sdfg.out_edges(self.guard):
+            if e.data.condition == self.condition:
+                break
+        else:
+            return None  # Condition edge not found
+        result = find_for_loop(sdfg, self.guard, e.dst, self.itervar)
+        if result is None:
+            return None
+        return result[1]
 
 
 @dataclass

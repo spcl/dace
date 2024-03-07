@@ -202,6 +202,8 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
             raise InvalidSDFGError("Invalid name", sdfg, None)
 
         all_blocks = set(sdfg.all_control_flow_blocks())
+        if len(all_blocks) == 0:
+            raise InvalidSDFGError('SDFG contains no states or control flow blocks', sdfg, None)
         if len(all_blocks) != len(set([s.label for s in all_blocks])):
             raise InvalidSDFGError('Found multiple blocks with the same name', sdfg, None)
 
