@@ -558,8 +558,12 @@ class RedundantArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.data != in_array.data:
+                    continue
+
                 # 2-a. Extract subsets for array B and others
                 other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
+
                 # 2-b. Modify memlet to match array B.
                 dname = out_array.data
                 src_is_data = False
@@ -582,11 +586,10 @@ class RedundantArray(pm.SingleStateTransformation):
                 else:
                     src_subset = None
 
-                subset = src_subset if src_is_data else dst_subset
-                other_subset = dst_subset if src_is_data else src_subset
                 e3.data.data = dname
-                e3.data.subset = subset
-                e3.data.other_subset = other_subset
+                e3.data._is_data_src = src_is_data
+                e3.data.src_subset = src_subset
+                e3.data.dst_subset = dst_subset
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr
@@ -941,6 +944,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if e3.data.data != out_array.data:
+                    continue
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # 2-b. Modify memlet to match array A. Example:
