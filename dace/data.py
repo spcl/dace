@@ -1260,6 +1260,16 @@ class Tensor(Structure):
             "Dense_Matrix"
         )
 
+    @staticmethod
+    def CSF(shape, nnz, dtype=dtypes.float32) -> "Tensor":
+        return Tensor(
+            dtype,
+            shape,
+            [(TensorIndexCompressed(), i) for i in range(len(shape))],
+            nnz,
+            f"CSF_{len(shape)}D_Tensor"
+        )
+
 
 @make_properties
 class Scalar(Data):
