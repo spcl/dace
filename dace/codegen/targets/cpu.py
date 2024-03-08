@@ -1037,10 +1037,14 @@ class CPUCodeGen(TargetCodeGenerator):
                             # which we skip since the memlets are references
                             continue
                         desc = sdfg.arrays[memlet.data]
-                        ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-                        is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                                      dtypes.AllocationLifetime.Persistent,
-                                                      dtypes.AllocationLifetime.External)
+                        if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+                            ptrname = '__dace_ptr_increment_' + memlet.data
+                            is_global = False
+                        else:
+                            ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                        dtypes.AllocationLifetime.Persistent,
+                                                        dtypes.AllocationLifetime.External)
                         try:
                             defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                         except KeyError:
@@ -1077,7 +1081,14 @@ class CPUCodeGen(TargetCodeGenerator):
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
+                            if memlet.schedule == dtypes.MemletScheduleType.Pointer_Increment:
+                                subset = self._frame._ptr_incremented_accesses[memlet][0]
+                                idx = subset.at([0] * subset.dims(), desc.strides)
+                                expr = cpp.sym2cpp(idx)
+                                if expr != ptrname:
+                                    expr = '%s[%s]' % (ptrname, expr)
+                            else:
+                                expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
