@@ -260,24 +260,40 @@ class CPUCodeGen(TargetCodeGenerator):
                     value = f'{arrexpr}->{field_name}'
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
-
-        if not declared:
-            ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
-                        dtypes.pointer(nodedesc.dtype).ctype)
-            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
-            if isinstance(nodedesc, data.StructureView):
-                for k, v in nodedesc.members.items():
+        
+        def _visit_structure(struct: Union[data.Structure, data.StructureView],
+                             prefix: str = '', declare: bool = True, define: bool = True):
+                for k, v in struct.members.items():
+                    if isinstance(v, data.Structure):
+                        _visit_structure(v, f'{prefix}->{k}')
+                    elif isinstance(v, data.ContainerArray):
+                        _visit_structure(v.stype, f'{prefix}->{k}')
                     if isinstance(v, data.Data):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                # if atype.endswith('*'):
-                #     atype = atype[:-1]
-                # if value.startswith('&'):
-                #     value = value[1:]
+                        if declare:
+                            self._dispatcher.declared_arrays.add(f"{prefix}->{k}", defined_type, ctypedef)
+                        if define:
+                            self._dispatcher.defined_vars.add(f"{prefix}->{k}", defined_type, ctypedef)
+                    ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+                    if declare:
+                        self._dispatcher.declared_arrays.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+                    if define:
+                        self._dispatcher.defined_vars.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+
+        ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
+                        dtypes.pointer(nodedesc.dtype).ctype)
+        if not declared:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname)
+            else:
+                self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+        else:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname, declare=False)
+            else:
+                self._dispatcher.defined_vars.add(aname, DefinedType.Pointer, ctypedef)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
