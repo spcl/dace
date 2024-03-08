@@ -1082,6 +1082,8 @@ class IndexExtractorNodeLister(NodeVisitor):
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
+            for arg in node.args:
+                self.visit(arg)
             return
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
@@ -1142,6 +1144,11 @@ class IndexExtractor(NodeTransformer):
         if node.name.name in ["pow", "atan2", "tanh", *FortranIntrinsics.retained_function_names()]:
             return self.generic_visit(node)
         else:
+
+            new_args = []
+            for arg in node.args:
+                new_args.append(self.visit(arg))
+            node.args = new_args
             return node
 
     def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
@@ -1409,7 +1416,7 @@ class OptionalArgsTransformer(NodeTransformer):
         present_args = len(node.args)
 
         # Remove the deduplicated variable entries acting as flags for optional args
-        missing_args_count = should_be_args - present_args - optional_args
+        missing_args_count = should_be_args - present_args
         present_optional_args = present_args - mandatory_args
         new_args=[None]*should_be_args
         for i in range(mandatory_args):

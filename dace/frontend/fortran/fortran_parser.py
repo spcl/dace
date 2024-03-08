@@ -1629,7 +1629,7 @@ class AST_translator:
         
         if self.multiple_sdfgs==False:
             if node.execution_part is not None:
-                if node.specification_part is not None:  
+                if node.specification_part is not None and node.specification_part.uses is not None:
                     for j in node.specification_part.uses:
                         for k in j.list:
                             if self.contexts.get(new_sdfg.name) is None:

@@ -436,8 +436,8 @@ class TaskletWriter:
         if hasattr(node,"isStructMember"):
             if node.isStructMember:
                 return node.name
-            
-        if name in self.rename_dict:    
+
+        if self.rename_dict is not None and name in self.rename_dict:
             return str(self.rename_dict[name])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
