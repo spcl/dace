@@ -2042,20 +2042,25 @@ class CPUCodeGen(TargetCodeGenerator):
                         if not found_involved_scope:
                             raise RuntimeError()
 
+                        do_increment = True
+                        curr_stride = desc.strides[found_involved_scope[1]]
                         if found_involved_scope != involved_scopes[-1]:
                             # Subtract everything added in the loop one hierarchy down.
                             scope_idx = involved_scopes.index(found_involved_scope)
                             prev_param, prev_idx, prev_entry, _ = involved_scopes[scope_idx + 1]
                             prev_range = prev_entry.map.range[prev_entry.map.params.index(str(prev_param))]
                             prev_n_iterations = subsets.Range([prev_range]).num_elements_exact()
-                            stride_expr = cpp.sym2cpp(desc.strides[prev_idx])
-                            subtr_expr = '-= (' + cpp.sym2cpp(prev_n_iterations) + ' * ' + stride_expr + ')'
-                            result.write('%s %s;\n' % (ptr_base_name, subtr_expr), sdfg, state_id, node)
+                            if prev_n_iterations != curr_stride:
+                                stride_expr = cpp.sym2cpp(desc.strides[prev_idx])
+                                subtr_expr = '-= (' + cpp.sym2cpp(prev_n_iterations) + ' * ' + stride_expr + ')'
+                                result.write('%s %s;\n' % (ptr_base_name, subtr_expr), sdfg, state_id, node)
+                            else:
+                                do_increment = False
 
-                        stride_expr = cpp.sym2cpp(desc.strides[found_involved_scope[1]])
-                        offset_expr = '+= (' + cpp.sym2cpp(skip) + ' * ' + stride_expr + ')'
-
-                        result.write('%s %s;\n' % (ptr_base_name, offset_expr), sdfg, state_id, node)
+                        if do_increment:
+                            stride_expr = cpp.sym2cpp(curr_stride)
+                            offset_expr = '+= (' + cpp.sym2cpp(skip) + ' * ' + stride_expr + ')'
+                            result.write('%s %s;\n' % (ptr_base_name, offset_expr), sdfg, state_id, node)
 
                 result.write("}", sdfg, state_id, node)
 
