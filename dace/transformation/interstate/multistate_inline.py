@@ -11,7 +11,7 @@ from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types
 from dace.sdfg.replace import replace_datadesc_names
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 from dace.properties import make_properties
 from dace import data
 from dace.sdfg.state import StateSubgraphView

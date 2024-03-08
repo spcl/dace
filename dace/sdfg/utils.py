@@ -1327,17 +1327,17 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     for nsdfg_node in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         # We have to reevaluate every time due to changing IDs
         # e.g., InlineMultistateSDFG may fission states
-        parent_state = nsdfg_node.sdfg.parent
-        parent_sdfg = parent_state.parent
-        parent_state_id = parent_sdfg.node_id(parent_state)
+        parent_state: SDFGState = nsdfg_node.sdfg.parent
+        parent_sdfg = parent_state.sdfg
+        parent_state_id = parent_state.block_id
 
         if multistate:
             candidate = {
                 InlineMultistateSDFG.nested_sdfg: nsdfg_node,
             }
             inliner = InlineMultistateSDFG()
-            inliner.setup_match(sdfg=parent_sdfg,
-                                cfg_id=parent_sdfg.sdfg_id,
+            inliner.setup_match(parent_sdfg,
+                                cfg_id=parent_state.parent_graph.cfg_id,
                                 state_id=parent_state_id,
                                 subgraph=candidate,
                                 expr_index=0,
@@ -1351,8 +1351,8 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             InlineSDFG.nested_sdfg: nsdfg_node,
         }
         inliner = InlineSDFG()
-        inliner.setup_match(sdfg=parent_sdfg,
-                            cfg_id=parent_sdfg.cfg_id,
+        inliner.setup_match(parent_sdfg,
+                            cfg_id=parent_state.parent_graph.cfg_id,
                             state_id=parent_state_id,
                             subgraph=candidate,
                             expr_index=0,
