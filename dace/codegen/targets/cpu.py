@@ -19,6 +19,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga, is_in_scope
+from dace.sdfg.validation import validate_memlet_data
 from typing import Optional, Tuple, Union
 from dace.codegen.targets import fpga
 
@@ -33,12 +34,12 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _define_sdfg_arguments(self, sdfg, arglist):
 
-        # NOTE: Multi-nesting with StructArrays must be further investigated.
+        # NOTE: Multi-nesting with container arrays must be further investigated.
         def _visit_structure(struct: data.Structure, args: dict, prefix: str = ''):
             for k, v in struct.members.items():
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
-                elif isinstance(v, data.StructArray):
+                elif isinstance(v, data.ContainerArray):
                     _visit_structure(v.stype, args, f'{prefix}->{k}')
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
@@ -49,10 +50,11 @@ class CPUCodeGen(TargetCodeGenerator):
             if isinstance(arg_type, data.Structure):
                 desc = sdfg.arrays[name]
                 _visit_structure(arg_type, args, name)
-            elif isinstance(arg_type, data.StructArray):
+            elif isinstance(arg_type, data.ContainerArray):
                 desc = sdfg.arrays[name]
                 desc = desc.stype
-                _visit_structure(desc, args, name)
+                if isinstance(desc, data.Structure):
+                    _visit_structure(desc, args, name)
 
         for name, arg_type in args.items():
             if isinstance(arg_type, data.Scalar):
@@ -223,6 +225,35 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         conntype,
                                                         ancestor=0,
                                                         is_write=is_write)
+
+        # Test for views of container arrays and structs
+        if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
+            vdesc = sdfg.arrays[viewed_dnode.data]
+            ptrname = cpp.ptr(memlet.data, vdesc, sdfg, self._dispatcher.frame)
+            field_name = None
+            if is_write and mpath[-1].dst_conn:
+                field_name = mpath[-1].dst_conn
+            elif not is_write and mpath[0].src_conn:
+                field_name = mpath[0].src_conn
+
+            # Plain view into a container array
+            if isinstance(vdesc, data.ContainerArray) and not isinstance(vdesc.stype, data.Structure):
+                offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                value = f'{ptrname}[{offset}]'
+            else:
+                if field_name is not None:
+                    if isinstance(vdesc, data.ContainerArray):
+                        offset = cpp.cpp_offset_expr(vdesc, memlet.subset)
+                        arrexpr = f'{ptrname}[{offset}]'
+                        stype = vdesc.stype
+                    else:
+                        arrexpr = f'{ptrname}'
+                        stype = vdesc
+
+                    value = f'{arrexpr}->{field_name}'
+                    if isinstance(stype.members[field_name], data.Scalar):
+                        value = '&' + value
+
         if not declared:
             ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
                         dtypes.pointer(nodedesc.dtype).ctype)
@@ -365,9 +396,9 @@ class CPUCodeGen(TargetCodeGenerator):
                             self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
                         else:
                             self.allocate_array(sdfg, dfg, state_id, nodes.AccessNode(f"{node.data}.{k}"), v,
-                                                    function_stream, declaration_stream, allocation_stream)
+                                                function_stream, declaration_stream, allocation_stream)
             return
-        if isinstance(nodedesc, (data.StructureView, data.View)):
+        if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Reference):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
@@ -608,6 +639,7 @@ class CPUCodeGen(TargetCodeGenerator):
             callsite_stream,
         )
 
+
     def _emit_copy(
         self,
         sdfg: SDFG,
@@ -625,13 +657,16 @@ class CPUCodeGen(TargetCodeGenerator):
         orig_vconn = vconn
 
         # Determine memlet directionality
-        if isinstance(src_node, nodes.AccessNode) and memlet.data == src_node.data:
+        if isinstance(src_node, nodes.AccessNode) and validate_memlet_data(memlet.data, src_node.data):
             write = True
-        elif isinstance(dst_node, nodes.AccessNode) and memlet.data == dst_node.data:
+        elif isinstance(dst_node, nodes.AccessNode) and validate_memlet_data(memlet.data, dst_node.data):
             write = False
         elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
             raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
+        elif uconn is None and vconn is None and memlet.data is None and dst_schedule == dtypes.ScheduleType.Sequential:
+            # Sequential dependency edge
+            return
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
@@ -1321,10 +1356,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     # be read if necessary
                     memlet_type = 'const %s' % memlet_type
                     if is_pointer:
-                        # This is done to make the reference constant, otherwise
-                        # compilers error out with initial reference value.
-                        memlet_type += ' const'
-                    result += "{} &{} = {};".format(memlet_type, local_name, expr)
+                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                    else:
+                        result += "{} &{} = {};".format(memlet_type, local_name, expr)
                 defined = (DefinedType.Scalar if is_scalar else DefinedType.Pointer)
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:

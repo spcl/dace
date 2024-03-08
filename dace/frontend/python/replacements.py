@@ -57,12 +57,17 @@ def _define_local_ex(pv: ProgramVisitor,
                      state: SDFGState,
                      shape: Shape,
                      dtype: dace.typeclass,
+                     strides: Optional[Shape] = None,
                      storage: dtypes.StorageType = dtypes.StorageType.Default,
                      lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope):
     """ Defines a local array in a DaCe program. """
     if not isinstance(shape, (list, tuple)):
         shape = [shape]
-    name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage, lifetime=lifetime)
+    if strides is not None:
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        strides = [int(s) if isinstance(s, Integral) else s for s in strides]
+    name, _ = sdfg.add_temp_transient(shape, dtype, strides=strides, storage=storage, lifetime=lifetime)
     return name
 
 
@@ -4730,7 +4735,7 @@ def _define_cupy_local(
     sdfg: SDFG,
     state: SDFGState,
     shape: Shape,
-    dtype: typeclass,
+    dtype: typeclass
 ):
     """Defines a local array in a DaCe program."""
     if not isinstance(shape, (list, tuple)):

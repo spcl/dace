@@ -790,10 +790,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Gather data descriptors from nodes
         descs = {}
+        descs_with_nodes = {}
         scalars_with_nodes = set()
         for node in self.nodes():
             if isinstance(node, nd.AccessNode):
                 descs[node.data] = node.desc(sdfg)
+                descs_with_nodes[node.data] = node
                 if isinstance(node.desc(sdfg), dt.Scalar):
                     scalars_with_nodes.add(node.data)
 
@@ -845,18 +847,18 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
             elif isinstance(self, SubgraphView):
                 if (desc.lifetime != dtypes.AllocationLifetime.Scope):
                     data_args[name] = desc
-            # Check for allocation constraints that would
-            # enforce array to be allocated outside subgraph
-            elif desc.lifetime == dtypes.AllocationLifetime.Scope:
-                curnode = sdict[node]
-                while curnode is not None:
-                    if dtypes.can_allocate(desc.storage, curnode.schedule):
-                        break
-                    curnode = sdict[curnode]
-                else:
-                    # If no internal scope can allocate node,
-                    # mark as external
-                    data_args[name] = desc
+                # Check for allocation constraints that would
+                # enforce array to be allocated outside subgraph
+                elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                    curnode = sdict[descs_with_nodes[name]]
+                    while curnode is not None:
+                        if dtypes.can_allocate(desc.storage, curnode.schedule):
+                            break
+                        curnode = sdict[curnode]
+                    else:
+                        # If no internal scope can allocate node,
+                        # mark as external
+                        data_args[name] = desc
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols
@@ -1548,7 +1550,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.parent = self
             sdfg.parent_sdfg = self.parent
 
-            sdfg.update_sdfg_list([])
+        sdfg.update_cfg_list([])
 
         # Make dictionary of autodetect connector types from set
         if isinstance(inputs, (set, collections.abc.KeysView)):

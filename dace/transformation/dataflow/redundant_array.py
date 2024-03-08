@@ -462,10 +462,10 @@ class RedundantArray(pm.SingleStateTransformation):
                     skipped_strides += 1
                 else:
                     view_strides.append(out_desc.strides[i - skipped_strides])
-        sdfg.arrays[in_array.data] = data.View(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
-                                               out_desc.storage, out_desc.location, view_strides, in_desc.offset,
-                                               out_desc.may_alias, dtypes.AllocationLifetime.Scope, in_desc.alignment,
-                                               in_desc.debuginfo, in_desc.total_size)
+        sdfg.arrays[in_array.data] = data.ArrayView(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
+                                                    out_desc.storage, out_desc.location, view_strides, in_desc.offset,
+                                                    out_desc.may_alias, dtypes.AllocationLifetime.Scope,
+                                                    in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
         in_array.add_out_connector('views', force=True)
         e1._src_conn = 'views'
 
@@ -936,10 +936,11 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             view_strides = out_desc.strides
             if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
                 view_strides = [s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop]
-            sdfg.arrays[out_array.data] = data.View(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
-                                                    in_desc.storage, in_desc.location, view_strides, out_desc.offset,
-                                                    in_desc.may_alias, dtypes.AllocationLifetime.Scope,
-                                                    out_desc.alignment, out_desc.debuginfo, out_desc.total_size)
+            sdfg.arrays[out_array.data] = data.ArrayView(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
+                                                         in_desc.storage, in_desc.location, view_strides,
+                                                         out_desc.offset, in_desc.may_alias,
+                                                         dtypes.AllocationLifetime.Scope, out_desc.alignment,
+                                                         out_desc.debuginfo, out_desc.total_size)
             out_array.add_in_connector('views', force=True)
             e1._dst_conn = 'views'
             return out_array
@@ -1582,7 +1583,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
-                        
+
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
                         e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
@@ -1592,7 +1593,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
                 # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
                 #       the view space.
-
 
             # Remove edge directly adjacent to view and reconnect
             state.remove_edge(edge)
@@ -1629,7 +1629,6 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
     write = pm.PatternNode(nodes.AccessNode)
     map_exit = pm.PatternNode(nodes.MapExit)
 
-
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.write, cls.map_exit)]
@@ -1640,7 +1639,7 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
         edges = state.edges_between(self.write, self.map_exit)
         if any(not e.data.is_empty() for e in edges):
             return False
-        
+
         # The input edges must either depend on all the Map parameters or have WCR.
         for edge in state.in_edges(self.write):
             if edge.data.wcr:
@@ -1655,7 +1654,7 @@ class RemoveIntermediateWrite(pm.SingleStateTransformation):
 
         entry_node = state.entry_node(self.map_exit)
         scope_dict = state.scope_dict()
-        
+
         outer_write = state.add_access(self.write.data)
         for edge in state.in_edges(self.write):
             state.add_memlet_path(edge.src, self.map_exit, outer_write, memlet=edge.data, src_conn=edge.src_conn)

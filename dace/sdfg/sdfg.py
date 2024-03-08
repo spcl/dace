@@ -122,25 +122,6 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def _assignments_from_string(astr):
-    """ Returns a dictionary of assignments from a semicolon-delimited
-        string of expressions. """
-
-    result = {}
-    for aitem in astr.split(';'):
-        aitem = aitem.strip()
-        m = re.search(r'([^=\s]+)\s*=\s*([^=]+)', aitem)
-        result[m.group(1)] = m.group(2)
-
-    return result
-
-
-def _assignments_to_string(assdict):
-    """ Returns a semicolon-delimited string from a dictionary of assignment
-        expressions. """
-    return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
-
-
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
@@ -199,9 +180,7 @@ class InterstateEdge(object):
     """
 
     assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')")
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
@@ -744,7 +723,9 @@ class SDFG(ControlFlowRegion):
 
         # Replace in arrays and symbols (if a variable name)
         if replace_keys:
-            for name, new_name in repldict.items():
+            # Filter out nested data names, as we cannot and do not want to replace names in nested data descriptors
+            repldict_filtered = {k: v for k, v in repldict.items() if '.' not in k}
+            for name, new_name in repldict_filtered.items():
                 if validate_name(new_name):
                     _replace_dict_keys(self._arrays, name, new_name)
                     _replace_dict_keys(self.symbols, name, new_name)
@@ -1441,9 +1422,13 @@ class SDFG(ControlFlowRegion):
 
         # Create renderer canvas and load SDFG
         result += """
+<div class="sdfv">
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
+</div>
 <script>
     var sdfg_{uid} = {sdfg};
+</script>
+<script>
     var sdfv_{uid} = new SDFV();
     var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
@@ -1693,7 +1678,7 @@ class SDFG(ControlFlowRegion):
                  total_size=None,
                  find_new_name=False,
                  alignment=0,
-                 may_alias=False) -> Tuple[str, dt.View]:
+                 may_alias=False) -> Tuple[str, dt.ArrayView]:
         """ Adds a view to the SDFG data descriptor store. """
 
         # convert strings to int if possible
@@ -1708,18 +1693,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.View(dtype,
-                       shape,
-                       storage=storage,
-                       allow_conflicts=allow_conflicts,
-                       transient=True,
-                       strides=strides,
-                       offset=offset,
-                       lifetime=dtypes.AllocationLifetime.Scope,
-                       alignment=alignment,
-                       debuginfo=debuginfo,
-                       total_size=total_size,
-                       may_alias=may_alias)
+        desc = dt.ArrayView(dtype,
+                            shape,
+                            storage=storage,
+                            allow_conflicts=allow_conflicts,
+                            transient=True,
+                            strides=strides,
+                            offset=offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=total_size,
+                            may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1750,18 +1735,18 @@ class SDFG(ControlFlowRegion):
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
 
-        desc = dt.Reference(dtype,
-                            shape,
-                            storage=storage,
-                            allow_conflicts=allow_conflicts,
-                            transient=True,
-                            strides=strides,
-                            offset=offset,
-                            lifetime=dtypes.AllocationLifetime.Scope,
-                            alignment=alignment,
-                            debuginfo=debuginfo,
-                            total_size=total_size,
-                            may_alias=may_alias)
+        desc = dt.ArrayReference(dtype,
+                                 shape,
+                                 storage=storage,
+                                 allow_conflicts=allow_conflicts,
+                                 transient=True,
+                                 strides=strides,
+                                 offset=offset,
+                                 lifetime=dtypes.AllocationLifetime.Scope,
+                                 alignment=alignment,
+                                 debuginfo=debuginfo,
+                                 total_size=total_size,
+                                 may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1947,6 +1932,30 @@ class SDFG(ControlFlowRegion):
         _add_symbols(datadesc)
 
         return name
+
+    def add_datadesc_view(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a view of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.View.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
+
+    def add_datadesc_reference(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
+        """ Adds a reference of a given data descriptor to the SDFG array store.
+
+            :param name: Name to use.
+            :param datadesc: Data descriptor to view.
+            :param find_new_name: If True and data descriptor with this name
+                                  exists, finds a new name to add.
+            :return: Name of the new data descriptor
+        """
+        vdesc = dt.Reference.view(datadesc)
+        return self.add_datadesc(name, vdesc, find_new_name)
 
     def add_pgrid(self,
                   shape: ShapeType = None,
@@ -2151,16 +2160,8 @@ class SDFG(ControlFlowRegion):
 
             :param symbols: Values to specialize.
         """
-        # Set symbol values to add
-        syms = {
-            # If symbols are passed, extract the value. If constants are
-            # passed, use them directly.
-            name: val.get() if isinstance(val, dace.symbolic.symbol) else val
-            for name, val in symbols.items()
-        }
-
         # Update constants
-        for k, v in syms.items():
+        for k, v in symbols.items():
             self.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:

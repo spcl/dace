@@ -1463,8 +1463,10 @@ def validate_name(name):
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if namere.match(name) is None:
-        return False
+    tokens = name.split('.')
+    for token in tokens:
+        if namere.match(token) is None:
+            return False
     return True
 
 
@@ -1563,6 +1565,8 @@ def is_array(obj: Any) -> bool:
     except (KeyError, RuntimeError):
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
+        return True
+    if isinstance(obj, ctypes.Array):
         return True
     if hasattr(obj, '__array_interface__'):
         return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple

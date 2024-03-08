@@ -1793,9 +1793,6 @@ def create_sdfg_from_string(
     sdfg.parent_nsdfg_node = None
     sdfg.reset_cfg_list()
 
-    sdfg.apply_transformations(IntrinsicSDFGTransformation)
-    sdfg.expand_library_nodes()
-
     sdfg.using_experimental_blocks = use_experimental_cfg_blocks
     return sdfg
 

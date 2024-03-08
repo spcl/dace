@@ -21,10 +21,7 @@ args = [
 outputs = [(1, 'B')]
 
 
-def init_array(A, B, alpha):
-    n = N.get()
-    m = M.get()
-
+def init_array(A, B, alpha, n, m):
     alpha[0] = datatype(1.5)
 
     for i in range(m):

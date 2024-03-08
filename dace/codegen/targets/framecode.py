@@ -192,7 +192,10 @@ class DaCeCodeGenerator(object):
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
-                global_stream.write(dtype.emit_definition(), sdfg)
+                if dtype not in emitted_definitions:
+                    global_stream.write(dtype.emit_definition(), sdfg)
+                    wrote_something = True
+                    emitted_definitions.add(dtype)
             return wrote_something
 
         # Emit unique definitions
@@ -863,7 +866,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     instances = access_instances[sdfg.cfg_id][name]
 
                     # A view gets "allocated" everywhere it appears
-                    if isinstance(desc, (data.StructureView, data.View)):
+                    if isinstance(desc, data.View):
                         for s, n in instances:
                             self.to_allocate[s].append((sdfg, s, n, False, True, False))
                             self.to_allocate[s].append((sdfg, s, n, False, False, True))
