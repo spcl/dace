@@ -510,7 +510,7 @@ class StructPointerEliminator(NodeTransformer):
                     vardecl=[]
                     for k in i.vars.vardecl:
                         if k.name==self.pointer_name and k.alloc==True and k.type==self.pointed_struct:
-                            print("Eliminating pointer "+self.pointer_name+" of type "+ k.type +" in struct "+self.parent_struct)
+                            #print("Eliminating pointer "+self.pointer_name+" of type "+ k.type +" in struct "+self.parent_struct)
                             continue
                         else:
                             vardecl.append(k)
@@ -1414,7 +1414,7 @@ class OptionalArgsTransformer(NodeTransformer):
         new_args=[None]*should_be_args
         for i in range(mandatory_args):
             new_args[i] = node.args[i]
-        for i in range(mandatory_args,mandatory_args+missing_args_count):
+        for i in range(mandatory_args,len(node.args)):
             if len(node.args)>i:
                 current_arg = node.args[i]
                 if not isinstance(current_arg, ast_internal_classes.Actual_Arg_Spec_Node):
