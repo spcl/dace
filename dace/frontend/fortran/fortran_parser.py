@@ -1610,7 +1610,7 @@ class AST_translator:
         #Finally, now that the nested sdfg is built and the memlets are added, we can parse the internal of the subroutine and add it to the SDFG.
         if self.multiple_sdfgs==False:
             if node.execution_part is not None:
-                if node.specification_part is not None:  
+                if node.specification_part is not None and node.specification_part.uses is not None:
                     for j in node.specification_part.uses:
                         for k in j.list:
                             if self.contexts.get(new_sdfg.name) is None:
