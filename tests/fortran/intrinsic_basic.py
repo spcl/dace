@@ -199,8 +199,7 @@ def test_fortran_frontend_present():
     #                !END SUBROUTINE intrinsic_basic_present_function2
     #                """
 
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present_test", False)
-    sdfg.view()
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_present_test", True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -214,7 +213,7 @@ def test_fortran_frontend_present():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
-    #test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_bit_size()
+    test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_size_arbitrary()
     test_fortran_frontend_present()
