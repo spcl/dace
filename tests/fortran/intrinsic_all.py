@@ -346,16 +346,17 @@ def test_fortran_frontend_all_array_comparison_2d_subset_offset():
     res = np.full([2], 0, order="F", dtype=np.int32)
 
     sdfg(first=first, second=second, res=res)
+    print(res)
     assert list(res) == [0, 1]
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_all_array()
-    test_fortran_frontend_all_array_dim()
-    test_fortran_frontend_all_array_comparison()
-    test_fortran_frontend_all_array_scalar_comparison()
-    test_fortran_frontend_all_array_comparison_wrong_subset()
-    test_fortran_frontend_all_array_2d()
-    test_fortran_frontend_all_array_comparison_2d()
-    test_fortran_frontend_all_array_comparison_2d_subset()
+    #test_fortran_frontend_all_array()
+    #test_fortran_frontend_all_array_dim()
+    #test_fortran_frontend_all_array_comparison()
+    #test_fortran_frontend_all_array_scalar_comparison()
+    #test_fortran_frontend_all_array_comparison_wrong_subset()
+    #test_fortran_frontend_all_array_2d()
+    #test_fortran_frontend_all_array_comparison_2d()
+    #test_fortran_frontend_all_array_comparison_2d_subset()
     test_fortran_frontend_all_array_comparison_2d_subset_offset()

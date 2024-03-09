@@ -249,7 +249,7 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     simple_graph.add_node(j[1])
                 simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
         actually_used_in_module[i]=actually_used        
-    print(simple_graph)
+    #print(simple_graph)
     return simple_graph,actually_used_in_module
     
 
@@ -441,13 +441,10 @@ class TaskletWriter:
             return str(self.rename_dict[name])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
-            #print(location)
             sdfg_name = self.mapping.get(self.sdfg).get(location[0])
             if sdfg_name is None:
                 return name
             else:
-                print(sdfg_name) 
-                print(location)
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
@@ -455,13 +452,10 @@ class TaskletWriter:
         
         if self.placeholders_offsets.get(name) is not None:
             location=self.placeholders_offsets.get(name)
-            #print(location)
             sdfg_name = self.mapping.get(self.sdfg).get(location[0])
             if sdfg_name is None:
                 return name
             else:
-                print(sdfg_name) 
-                print(location)
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "0"
                 offset=self.sdfg.arrays[sdfg_name].offset[location[1]]

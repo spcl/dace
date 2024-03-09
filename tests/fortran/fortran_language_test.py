@@ -254,11 +254,11 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_real_kind_selector()
-    test_fortran_frontend_if1()
+    #test_fortran_frontend_real_kind_selector()
+    #test_fortran_frontend_if1()
     test_fortran_frontend_loop1()
-    test_fortran_frontend_function_statement1()
+    #test_fortran_frontend_function_statement1()
 
-    test_fortran_frontend_pow1()
-    test_fortran_frontend_pow2()
-    test_fortran_frontend_sign1()
+    #test_fortran_frontend_pow1()
+    #test_fortran_frontend_pow2()
+    #test_fortran_frontend_sign1()

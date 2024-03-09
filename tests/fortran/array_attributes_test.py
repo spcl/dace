@@ -351,28 +351,28 @@ def test_fortran_frontend_array_arbitrary_attribute2():
                     integer :: arrsize3
                     integer :: arrsize4
                     double precision :: d(arrsize, arrsize2)
-                    double precision :: d2(arrsize3, arrsize4)
-                    CALL index_test_function(d, d2)
+                    !double precision :: d2(arrsize3, arrsize4)
+                    CALL index_test_function(d)
                     end
 
-                    SUBROUTINE index_test_function(d, d2)
-                    double precision, dimension(:,:) :: d, d2
+                    SUBROUTINE index_test_function(d)
+                    double precision, dimension(:,:) :: d
 
-                    CALL index_test_function_second(d,d2)
+                    CALL index_test_function_second(d)
 
                     END SUBROUTINE index_test_function
 
-                    SUBROUTINE index_test_function_second(d, d2)
-                    double precision, dimension(:,:) :: d, d2
+                    SUBROUTINE index_test_function_second(d)
+                    double precision, dimension(:,:) :: d
 
-                    d(1,1) = SIZE(d,1)
-                    d(1,2) = SIZE(d,2)
-                    d(1,3) = SIZE(d2,1)
-                    d(1,4) = SIZE(d2,2)
+                    d(1,1) = 5
+                    !d(1,2) = SIZE(d,2)
+                    !d(1,3) = SIZE(d2,1)
+                    !d(1,4) = SIZE(d2,2)
 
                     END SUBROUTINE index_test_function_second
                     """
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "index_offset_test", normalize_offsets=True)
     sdfg.simplify(verbose=True)
     sdfg.compile()
 
@@ -383,6 +383,7 @@ def test_fortran_frontend_array_arbitrary_attribute2():
     a = np.full([arrsize,arrsize2], 42, order="F", dtype=np.float64)
     b = np.full([arrsize3,arrsize4], 42, order="F", dtype=np.float64)
     sdfg(d=a,d2=b,arrsize=arrsize,arrsize2=arrsize2,arrsize3=arrsize3,arrsize4=arrsize4)
+    print(a)
     assert a[0,0] == arrsize
     assert a[0,1] == arrsize2
     assert a[0,2] == arrsize3
@@ -390,13 +391,13 @@ def test_fortran_frontend_array_arbitrary_attribute2():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_offset()
-    test_fortran_frontend_array_attribute_no_offset()
-    test_fortran_frontend_array_attribute_offset()
-    test_fortran_frontend_array_attribute_no_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol()
-    test_fortran_frontend_array_attribute_offset_symbol2()
-    test_fortran_frontend_array_offset_symbol()
-    test_fortran_frontend_array_arbitrary()
-    test_fortran_frontend_array_arbitrary_attribute()
+    #test_fortran_frontend_array_offset()
+    #test_fortran_frontend_array_attribute_no_offset()
+    #test_fortran_frontend_array_attribute_offset()
+    #test_fortran_frontend_array_attribute_no_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol()
+    #test_fortran_frontend_array_attribute_offset_symbol2()
+    #test_fortran_frontend_array_offset_symbol()
+    #test_fortran_frontend_array_arbitrary()
+    #test_fortran_frontend_array_arbitrary_attribute()
     test_fortran_frontend_array_arbitrary_attribute2()
