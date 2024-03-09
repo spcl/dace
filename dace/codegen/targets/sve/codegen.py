@@ -118,6 +118,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         callsite_stream.write('{')
         self.dispatcher.defined_vars.enter_scope(node)
+        self.dispatcher.declared_arrays.enter_scope(node)
 
         ##################
         # Generate tasklet
@@ -141,6 +142,7 @@ class SVECodeGen(TargetCodeGenerator):
             self.generate_writeback(sdfg, state, scope, edge, callsite_stream)
 
         self.dispatcher.defined_vars.exit_scope(node)
+        self.dispatcher.declared_arrays.exit_scope(node)
         callsite_stream.write('}')
 
     def generate_read(self, sdfg: SDFG, state: SDFGState, map: nodes.Map, edge: graph.MultiConnectorEdge[mm.Memlet],
@@ -418,6 +420,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         callsite_stream.write('{')
         self.dispatcher.defined_vars.enter_scope(scope)
+        self.dispatcher.declared_arrays.enter_scope(scope)
 
         # Define all dynamic input connectors of the map entry
         state_dfg = sdfg.node(state_id)
@@ -473,6 +476,7 @@ class SVECodeGen(TargetCodeGenerator):
         callsite_stream.write('}')
 
         self.dispatcher.defined_vars.exit_scope(scope)
+        self.dispatcher.declared_arrays.exit_scope(scope)
         callsite_stream.write('}')
 
     def unparse_tasklet(self, sdfg: SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
