@@ -409,7 +409,7 @@ class LoopBasedReplacementTransformation(IntrinsicNodeTransformer):
         # supports syntax func(arr)
         if isinstance(arg, ast_internal_classes.Name_Node):
             # TODO: missing line number here!
-            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, line_number=42)
+            array_node = ast_internal_classes.Array_Subscript_Node(parent=arg.parent, type=arg.type, line_number=42)
             array_node.name = arg
 
             # If we access SUM(arr) where arr has many dimensions,
@@ -1510,6 +1510,10 @@ class FortranIntrinsics:
         Merge
     ]
 
+    EXEMPTED_FROM_ARG_EXTRACTION = [
+        All, Any
+    ]
+
     def __init__(self):
         self._transformations_to_run = {}
 
@@ -1531,6 +1535,13 @@ class FortranIntrinsics:
     def call_extraction_exemptions() -> List[str]:
         return [
             *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_CALL_EXTRACTION]
+            #*MathFunctions.temporary_functions()
+        ]
+
+    @staticmethod
+    def arg_extraction_exemptions() -> List[str]:
+        return [
+            *[func.Transformation.func_name() for func in FortranIntrinsics.EXEMPTED_FROM_ARG_EXTRACTION]
             #*MathFunctions.temporary_functions()
         ]
 

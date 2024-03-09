@@ -648,7 +648,7 @@ class ArgumentExtractor(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         from dace.frontend.fortran.intrinsics import FortranIntrinsics
-        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.call_extraction_exemptions()]:
+        if node.name.name in ["malloc", "pow", "cbrt",  "__dace_epsilon", *FortranIntrinsics.arg_extraction_exemptions()]:
             return self.generic_visit(node)
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
@@ -1402,6 +1402,7 @@ class OptionalArgsTransformer(NodeTransformer):
         if node.name.name not in self.funcs_with_opt_args:
             return node
 
+
         # Basic assumption for positioanl arguments
         # Optional arguments follow the mandatory ones
         # We use that to determine which optional arguments are missing
@@ -1414,6 +1415,7 @@ class OptionalArgsTransformer(NodeTransformer):
         mandatory_args = should_be_args - optional_args*2
 
         present_args = len(node.args)
+
 
         # Remove the deduplicated variable entries acting as flags for optional args
         missing_args_count = should_be_args - present_args
