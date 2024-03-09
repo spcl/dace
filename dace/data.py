@@ -441,9 +441,28 @@ class Structure(Data):
         #     else:
         #         fields_and_types[str(s)] = dtypes.int32
 
-        dtype = dtypes.pointer(dtypes.struct(name, **fields_and_types))
+        dtype = dtypes.pointer(dtypes.struct(name, fields_and_types))
         shape = (1, )
         super(Structure, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
+
+    
+    def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
+        """
+        Returns a set of symbols that are used by this data descriptor.
+
+        :param all_symbols: Include not-strictly-free symbols that are used by this data descriptor,
+                            e.g., shape and size of a global array.
+        :return: A set of symbols that are used by this data descriptor. NOTE: The results are symbolic
+                 rather than a set of strings.
+        """
+        result = set()
+        
+        for member_name,member in self.members.items():
+            result |= member.used_symbols(all_symbols)
+        
+        #result=set(filter(lambda x: not str(x).startswith("__f2dace_ARRAY"),result))
+        return result
+
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -1576,6 +1595,7 @@ class Array(Data):
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
+        
         for s in self.strides:
             if isinstance(s, sp.Expr):
                 result |= set(s.free_symbols)

@@ -278,7 +278,26 @@ class InlineSDFG(transformation.SingleStateTransformation):
         views: Dict[str, Tuple[str, Memlet]] = {}
         input_set: Dict[str, str] = {}
         output_set: Dict[str, str] = {}
-        for e in state.in_edges(nsdfg_node):
+        struct_views : Dict[str, str] = {}
+
+        for e in list(state.in_edges(nsdfg_node)):
+            
+            # Structure treatment
+            outer_dataname = state.memlet_path(e)[-1].data.data
+            outer_tokens = outer_dataname.split('.')
+            outer_dataname = outer_tokens[0]
+            outer_descriptor = sdfg.arrays[outer_dataname]
+            inner_dataname = e.dst_conn
+            inner_descriptor = nsdfg.arrays[inner_dataname]
+            if not isinstance(outer_descriptor, (type(inner_descriptor), type(data.View.view(inner_descriptor)))):
+                view_name = sdfg.add_datadesc_view(inner_dataname, inner_descriptor, find_new_name=True)
+                struct_views[inner_dataname] = view_name
+                view_node = state.add_access(view_name)
+                state.add_edge(e.src, e.src_conn, view_node, 'views', copy.deepcopy(e.data))
+                new_e = state.add_edge(view_node, None, nsdfg_node, inner_dataname, Memlet.from_array(view_name, view_node.desc(sdfg)))
+                state.remove_edge(e)
+                e = new_e
+            
             inputs[e.dst_conn] = e
             input_set[e.data.data] = e.dst_conn
             if isinstance(e.src, nodes.AccessNode):
@@ -293,7 +312,27 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     mem.subset = srcset
                     mem.other_subset = dstset
                     views[d] = (arr, mem)
-        for e in state.out_edges(nsdfg_node):
+
+        for e in list(state.out_edges(nsdfg_node)):
+
+            # Structure treatment
+            outer_dataname = state.memlet_path(e)[0].data.data
+            outer_tokens = outer_dataname.split('.')
+            outer_dataname = outer_tokens[0]
+            outer_descriptor = sdfg.arrays[outer_dataname]
+            inner_dataname = e.src_conn
+            inner_descriptor = nsdfg.arrays[inner_dataname]
+            if not isinstance(outer_descriptor, (type(inner_descriptor), type(data.View.view(inner_descriptor)))):
+                if inner_dataname in struct_views:
+                    view_name = struct_views[inner_dataname]
+                else:
+                    view_name = sdfg.add_datadesc_view(inner_dataname, inner_descriptor, find_new_name=True)
+                view_node = state.add_access(view_name)
+                new_e = state.add_edge(nsdfg_node, inner_dataname, view_node, None, Memlet.from_array(view_name, view_node.desc(sdfg)))
+                state.add_edge(view_node, 'views', e.dst, e.dst_conn, copy.deepcopy(e.data))
+                state.remove_edge(e)
+                e = new_e
+
             outputs[e.src_conn] = e
             output_set[e.data.data] = e.src_conn
             if isinstance(e.dst, nodes.AccessNode):
@@ -703,6 +742,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Modifies memlet paths in an inlined SDFG. Returns set of modified
             edges.
         """
+
+        def _is_nested(memlet):
+            return '.' in memlet.data
+
         result = set()
         for node, top_edge in new_edges.items():
             inner_edges = (nstate.out_edges(node) if inputs else nstate.in_edges(node))
@@ -710,11 +753,18 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if inner_edge in edges_to_ignore:
                     new_memlet = inner_edge.data
                 else:
-                    offset = state.parent.arrays[top_edge.data.data].offset
-                    new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
-                                                          top_edge.data,
-                                                          internal_offset=offset,
-                                                          external_offset=offset)
+                    if _is_nested(inner_edge.data):
+                        outer_root_name = top_edge.data.data.split('.')[0]
+                        tokens = inner_edge.data.data.split('.')
+                        inner_root_name = tokens[0]
+                        inner_nested_name = '.'.join(tokens[1:])
+                        new_memlet = Memlet(data=f"{outer_root_name}.{inner_nested_name}", subset=inner_edge.data.subset)
+                    else:
+                        offset = state.parent.arrays[top_edge.data.data].offset
+                        new_memlet = helpers.unsqueeze_memlet(inner_edge.data,
+                                                            top_edge.data,
+                                                            internal_offset=offset,
+                                                            external_offset=offset)
                 if inputs:
                     if inner_edge.dst in inner_to_outer:
                         dst = inner_to_outer[inner_edge.dst]

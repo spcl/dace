@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Union
 
 from dace import SDFG, Memlet, SDFGState
 from dace.sdfg import nodes as nd
@@ -20,15 +20,15 @@ else:
 class RecodeAttributeNodes(ast.NodeTransformer):
 
     connector: str
-    data: dt.Structure
+    data: Union[dt.Structure, dt.ContainerView]
     tasklet: nd.Tasklet
     direction: dirtype
     memlet: Memlet
     data_node: nd.AccessNode
     state: SDFGState
 
-    def __init__(self, state: SDFGState, data_node: nd.AccessNode, connector: str, data: dt.Structure,
-                 tasklet: nd.Tasklet, memlet: Memlet, direction: dirtype):
+    def __init__(self, state: SDFGState, data_node: nd.AccessNode, connector: str,
+                 data: Union[dt.Structure, dt.ContainerView], tasklet: nd.Tasklet, memlet: Memlet, direction: dirtype):
         self.connector = connector
         self.data = data
         self.tasklet = tasklet
@@ -37,15 +37,15 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         self.data_node = data_node
         self.state = state
 
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
-        if not node.value or not isinstance(node.value, ast.Name) or node.value.id != self.connector:
-            return self.generic_visit(node)
-
-        if not node.attr in self.data.members:
-            raise RuntimeError('Structure attribute is not a member of the structure type definition')
+    def _handle_simple_name_access(self, node: ast.Attribute, val: ast.Name) -> Any:
+        struct: dt.Structure = self.data
+        if not node.attr in struct.members:
+            raise RuntimeError(
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
+            )
 
         # Gather a new connector name and add the appropriate connector.
-        new_connector_name = node.value.id + '_' + node.attr
+        new_connector_name = val.id + '_' + node.attr
         new_connector_name = self.tasklet.next_connector(new_connector_name)
         if self.direction == 'in':
             if not self.tasklet.add_in_connector(new_connector_name):
@@ -64,15 +64,8 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         try:
             view = self.state.sdfg.arrays[view_name]
         except KeyError:
-            member: dt.Data = self.data.members[node.attr]
-            if isinstance(member, dt.Structure):
-                view = dt.StructureView(member.members, member.name, True, member.storage, member.location,
-                                        member.lifetime, member.debuginfo)
-                self.state.sdfg.add_datadesc(view_name, view)
-            else:
-                view_name, view = self.state.sdfg.add_view(view_name, member.shape, member.dtype, member.storage,
-                                                           member.strides,
-                                                           member.offset if isinstance(member, dt.Array) else None)
+            view = dt.View.view(struct.members[node.attr])
+            view_name = self.state.sdfg.add_datadesc(view_name, view, find_new_name=True)
 
         # Add an access node for the view and connect it appropriately.
         view_node = self.state.add_access(view_name)
@@ -88,8 +81,86 @@ class RecodeAttributeNodes(ast.NodeTransformer):
             # TODO: determine the actual subset from the tasklet accesses.
             self.state.add_edge(self.tasklet, new_connector_name, view_node, None,
                                 Memlet.from_array(view_name, view))
-
         return self.generic_visit(replacement)
+
+    def _handle_sliced_access(self, node: ast.Attribute, val: ast.Slice) -> Any:
+        struct = self.data.stype
+        if not isinstance(struct, dt.Structure):
+            raise ValueError('Invalid ContainerView, can only lift ContainerViews to Structures')
+        if not node.attr in struct.members:
+            raise RuntimeError(
+                f'Structure attribute {node.attr} is not a member of the structure {struct.name} type definition'
+            )
+
+        # Gather a new connector name and add the appropriate connector.
+        new_connector_name = node.value.value.id + '_slice_' + node.attr
+        new_connector_name = self.tasklet.next_connector(new_connector_name)
+        if self.direction == 'in':
+            if not self.tasklet.add_in_connector(new_connector_name):
+                raise RuntimeError(f'Failed to add connector {new_connector_name}')
+        else:
+            if not self.tasklet.add_out_connector(new_connector_name):
+                raise RuntimeError(f'Failed to add connector {new_connector_name}')
+
+        # We first lift the slice into a separate view, and then the attribute access.
+        slice_view_name = 'v_' + self.data_node.data + '_slice'
+        attr_view_name = slice_view_name + '_' + node.attr
+        try:
+            slice_view = self.state.sdfg.arrays[slice_view_name]
+        except KeyError:
+            slice_view = dt.View.view(struct)
+            slice_view_name = self.state.sdfg.add_datadesc(slice_view_name, slice_view, find_new_name=True)
+        try:
+            attr_view = self.state.sdfg.arrays[attr_view_name]
+        except KeyError:
+            member: dt.Data = struct.members[node.attr]
+            attr_view = dt.View.view(member)
+            attr_view_name = self.state.sdfg.add_datadesc(attr_view_name, attr_view, find_new_name=True)
+
+        # Construct the correct AST replacement node (direct access, i.e., name node).
+        replacement = ast.Name()
+        replacement.ctx = ast.Load()
+        replacement.id = new_connector_name
+
+        # Add access nodes for the views and connect them appropriately.
+        slice_view_node = self.state.add_access(slice_view_name)
+        attr_view_node = self.state.add_access(attr_view_name)
+        if self.direction == 'in':
+            idx = ast.unparse(val.slice)
+            slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
+            self.state.add_edge(self.data_node, None, slice_view_node, 'views', slice_memlet)
+            attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
+            self.state.add_edge(slice_view_node, None, attr_view_node, 'views', attr_memlet)
+            # TODO: determine the actual subset from the tasklet accesses.
+            self.state.add_edge(attr_view_node, None, self.tasklet, new_connector_name,
+                                Memlet.from_array(attr_view_name, attr_view))
+        else:
+            self.state.add_edge(self.tasklet, new_connector_name, attr_view_node, None,
+                                Memlet.from_array(attr_view_name, attr_view))
+            # TODO: determine the actual subset from the tasklet accesses.
+            attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
+            self.state.add_edge(attr_view_node, 'views', slice_view_node, 'views', attr_memlet)
+            idx = ast.unparse(val.slice)
+            slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
+            self.state.add_edge(slice_view_node, 'views', self.data_node, None, slice_memlet)
+        return self.generic_visit(replacement)
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        if not node.value:
+            return self.generic_visit(node)
+
+        if isinstance(self.data, dt.Structure):
+            if (not isinstance(node.value, ast.Name) or
+                node.value.id != self.connector):
+                return self.generic_visit(node)
+            return self._handle_simple_name_access(node, node.value)
+        elif isinstance(self.data, dt.ContainerView):
+            if (not isinstance(node.value, ast.Subscript) or
+                node.value.value.id != self.connector):
+                return self.generic_visit(node)
+            return self._handle_sliced_access(node, node.value)
+        else:
+            raise NotImplementedError()
 
 
 class LiftStructViews(ppl.Pass):
@@ -137,20 +208,23 @@ class LiftStructViews(ppl.Pass):
         results = dict()
 
         lifted_something = False
-        for state in sdfg.states():
-            for node in state.data_nodes():
-                container = sdfg.data(node.data)
-                if isinstance(container, dt.Structure):
-                    for oedge in state.out_edges(node):
-                        if isinstance(oedge.dst, nd.Tasklet):
-                            self._lift_tasklet_accesses(state, node, oedge.dst, oedge, container, oedge.dst_conn,
-                                                        'in')
-                            lifted_something = True
-                    for iedge in state.in_edges(node):
-                        if isinstance(iedge.src, nd.Tasklet):
-                            self._lift_tasklet_accesses(state, node, iedge.src, iedge, container, iedge.src_conn,
-                                                        'out')
-                            lifted_something = True
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.states():
+                for node in state.data_nodes():
+                    container = nsdfg.data(node.data)
+                    if (isinstance(container, dt.Structure) or
+                        (isinstance(container, dt.ContainerView) and
+                        isinstance(container.stype, dt.Structure))):
+                        for oedge in state.out_edges(node):
+                            if isinstance(oedge.dst, nd.Tasklet):
+                                self._lift_tasklet_accesses(state, node, oedge.dst, oedge, container, oedge.dst_conn,
+                                                            'in')
+                                lifted_something = True
+                        for iedge in state.in_edges(node):
+                            if isinstance(iedge.src, nd.Tasklet):
+                                self._lift_tasklet_accesses(state, node, iedge.src, iedge, container, iedge.src_conn,
+                                                            'out')
+                                lifted_something = True
 
         if not lifted_something:
             return None

@@ -69,7 +69,16 @@ class ConstantPropagation(ppl.Pass):
             result = {}
         else:
             # Trace all constants and symbols through states
-            per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
+            per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)            
+
+            for state, mapping in per_state_constants.items():
+                mapping_ = {}
+                for k, v in mapping.items():
+                    if isinstance(v, str) and "." in v:
+                        continue
+                    mapping_[k] = v
+                
+                per_state_constants[state] = mapping_
 
             # Keep track of replaced and ambiguous symbols
             symbols_replaced: Dict[str, Any] = {}

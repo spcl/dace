@@ -1102,6 +1102,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             internal_memlet = border_memlets['in'][iedge.dst_conn]
             if internal_memlet is None:
                 continue
+            if internal_memlet.data != iedge.data.data:
+                continue
             try:
                 ext_desc = parent_sdfg.arrays[iedge.data.data]
                 int_desc = sdfg.arrays[iedge.dst_conn]
@@ -1129,6 +1131,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
         if oedge.src_conn in border_memlets['out']:
             internal_memlet = border_memlets['out'][oedge.src_conn]
             if internal_memlet is None:
+                continue
+            if internal_memlet.data != oedge.data.data:
                 continue
             try:
                 ext_desc = parent_sdfg.arrays[oedge.data.data]

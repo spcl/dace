@@ -14,6 +14,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace import Memlet
 from dace.sdfg.nodes import Tasklet
 from dace import dtypes
+from dace import data as dat
 from dace import symbolic as sym
 from dace import DebugInfo as di
 from dace import Language as lang
@@ -24,6 +25,7 @@ from numpy import float64 as fl
 from dace.frontend.fortran import ast_internal_classes
 from typing import List, Set
 import networkx as nx
+from dace.frontend.fortran import ast_transforms
 
 fortrantypes2dacetypes = {
     "DOUBLE": dtypes.float64,
@@ -247,7 +249,7 @@ def eliminate_dependencies(dep_graph:nx.digraph.DiGraph):
                     simple_graph.add_node(j[1])
                 simple_graph.add_edge(i,j[1],obj_list=new_out_names_local)
         actually_used_in_module[i]=actually_used        
-    print(simple_graph)
+    #print(simple_graph)
     return simple_graph,actually_used_in_module
     
 
@@ -264,7 +266,17 @@ def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str], vars_out: Set
 
 
 def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_conn: str, memlet_range: str):
-    src = substate.add_access(var_name)
+    found = False
+    if isinstance(substate.parent.arrays[var_name],dat.View):
+        for i in substate.data_nodes():
+            if i.data==var_name and len(substate.out_edges(i))==0:
+                src=i
+                found=True
+                break
+    if not found:
+        src = substate.add_read(var_name)
+    
+    #src = substate.add_access(var_name)
     if memlet_range != "":
         substate.add_memlet_path(src, tasklet, dst_conn=dest_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -273,7 +285,16 @@ def add_memlet_read(substate: SDFGState, var_name: str, tasklet: Tasklet, dest_c
 
 
 def add_memlet_write(substate: SDFGState, var_name: str, tasklet: Tasklet, source_conn: str, memlet_range: str):
-    dst = substate.add_write(var_name)
+    found = False
+    if isinstance(substate.parent.arrays[var_name],dat.View):
+        for i in substate.data_nodes():
+            if i.data==var_name and len(substate.in_edges(i))==0:
+                dst=i
+                found=True
+                break
+    if not found:
+        dst = substate.add_write(var_name)
+    #dst = substate.add_write(var_name)
     if memlet_range != "":
         substate.add_memlet_path(tasklet, dst, src_conn=source_conn, memlet=Memlet(expr=var_name, subset=memlet_range))
     else:
@@ -304,7 +325,10 @@ def get_name(node: ast_internal_classes.FNode):
     elif isinstance(node, ast_internal_classes.Data_Ref_Node):
         view_name=node.parent_ref.name
         while isinstance(node.part_ref, ast_internal_classes.Data_Ref_Node):
-            view_name=view_name+"_"+node.part_ref.parent_ref.name
+            if isinstance(node.part_ref.parent_ref, ast_internal_classes.Name_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name
+            elif isinstance(node.part_ref.parent_ref, ast_internal_classes.Array_Subscript_Node):
+                view_name=view_name+"_"+node.part_ref.parent_ref.name.name    
             node=node.part_ref
         view_name=view_name+"_"+get_name(node.part_ref)
         return view_name            
@@ -330,14 +354,20 @@ class TaskletWriter:
                  sdfg: SDFG = None,
                  name_mapping=None,
                  input: List[str] = None,
-                 input_changes: List[str] = None,placeholders=None):
+                 input_changes: List[str] = None,
+                 placeholders=None,
+                 placeholders_offsets=None,
+                 rename_dict=None
+    ):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
         self.sdfg = sdfg
-        self.placeholders=placeholders
+        self.placeholders = placeholders
+        self.placeholders_offsets = placeholders_offsets
         self.mapping = name_mapping
         self.input = input
         self.input_changes = input_changes
+        self.rename_dict = rename_dict
 
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
@@ -346,6 +376,7 @@ class TaskletWriter:
             ast_internal_classes.Name_Range_Node: self.name2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
+            ast_internal_classes.Double_Literal_Node: self.doublelit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
             ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,
@@ -402,16 +433,33 @@ class TaskletWriter:
 
         return_value = node.name
         name = node.name
+        if hasattr(node,"isStructMember"):
+            if node.isStructMember:
+                return node.name
+
+        if self.rename_dict is not None and name in self.rename_dict:
+            return str(self.rename_dict[name])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
-            #print(location)
             sdfg_name = self.mapping.get(self.sdfg).get(location[0])
             if sdfg_name is None:
                 return name
             else:
-                #print(sdfg_name)
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
+                    return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
                 return str(size)
+        
+        if self.placeholders_offsets.get(name) is not None:
+            location=self.placeholders_offsets.get(name)
+            sdfg_name = self.mapping.get(self.sdfg).get(location[0])
+            if sdfg_name is None:
+                return name
+            else:
+                if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
+                    return "0"
+                offset=self.sdfg.arrays[sdfg_name].offset[location[1]]
+                return str(offset)    
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
@@ -440,6 +488,10 @@ class TaskletWriter:
         return "".join(map(str, node.value))
 
     def floatlit2string(self, node: ast_internal_classes.Real_Literal_Node):
+
+        return "".join(map(str, node.value))
+    
+    def doublelit2string(self, node: ast_internal_classes.Double_Literal_Node):
 
         return "".join(map(str, node.value))
     
@@ -504,7 +556,7 @@ class TaskletWriter:
             return left + op + right
 
 
-def generate_memlet(op, top_sdfg, state):
+def generate_memlet(op, top_sdfg, state, offset_normalization = False):
 
     if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
         shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(op)]].shape
@@ -515,7 +567,7 @@ def generate_memlet(op, top_sdfg, state):
     indices = []
     if isinstance(op, ast_internal_classes.Array_Subscript_Node):
         for i in op.indices:
-            tw = TaskletWriter([], [], top_sdfg, state.name_mapping)
+            tw = TaskletWriter([], [], top_sdfg, state.name_mapping, placeholders=state.placeholders, placeholders_offsets=state.placeholders_offsets)
             text = tw.write_code(i)
             #This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(sym.pystr_to_symbolic(text))
@@ -525,7 +577,10 @@ def generate_memlet(op, top_sdfg, state):
             return memlet
 
     all_indices = indices + [None] * (len(shape) - len(indices))
-    subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
+    if offset_normalization:
+        subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1) for i, s in zip(all_indices, shape)])
+    else:
+        subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1) for i, s in zip(all_indices, shape)])
     return subset
 
 
@@ -534,10 +589,12 @@ class ProcessedWriter(TaskletWriter):
     This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
     :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
     """
-    def __init__(self, sdfg: SDFG, mapping,placeholders):
+    def __init__(self, sdfg: SDFG, mapping, placeholders, placeholders_offsets,rename_dict):
         self.sdfg = sdfg
         self.mapping = mapping
         self.placeholders = placeholders
+        self.placeholders_offsets = placeholders_offsets
+        self.rename_dict = rename_dict
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
             ast_internal_classes.Actual_Arg_Spec_Node: self.actualarg2string,
@@ -545,6 +602,7 @@ class ProcessedWriter(TaskletWriter):
             ast_internal_classes.Name_Range_Node: self.namerange2string,
             ast_internal_classes.Int_Literal_Node: self.intlit2string,
             ast_internal_classes.Real_Literal_Node: self.floatlit2string,
+            ast_internal_classes.Double_Literal_Node: self.doublelit2string,
             ast_internal_classes.Bool_Literal_Node: self.boollit2string,
             ast_internal_classes.Char_Literal_Node: self.charlit2string,
             ast_internal_classes.UnOp_Node: self.unop2string,
@@ -557,6 +615,8 @@ class ProcessedWriter(TaskletWriter):
 
     def name2string(self, node: ast_internal_classes.Name_Node):
         name = node.name
+        if name in self.rename_dict:    
+            return str(self.rename_dict[name])
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
@@ -809,12 +869,13 @@ class DefModuleLister:
             else:
                 self.get_defined_modules(i)
 
-def parse_module_declarations(internal_ast: ast_components.InternalFortranAst, ast, parsed_modules):
+def parse_module_declarations(program):
 
     module_level_variables = {}
 
-    for module_name, module in parsed_modules.items():
+    for module in program.modules:
 
+        module_name = module.name.name
         from dace.frontend.fortran.ast_transforms import ModuleVarsDeclarations
 
         visitor = ModuleVarsDeclarations() #module_name)

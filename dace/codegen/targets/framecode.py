@@ -69,6 +69,7 @@ class DaCeCodeGenerator(object):
         self._symbols_and_constants = {}
         self._ptr_incremented_accesses = {}
         fsyms = self.free_symbols(sdfg)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA") or str(x).startswith("tmp_struct_symbol")), fsyms))
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
         # resolve all symbols and constants
@@ -104,6 +105,7 @@ class DaCeCodeGenerator(object):
         if k in self.fsyms:
             return self.fsyms[k]
         if hasattr(obj, 'used_symbols'):
+            #TODO LATER: all_symbols was False but caused members in structs that are not transient to lose the last dimension
             result = obj.used_symbols(all_symbols=False)
         else:
             result = obj.free_symbols
@@ -178,12 +180,9 @@ class DaCeCodeGenerator(object):
             if arr is not None:
                 datatypes.add(arr.dtype)
 
-        emitted_definitions = set()
+        emitted = set()
         
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
-            if dtype in emitted_definitions:
-                return False
-            emitted_definitions.add(dtype)
             if isinstance(dtype, dtypes.pointer):
                 wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
             elif isinstance(dtype, dtypes.struct):
@@ -263,8 +262,10 @@ struct {mangle_dace_state_struct_name(sdfg)} {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
-        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
+        initparams = sdfg.signature(arglist=self.arglist)
+        initparamnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        #initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        #initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():

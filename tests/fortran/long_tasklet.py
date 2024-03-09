@@ -16,7 +16,7 @@ def test_fortran_frontend_long_tasklet():
 
                     
                     type test_type
-                        integer indices(5)
+                        integer :: indices(5)
                         integer :: start
                         integer :: end
                     end type

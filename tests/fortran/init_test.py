@@ -58,7 +58,7 @@ def test_fortran_frontend_init():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "init_test",sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a)
+    sdfg(d=a,outside_init=0)
     assert (a[0] == 42)
     assert (a[1] == 5.5)
     assert (a[2] == 42)
@@ -102,12 +102,12 @@ def test_fortran_frontend_init2():
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "init2_test",sources=sources)
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
-    sdfg(d=a)
+    sdfg(d=a, torus_max_lat=4.0 / 18.0 * np.arctan(1.0))
     assert (a[0] == 42)
-    assert (a[1] == 5.5)
+    assert (a[1] == 5.674532920122147)
     assert (a[2] == 42)
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_init()
+    test_fortran_frontend_init()
     test_fortran_frontend_init2()

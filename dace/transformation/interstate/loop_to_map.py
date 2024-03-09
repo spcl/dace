@@ -373,121 +373,130 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         nsdfg = None
 
         # Nest loop-body states
-        if len(states) > 1:
-
-            # Find read/write sets
-            read_set, write_set = set(), set()
-            for state in states:
-                rset, wset = state.read_and_write_sets()
-                read_set |= rset
-                write_set |= wset
-                # Add to write set also scalars between tasklets
-                for src_node in state.nodes():
-                    if not isinstance(src_node, nodes.Tasklet):
+        # Find read/write sets
+        read_set, write_set = set(), set()
+        for state in states:
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+            # Add to write set also scalars between tasklets
+            for src_node in state.nodes():
+                if not isinstance(src_node, nodes.Tasklet):
+                    continue
+                for dst_node in state.nodes():
+                    if src_node is dst_node:
                         continue
-                    for dst_node in state.nodes():
-                        if src_node is dst_node:
-                            continue
-                        if not isinstance(dst_node, nodes.Tasklet):
-                            continue
-                        for e in state.edges_between(src_node, dst_node):
-                            if e.data.data and e.data.data in sdfg.arrays:
-                                write_set.add(e.data.data)
-                # Add data from edges
-                for src in states:
-                    for dst in states:
-                        for edge in sdfg.edges_between(src, dst):
-                            for s in edge.data.free_symbols:
-                                if s in sdfg.arrays:
-                                    read_set.add(s)
-
-            # Find NestedSDFG's unique data
-            rw_set = read_set | write_set
-            unique_set = set()
-            for name in rw_set:
-                if not sdfg.arrays[name].transient:
-                    continue
-                found = False
-                for state in sdfg.states():
-                    if state in states:
+                    if not isinstance(dst_node, nodes.Tasklet):
                         continue
-                    for node in state.nodes():
-                        if (isinstance(node, nodes.AccessNode) and node.data == name):
-                            found = True
-                            break
-                if not found and _is_array_thread_local(name, itervar, sdfg, states):
-                    unique_set.add(name)
+                    for e in state.edges_between(src_node, dst_node):
+                        if e.data.data and e.data.data in sdfg.arrays:
+                            write_set.add(e.data.data)
+            # Add data from edges
+            for src in states:
+                for dst in states:
+                    for edge in sdfg.edges_between(src, dst):
+                        for s in edge.data.free_symbols:
+                            if s in sdfg.arrays:
+                                read_set.add(s)
 
-            # Find NestedSDFG's connectors
-            read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
-            write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
-
-            # Create NestedSDFG and add all loop-body states and edges
-            # Also, find defined symbols in NestedSDFG
-            fsymbols = set(sdfg.free_symbols)
-            new_body = sdfg.add_state('single_state_body')
-            nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
-            nsdfg.add_node(body, is_start_state=True)
-            body.parent = nsdfg
-            exit_state = nsdfg.add_state('exit')
-            nsymbols = dict()
-            for state in states:
-                if state is body:
+        # Find NestedSDFG's unique data
+        rw_set = read_set | write_set
+        unique_set = set()
+        for name in rw_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in states:
                     continue
-                nsdfg.add_node(state)
-                state.parent = nsdfg
-            for state in states:
-                if state is body:
-                    continue
-                for src, dst, data in sdfg.in_edges(state):
-                    nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
-                    nsdfg.add_edge(src, dst, data)
-            nsdfg.add_edge(body_end, exit_state, InterstateEdge())
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+                        found = True
+                        break
+            if not found and _is_array_thread_local(name, itervar, sdfg, states):
+                unique_set.add(name)
 
-            # Move guard -> body edge to guard -> new_body
-            for src, dst, data, in sdfg.edges_between(guard, body):
-                sdfg.add_edge(src, new_body, data)
-            # Move body_end -> guard edge to new_body -> guard
-            for src, dst, data in sdfg.edges_between(body_end, guard):
-                sdfg.add_edge(new_body, dst, data)
+        # Find NestedSDFG's connectors
+        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
 
-            # Delete loop-body states and edges from parent SDFG
-            for state in states:
-                for e in sdfg.all_edges(state):
-                    sdfg.remove_edge(e)
-                sdfg.remove_node(state)
+        # Create NestedSDFG and add all loop-body states and edges
+        # Also, find defined symbols in NestedSDFG
+        fsymbols = set(sdfg.free_symbols)
+        new_body = sdfg.add_state('single_state_body')
+        nsdfg = SDFG("loop_body", constants=sdfg.constants_prop, parent=new_body)
+        nsdfg.add_node(body, is_start_state=True)
+        body.parent = nsdfg
+        exit_state = nsdfg.add_state('exit')
+        nsymbols = dict()
+        for state in states:
+            if state is body:
+                continue
+            nsdfg.add_node(state)
+            state.parent = nsdfg
+        for state in states:
+            if state is body:
+                continue
+            for src, dst, data in sdfg.in_edges(state):
+                nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
+                nsdfg.add_edge(src, dst, data)
+        nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
-            # Add NestedSDFG arrays
-            for name in read_set | write_set:
-                nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+        # Move guard -> body edge to guard -> new_body
+        for src, dst, data, in sdfg.edges_between(guard, body):
+            sdfg.add_edge(src, new_body, data)
+        # Move body_end -> guard edge to new_body -> guard
+        for src, dst, data in sdfg.edges_between(body_end, guard):
+            sdfg.add_edge(new_body, dst, data)
+
+        # Delete loop-body states and edges from parent SDFG
+        for state in states:
+            for e in sdfg.all_edges(state):
+                sdfg.remove_edge(e)
+            sdfg.remove_node(state)
+
+        # Add NestedSDFG arrays
+        for name in read_set | write_set:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            if not isinstance(nsdfg.arrays[name], dt.View):
                 nsdfg.arrays[name].transient = False
-            for name in unique_set:
-                nsdfg.arrays[name] = sdfg.arrays[name]
-                del sdfg.arrays[name]
+        for name in unique_set:
+            nsdfg.arrays[name] = sdfg.arrays[name]
+            del sdfg.arrays[name]
 
-            # Add NestedSDFG node
-            cnode = new_body.add_nested_sdfg(nsdfg, None, read_set, write_set)
-            if sdfg.parent:
-                for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
-                    if s not in cnode.symbol_mapping:
-                        cnode.symbol_mapping[s] = m
-                        nsdfg.add_symbol(s, sdfg.symbols[s])
-            for name in read_set:
-                r = new_body.add_read(name)
-                new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
-            for name in write_set:
-                w = new_body.add_write(name)
-                new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+        # Add NestedSDFG node
+        inputs = {data for data in read_set if not isinstance(nsdfg.arrays[data], dt.View)}
+        outputs = {data for data in write_set if not isinstance(nsdfg.arrays[data], dt.View)}
+        cnode = new_body.add_nested_sdfg(nsdfg, None, inputs, outputs)
+        if sdfg.parent:
+            for s, m in sdfg.parent_nsdfg_node.symbol_mapping.items():
+                if s not in cnode.symbol_mapping:
+                    cnode.symbol_mapping[s] = m
+                    nsdfg.add_symbol(s, sdfg.symbols[s])
+        
+        for name in read_set:
+            if isinstance(nsdfg.arrays[name], dt.View):
+                continue
 
-            # Fix SDFG symbols
-            for sym in sdfg.free_symbols - fsymbols:
-                if sym in sdfg.symbols:
-                    del sdfg.symbols[sym]
-            for sym, dtype in nsymbols.items():
-                nsdfg.symbols[sym] = dtype
+            r = new_body.add_read(name)
+            new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
-            # Change body state reference
-            body = new_body
+        for name in write_set:
+            if isinstance(nsdfg.arrays[name], dt.View):
+                continue
+
+            w = new_body.add_write(name)
+            new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+
+        # Fix SDFG symbols
+        for sym in sdfg.free_symbols - fsymbols:
+            if sym in sdfg.symbols:
+                del sdfg.symbols[sym]
+        for sym, dtype in nsymbols.items():
+            nsdfg.symbols[sym] = dtype
+
+        # Change body state reference
+        body = new_body
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a
@@ -554,9 +563,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     continue
                 intermediate_nodes.append(node)
 
-        map = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
-        entry = nodes.MapEntry(map)
-        exit = nodes.MapExit(map)
+        map_node = nodes.Map(body.label + "_map", [itervar], [(start, end, step)])
+        entry = nodes.MapEntry(map_node)
+        exit = nodes.MapExit(map_node)
         body.add_node(entry)
         body.add_node(exit)
 

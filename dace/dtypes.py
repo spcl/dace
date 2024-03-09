@@ -869,7 +869,7 @@ class struct(typeclass):
 {typ}
 }};""".format(
             name=self.name,
-            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in self._data.items()]),
+            typ='\n'.join(["    %s %s;" % (t.ctype, tname) for tname, t in sorted(self._data.items())]),
         )
 
 

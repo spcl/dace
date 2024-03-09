@@ -8,6 +8,7 @@ from dace.frontend.fortran import ast_internal_classes
 from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
 from typing import Any, List, Optional, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
 
+
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics
 
@@ -122,6 +123,7 @@ class InternalFortranAst:
         self.intrinsics_list = []
         self.rename_list = {}
         self.placeholders = {}
+        self.placeholders_offsets = {}
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -358,6 +360,8 @@ class InternalFortranAst:
         idx=len(children)-1
         parent = children[idx-1]
         part_ref = children[idx]
+        part_ref.isStructMember=True
+        #parent.isStructMember=True
         idx=idx-1
         current=ast_internal_classes.Data_Ref_Node(parent_ref=parent, part_ref=part_ref,type="VOID")
         
@@ -377,6 +381,24 @@ class InternalFortranAst:
         children = self.create_children(node)
         name = children[0].name
         component_part = get_child(children, ast_internal_classes.Component_Part_Node)
+        from dace.frontend.fortran.ast_transforms import PartialRenameVar
+        if component_part is not None:
+            component_part=PartialRenameVar(oldname="__f2dace_A", newname="__f2dace_SA").visit(component_part)
+            component_part=PartialRenameVar(oldname="__f2dace_OA", newname="__f2dace_SOA").visit(component_part)
+            new_placeholder={}
+            new_placeholder_offsets={}
+            for k,v in self.placeholders.items():
+                if "__f2dace_A" in k:
+                    new_placeholder[k.replace("__f2dace_A","__f2dace_SA")]=self.placeholders[k]
+                else:
+                    new_placeholder[k]=self.placeholders[k]
+            self.placeholders=new_placeholder            
+            for k,v in self.placeholders_offsets.items():
+                if "__f2dace_OA" in k:
+                    new_placeholder_offsets[k.replace("__f2dace_OA","__f2dace_SOA")]=self.placeholders_offsets[k]
+                else:
+                    new_placeholder_offsets[k]=self.placeholders_offsets[k]
+            self.placeholders_offsets=new_placeholder_offsets            
         return ast_internal_classes.Derived_Type_Def_Node(name=name, component_part=component_part)
 
     def derived_type_stmt(self, node: FASTNode):
@@ -452,9 +474,20 @@ class InternalFortranAst:
         specification_part = get_child(children, ast_internal_classes.Specification_Part_Node)
         execution_part = get_child(children, ast_internal_classes.Execution_Part_Node)
         return_type = ast_internal_classes.Void
+
+        optional_args_count = 0
+        if specification_part is not None:
+            for j in specification_part.specifications:
+                for k in j.vardecl:
+                    if k.optional:
+                        optional_args_count += 1
+        mandatory_args_count = len(name.args) - optional_args_count
+
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=name.name,
             args=name.args,
+            optional_args_count=optional_args_count,
+            mandatory_args_count=mandatory_args_count,
             specification_part=specification_part,
             execution_part=execution_part,
             type=return_type,
@@ -525,7 +558,7 @@ class InternalFortranAst:
         if args==None:
             ret_args = []
         else:
-            ret_args = args.args   
+            ret_args = args.args
         return ast_internal_classes.Subroutine_Stmt_Node(name=name, args=ret_args, line_number=node.item.span,elemental=elemental)
 
     def ac_value_list(self, node: FASTNode):
@@ -763,14 +796,18 @@ class InternalFortranAst:
                 raise NotImplementedError("Assumed array shape not supported yet if array name missing")
 
             sizes = []
+            offsets =[]
             for actual_array in processed_array_names:
 
                 size = []
+                offset = []
                 for i in range(dims_count):
 
-                    name = f'__f2dace_ARRAY_{actual_array}_dim_{i}_size_{self.type_arbitrary_array_variable_count}'
+                    name = f'__f2dace_A_{actual_array}_d_{i}_s_{self.type_arbitrary_array_variable_count}'
+                    offset_name= f'__f2dace_OA_{actual_array}_d_{i}_s_{self.type_arbitrary_array_variable_count}'
                     self.type_arbitrary_array_variable_count += 1
                     self.placeholders[name] = [actual_array, i, self.type_arbitrary_array_variable_count]
+                    self.placeholders_offsets[name] = [actual_array, i, self.type_arbitrary_array_variable_count]
 
                     var = ast_internal_classes.Symbol_Decl_Node(name=name,
                                                     type='INTEGER',
@@ -780,14 +817,26 @@ class InternalFortranAst:
                                                     init=None,
                                                     kind=None,
                                                     line_number=linenumber)
+                    var2 = ast_internal_classes.Symbol_Decl_Node(name=offset_name,
+                                                    type='INTEGER',
+                                                    alloc=False,
+                                                    sizes=None,
+                                                    offsets=None,
+                                                    init=None,
+                                                    kind=None,
+                                                    line_number=linenumber)
                     size.append(ast_internal_classes.Name_Node(name=name))
+                    offset.append(ast_internal_classes.Name_Node(name=offset_name))
+
                     self.symbols[name] = None
                     vardecls.append(var)
+                    vardecls.append(var2)
                 sizes.append(size)
+                offsets.append(offset)
 
-            return sizes, vardecls
+            return sizes, vardecls ,offsets
         else:
-            return None, []
+            return None, [] ,None
 
     def type_declaration_stmt(self, node: FASTNode):
 
@@ -896,10 +945,8 @@ class InternalFortranAst:
                     attr_size = [attr_size] * len(names)
                     attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
-                    attr_offset = []
-                    for size in attr_size:
-                        attr_offset.append([1] * len(size))
+                    attr_size, assumed_vardecls,attr_offset = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
+                    
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
@@ -927,10 +974,7 @@ class InternalFortranAst:
                     attr_size = [attr_size] * len(names)
                     attr_offset = [attr_offset] * len(names)
                 else:
-                    attr_size, assumed_vardecls = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
-                    attr_offset = []
-                    for size in attr_size:
-                        attr_offset.append([1] * len(size))
+                    attr_size, assumed_vardecls, attr_offset = self.assumed_array_shape(dimension_spec[0], names, node.item.span)
                     if attr_size is None:
                         raise RuntimeError("Couldn't parse the dimension attribute specification!")
 
@@ -975,13 +1019,14 @@ class InternalFortranAst:
 
                     if size is None:
 
-                        size, assumed_vardecls = self.assumed_array_shape(var, actual_name.name, node.item.span)
+                        size, assumed_vardecls ,offset = self.assumed_array_shape(var, actual_name.name, node.item.span)
                         if size is None:
                             offset = None
                         else:
                             # only one array
                             size = size[0]
-                            offset = [1] * len(size)
+                            offset = offset[0]
+                            #offset = [1] * len(size)
                         vardecls.extend(assumed_vardecls)
 
                     vardecls.append(
@@ -1520,10 +1565,16 @@ class InternalFortranAst:
 
     def real_literal_constant(self, node: FASTNode):
         value=node.children[0].lower()
+        if len(node.children) == 2 and node.children[1] is not None and node.children[1].lower()=="wp":
+            return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
         if value.find("_")!=-1:
             x=value.split("_")
             value=x[0]
+            print(x[1])
+            if (x[1]=="wp"):
+                return ast_internal_classes.Double_Literal_Node(value=value,type="DOUBLE")
         return ast_internal_classes.Real_Literal_Node(value=value,type="REAL")
+        
     
     def char_literal_constant(self, node: FASTNode):
         return ast_internal_classes.Char_Literal_Node(value=node.string,type="CHAR")

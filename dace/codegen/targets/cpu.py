@@ -218,13 +218,21 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Emit memlet as a reference and register defined variable
         conntype = nodedesc.dtype if isinstance(nodedesc, data.StructureView) else dtypes.pointer(nodedesc.dtype)
+        # atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
+        #                                                 sdfg,
+        #                                                 memlet,
+        #                                                 name,
+        #                                                 conntype,
+        #                                                 ancestor=0,
+        #                                                 is_write=is_write)
+        # NOTE: IMPORTANT!!! This is a temporary fix for Views that are used for both reading and writing
         atype, aname, value = cpp.emit_memlet_reference(self._dispatcher,
                                                         sdfg,
                                                         memlet,
                                                         name,
                                                         conntype,
                                                         ancestor=0,
-                                                        is_write=is_write)
+                                                        is_write=True)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
@@ -253,24 +261,40 @@ class CPUCodeGen(TargetCodeGenerator):
                     value = f'{arrexpr}->{field_name}'
                     if isinstance(stype.members[field_name], data.Scalar):
                         value = '&' + value
-
-        if not declared:
-            ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
-                        dtypes.pointer(nodedesc.dtype).ctype)
-            self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
-            if isinstance(nodedesc, data.StructureView):
-                for k, v in nodedesc.members.items():
+        
+        def _visit_structure(struct: Union[data.Structure, data.StructureView],
+                             prefix: str = '', declare: bool = True, define: bool = True):
+                for k, v in struct.members.items():
+                    if isinstance(v, data.Structure):
+                        _visit_structure(v, f'{prefix}->{k}')
+                    elif isinstance(v, data.ContainerArray):
+                        _visit_structure(v.stype, f'{prefix}->{k}')
                     if isinstance(v, data.Data):
                         ctypedef = dtypes.pointer(v.dtype).ctype if isinstance(v, data.Array) else v.dtype.ctype
                         defined_type = DefinedType.Scalar if isinstance(v, data.Scalar) else DefinedType.Pointer
-                        self._dispatcher.declared_arrays.add(f"{name}->{k}", defined_type, ctypedef)
-                        self._dispatcher.defined_vars.add(f"{name}->{k}", defined_type, ctypedef)
-                # TODO: Find a better way to do this (the issue is with pointers of pointers)
-                # if atype.endswith('*'):
-                #     atype = atype[:-1]
-                # if value.startswith('&'):
-                #     value = value[1:]
+                        if declare:
+                            self._dispatcher.declared_arrays.add(f"{prefix}->{k}", defined_type, ctypedef)
+                        if define:
+                            self._dispatcher.defined_vars.add(f"{prefix}->{k}", defined_type, ctypedef)
+                    ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+                    if declare:
+                        self._dispatcher.declared_arrays.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+                    if define:
+                        self._dispatcher.defined_vars.add(f"{prefix}", DefinedType.Pointer, ctypedef)
+
+        ctypedef = (nodedesc.dtype.ctype if isinstance(nodedesc, data.StructureView) else
+                        dtypes.pointer(nodedesc.dtype).ctype)
+        if not declared:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname)
+            else:
+                self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
             declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+        else:
+            if isinstance(nodedesc, data.StructureView):
+                _visit_structure(nodedesc, aname, declare=False)
+            else:
+                self._dispatcher.defined_vars.add(aname, DefinedType.Pointer, ctypedef)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
     def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
@@ -485,9 +509,17 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
-            allocation_stream.write(
-                "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
-                state_id, node)
+            
+            # NOTE: Special case: double pointer
+            ctype_str = nodedesc.dtype.ctype
+            format_str = "{name} = new {ctype} DACE_ALIGN(64)[{size}];\n"
+            if (isinstance(nodedesc.dtype, dtypes.pointer) and
+                isinstance(nodedesc.dtype.base_type, (dtypes.pointer, dtypes.struct))):
+                ctype_str = nodedesc.dtype.base_type.ctype
+                format_str = "{name} = new {ctype} DACE_ALIGN(64)*[{size}];\n"    
+            
+            allocation_stream.write(format_str.format(name=alloc_name, ctype=ctype_str, size=cpp.sym2cpp(arrsize)),
+                                    sdfg, state_id, node)
             define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
@@ -576,7 +608,7 @@ class CPUCodeGen(TargetCodeGenerator):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
-            callsite_stream.write(f'{operator} {alloc_name};\n', sdfg, state_id, node)
+            callsite_stream.write("delete[] %s;\n" % alloc_name, sdfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             callsite_stream.write(
@@ -1643,6 +1675,7 @@ class CPUCodeGen(TargetCodeGenerator):
             f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)
         ]
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname in fsyms and aname not in sdfg.constants
@@ -1655,6 +1688,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if state_struct:
             prepend = ['__state']
         fsyms = node.sdfg.used_symbols(all_symbols=False, keep_defined_in_mapping=True)
+        fsyms=set(filter(lambda x: not (str(x).startswith("__f2dace_SA") or str(x).startswith("__f2dace_SOA")), fsyms))
         args = ', '.join(prepend + [argval for _, _, argval in memlet_references] + [
             cpp.sym2cpp(symval) for symname, symval in sorted(node.symbol_mapping.items())
             if symname in fsyms and symname not in sdfg.constants
@@ -1708,7 +1742,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         fsyms = self._frame.free_symbols(node.sdfg)
         arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        
         self._define_sdfg_arguments(node.sdfg, arglist)
+
 
         # Quick sanity check.
         # TODO(later): Is this necessary or "can_access_parent" should always be False?

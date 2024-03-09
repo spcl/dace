@@ -110,6 +110,8 @@ class Subroutine_Subprogram_Node(FNode):
     _attributes = ('name', 'type')
     _fields = (
         'args',
+        'mandatory_args_count',
+        'optional_args_count',
         'specification_part',
         'execution_part',
     )
@@ -256,6 +258,7 @@ class Var_Decl_Node(Statement_Node):
     _fields = (
         'sizes',
         'offsets',
+        'actual_offsets'
         'typeref',
         'init',
     )
@@ -291,6 +294,9 @@ class Int_Literal_Node(Literal):
     pass
 
 class Real_Literal_Node(Literal):
+    pass
+
+class Double_Literal_Node(Literal):
     pass
 
 class Bool_Literal_Node(Literal):
@@ -394,7 +400,7 @@ class Else_Separator_Node(FNode):
 
 class Parenthesis_Expr_Node(FNode):
     _attributes = ()
-    _fields = ('expr', )
+    _fields = ('expr', 'type')
 
 
 class Nonlabel_Do_Stmt_Node(FNode):

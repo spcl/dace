@@ -1483,7 +1483,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
         desc = self.view.desc(sdfg)
 
         # Ensure view
-        if not isinstance(desc, data.View):
+        if not isinstance(desc, data.View) or isinstance(desc, data.StructureView):
             return False
 
         # Get viewed node and non-viewed edges
