@@ -1464,6 +1464,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                           after_memlets_stream)
 
         self._dispatcher.defined_vars.enter_scope(node)
+        self._dispatcher.declared_arrays.enter_scope(node)
 
         arrays = set()
         for edge in state_dfg.in_edges(node):
@@ -1618,6 +1619,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         self._locals.clear_scope(self._ldepth + 1)
         self._dispatcher.defined_vars.exit_scope(node)
+        self._dispatcher.declared_arrays.exit_scope(node)
 
     def unparse_tasklet(self, sdfg, state_id, dfg, node, function_stream, inner_stream, locals, ldepth,
                         toplevel_schedule):
@@ -1738,6 +1740,7 @@ class CPUCodeGen(TargetCodeGenerator):
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
+        self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
         state_dfg = sdfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
@@ -1893,6 +1896,7 @@ class CPUCodeGen(TargetCodeGenerator):
             function_stream.write(nested_stream.getvalue())
 
         self._dispatcher.defined_vars.exit_scope(sdfg)
+        self._dispatcher.declared_arrays.exit_scope(sdfg)
 
     def _generate_MapEntry(
         self,
