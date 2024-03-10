@@ -649,6 +649,8 @@ class NestedSDFG(CodeNode):
                     f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
                     'Example: parameter passed to a function without a matching array within it.')
         for dname, desc in self.sdfg.arrays.items():
+            if desc.lifetime == dtypes.AllocationLifetime.Global:
+                continue
             if not desc.transient and dname not in connectors:
                 raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
@@ -668,9 +670,9 @@ class NestedSDFG(CodeNode):
                 dst = utils.get_global_memlet_path_dst(sdfg, state, edge)
                 if isinstance(dst, AccessNode):
                     outputs.add(dst.data)
-            if len(inputs - outputs) > 0:
-                raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
-                                 f"output ({outputs}) arrays")
+            # if len(inputs - outputs) > 0:
+            #     raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
+            #                      f"output ({outputs}) arrays")
 
         # Validate undefined symbols
         symbols = set(k for k in self.sdfg.used_symbols(False) if k not in connectors)

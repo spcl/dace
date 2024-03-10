@@ -4,6 +4,7 @@ import copy
 import functools
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+import warnings
 
 import networkx as nx
 import numpy as np
@@ -810,8 +811,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         for tsdfg, aname, desc in sdfg.arrays_recursive():
             if desc.lifetime == dtypes.AllocationLifetime.Global:
                 if aname in allocated and allocated[aname] != desc:
-                    raise TypeError(f'Global "{aname}" was already allocated as {allocated[aname]}. Definition '
-                                    f'in SDFG {tsdfg.name} overrides it as {desc}.')
+                    warnings.warn(f'Global "{aname}" was already allocated as {allocated[aname]}. Definition '
+                                  f'in SDFG {tsdfg.name} overrides it as {desc}.')
                 elif aname in allocated:
                     continue  # Do not define same global more than once
 

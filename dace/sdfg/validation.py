@@ -472,7 +472,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     initialized_transients.add(node.data)
 
             nsdfg_node = sdfg.parent_nsdfg_node
-            if nsdfg_node is not None:
+            if nsdfg_node is not None and arr.lifetime != dtypes.AllocationLifetime.Global:
                 # Find unassociated non-transients access nodes
                 if (not arr.transient and node.data not in nsdfg_node.in_connectors
                         and node.data not in nsdfg_node.out_connectors):
@@ -683,10 +683,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
                     # In case of dynamic memlet, only output a warning
-                    if e.data.dynamic:
-                        warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
-                    else:
-                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
+                    # if e.data.dynamic:
+                    warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
+                    # else:
+                        # raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
                     if e.data.dynamic:

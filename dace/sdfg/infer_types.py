@@ -177,7 +177,7 @@ def set_default_schedule_and_storage_types(scope: Union[SDFG, SDFGState, nodes.E
         # Take care of remaining scalars without access nodes
         for aname, desc in scope.arrays.items():
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
-            if not desc.transient and scope.parent_sdfg is not None:
+            if not desc.transient and scope.parent_sdfg is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
                 desc.storage = _get_storage_from_parent(aname, scope)
             elif ((desc.transient or scope.parent_sdfg is None) and desc.storage == dtypes.StorageType.Default):
                 # Indeterminate storage type, set to register
@@ -352,7 +352,7 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
             continue
         desc = node.desc(sdfg)
         # If not transient in a nested SDFG, take storage from parent, regardless of current type
-        if not desc.transient and sdfg.parent is not None:
+        if not desc.transient and sdfg.parent is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
             desc.storage = _get_storage_from_parent(node.data, sdfg)
         elif desc.storage == dtypes.StorageType.Default:
             desc.storage = child_storage
@@ -362,7 +362,7 @@ def _set_default_storage_in_scope(state: SDFGState, parent_node: Optional[nodes.
         if not edge.data.is_empty():
             desc = sdfg.arrays[edge.data.data]
             # If not transient in a nested SDFG, take storage from parent, regardless of current type
-            if not desc.transient and sdfg.parent is not None:
+            if not desc.transient and sdfg.parent is not None and desc.lifetime != dtypes.AllocationLifetime.Global:
                 desc.storage = _get_storage_from_parent(edge.data.data, sdfg)
             elif desc.storage == dtypes.StorageType.Default:
                 desc.storage = child_storage
