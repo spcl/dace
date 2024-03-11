@@ -56,18 +56,20 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
         current_member=datatype_to_add.members[i]    
         
         if str(datatype_to_add.members[i].dtype.base_type) in registered_types: 
-            #print(i)   
-            #print(datatype_to_add.members[i].dtype.base_type)
+
 
             view_to_member = dat.View.view(datatype_to_add.members[i])
-            sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
-        else:    
-            sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+            if sdfg.arrays.get(name_mapping[name]+ join_chain + "_" + i) is None:
+                sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
+        else:
+            if sdfg.arrays.get(name_mapping[name]+ join_chain + "_" + i) is None:    
+                sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
         if names_of_object_in_parent_sdfg.get(name_mapping[name]) is not None:
             if actual_offsets_per_parent_sdfg.get(names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i) is not None:
                 actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]= actual_offsets_per_parent_sdfg[names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i]
             else:
                 print("No offsets in sdfg: ",sdfg.name ," for: ",names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i)    
+                actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]=[1]*len(datatype_to_add.members[i].shape)
         name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
         struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
 
@@ -226,6 +228,7 @@ class AST_translator:
         self.last_sdfg_states = {}
         self.last_loop_continues = {}
         self.last_loop_continues_stack = {}
+        self.already_has_edge_back_continue = {}
         self.last_loop_breaks = {}
         self.last_returns = {}
         self.module_vars = []
@@ -614,7 +617,8 @@ class AST_translator:
         if self.last_sdfg_states[sdfg] not in [
                 self.last_loop_breaks.get(sdfg),
                 self.last_loop_continues.get(sdfg),
-                self.last_returns.get(sdfg)
+                self.last_returns.get(sdfg),
+                self.already_has_edge_back_continue.get(sdfg)
         ]:
             body_ifend_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, f"BodyIfEnd{name}")
             sdfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
@@ -1230,7 +1234,7 @@ class AST_translator:
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
                                 
-                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg],self.names_of_object_in_parent_sdfg[new_sdfg],self.actual_offsets_per_sdfg[new_sdfg])    
+                                add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg],self.names_of_object_in_parent_sdfg[new_sdfg],self.actual_offsets_per_sdfg[sdfg])    
                                 
                             else:
                                 new_sdfg.add_scalar(self.name_mapping[new_sdfg][local_name.name], array.dtype, array.storage)            
@@ -2012,7 +2016,16 @@ class AST_translator:
                             self.replace_names[i.name]=str(actual_offsets[index])
                             #node.parent.execution_part=ast_transforms.RenameVar(i.name,str(actual_offsets[index])).visit(node.parent.execution_part)
                     index+=1        
-            
+            elif sizes is None:
+                if isinstance(datatype, Structure):
+                    datatype_to_add=copy.deepcopy(datatype)
+                    datatype_to_add.transient = transient
+                    #if node.name=="p_nh":
+                        #print("Adding local struct",self.name_mapping[sdfg][node.name],datatype_to_add)
+                    if self.struct_views.get(sdfg) is None:
+                        self.struct_views[sdfg] = {}
+                    add_views_recursive(sdfg,node.name,datatype_to_add,self.struct_views[sdfg],self.name_mapping[sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[sdfg],self.names_of_object_in_parent_sdfg[sdfg],self.actual_offsets_per_sdfg[sdfg.parent_sdfg])        
+                
 
             return
 
@@ -2085,7 +2098,7 @@ class AST_translator:
     def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG):
         #
         sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())  
-        self.last_loop_continues[sdfg] = self.last_sdfg_states[sdfg]  
+        self.already_has_edge_back_continue[sdfg] = self.last_sdfg_states[sdfg]  
 
 def create_ast_from_string(
     source_string: str,
@@ -3157,10 +3170,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
+            #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
-            #if j.name.name!="velocity_tendencies":
+            if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
