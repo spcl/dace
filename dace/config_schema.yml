@@ -904,11 +904,6 @@ required:
             be called before every compiled SDFG's generated code is invoked. Used
             for functionality such as low-level profiling.
 
-    check_race_conditions:
-        type: bool
-        default: false
-        title: Check race conditions
-        description: Check for probable race conditions during validation.
 
     #############################################
     # Experimental features
@@ -924,6 +919,12 @@ required:
                 title: Undefined Symbol Check
                 description: >
                     Check for undefined symbols in memlets during SDFG validation.
+
+            check_race_conditions:
+                type: bool
+                default: false
+                title: Check race conditions
+                description: Check for probable race conditions during validation.
 
     #############################################
     # Features for unit testing

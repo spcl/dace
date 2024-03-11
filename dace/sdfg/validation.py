@@ -791,7 +791,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     continue
                 raise error
 
-        if Config.get_bool("check_race_conditions"):
+        if Config.get_bool("experimental.check_race_conditions"):
             for node in state.nodes():
                 if isinstance(node, AccessNode):
                     in_memlet_ranges = [e.data.dst_subset for e in state.in_edges(node)]
