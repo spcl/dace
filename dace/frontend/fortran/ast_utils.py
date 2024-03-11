@@ -625,9 +625,9 @@ class ProcessedWriter(TaskletWriter):
         return name
 
     def arraysub2string(self, node: ast_internal_classes.Array_Subscript_Node):
-        str_to_return = self.write_code(node.name) + "[(" + self.write_code(node.indices[0]) + "+1)"
+        str_to_return = self.write_code(node.name) + "[(" + self.write_code(node.indices[0]) + ")"
         for i in node.indices[1:]:
-            str_to_return += ",( " + self.write_code(i) + "+1)"
+            str_to_return += ",( " + self.write_code(i) + ")"
         str_to_return += "]"
         return str_to_return
 
