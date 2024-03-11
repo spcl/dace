@@ -47,9 +47,13 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         for iedge in state.in_edges(nested_sdfg):
             if iedge.data.data is None:
                 return False
+            if not isinstance(iedge.src, nodes.AccessNode):
+                return False
 
         for oedge in state.out_edges(nested_sdfg):
             if oedge.data.data is None:
+                return False
+            if not isinstance(oedge.dst, nodes.AccessNode):
                 return False
 
         return True
