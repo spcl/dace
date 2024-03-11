@@ -542,6 +542,8 @@ class CompiledSDFG(object):
                     pass
                 elif (is_int and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
+                elif isinstance(arg, float) and atype.dtype.type == np.float32:
+                    pass
                 elif isinstance(arg, float) and atype.dtype.type == np.float64:
                     pass
                 elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
