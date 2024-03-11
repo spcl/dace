@@ -585,11 +585,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
         if isinstance(scope_node, nd.EntryNode):
-            out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
-            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+            out_edges = [ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn]
+            edges_to_remove = [ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove]
         else:
-            out_edge = next(ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn)
-            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove)
+            out_edges = [ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn]
+            edges_to_remove = [ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove]
+        assert len(edges_to_remove) == 1 and len(out_edges) == 1
+        edge_to_remove = edges_to_remove[0]
+        out_edge = out_edges[0]
         out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
 
         # Check if dangling connectors have been created and remove them,
@@ -644,6 +647,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
                 e.dst.remove_out_connector('OUT' + e.dst_conn[2:])
 
         # Continue traversing upwards
+        # TODO: What is about the children of the tree.
         curedge = curedge.parent
     else:
         # Check if an isolated node have been created at the root and remove
