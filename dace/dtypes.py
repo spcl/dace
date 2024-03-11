@@ -601,10 +601,16 @@ def result_type_of(lhs, *rhs):
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
 
-    def __init__(self, typename):
+    def __init__(self, typename, define=False):
         self.type = typename
         self.ctype = typename
         self.dtype = self
+        self.define = define
+
+    def emit_definition(self):
+        if self.define:
+            return f'struct {self.ctype};'
+        return ''
 
     def to_json(self):
         return {'type': 'opaque', 'ctype': self.ctype}

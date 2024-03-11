@@ -165,16 +165,23 @@ class DaCeCodeGenerator(object):
         def _emit_definitions(dtype: dtypes.typeclass, wrote_something: bool) -> bool:
             if dtype in emitted_definitions:
                 return False
-            emitted_definitions.add(dtype)
-            if isinstance(dtype, dtypes.pointer):
-                wrote_something = _emit_definitions(dtype._typeclass, wrote_something)
+
+            if dtype.base_type is not dtype:  # Pointers, vectors, fixed-length arrays, etc.
+                # Opaque pointer type needs to be forward-declared
+                if isinstance(dtype.base_type, dtypes.opaque):
+                    dtype.base_type.define = True
+                wrote_something = _emit_definitions(dtype.base_type, wrote_something)
             elif isinstance(dtype, dtypes.struct):
                 for field in dtype.fields.values():
                     wrote_something = _emit_definitions(field, wrote_something)
+
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
                     global_stream.write("", sdfg)
                 global_stream.write(dtype.emit_definition(), sdfg)
+
+            emitted_definitions.add(dtype)
+
             return wrote_something
 
         # Emit unique definitions
