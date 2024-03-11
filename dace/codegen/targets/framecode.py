@@ -486,7 +486,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         pass_params = copy.copy(map_param_list)
         if scope.entry:
             if isinstance(scope.entry, nodes.MapEntry):
-                if scope.entry.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                if scope.entry.map.schedule in (dtypes.ScheduleType.CPU_Multicore,
+                                                dtypes.ScheduleType.CPU_Multicore_Doacross):
                     n_parallel_params = scope.entry.map.collapse
                     para_params = scope.entry.map.params[:n_parallel_params]
                     seq_params = scope.entry.map.params[n_parallel_params:]

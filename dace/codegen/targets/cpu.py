@@ -1982,9 +1982,9 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent):
                 raise ValueError("An OpenMP map cannot be unrolled (" + node.map.label + ")")
 
-        result.write(map_header, sdfg, state_id, node)
-
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:
+            result.write(map_header, sdfg, state_id, node)
+
             result.write('{\n', sdfg, state_id, node)
 
             # Find if bounds are used within the scope
@@ -2045,6 +2045,10 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id,
                             node
                         )
+
+                # The header must be directly atop the for statement.
+                if i == 0:
+                    result.write(map_header, sdfg, state_id, node)
 
                 if node.map.unroll:
                     result.write("#pragma unroll", sdfg, state_id, node)

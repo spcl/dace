@@ -262,7 +262,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     direct_subgraph.add(view_node)
 
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        return helpers.state_fission(sdfg, direct_subgraph)
+        return helpers.state_fission(direct_subgraph)
 
     def _replace_arguments_by_views(
         self,
