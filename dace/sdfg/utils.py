@@ -641,7 +641,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         else:
             if e.dst_conn:
                 e.dst.remove_in_connector(e.dst_conn)
-                e.src.remove_out_connector('OUT' + e.dst_conn[2:])
+                e.dst.remove_out_connector('OUT' + e.dst_conn[2:])
 
         # Continue traversing upwards
         curedge = curedge.parent
