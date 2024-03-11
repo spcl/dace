@@ -627,9 +627,9 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         e = curedge.edge
         state.remove_edge(e)
         if inwards:
-            neighbors = [neighbor for neighbor in state.out_edges(e.src) if e.src_conn == neighbor.src_conn]
+            neighbors = [] if not e.src_conn else [neighbor for neighbor in state.out_edges_by_connector(e.src, e.src_conn)]
         else:
-            neighbors = [neighbor for neighbor in state.in_edges(e.dst) if e.dst_conn == neighbor.dst_conn]
+            neighbors = [] if not e.dst_conn else [neighbor for neighbor in state.in_edges_by_connector(e.dst, e.dst_conn)]
         if len(neighbors) > 0:  # There are still edges connected, leave as-is
             break
 
