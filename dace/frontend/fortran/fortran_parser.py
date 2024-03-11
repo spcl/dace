@@ -657,7 +657,7 @@ class AST_translator:
 
             cfg.add_edge(begin_state, guard_substate, InterstateEdge(assignments=entry))
 
-            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders).write_code(node.cond)
+            condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names).write_code(node.cond)
 
             increment = "i+0+1"
             if isinstance(node.iter, ast_internal_classes.BinOp_Node):
@@ -687,15 +687,21 @@ class AST_translator:
                 else:
                     raise ValueError("Unknown variable " + decl_node.lval.name)
                 entry[iter_name] = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
-                                                             placeholders=self.placeholders).write_code(decl_node.rval)
+                                                               placeholders=self.placeholders,
+                                                               placeholders_offsets=self.placeholders_offsets,
+                                                               rename_dict=self.replace_names).write_code(decl_node.rval)
 
             condition = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
-                                                  placeholders=self.placeholders).write_code(node.cond)
+                                                  placeholders=self.placeholders,
+                                                  placeholders_offsets=self.placeholders_offsets,
+                                                  rename_dict=self.replace_names).write_code(node.cond)
 
             increment = "i+0+1"
             if isinstance(node.iter, ast_internal_classes.BinOp_Node):
                 increment = ast_utils.ProcessedWriter(sdfg, self.name_mapping,
-                                                      placeholders=self.placeholders).write_code(node.iter.rval)
+                                                      placeholders=self.placeholders,
+                                                      placeholders_offsets=self.placeholders_offsets,
+                                                      rename_dict=self.replace_names).write_code(node.iter.rval)
 
             loop_region = LoopRegion(name, condition, iter_name, f"{iter_name} = {entry[iter_name]}",
                                      f"{iter_name} = {increment}")
@@ -1657,9 +1663,9 @@ class AST_translator:
                     first=False
                 else:
                     if local_name.name in write_names:
-                        nested_sdfg.parent_nsdfg_node.add_out_connector(self.name_mapping[parent_sdfg][i])
+                        nested_sdfg.parent_nsdfg_node.add_out_connector(self.name_mapping[parent_sdfg][i], force=True)
                     if local_name.name in read_names:
-                        nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i])
+                        nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i], force=True)
 
                 memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), parent_sdfg, self, self.normalize_offsets)
                 if local_name.name in write_names:
@@ -1998,7 +2004,11 @@ class AST_translator:
             #here we must replace local placeholder sizes that have already made it to tasklets via size and ubound calls
             if sizes is not None:
                 actual_sizes=sdfg.arrays[self.name_mapping[sdfg][node.name]].shape
-                actual_offsets=self.actual_offsets_per_sdfg[sdfg.parent_sdfg][self.names_of_object_in_parent_sdfg[sdfg][node.name]]
+                if node.name not in self.names_of_object_in_parent_sdfg[sdfg] or self.names_of_object_in_parent_sdfg[sdfg][node.name] not in self.actual_offsets_per_sdfg[sdfg.parent_sdfg]:
+                    shapelen = len(actual_sizes)
+                    actual_offsets = [ast_internal_classes.Int_Literal_Node(value=str(1))] * shapelen
+                else:
+                    actual_offsets=self.actual_offsets_per_sdfg[sdfg.parent_sdfg][self.names_of_object_in_parent_sdfg[sdfg][node.name]]
                 index=0
                 for i in node.sizes:
                     if isinstance(i,ast_internal_classes.Name_Node):
@@ -2674,7 +2684,9 @@ def recursive_ast_improver(ast,
         asts[i.children[0].children[1].string.lower()] = i
     return ast
 
-def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir, icon_sdfgs_dir, normalize_offsets: bool = False):
+def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, include_list, icon_sources_dir,
+                                               icon_sdfgs_dir, normalize_offsets: bool = False,
+                                               use_experimental_cfg_blocks: bool = False):
     """
     Creates an SDFG from a fortran file
     :param source_string: The fortran file name
@@ -3165,23 +3177,24 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
-                continue
+            #    continue
             if j.execution_part is None:
                 continue
             startpoint = j
             ast2sdfg = AST_translator(program, __file__,
                                       multiple_sdfgs=False, startpoint=startpoint, sdfg_path=icon_sdfgs_dir,
-                                      normalize_offsets=normalize_offsets)
+                                      normalize_offsets=normalize_offsets,
+                                      use_experimental_cfg_blocks=use_experimental_cfg_blocks)
             sdfg = SDFG(j.name.name)
             ast2sdfg.actual_offsets_per_sdfg[sdfg]={}
             ast2sdfg.top_level = program
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfgz"), compress=True)
             #try:
             sdfg.apply_transformations(IntrinsicSDFGTransformation)
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
@@ -3196,10 +3209,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfgz"), compress=True)
             try:    
                 sdfg.simplify(verbose=True)
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"), compress=True)
             except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
                 print(e)

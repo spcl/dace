@@ -53,7 +53,7 @@ class StateReachability(ppl.Pass):
         pivot = region.parent_graph
         while pivot and not isinstance(pivot, SDFG):
             closure.update(self._region_closure(pivot, block_reach))
-            pivot = region.parent_graph
+            pivot = pivot.parent_graph
 
         return closure
 

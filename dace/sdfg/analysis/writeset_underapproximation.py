@@ -8,7 +8,7 @@ from collections import defaultdict
 import copy
 import itertools
 import warnings
-from typing import Dict, List, Set, Tuple, Union, TypedDict
+from typing import Dict, List, Set, Tuple, Union
 import sympy
 
 import dace
@@ -680,7 +680,7 @@ def _merge_subsets(subset_a: subsets.Subset, subset_b: subsets.Subset) -> subset
         return subset_b
 
 
-class UnderapproximateWritesDictT(TypedDict):
+class UnderapproximateWritesDictT(dict):
     approximation: Dict[graph.Edge, Memlet]
     loop_approximation: Dict[SDFGState, Dict[str, Memlet]]
     loops: Dict[SDFGState, Tuple[SDFGState, SDFGState, List[SDFGState], str, subsets.Range]]

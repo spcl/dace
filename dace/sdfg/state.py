@@ -2543,8 +2543,9 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
             self._cached_start_block = node
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: bool=None) -> SDFGState:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.all_control_flow_blocks())
+        sdfg: SDFG = self.sdfg or self
+        if self._labels is None or len(self._labels) != sdfg.number_of_blocks_nested():
+            self._labels = set(s.label for s in sdfg.all_control_flow_blocks())
         label = label or 'state'
         existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
@@ -2628,7 +2629,11 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
                 # collect symbols representing data containers
                 dsyms = {sym for sym in efsyms if sym in sdfg.arrays}
                 for d in dsyms:
-                    efsyms |= {str(sym) for sym in sdfg.arrays[d].used_symbols(all_symbols)}
+                    desc = sdfg.arrays[d]
+                    efsyms |= {str(sym) for sym in desc.used_symbols(all_symbols)}
+                    # If a 'symbol' represents a scalar data container, remove it.
+                    if isinstance(desc, dt.Scalar) or (isinstance(desc, dt.Array) and desc.total_size == 1):
+                        efsyms.remove(d)
                 defined_syms |= set(e.data.assignments.keys()) - (efsyms | state_symbols)
                 used_before_assignment.update(efsyms - defined_syms)
                 free_syms |= efsyms
@@ -2748,6 +2753,13 @@ class ControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.InterstateEd
 
     ###################################################################
     # Getters & setters, overrides
+
+    def number_of_blocks_nested(self):
+        n = 0
+        for r in self.all_control_flow_regions():
+            n += r.number_of_nodes()
+        return n
+
 
     def __str__(self):
         return ControlFlowBlock.__str__(self)
