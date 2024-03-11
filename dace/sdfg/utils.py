@@ -647,7 +647,6 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
                 e.dst.remove_out_connector('OUT' + e.dst_conn[2:])
 
         # Continue traversing upwards
-        # TODO: What is about the children of the tree.
         curedge = curedge.parent
     else:
         # Check if an isolated node have been created at the root and remove
