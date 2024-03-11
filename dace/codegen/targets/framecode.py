@@ -174,6 +174,11 @@ class DaCeCodeGenerator(object):
             elif isinstance(dtype, dtypes.struct):
                 for field in dtype.fields.values():
                     wrote_something = _emit_definitions(field, wrote_something)
+            elif isinstance(dtype, dtypes.callback):
+                for inp in dtype.input_types:
+                    wrote_something = _emit_definitions(inp, wrote_something)
+                for ret in dtype.return_types:
+                    wrote_something = _emit_definitions(ret, wrote_something)
 
             if hasattr(dtype, 'emit_definition'):
                 if not wrote_something:
