@@ -1,15 +1,18 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import ctypes
+import platform
 import numpy as np
-
-M = 10
-N = 10
 
 
 @dace.program
-def empty_like1(A: dace.uintp[N, M]):
-    return np.empty_like(A)
+def test_dace(pointer: dace.uintp, value: dace.data.Array(dtype=dace.int64, shape=[1])):
+    with dace.tasklet(dace.Language.CPP):
+        p << pointer
+        val >> value[0]
+        """
+        val = *reinterpret_cast<int*>(p);
+        """
 
 
 def test_uintptr_t():
@@ -25,10 +28,35 @@ def test_uintptr_t():
 
     assert size == size_of_np_uintp == size_of_dace_uintp
 
-    A = np.ndarray([N, M], dtype=np.uintp)
-    out = empty_like1(A)
+    ###############################################################################
 
-    assert (out.dtype == np.uintp) and (out.nbytes == M*N*size)
+    cpp_code = """
+    extern "C" {
+        void* get_pointer() {
+            int* ptr = new int(42);
+            return static_cast<void*>(ptr);
+        }
+    }
+    """
+
+    with open("temp.cpp", "w") as file:
+        file.write(cpp_code)
+
+    import os
+    os.system("$CXX -shared -o test_uintptr_t.out -fPIC temp.cpp")
+
+    lib = ctypes.CDLL("./test_uintptr_t.out")
+    lib.get_pointer.restype = ctypes.c_void_p
+    pointer = lib.get_pointer()
+
+    value_ctypes = ctypes.cast(pointer, ctypes.POINTER(ctypes.c_int)).contents.value
+    value_dace = np.empty(shape=1, dtype=np.intc)
+    test_dace(pointer, value_dace)
+
+    assert value_ctypes == value_dace[0], f"Expected {value_ctypes}, got {value_dace[0]}"
+    
+    os.remove("temp.cpp")
+    os.remove("test_uintptr_t.out")
 
 
 if __name__ == '__main__':
