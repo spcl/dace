@@ -224,15 +224,53 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
 
         for sym in map_entry.map.params:
             nsdfg.remove_symbol(sym)
+        
+        # Cache symbols defined in the current nested SDFG (before `new_state`)`
+        defined_symbols = set()
+        for iedge in nsdfg.in_edges(new_state):
+            defined_symbols |= set(iedge.data.assignments.keys())
 
         for sym in map_entry.free_symbols:
-            if sym not in nsdfg_node.symbol_mapping:
+            # If the symbol is not defined in current nested SDFG, it has to be added to it.
+            if sym not in defined_symbols and sym not in nsdfg_node.symbol_mapping:
+                if sym not in nsdfg.symbols:
+                    nsdfg.add_symbol(sym, sdfg.symbols[sym])
                 nsdfg_node.symbol_mapping[sym] = sym
-            
-        for iedge in nsdfg.in_edges(new_state):
-            for sym in iedge.data.assignments:
-                if sym not in new_nsdfg_node.symbol_mapping:
-                    new_nsdfg_node.symbol_mapping[sym] = sym
+            if sym not in new_nsdfg_node.symbol_mapping:
+                if sym not in new_nsdfg.symbols:
+                    new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
+                new_nsdfg_node.symbol_mapping[sym] = sym
+        
+        for sym in defined_symbols:
+            if sym not in new_nsdfg_node.symbol_mapping:
+                if sym not in new_nsdfg.symbols:
+                    new_nsdfg.add_symbol(sym, nsdfg.symbols[sym])
+                new_nsdfg_node.symbol_mapping[sym] = sym
+            # If the symbol is defined in the currned nested SDFG, drop it from its symbols and symbol_mapping.
+            if sym in nsdfg_node.symbol_mapping:
+                del nsdfg_node.symbol_mapping[sym]
+                del nsdfg.symbols[sym]
+
+        # NOTE: The following lines "fix" prexisting issues with symbols and symbol mappings.
+        # TODO: Investigate why these issues are present in the first place.
+        # Fix missing symbols in the new nested SDFG.
+        for sym in new_nsdfg.free_symbols:
+            if sym not in new_nsdfg_node.symbol_mapping:
+                if sym not in new_nsdfg.symbols:
+                    new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
+                new_nsdfg_node.symbol_mapping[sym] = sym
+                # If the symbol is missing from the new nested SDFG,
+                # then it should be missing from the current nested SDFG.
+                if sym not in nsdfg_node.symbol_mapping:
+                    if sym not in nsdfg.symbols:
+                        nsdfg.add_symbol(sym, sdfg.symbols[sym])
+                    nsdfg_node.symbol_mapping[sym] = sym
+        # Fix missing symbols in the current nested SDFG.
+        for sym in nsdfg.free_symbols:
+            if sym not in nsdfg_node.symbol_mapping:
+                if sym not in nsdfg.symbols:
+                    nsdfg.add_symbol(sym, sdfg.symbols[sym])
+                nsdfg_node.symbol_mapping[sym] = sym
 
         sdfg.reset_cfg_list()
 
@@ -541,7 +579,8 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
 
         for sym in map_entry.free_symbols:
             if sym not in nsdfg_node.symbol_mapping:
-                nsdfg.add_symbol(sym, sdfg.symbols[sym])
+                if sym not in nsdfg.symbols:
+                    nsdfg.add_symbol(sym, sdfg.symbols[sym])
                 nsdfg_node.symbol_mapping[sym] = sym
 
         sdfg.reset_cfg_list()
