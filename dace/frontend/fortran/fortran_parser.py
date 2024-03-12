@@ -36,7 +36,9 @@ global_struct_instance_counter=0
 
 def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain,actual_offsets_per_sdfg,names_of_object_in_parent_sdfg,actual_offsets_per_parent_sdfg): 
     if not isinstance(datatype_to_add,dat.Structure):
-        return   
+        print("Not adding: ", str(datatype_to_add))
+        if isinstance(datatype_to_add,dat.ContainerArray):
+            datatype_to_add=datatype_to_add.stype
     for i in datatype_to_add.members:
         current_dtype=datatype_to_add.members[i].dtype
         for other_type in registered_types:
@@ -54,21 +56,26 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
         current_member=datatype_to_add.members[i]    
         
         if str(datatype_to_add.members[i].dtype.base_type) in registered_types: 
-            #print(i)   
-            #print(datatype_to_add.members[i].dtype.base_type)
+
 
             view_to_member = dat.View.view(datatype_to_add.members[i])
-            sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
-        else:    
-            sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
+            if sdfg.arrays.get(name_mapping[name]+ join_chain + "_" + i) is None:
+                sdfg.arrays[name_mapping[name]+ join_chain + "_" + i] = view_to_member           
+        else:
+            if sdfg.arrays.get(name_mapping[name]+ join_chain + "_" + i) is None:    
+                sdfg.add_view(name_mapping[name]+ join_chain + "_" + i,datatype_to_add.members[i].shape,datatype_to_add.members[i].dtype)
         if names_of_object_in_parent_sdfg.get(name_mapping[name]) is not None:
             if actual_offsets_per_parent_sdfg.get(names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i) is not None:
                 actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]= actual_offsets_per_parent_sdfg[names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i]
+            else:
+                print("No offsets in sdfg: ",sdfg.name ," for: ",names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i)    
+                actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]=[1]*len(datatype_to_add.members[i].shape)
         name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
         struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
 
 def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures, decl:ast_internal_classes.Var_Decl_Node, sdfg: SDFG, assign_state: SDFGState,name:str,name_:str,placeholders,placeholders_offsets,object,names_to_replace,actual_offsets_per_sdfg):
                             if not structures.is_struct(decl.type):
+                                #print("Not adding defferred shape assigns for: ", decl.type,decl.name)
                                 return
 
                             if isinstance(object,dat.ContainerArray):
@@ -96,6 +103,8 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                 if isinstance(object.members[ast_struct_type.name],dat.Structure):
                                     
                                         add_deferred_shape_assigns_for_structs(structures, ast_struct_type, sdfg, assign_state, f"{name}->{ast_struct_type.name}",f"{ast_struct_type.name}_{name_}",placeholders,placeholders_offsets,object.members[ast_struct_type.name],names_to_replace,actual_offsets_per_sdfg)
+                                elif isinstance(var_type,dat.Structure)       :
+                                    add_deferred_shape_assigns_for_structs(structures, ast_struct_type, sdfg, assign_state, f"{name}->{ast_struct_type.name}",f"{ast_struct_type.name}_{name_}",placeholders,placeholders_offsets,var_type,names_to_replace,actual_offsets_per_sdfg)
                                 #print(ast_struct_type)
                                 #print(ast_struct_type.__class__)
                               
@@ -170,7 +179,8 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 object.members.pop(ast_struct_type.name)
                                                 object.members[ast_struct_type.name]=tmpobject
                                                 tmpview=dat.View.view(object.members[ast_struct_type.name])
-                                                del sdfg.arrays[viewname]
+                                                if sdfg.arrays.get(viewname) is not None:
+                                                    del sdfg.arrays[viewname]
                                                 sdfg.arrays[viewname]=tmpview    
                                                 #if placeholders.get(size.name) is not None:
                                                 #    placeholders[newsize]=placeholders[size.name]
@@ -217,6 +227,8 @@ class AST_translator:
         self.all_array_names = []
         self.last_sdfg_states = {}
         self.last_loop_continues = {}
+        self.last_loop_continues_stack = {}
+        self.already_has_edge_back_continue = {}
         self.last_loop_breaks = {}
         self.last_returns = {}
         self.module_vars = []
@@ -247,6 +259,7 @@ class AST_translator:
             ast_internal_classes.Write_Stmt_Node: self.write2sdfg,
             ast_internal_classes.Allocate_Stmt_Node: self.allocate2sdfg,
             ast_internal_classes.Break_Node: self.break2sdfg,
+            ast_internal_classes.Continue_Node: self.continue2sdfg,
             ast_internal_classes.Derived_Type_Def_Node: self.derivedtypedef2sdfg,
             ast_internal_classes.Pointer_Assignment_Stmt_Node: self.pointerassignment2sdfg,
         }
@@ -604,7 +617,8 @@ class AST_translator:
         if self.last_sdfg_states[sdfg] not in [
                 self.last_loop_breaks.get(sdfg),
                 self.last_loop_continues.get(sdfg),
-                self.last_returns.get(sdfg)
+                self.last_returns.get(sdfg),
+                self.already_has_edge_back_continue.get(sdfg)
         ]:
             body_ifend_state = ast_utils.add_simple_state_to_sdfg(self, sdfg, f"BodyIfEnd{name}")
             sdfg.add_edge(body_ifend_state, final_substate, InterstateEdge())
@@ -657,7 +671,10 @@ class AST_translator:
         begin_loop_state = sdfg.add_state("BeginLoop" + name)
         end_loop_state = sdfg.add_state("EndLoop" + name)
         self.last_sdfg_states[sdfg] = begin_loop_state
-        self.last_loop_continues[sdfg] = final_substate
+        self.last_loop_continues[sdfg] = end_loop_state
+        if self.last_loop_continues_stack.get(sdfg) is None:
+            self.last_loop_continues_stack[sdfg] = []
+        self.last_loop_continues_stack[sdfg].append(end_loop_state)
         self.translate(node.body, sdfg)
 
         sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state, InterstateEdge())
@@ -665,6 +682,12 @@ class AST_translator:
         sdfg.add_edge(end_loop_state, guard_substate, InterstateEdge(assignments=entry))
         sdfg.add_edge(guard_substate, final_substate, InterstateEdge(f"not ({condition})"))
         self.last_sdfg_states[sdfg] = final_substate
+        self.last_loop_continues_stack[sdfg].pop()
+        if len(self.last_loop_continues_stack[sdfg]) > 0:
+            self.last_loop_continues[sdfg]=self.last_loop_continues_stack[sdfg][-1]
+        else:
+            self.last_loop_continues[sdfg]=None
+
 
     def symbol2sdfg(self, node: ast_internal_classes.Symbol_Decl_Node, sdfg: SDFG):
         """
@@ -961,17 +984,12 @@ class AST_translator:
                                     last_view_name=concatenated_name    
                                 if isinstance(current_parent_structure,dat.ContainerArray):
                                     stype=current_parent_structure.stype
-                                    print('HERE - 0')
-                                    print(array)
                                     array=stype.members[ast_utils.get_name(tmpvar)]
-                                    print(array)
-                                    print('ENDHERE - 0')
+                                    
                                 else:
-                                    print('HERE - 1')
-                                    print(array)
                                     array=current_parent_structure.members[ast_utils.get_name(tmpvar)]    # FLAG
-                                    print(array)
-                                    print('ENDHERE - 1')
+                                    
+                                    
                                 sdfg.add_view(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count),array.shape,array.dtype)
                                 last_view_name_read=None
                                 if local_name.name in read_names:
@@ -1158,7 +1176,7 @@ class AST_translator:
                         
                         if shape == () or shape == (1, ) or shape == [] or shape == [1]:
                             #FIXME 6.03.2024
-                            print(array,array.__class__.__name__)
+                            #print(array,array.__class__.__name__)
                             if isinstance(array,dat.ContainerArray):
                                 if isinstance(array.stype, dat.ContainerArray):
                                     if isinstance(array.stype.stype,dat.Structure):
@@ -1173,22 +1191,49 @@ class AST_translator:
                                 #print(element_type,element_type.__class__.__name__)
                                 #print(array.base_type,array.base_type.__class__.__name__)
                             elif isinstance(array,pointer):
-                                element_type=array.dtype.base_type 
+                                if hasattr(array,"stype"):
+                                    if hasattr(array.stype,"free_symbols"):
+                                        element_type=array.stype
+                                        #print("get stype")
+                                
                             else:
-                                element_type=array.dtype  
+                                if hasattr(array,"dtype"):
+                                    if hasattr(array.dtype,"free_symbols"):
+                                        element_type=array.dtype
+                                        #print("get dtype")
+                                
                             if isinstance(element_type,pointer):
-                                element_type=element_type.base_type 
-                            print("array info: "+str(array),array.__class__.__name__)
-                            print(element_type,element_type.__class__.__name__)    
+                                #print("pointer-ized")
+                                found=False
+                                if hasattr(element_type,"dtype"):
+                                    if hasattr(element_type.dtype,"free_symbols"):
+                                        element_type=element_type.dtype
+                                        found=True
+                                        #print("get dtype")
+                                if hasattr(element_type,"stype"):
+                                    if hasattr(element_type.stype,"free_symbols"):
+                                        element_type=element_type.stype
+                                        found=True
+                                        #print("get stype")
+                                if hasattr(element_type,"base_type"):        
+                                    if hasattr(element_type.base_type,"free_symbols"):
+                                        element_type=element_type.base_type
+                                        found=True
+                                        #print("get base_type")        
+                                #if not found:
+                                #    print(dir(element_type))
+                            #print("array info: "+str(array),array.__class__.__name__)
+                            #print(element_type,element_type.__class__.__name__)    
                             if element_type.name in self.registered_types:
                                 datatype=self.get_dace_type(str(element_type))
                                 datatype_to_add=copy.deepcopy(element_type)
                                 datatype_to_add.transient = False
-                                print(datatype_to_add,datatype_to_add.__class__.__name__)
+                                #print(datatype_to_add,datatype_to_add.__class__.__name__)
                                 new_sdfg.add_datadesc(self.name_mapping[new_sdfg][local_name.name], datatype_to_add)
                                 
                                 if self.struct_views.get(new_sdfg) is None:
                                     self.struct_views[new_sdfg] = {}
+                                
                                 add_views_recursive(new_sdfg,local_name.name,datatype_to_add,self.struct_views[new_sdfg],self.name_mapping[new_sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[new_sdfg],self.names_of_object_in_parent_sdfg[new_sdfg],self.actual_offsets_per_sdfg[sdfg])    
                                 
                             else:
@@ -1257,7 +1302,7 @@ class AST_translator:
                                     self.views = self.views + 1
                                     views.append([mapped_name_overwrite, wv, rv, variables_in_call.index(variable_in_call)])
                                     #views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
-                                print("Adding array",self.name_mapping[new_sdfg][local_name.name],shape,array.dtype,array.storage,strides,offsets)
+                                #print("Adding nested array",self.name_mapping[new_sdfg][local_name.name],shape,array.dtype,array.storage,strides,offsets)
                                 new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                             shape,
                                             array.dtype,
@@ -1952,7 +1997,11 @@ class AST_translator:
             #here we must replace local placeholder sizes that have already made it to tasklets via size and ubound calls
             if sizes is not None:
                 actual_sizes=sdfg.arrays[self.name_mapping[sdfg][node.name]].shape
+                print(node.name,sdfg.name,self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))
+                print(sdfg.parent_sdfg.name,self.actual_offsets_per_sdfg[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg[sdfg][node.name]))
+                print(sdfg.parent_sdfg.arrays.get(self.name_mapping[sdfg.parent_sdfg].get(self.names_of_object_in_parent_sdfg.get(sdfg).get(node.name))))
                 actual_offsets=self.actual_offsets_per_sdfg[sdfg.parent_sdfg][self.names_of_object_in_parent_sdfg[sdfg][node.name]]
+
                 index=0
                 for i in node.sizes:
                     if isinstance(i,ast_internal_classes.Name_Node):
@@ -1967,7 +2016,16 @@ class AST_translator:
                             self.replace_names[i.name]=str(actual_offsets[index])
                             #node.parent.execution_part=ast_transforms.RenameVar(i.name,str(actual_offsets[index])).visit(node.parent.execution_part)
                     index+=1        
-            
+            elif sizes is None:
+                if isinstance(datatype, Structure):
+                    datatype_to_add=copy.deepcopy(datatype)
+                    datatype_to_add.transient = transient
+                    #if node.name=="p_nh":
+                        #print("Adding local struct",self.name_mapping[sdfg][node.name],datatype_to_add)
+                    if self.struct_views.get(sdfg) is None:
+                        self.struct_views[sdfg] = {}
+                    add_views_recursive(sdfg,node.name,datatype_to_add,self.struct_views[sdfg],self.name_mapping[sdfg],self.registered_types,[],self.actual_offsets_per_sdfg[sdfg],self.names_of_object_in_parent_sdfg[sdfg],self.actual_offsets_per_sdfg[sdfg.parent_sdfg])        
+                
 
             return
 
@@ -1980,8 +2038,8 @@ class AST_translator:
             if isinstance(datatype, Structure):
                 datatype_to_add=copy.deepcopy(datatype)
                 datatype_to_add.transient = transient
-                if node.name=="p_nh":
-                    print("Adding struct",self.name_mapping[sdfg][node.name],datatype_to_add)
+                #if node.name=="p_nh":
+                    #print("Adding local struct",self.name_mapping[sdfg][node.name],datatype_to_add)
                 sdfg.add_datadesc(self.name_mapping[sdfg][node.name], datatype_to_add)
                 if self.struct_views.get(sdfg) is None:
                     self.struct_views[sdfg] = {}
@@ -2010,12 +2068,12 @@ class AST_translator:
                 arr_dtype = datatype[sizes]
                 arr_dtype.offset = [offset_value for _ in sizes]
                 container=dat.ContainerArray(stype=datatype,shape=sizes,offset=offset,transient=transient)
-                print("Adding container array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
+                #print("Adding local container array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.arrays[self.name_mapping[sdfg][node.name]]=container
                 #sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)
                 
             else:    
-                print("Adding array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
+                #print("Adding local array",self.name_mapping[sdfg][node.name],sizes,datatype,offset,strides,transient)
                 sdfg.add_array(self.name_mapping[sdfg][node.name],
                            shape=sizes,
                            dtype=datatype,
@@ -2036,6 +2094,11 @@ class AST_translator:
 
         self.last_loop_breaks[sdfg] = self.last_sdfg_states[sdfg]
         sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())
+
+    def continue2sdfg(self, node: ast_internal_classes.Continue_Node, sdfg: SDFG):
+        #
+        sdfg.add_edge(self.last_sdfg_states[sdfg], self.last_loop_continues.get(sdfg), InterstateEdge())  
+        self.already_has_edge_back_continue[sdfg] = self.last_sdfg_states[sdfg]  
 
 def create_ast_from_string(
     source_string: str,
