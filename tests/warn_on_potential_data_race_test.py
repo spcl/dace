@@ -201,9 +201,84 @@ def test_memlet_overlap_symbolic_ranges():
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
             sdfg(N=N, A=A, B=B, C=C)
 
+def test_constant_memlet_overlap():
+    sdfg = dace.SDFG('constant_memlet_overlap')
+    state = sdfg.add_state()
+    sdfg.add_array("A", (12,), dace.int32)
+    A = state.add_access("A")
+    sdfg.add_array("B", (12,), dace.int32)
+    B = state.add_access("B")
+
+    state.add_mapped_tasklet(
+        name="first_tasklet",
+        code="b = a + 10",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="k")},
+        map_ranges={"k": "3:10"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+    state.add_mapped_tasklet(
+        name="second_tasklet",
+        code="b = a - 20",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="k")},
+        map_ranges={"k": "6:12"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+
+    A = np.arange(12, dtype=np.int32)
+    B = np.zeros((12,), dtype=np.int32)
+
+    with pytest.warns(UserWarning):
+        with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
+            sdfg(A=A, B=B)
+
+def test_constant_memlet_almost_overlap():
+    sdfg = dace.SDFG('constant_memlet_almost_overlap')
+    state = sdfg.add_state()
+    sdfg.add_array("A", (20,), dace.int32)
+    A = state.add_access("A")
+    sdfg.add_array("B", (20,), dace.int32)
+    B = state.add_access("B")
+
+    state.add_mapped_tasklet(
+        name="first_tasklet",
+        code="b = a + 10",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="k")},
+        map_ranges={"k": "3:10"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+    state.add_mapped_tasklet(
+        name="second_tasklet",
+        code="b = a - 20",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="k")},
+        map_ranges={"k": "10:20"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+
+    A = np.arange(20, dtype=np.int32)
+    B = np.zeros((20,), dtype=np.int32)
+
+    with pytest.warns(UserWarning):
+        with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
+            sdfg(A=A, B=B)
+
+
 if __name__ == '__main__':
     test_memlet_range_not_overlap_ranges()
     test_memlet_range_write_write_overlap_ranges()
     test_memlet_range_write_read_overlap_ranges()
     test_memlet_overlap_ranges_two_access_nodes()
     test_memlet_overlap_symbolic_ranges()
+    test_constant_memlet_overlap()
+    test_constant_memlet_almost_overlap()
