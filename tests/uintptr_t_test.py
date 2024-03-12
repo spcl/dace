@@ -39,13 +39,13 @@ def test_uintptr_t():
     }
     """
 
-    with open("temp.cpp", "w") as file:
+    with open("/tmp/temp.cpp", "w") as file:
         file.write(cpp_code)
 
     import os
-    os.system("$CXX -shared -o test_uintptr_t.out -fPIC temp.cpp")
+    os.system("$CXX -shared -o /tmp/test_uintptr_t.out -fPIC /tmp/temp.cpp")
 
-    lib = ctypes.CDLL("./test_uintptr_t.out")
+    lib = ctypes.CDLL("/tmp/test_uintptr_t.out")
     lib.get_pointer.restype = ctypes.c_void_p
     pointer = lib.get_pointer()
 
@@ -55,8 +55,8 @@ def test_uintptr_t():
 
     assert value_ctypes == value_dace[0], f"Expected {value_ctypes}, got {value_dace[0]}"
     
-    os.remove("temp.cpp")
-    os.remove("test_uintptr_t.out")
+    os.remove("/tmp/temp.cpp")
+    os.remove("/tmp/test_uintptr_t.out")
 
 
 if __name__ == '__main__':
