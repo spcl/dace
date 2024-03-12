@@ -390,6 +390,9 @@ class Structure(Data):
                                   to_json=_arrays_to_json)
     name = Property(dtype=str, desc="Structure type name")
     packed = Property(dtype=bool, desc="Whether the structure is tightly packed", default=False)
+    byval = Property(dtype=bool,
+                     default=False,
+                     desc='If True, the structure will be passed by value rather than by pointer.')
 
     def __init__(self,
                  members: Union[Dict[str, Data], List[Tuple[str, Data]]],
@@ -399,6 +402,7 @@ class Structure(Data):
                  location: Dict[str, str] = None,
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  packed: bool = False,
+                 byval: bool = False,
                  debuginfo: dtypes.DebugInfo = None):
 
         self.members = OrderedDict(members)
@@ -409,7 +413,17 @@ class Structure(Data):
 
         shape = (1, )
         self.packed = packed
+        self.byval = byval
         super(Structure, self).__init__(self.get_dtype(), shape, transient, storage, location, lifetime, debuginfo)
+
+    @property
+    def dtype(self):
+        self._dtype = self.get_dtype()
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, value):
+        self._dtype = value
 
     def get_dtype(self):
         # Create typeclass struct on-the-fly based on current members
@@ -418,13 +432,19 @@ class Structure(Data):
         for k, v in self.members.items():
             if isinstance(v, Structure):
                 symbols |= v.free_symbols
-                fields_and_types[k] = (v.dtype, str(v.total_size))
+                if v.byval:
+                    fields_and_types[k] = v.dtype
+                else:
+                    fields_and_types[k] = (v.dtype, str(v.total_size))
             elif isinstance(v, Array):
                 symbols |= v.free_symbols
                 if v.byval:
                     curdtype = v.dtype
                     for s in reversed(v.shape):
-                        curdtype = dtypes.fixedlenarray(curdtype, s)
+                        if symbolic.issymbolic(s):
+                            curdtype = dtypes.pointer(curdtype)
+                        else:
+                            curdtype = dtypes.fixedlenarray(curdtype, s)
                     fields_and_types[k] = curdtype
                 else:
                     fields_and_types[k] = (dtypes.pointer(v.dtype), str(_prod(v.shape)))
@@ -451,6 +471,8 @@ class Structure(Data):
 
         stype = dtypes.struct(self.name, **fields_and_types)
         stype.packed = self.packed
+        if self.byval:
+            return stype
         return dtypes.pointer(stype)
 
     @staticmethod
@@ -504,8 +526,10 @@ class Structure(Data):
         return f"{self.name} ({', '.join([f'{k}: {v}' for k, v in self.members.items()])})"
 
     def as_arg(self, with_types=True, for_call=False, name=None):
-        if self.storage is dtypes.StorageType.GPU_Global:
+        if self.storage == dtypes.StorageType.GPU_Global:
             return Array(self.dtype, [1]).as_arg(with_types, for_call, name)
+        if self.lifetime == dtypes.AllocationLifetime.Global:
+            return Scalar(self.dtype.base_type).as_arg(with_types, for_call, name)
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
@@ -1562,7 +1586,9 @@ class Array(Data):
             return arrname
         if self.byval:
             return str(self.dtype.ctype) + ''.join(f'[{s}]' for s in reversed(self.shape))
-        if self.may_alias:
+        if hasattr(self.dtype, 'as_arg'):
+            return self.dtype.as_arg('*' + arrname)
+        if self.may_alias or isinstance(self, Reference):
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
 
@@ -1847,6 +1873,11 @@ class ContainerArray(Array):
             ret.total_size = _prod(ret.shape)
 
         return ret
+
+    def as_arg(self, with_types=True, for_call=False, name=None):
+        if not with_types or for_call:
+            return name
+        return self.stype.as_arg(with_types, for_call, '*' + name)
 
 
 class View:

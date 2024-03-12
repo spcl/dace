@@ -402,7 +402,7 @@ def make_properties(cls):
         for name, prop in own_properties.items():
             # Only assign our own properties, so we don't overwrite what's been
             # set by the base class
-            if hasattr(obj, name):
+            if hasattr(obj, '_' + name):
                 raise PropertyError("Property {} already assigned in {}".format(name, type(obj).__name__))
             if not prop.indirected:
                 if prop.allow_none or prop.default is not None:

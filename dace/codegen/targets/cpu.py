@@ -275,7 +275,7 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(ptrname)
 
         if not declared:
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{ptrname};', sdfg, state_id, node)
+            declaration_stream.write(f'{nodedesc.as_arg(name=ptrname)};', sdfg, state_id, node)
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             self._dispatcher.declared_arrays.add(ptrname, DefinedType.Pointer, ctypedef)
             self._dispatcher.defined_vars.add(ptrname, DefinedType.Pointer, ctypedef)
@@ -308,22 +308,22 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if (nodedesc.storage == dtypes.StorageType.CPU_Heap or nodedesc.storage == dtypes.StorageType.Register):
 
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            ctypedef = dtypes.pointer(nodedesc.dtype)
 
-            declaration_stream.write(f'{nodedesc.dtype.ctype} *{name} = nullptr;\n', sdfg, state_id, node)
-            self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef)
+            declaration_stream.write(f'{ctypedef.as_arg(name)} = nullptr;\n', sdfg, state_id, node)
+            self._dispatcher.declared_arrays.add(name, DefinedType.Pointer, ctypedef.ctype)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
             # NOTE: OpenMP threadprivate storage MUST be declared globally.
             function_stream.write(
-                "{ctype} *{name} = nullptr;\n"
-                "#pragma omp threadprivate({name})".format(ctype=nodedesc.dtype.ctype, name=name),
+                "{ctype} = nullptr;\n"
+                "#pragma omp threadprivate({name})".format(ctype=nodedesc.as_arg(name=name)),
                 sdfg,
                 state_id,
                 node,
             )
-            self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
+            self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, dtypes.pointer(nodedesc.dtype).ctype)
         else:
             raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
@@ -351,7 +351,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if nodedesc.lifetime == dtypes.AllocationLifetime.Global:
             self._dispatcher.defined_vars.add_global(
                 name,
-                (DefinedType.Pointer if isinstance(nodedesc.dtype, dtypes.pointer) else DefinedType.Scalar),
+                DefinedType.Scalar,
                 nodedesc.as_arg(name=''),
             )
             if not nodedesc.transient: # Global globals are declared as extern
@@ -389,9 +389,9 @@ class CPUCodeGen(TargetCodeGenerator):
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             if node.setzero:
-                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+                declaration_stream.write(f'{nodedesc.as_arg(name=name)} = 0;\n', sdfg, state_id, node)
             else:
-                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+                declaration_stream.write(f'{nodedesc.as_arg(name=name)};\n', sdfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
@@ -461,14 +461,14 @@ class CPUCodeGen(TargetCodeGenerator):
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
-            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            ctypedef = dtypes.pointer(nodedesc.dtype)
 
             if not declared:
-                declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', sdfg, state_id, node)
+                declaration_stream.write(f'{ctypedef.as_arg(name=name)};\n', sdfg, state_id, node)
             allocation_stream.write(
                 "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
                 state_id, node)
-            define_var(name, DefinedType.Pointer, ctypedef)
+            define_var(name, DefinedType.Pointer, ctypedef.ctype)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
@@ -1326,8 +1326,13 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 if not memlet.dynamic:
                     if is_scalar:
-                        # We can pre-read the value
-                        result += "{} {} = {};".format(memlet_type, local_name, expr)
+                        # FIXME: Very specific hack
+                        if isinstance(desc, data.Structure) and desc.lifetime == dtypes.AllocationLifetime.Global:
+                            refs = conntype.ctype.count('*')
+                            result += f'{memlet_type} {local_name} = {"&"*refs}{expr};'
+                        else:
+                            # We can pre-read the value
+                            result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
                         # constexpr arrays
                         if memlet.data in self._frame.symbols_and_constants(sdfg):
