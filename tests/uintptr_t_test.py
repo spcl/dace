@@ -43,7 +43,7 @@ def test_uintptr_t():
         file.write(cpp_code)
 
     import os
-    os.system("$CXX -shared -o /tmp/test_uintptr_t.out -fPIC /tmp/temp.cpp")
+    os.system("g++ -shared -o /tmp/test_uintptr_t.out -fPIC /tmp/temp.cpp")
 
     lib = ctypes.CDLL("/tmp/test_uintptr_t.out")
     lib.get_pointer.restype = ctypes.c_void_p
