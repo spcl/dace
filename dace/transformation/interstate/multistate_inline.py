@@ -5,7 +5,7 @@ import ast
 from copy import deepcopy as dc
 from typing import Dict, List
 
-from dace.data import find_new_name, View
+from dace.data import find_new_name, View, Scalar, Array, ArrayView
 from dace import Memlet, subsets
 from dace import symbolic, dtypes
 from dace.sdfg import nodes
@@ -473,7 +473,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Convert argument into path to full data
         for arg in args_used_in_assignments:
             in_edge = input_memlets[arg]
-            data_path = [in_edge.data.data + "[" + str(in_edge.data.subset) + "]"]
+            if isinstance(nsdfg.arrays[in_edge.data.data], (ArrayView, Array)):
+                first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+            else:
+                first_data = in_edge.data.data
+
+            data_path = [first_data]
 
             # TODO: More complex data paths
             outer_nodes = get_all_view_nodes(outer_state, in_edge.src)
