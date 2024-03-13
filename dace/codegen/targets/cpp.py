@@ -291,6 +291,7 @@ def emit_memlet_reference(dispatcher,
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
                                                              isinstance(desc, data.ContainerArray))
+    is_scalar = is_scalar or isinstance(desc, data.Structure)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
