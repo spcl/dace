@@ -162,22 +162,35 @@ class DirectReplacement(IntrinsicTransformation):
             raise NotImplementedError()
 
         rank_value = int(rank.value)
+
+        is_assumed = var_decl.offsets[0].name.startswith("__f2dace_")
+        print(is_assumed, var_decl.alloc)
+
         if func == 'lbound':
-            value = var_decl.offsets[rank_value-1]
+
+            if is_assumed and not var_decl.alloc:
+                value = ast_internal_classes.Int_Literal_Node(value="1")
+            else:
+                value = var_decl.offsets[rank_value-1]
+
         else:
             size = var_decl.sizes[rank_value-1] if isinstance(var_decl.sizes[rank_value-1], ast_internal_classes.FNode) else ast_internal_classes.Int_Literal_Node(var_decl.sizes[rank_value-1])
-            offset = var_decl.offsets[rank_value-1] if isinstance(var_decl.offsets[rank_value-1], ast_internal_classes.FNode) else ast_internal_classes.Int_Literal_Node(var_decl.offsets[rank_value-1])
-            value = ast_internal_classes.BinOp_Node(
-                op="+",
-                lval=size,
-                rval=ast_internal_classes.BinOp_Node(
-                    op="-",
-                    lval=offset,
-                    rval=ast_internal_classes.Int_Literal_Node(value="1"),
+
+            if is_assumed and not var_decl.alloc:
+                value = size
+            else:
+                offset = var_decl.offsets[rank_value-1] if isinstance(var_decl.offsets[rank_value-1], ast_internal_classes.FNode) else ast_internal_classes.Int_Literal_Node(var_decl.offsets[rank_value-1])
+                value = ast_internal_classes.BinOp_Node(
+                    op="+",
+                    lval=size,
+                    rval=ast_internal_classes.BinOp_Node(
+                        op="-",
+                        lval=offset,
+                        rval=ast_internal_classes.Int_Literal_Node(value="1"),
+                        line_number=line
+                    ),
                     line_number=line
-                ),
-                line_number=line
-            )
+                )
 
         return (value, "INTEGER")
 

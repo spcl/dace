@@ -148,9 +148,54 @@ def test_fortran_frontend_ubound_assumed_1d():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_ubound_arbitrary_test", True)
-    sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
-    sdfg.save('after.sdfg')
+    sdfg.compile()
+
+    size = 7
+    size2 = 10
+    res = np.full([10], 42, order="F", dtype=np.int32)
+    sdfg(res=res,arrsize=size,arrsize2=size2)
+
+    assert res[0] == 1
+    assert res[1] == size2 - size + 1
+
+def test_fortran_frontend_ubound_assumed_1d_ptr():
+    test_string = """
+                    PROGRAM intrinsic_basic_ubound_arbitrary
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer :: res(arrsize:arrsize2)
+                    CALL intrinsic_basic_ubound_arbitrary_test_function(res, arrsize, arrsize2)
+                    end
+
+                    SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function(res, arrsize, arrsize2)
+                    implicit none
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer, target :: res(arrsize:arrsize2)
+                    integer, pointer, dimension(:) :: ptr
+
+                    ptr => res
+
+                    CALL intrinsic_basic_ubound_arbitrary_test_function2(ptr)
+
+                    END SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function
+
+                    SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function2(res)
+                    implicit none
+                    integer, pointer, dimension(:) :: res
+                    integer :: lboundvar
+
+                    lboundvar = LBOUND(res, 1)
+                    res(lboundvar) = lboundvar
+                    res(lboundvar+1) = UBOUND(res, 1)
+
+                    END SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function2
+                    """
+
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_ubound_arbitrary_test", True)
+    sdfg.simplify(verbose=True)
     sdfg.compile()
 
     size = 7
@@ -162,44 +207,45 @@ def test_fortran_frontend_ubound_assumed_1d():
     assert res[0] == size
     assert res[1] == size2
 
-def test_fortran_frontend_ubound_arbitrary_ptr():
+def test_fortran_frontend_ubound_assumed_1d_struct_ptr():
     test_string = """
                     PROGRAM intrinsic_basic_ubound_arbitrary
                     implicit none
+
+                    type a_t
+                        integer, pointer, dimension(:) :: w
+                    end type a_t
+
                     integer :: arrsize
                     integer :: arrsize2
                     integer :: res(arrsize:arrsize2)
-                    CALL intrinsic_basic_ubound_arbitrary_test_function(res)
+                    CALL intrinsic_basic_ubound_arbitrary_test_function(res, arrsize, arrsize2)
                     end
 
-                    SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function(res)
+                    SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function(res, arrsize, arrsize2)
                     implicit none
-                    integer, target :: res(:)
-                    integer, pointer :: res(:)
-
-                    lboundvar = LBOUND(res, 1)
-                    res(lboundvar) = lboundvar
-                    res(lboundvar+1) = UBOUND(res, 1)
-                    CALL intrinsic_basic_ubound_arbitrary_test_function2(res)
-
-                    END SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function
-
-                    SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function2(res)
-                    implicit none
-                    integer :: res(:)
+                    integer :: arrsize
+                    integer :: arrsize2
+                    integer, target :: res(arrsize:arrsize2)
+                    integer, pointer :: ptr(:)
+                    type(a_t) :: data
                     integer :: lboundvar
 
-                    lboundvar = LBOUND(res, 1)
-                    res(lboundvar) = lboundvar
-                    res(lboundvar+1) = UBOUND(res, 1)
+                    data%w=>res
 
-                    END SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function2
+                    ptr=>data%w
+
+                    lboundvar = LBOUND(res, 1)
+                    !ptr(lboundvar) = lboundvar
+                    !ptr(lboundvar+1) = UBOUND(res, 1)
+
+                    !res = data%w
+
+                    END SUBROUTINE intrinsic_basic_ubound_arbitrary_test_function
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_ubound_arbitrary_test", True)
-    sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
-    sdfg.save('after.sdfg')
     sdfg.compile()
 
     size = 7
@@ -236,57 +282,16 @@ def test_fortran_frontend_ubound_1d():
                     """
 
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_ubound_arbitrary_test", True)
-    sdfg.save('before.sdfg')
     sdfg.simplify(verbose=True)
-    sdfg.save('after.sdfg')
     sdfg.compile()
 
     size = 7
     size2 = 10
     res = np.full([10], 42, order="F", dtype=np.int32)
     sdfg(res=res,arrsize=size,arrsize2=size2)
-    print(res)
 
     assert res[0] == size
     assert res[1] == size2
-
-def test_fortran_frontend_ubound_arbitrary():
-    test_string = """
-                    PROGRAM intrinsic_basic_size_arbitrary
-                    implicit none
-                    integer :: arrsize
-                    integer :: arrsize2
-                    integer :: arrsize3
-                    integer :: arrsize4
-                    integer :: res(arrsize:arrsize2, arrsize3:arrsize4)
-                    CALL intrinsic_basic_size_arbitrary_test_function(res)
-                    end
-
-                    SUBROUTINE intrinsic_basic_size_arbitrary_test_function(res)
-                    implicit none
-                    integer :: res(:, :)
-
-                    res(1,1) = UBOUND(res, 1)
-                    res(2,1) = UBOUND(res, 2)
-
-                    END SUBROUTINE intrinsic_basic_size_arbitrary_test_function
-                    """
-
-    sdfg = fortran_parser.create_sdfg_from_string(test_string, "intrinsic_basic_size_arbitrary_test", True)
-    sdfg.simplify(verbose=True)
-    #sdfg.compile()
-
-    size = 7
-    size2 = 10
-    size3 = 5
-    size4 = 13
-    res = np.full([10,13], 42, order="F", dtype=np.int32)
-    sdfg(res=res,arrsize=size,arrsize2=size2,arrsize3=size3,arrsize4=size4)
-    print(res)
-
-    assert res[0,0] == size*size2
-    assert res[1,0] == size
-    assert res[2,0] == size2
 
 def test_fortran_frontend_present():
     test_string = """
@@ -376,10 +381,17 @@ def test_fortran_frontend_present():
 
 if __name__ == "__main__":
 
-    #test_fortran_frontend_bit_size()
-    #test_fortran_frontend_bit_size_symbolic()
-    #test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_bit_size()
+    test_fortran_frontend_bit_size_symbolic()
+    test_fortran_frontend_size_arbitrary()
+    test_fortran_frontend_present()
+
     test_fortran_frontend_ubound_1d()
     test_fortran_frontend_ubound_assumed_1d()
-    #test_fortran_frontend_ubound_arbitrary()
-    #test_fortran_frontend_present()
+
+    # This does not work - we do not support all types of pointers
+    #test_fortran_frontend_ubound_assumed_1d_ptr()
+
+    # This does not work - we do not support assigning pointer to a local array
+    #test_fortran_frontend_ubound_assumed_1d_struct_ptr()
+

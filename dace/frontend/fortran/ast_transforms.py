@@ -1214,7 +1214,11 @@ class IndexExtractor(NodeTransformer):
                                 else:
                                     var_name = j.name.name
                                     variable = self.scope_vars.get_var(child.parent, var_name)
+
                                 offset = variable.offsets[idx]
+                                is_assumed = isinstance(variable.offsets[0], ast_internal_classes.Name_Node) and variable.offsets[0].name.startswith("__f2dace_")
+                                if is_assumed and not variable.alloc:
+                                    offset = 1
 
                                 # it can be a symbol - Name_Node - or a value
                                 if not isinstance(offset, ast_internal_classes.Name_Node):
