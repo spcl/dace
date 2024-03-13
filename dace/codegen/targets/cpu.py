@@ -288,7 +288,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 _visit_structure(nodedesc, aname)
             else:
                 self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
-            declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
+            if '&' in atype:
+                aname = f'{atype} {aname}'
+            else:
+                declaration_stream.write(f'{atype} {aname};', sdfg, state_id, node)
         else:
             if isinstance(nodedesc, data.StructureView):
                 _visit_structure(nodedesc, aname, declare=False)
