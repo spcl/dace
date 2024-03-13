@@ -1900,8 +1900,8 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def _generate_MapEntry(
         self,
-        sdfg,
-        dfg,
+        sdfg: SDFG,
+        dfg: SDFGState,
         state_id,
         node: nodes.MapEntry,
         function_stream,
@@ -2059,6 +2059,26 @@ class CPUCodeGen(TargetCodeGenerator):
                     sdfg,
                     state_id,
                     node,
+                )
+
+        # TODO: check if we need to perform prefetches.
+        for e in dfg.scope_subgraph(node, include_nested_scopes=False).edges():
+            if e.data.schedule in (dtypes.MemletScheduleType.Prefetch_Start, dtypes.MemletScheduleType.Prefetch_All):
+                memlet: mmlt.Memlet = e.data
+                prefetch_locality = 3 # TODO: make configurable
+                prefetch_rw = 0 if memlet._is_data_src else 1
+
+                subset = memlet.subset
+                map_param = symbolic.symbol(node.map.params[-1])
+                zero_coord = subset.coord_at([0] * subset.dims())
+                offset_coord = [node.map.range[-1][2] if c == map_param else 0 for c in zero_coord]
+                desc = sdfg.data(memlet.data)
+                ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+                offs_expr = cpp.cpp_offset_expr(desc, subset, indices=offset_coord)
+                prefetch_ptr = '%s + %s' % (ptrname, offs_expr)
+
+                result.write(
+                    '__builtin_prefetch(%s, %s, %s);' % (prefetch_ptr, prefetch_rw, prefetch_locality)
                 )
 
         callsite_stream.write(inner_stream.getvalue())

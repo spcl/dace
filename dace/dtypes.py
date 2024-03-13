@@ -88,6 +88,8 @@ class MemletScheduleType(aenum.AutoNumberEnum):
     Doacross_Source = ()
     Doacross_Source_Deferred = ()
     Pointer_Increment = ()
+    Prefetch_Start = ()
+    Prefetch_All = ()
 
 
 # A subset of GPU schedule types
