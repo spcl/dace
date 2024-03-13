@@ -233,11 +233,16 @@ class CPUCodeGen(TargetCodeGenerator):
                                                         ancestor=0,
                                                         is_write=True)
         
-        if '.' in memlet.data:
-            root = memlet.data.split('.')[0]
-            if root in value and isinstance(sdfg.arrays[root], data.StructureView):
-                # Dereference the extra pointer.
-                value = value.replace(root, f'(*{root})')
+        # if '.' in memlet.data:
+        #     root = memlet.data.split('.')[0]
+        #     if root in value and isinstance(sdfg.arrays[root], data.StructureView):
+        #         # Dereference the extra pointer.
+        #         value = value.replace(root, f'(*{root})')
+        num_pointers = atype.count('*')
+        num_references = atype.count('&')
+        num_delete = min(num_pointers, num_references)
+        atype = atype.replace('*', '', num_delete)
+        atype = atype.replace('&', '', num_delete)
 
         # Test for views of container arrays and structs
         if isinstance(sdfg.arrays[viewed_dnode.data], (data.Structure, data.ContainerArray, data.ContainerView)):
