@@ -52,7 +52,7 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
+    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, dtypes.typeclass]:
         last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent
@@ -83,7 +83,9 @@ class DefinedMemlets:
 
         raise KeyError("Variable {} has not been defined".format(name))
 
-    def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
+    def add(self, name: str, dtype: DefinedType, ctype: dtypes.typeclass, ancestor: int = 0, allow_shadowing: bool = False):
+        if not isinstance(ctype, dtypes.typeclass):
+            raise NotImplementedError('No longer supported')
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
         if name.startswith('__state->'):
@@ -101,7 +103,7 @@ class DefinedMemlets:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
 
-    def add_global(self, name: str, dtype: DefinedType, ctype: str):
+    def add_global(self, name: str, dtype: DefinedType, ctype: dtypes.typeclass):
         """
         Adds a global variable (top scope)
         """

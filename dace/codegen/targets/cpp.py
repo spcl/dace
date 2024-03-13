@@ -267,7 +267,7 @@ def emit_memlet_reference(dispatcher,
                           ancestor: int = 1,
                           is_write: bool = None,
                           device_code: bool = False,
-                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
+                          decouple_array_interfaces: bool = False) -> Tuple[dtypes.typeclass, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
@@ -278,7 +278,7 @@ def emit_memlet_reference(dispatcher,
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
-    typedef = conntype.ctype
+    typedef = conntype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
@@ -292,11 +292,11 @@ def emit_memlet_reference(dispatcher,
         if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
                 str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
                 for s in dispatcher.frame.free_symbols(desc))):
-            defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
+            defined_types: Tuple[DefinedType, dtypes.typeclass] = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
+        defined_types: Tuple[DefinedType, dtypes.typeclass] = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
@@ -314,12 +314,11 @@ def emit_memlet_reference(dispatcher,
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
-    def make_const(expr: str) -> str:
+    def make_const(expr: dtypes.typeclass) -> dtypes.typeclass:
         # check whether const has already been added before
-        if not expr.startswith("const "):
-            return "const " + expr
-        else:
-            return expr
+        if getattr(expr, 'const', False):
+            expr.const = True
+        return expr
 
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
@@ -339,11 +338,11 @@ def emit_memlet_reference(dispatcher,
                 typedef = make_const(typedef)
 
     elif defined_type == DefinedType.ArrayInterface:
-        base_ctype = conntype.base_type.ctype
-        typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
+        base_ctype = conntype.base_type
+        typedef = dtypes.pointer(base_ctype)
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
-        typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        typedef = defined_ctype if is_scalar else dtypes.pointer(defined_ctype)
         if is_write is False:
             typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
@@ -394,9 +393,10 @@ def emit_memlet_reference(dispatcher,
 
     # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
     # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
+    # TODO: if not byval
     expr = expr.replace('.', '->')
 
-    return (typedef + ref, pointer_name, expr)
+    return (typedef, ref + pointer_name, expr)
 
 
 def reshape_strides(subset, strides, original_strides, copy_shape):
@@ -600,9 +600,9 @@ def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type
     """
     if src_dtype != dst_dtype:
         if is_scalar:
-            dst_expr = '*(%s *)(&%s)' % (src_dtype.ctype, dst_expr)
+            dst_expr = '*(%s)(&%s)' % (dtypes.pointer(src_dtype).as_arg(''), dst_expr)
         elif src_dtype.base_type != dst_dtype:
-            dst_expr = '(%s)(&%s)' % (src_dtype.ctype, dst_expr)
+            dst_expr = '(%s)(&%s)' % (src_dtype.as_arg(''), dst_expr)
         elif defined_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
             dst_expr = '&' + dst_expr
     elif not is_scalar:
