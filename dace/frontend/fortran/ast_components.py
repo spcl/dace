@@ -934,6 +934,8 @@ class InternalFortranAst:
                 for spec in specification:
                     if spec.string.lower() == "optional":
                         optional = True
+                    if spec.string.lower() == "pointer":
+                        alloc = True
 
                 dimension_spec = get_children(i, "Dimension_Attr_Spec")
                 if len(dimension_spec) == 0:
@@ -961,6 +963,8 @@ class InternalFortranAst:
                 for spec in specification:
                     if spec.string.lower() == "optional":
                         optional = True
+                    if spec.string.lower() == "pointer":
+                        alloc = True
 
                 dimension_spec = get_children(i, "Dimension_Component_Attr_Spec")
                 if len(dimension_spec) == 0:
