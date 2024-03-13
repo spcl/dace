@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Any, Dict, Set
+from typing import Any, Dict, Set, Type, Union
 
 import sympy
 
@@ -34,7 +34,7 @@ class MoveSequentialIntoParallel(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         return {}
 
     def _check_permute_doacross(self, state: SDFGState, scope: ScopeTree) -> None:

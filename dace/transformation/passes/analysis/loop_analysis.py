@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+import sys
 from collections import defaultdict
 
 import sympy
@@ -9,9 +10,13 @@ from dace.sdfg.state import LoopRegion
 from dace.subsets import Subset, SubsetUnion
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, properties, symbolic
-from typing import Dict, Optional, Set, Any, Tuple
+from typing import Dict, Optional, Set, Any, Tuple, Type, Union
 
-from dace.transformation.pass_pipeline import Pass
+if sys.version_info >= (3, 9):
+    ast_unparse_mod = ast
+else:
+    import astunparse as ast_unparse_mod
+
 from dace.transformation.passes.analysis.control_flow_region_analysis import CFGDataDependence
 
 
@@ -35,7 +40,7 @@ class LoopCarryDependencyAnalysis(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self):
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         return {CFGDataDependence}
 
     def _intersects(self, loop: LoopRegion, write_subset: Subset, read_subset: Subset, update: sympy.Basic) -> bool:
@@ -123,7 +128,7 @@ class FindAssignment(ast.NodeVisitor):
             if isinstance(tgt, ast.Name):
                 if tgt.id in self.assignments:
                     self.multiple = True
-                self.assignments[tgt.id] = ast.unparse(node.value)
+                self.assignments[tgt.id] = ast_unparse_mod.unparse(node.value)
         return self.generic_visit(node)
 
 

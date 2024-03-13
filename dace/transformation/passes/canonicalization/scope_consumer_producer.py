@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import networkx as nx
 from dace import properties
@@ -32,7 +32,7 @@ class ScopeConsumerProducerCanonicalization(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Memlets)
 
-    def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         return {}
 
     def apply_pass(self, top_sdfg: SDFG,
@@ -95,7 +95,7 @@ class ScopeIntermediateAccessesCanonicalization(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Memlets)
 
-    def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         return {}
 
     def apply_pass(self, top_sdfg: SDFG, _: Dict[str, Any]) -> Optional[Dict[int, Dict[str, Set[str]]]]:

@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Type, Union
 
 import sympy
 from dace import data, dtypes, properties, symbolic
@@ -35,7 +35,7 @@ class ParallelizeDoacrossLoops(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def depends_on(self) -> Set[type[ppl.Pass] | ppl.Pass]:
+    def depends_on(self) -> Set[Union[Type[ppl.Pass], ppl.Pass]]:
         return {loop_analysis.LoopCarryDependencyAnalysis}
 
     def _parallelize_loop(self, loop: LoopRegion,
