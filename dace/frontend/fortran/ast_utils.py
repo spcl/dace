@@ -411,6 +411,8 @@ class TaskletWriter:
                 raise NameError("Error in code generation")
 
             return text
+        elif isinstance(node, int):
+            return str(node)
         elif isinstance(node, str):
             return node
         else:
@@ -438,7 +440,7 @@ class TaskletWriter:
                 return node.name
 
         if self.rename_dict is not None and name in self.rename_dict:
-            return str(self.rename_dict[name])
+            return self.write_code(self.rename_dict[name])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
             sdfg_name = self.mapping.get(self.sdfg).get(location[0])
@@ -448,7 +450,7 @@ class TaskletWriter:
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
-                return str(size)
+                return self.write_code(size)
         
         if self.placeholders_offsets.get(name) is not None:
             location=self.placeholders_offsets.get(name)
@@ -459,7 +461,7 @@ class TaskletWriter:
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "0"
                 offset=self.sdfg.arrays[sdfg_name].offset[location[1]]
-                return str(offset)    
+                return self.write_code(offset)    
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:
