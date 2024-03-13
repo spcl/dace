@@ -36,7 +36,7 @@ global_struct_instance_counter=0
 
 def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,registered_types,chain,actual_offsets_per_sdfg,names_of_object_in_parent_sdfg,actual_offsets_per_parent_sdfg): 
     if not isinstance(datatype_to_add,dat.Structure):
-        print("Not adding: ", str(datatype_to_add))
+        #print("Not adding: ", str(datatype_to_add))
         if isinstance(datatype_to_add,dat.ContainerArray):
             datatype_to_add=datatype_to_add.stype
     for i in datatype_to_add.members:
@@ -68,7 +68,7 @@ def add_views_recursive(sdfg,name,datatype_to_add,struct_views,name_mapping,regi
             if actual_offsets_per_parent_sdfg.get(names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i) is not None:
                 actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]= actual_offsets_per_parent_sdfg[names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i]
             else:
-                print("No offsets in sdfg: ",sdfg.name ," for: ",names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i)    
+                #print("No offsets in sdfg: ",sdfg.name ," for: ",names_of_object_in_parent_sdfg[name_mapping[name]]+ join_chain + "_" + i)    
                 actual_offsets_per_sdfg[name_mapping[name]+ join_chain + "_" + i]=[1]*len(datatype_to_add.members[i].shape)
         name_mapping[name_mapping[name]+ join_chain + "_" + i] = name_mapping[name] + join_chain + "_" + i
         struct_views[name_mapping[name]+  join_chain+ "_" + i]=[name_mapping[name]]+chain+[i]
@@ -448,12 +448,12 @@ class AST_translator:
                     if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
                         sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))   
 
-            for i in offsetnames:
-                if str(i) in sdfg.symbols:
-                    sdfg.symbols.pop(str(i))
-                if sdfg.parent_nsdfg_node is not None:     
-                    if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
-                        sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))            
+            #for i in offsetnames:
+                #if str(i) in sdfg.symbols:
+                #    sdfg.symbols.pop(str(i))
+                #if sdfg.parent_nsdfg_node is not None:     
+                    #if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
+                        #sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))            
             sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
@@ -988,9 +988,14 @@ class AST_translator:
                                     
                                 else:
                                     array=current_parent_structure.members[ast_utils.get_name(tmpvar)]    # FLAG
+                                
+                                if isinstance(array,dat.ContainerArray):
+                                    view_to_member = dat.View.view(array)
+                                    sdfg.arrays[concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)] = view_to_member
                                     
-                                    
-                                sdfg.add_view(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count),array.shape,array.dtype)
+                                else:    
+    
+                                    sdfg.add_view(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count),array.shape,array.dtype)
                                 last_view_name_read=None
                                 if local_name.name in read_names:
                                     already_there=False
@@ -1110,8 +1115,10 @@ class AST_translator:
                                                 break
                                         if not already_there:
                                             wv = substate.add_write(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
-                                        
-                                        mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                        if isinstance(current_member,dat.ContainerArray):
+                                            mem=Memlet.simple(last_view_name, subset)
+                                        else:
+                                            mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)    
                                         substate.add_edge(re,None,wv,"views",dpcp(mem))
 
                                     if local_name.name in write_names:
@@ -1131,7 +1138,11 @@ class AST_translator:
                                                 break
                                         if not already_there:    
                                             rv = substate.add_read(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
-                                        mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
+                                        if isinstance(current_member,dat.ContainerArray):
+                                            mem2=Memlet.simple(last_view_name, subset)
+                                        else:
+                                            mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)    
+                                        
                                         substate.add_edge(rv,"views",wr,None,dpcp(mem2))
                                     last_view_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
                                     mapped_name_overwrite=concatenated_name+"_"+current_member_name   
@@ -1270,10 +1281,10 @@ class AST_translator:
                                                                 for i, s in zip(all_indices, array.shape)])
                                     smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                                    memlet = Memlet(f'{last_view_name}[{subset}]->{smallsubset}')
-                                    memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
-                                    #memlet = Memlet(f'{last_view_name}[{smallsubset}]')
+                                    #memlet = Memlet(f'{last_view_name}[{subset}]')
                                     #memlet2 = Memlet(f'{viewname}[{smallsubset}]')
+                                    memlet = Memlet(f'{last_view_name}[{smallsubset}]')
+                                    memlet2 = Memlet(f'{viewname}[{smallsubset}]')
                                     wv = None
                                     rv = None
                                     if local_name.name in read_names:
@@ -1373,10 +1384,10 @@ class AST_translator:
                                                             for i, s in zip(all_indices, array.shape)])
                                 smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
 
-                                memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
-                                memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
-                                #memlet = Memlet(f'{array_name}[{smallsubset}]')
-                                #memlet2 = Memlet(f'{array_name}[{smallsubset}]')
+                                #memlet = Memlet(f'{array_name}[{subset}]->{smallsubset}')
+                                #memlet2 = Memlet(f'{viewname}[{smallsubset}]->{subset}')
+                                memlet = Memlet(f'{array_name}[{smallsubset}]')
+                                memlet2 = Memlet(f'{array_name}[{smallsubset}]')
                                 wv = None
                                 rv = None
                                 if local_name.name in read_names:
@@ -1542,6 +1553,8 @@ class AST_translator:
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
         if self.multiple_sdfgs==False:
+            #print("Adding nested sdfg", new_sdfg.name, "to", sdfg.name)
+            #print(sym_dict)
             internal_sdfg = substate.add_nested_sdfg(new_sdfg,
                                                  sdfg,
                                                  ins_in_new_sdfg,
@@ -1784,6 +1797,7 @@ class AST_translator:
                                      input_names_tasklet,placeholders=self.placeholders,placeholders_offsets=self.placeholders_offsets,rename_dict=self.replace_names)
 
         text = tw.write_code(node)
+        #print(sdfg.name,node.line_number,output_names,output_names_changed,input_names,input_names_tasklet)
         tasklet.code = CodeBlock(text, lang.Python)
 
     def call2sdfg(self, node: ast_internal_classes.Call_Expr_Node, sdfg: SDFG):
@@ -1940,6 +1954,7 @@ class AST_translator:
                 self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
                 return
         # get the dimensions
+        #print(node.name)
         if node.sizes is not None:
             sizes = []
             offset = []
@@ -1967,10 +1982,14 @@ class AST_translator:
                     text = tw.write_code(ast_internal_classes.Name_Node(name="tmp_struct_symbol_"+str(count),type="INTEGER",line_number=node.line_number))
                     sizes.append(sym.pystr_to_symbolic(text))
                     actual_offset_value=node.offsets[node.sizes.index(i)]
+                    if isinstance(actual_offset_value,ast_internal_classes.Array_Subscript_Node):
+                        print(node.name,actual_offset_value.name.name)
+                        raise NotImplementedError("Array subscript in offset not implemented")
                     if isinstance(actual_offset_value,int):
                         actual_offset_value=ast_internal_classes.Int_Literal_Node(value=str(actual_offset_value))
                     aotext=tw.write_code(actual_offset_value)    
                     actual_offsets.append(str(sym.pystr_to_symbolic(aotext)))
+                    
                     self.actual_offsets_per_sdfg[sdfg][node.name]=actual_offsets
                     #otext = tw.write_code(offset_value)
 
@@ -3178,6 +3197,9 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+            #if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
