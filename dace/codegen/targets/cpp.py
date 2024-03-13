@@ -289,8 +289,12 @@ def emit_memlet_reference(dispatcher,
     typedef = conntype.ctype
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
-    is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
-                                                             isinstance(desc, data.ContainerArray))
+    # is_scalar = not isinstance(conntype, dtypes.pointer) or (isinstance(conntype, dtypes.pointer) and
+    #                                                          isinstance(desc, data.ContainerArray))
+    is_scalar = not isinstance(conntype, dtypes.pointer)
+    is_scalar = is_scalar or isinstance(desc, data.Structure)
+    is_dtype_struct = isinstance(desc, data.ContainerArray) and isinstance(desc.dtype, dtypes.pointer) and isinstance(desc.dtype.base_type, dtypes.struct)
+    is_scalar = is_scalar or (is_dtype_struct and memlet.subset and memlet.subset.num_elements() == 1)
     ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
@@ -397,6 +401,9 @@ def emit_memlet_reference(dispatcher,
         ref = '&'
     else:
         # Cast as necessary
+        if ref == '&' and offset_expr:
+            ref = ''
+            offset_expr = ''
         expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
 
     # Register defined variable
