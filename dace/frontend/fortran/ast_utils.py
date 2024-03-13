@@ -415,6 +415,10 @@ class TaskletWriter:
             return str(node)
         elif isinstance(node, str):
             return node
+        elif isinstance(node, sym.symbol):
+            string_name=str(node)
+            string_to_return = self.write_code(ast_internal_classes.Name_Node(name=string_name))
+            return string_to_return
         else:
             raise NameError("Error in code generation" + node.__class__.__name__)
 
@@ -439,8 +443,8 @@ class TaskletWriter:
             if node.isStructMember:
                 return node.name
 
-        if self.rename_dict is not None and name in self.rename_dict:
-            return self.write_code(self.rename_dict[name])
+        if self.rename_dict is not None and str(name) in self.rename_dict:
+            return self.write_code(self.rename_dict[str(name)])
         if self.placeholders.get(name) is not None:
             location=self.placeholders.get(name)
             sdfg_name = self.mapping.get(self.sdfg).get(location[0])
@@ -450,7 +454,7 @@ class TaskletWriter:
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "1"
                 size=self.sdfg.arrays[sdfg_name].shape[location[1]]
-                return self.write_code(size)
+                return self.write_code(str(size))
         
         if self.placeholders_offsets.get(name) is not None:
             location=self.placeholders_offsets.get(name)
@@ -461,7 +465,7 @@ class TaskletWriter:
                 if self.sdfg.arrays[sdfg_name].shape is None or (len(self.sdfg.arrays[sdfg_name].shape)==1 and self.sdfg.arrays[sdfg_name].shape[0]==1):
                     return "0"
                 offset=self.sdfg.arrays[sdfg_name].offset[location[1]]
-                return self.write_code(offset)    
+                return self.write_code(str(offset))    
         for i in self.sdfg.arrays:
             sdfg_name = self.mapping.get(self.sdfg).get(name)
             if sdfg_name == i:

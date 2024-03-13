@@ -441,12 +441,12 @@ class AST_translator:
             shapenames = [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))]
             offsetnames = self.actual_offsets_per_sdfg[sdfg][node.name_pointer.name]
             [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset))]
-            #for i in shapenames:
-                #if str(i) in sdfg.symbols:
-                #    sdfg.symbols.pop(str(i))
-                #if sdfg.parent_nsdfg_node is not None:     
-                    #if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
-                    #    sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))   
+            for i in shapenames:
+                if str(i) in sdfg.symbols:
+                    sdfg.symbols.pop(str(i))
+                if sdfg.parent_nsdfg_node is not None:     
+                    if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
+                        sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))   
 
             #for i in offsetnames:
                 #if str(i) in sdfg.symbols:
@@ -454,7 +454,7 @@ class AST_translator:
                 #if sdfg.parent_nsdfg_node is not None:     
                     #if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
                         #sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))            
-            #sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
+            sdfg.arrays.pop(self.name_mapping[sdfg][node.name_pointer.name])
         if isinstance(node.name_target, ast_internal_classes.Data_Ref_Node):
             if node.name_target.parent_ref.name not in self.name_mapping[sdfg]: 
                 raise ValueError("Unknown variable " + node.name_target.name)
@@ -1989,6 +1989,7 @@ class AST_translator:
                         actual_offset_value=ast_internal_classes.Int_Literal_Node(value=str(actual_offset_value))
                     aotext=tw.write_code(actual_offset_value)    
                     actual_offsets.append(str(sym.pystr_to_symbolic(aotext)))
+                    
                     self.actual_offsets_per_sdfg[sdfg][node.name]=actual_offsets
                     #otext = tw.write_code(offset_value)
 
@@ -3188,8 +3189,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
-            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
