@@ -393,6 +393,7 @@ class Structure(Data):
     byval = Property(dtype=bool,
                      default=False,
                      desc='If True, the structure will be passed by value rather than by pointer.')
+    opaque = Property(dtype=bool, desc="Whether the structure is opaque", default=False)
 
     def __init__(self,
                  members: Union[Dict[str, Data], List[Tuple[str, Data]]],
@@ -403,13 +404,15 @@ class Structure(Data):
                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                  packed: bool = False,
                  byval: bool = False,
-                 debuginfo: dtypes.DebugInfo = None):
+                 debuginfo: dtypes.DebugInfo = None,
+                 opaque: bool = False):
 
         self.members = OrderedDict(members)
         for k, v in self.members.items():
             v.transient = transient
 
         self.name = name
+        self.opaque = opaque
 
         shape = (1, )
         self.packed = packed
@@ -471,6 +474,7 @@ class Structure(Data):
 
         stype = dtypes.struct(self.name, **fields_and_types)
         stype.packed = self.packed
+        stype.opaque = self.opaque
         if self.byval:
             return stype
         return dtypes.pointer(stype)
@@ -1921,7 +1925,9 @@ class View:
                                    storage=viewed_container.storage,
                                    location=viewed_container.location,
                                    lifetime=viewed_container.lifetime,
-                                   debuginfo=debuginfo)
+                                   debuginfo=debuginfo,
+                                   opaque=viewed_container.opaque,
+                                   packed=viewed_container.packed)
         elif isinstance(viewed_container, ContainerArray):
             result = ContainerView(stype=cp.deepcopy(viewed_container.stype),
                                    shape=viewed_container.shape,
