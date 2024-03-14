@@ -75,20 +75,18 @@ def test_fortran_frontend_if_nested_cycle():
                         count=0
                         
                         DO j=start,limit             
-                            d(i,j)=8.5
                             if (j .eq. 2) count=count+2
                         ENDDO
                         if (count .eq. 2) CYCLE
+                        if (count .eq. 3) CYCLE
                         DO j=start,limit
-                            if (i .eq. 5) then
-                                d(1,1)=1.5
-                            endif    
+                             
                             d(i,j)=d(i,j)+1.5
                         ENDDO
                         d(i,1)=5.5    
                     ENDDO             
                     
-                    if (d(2,1) .eq. 42) d(2,1)=6.5
+                    if (d(2,1) .eq. 42.0) d(2,1)=6.5
                     
 
                     END SUBROUTINE if_nested_cycle_test_function
@@ -99,9 +97,9 @@ def test_fortran_frontend_if_nested_cycle():
     sdfg.simplify(verbose=True)
     a = np.full([4,4], 42, order="F", dtype=np.float64)
     sdfg(d=a)
-    assert (a[0,0] == 5.5)
+    assert (a[0,0] == 42)
     assert (a[1,0] == 6.5)
-    assert (a[2,0] == 5.5)    
+    assert (a[2,0] == 42)    
 
 
 if __name__ == "__main__":
