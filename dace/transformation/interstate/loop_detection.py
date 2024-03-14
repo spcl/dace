@@ -7,8 +7,9 @@ import typing
 from typing import AnyStr, Optional, Tuple, List
 
 from dace import sdfg as sd, symbolic
+from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr, utils as sdutil
-from dace.sdfg.state import ControlFlowRegion
+from dace.sdfg.state import ControlFlowRegion, LoopRegion
 from dace.transformation import transformation
 
 
@@ -205,3 +206,78 @@ def find_for_loop(
         return None
 
     return itervar, (start, end, stride), (start_states, last_loop_state)
+
+
+@make_properties
+class LiftLoop(DetectLoop, transformation.MultiStateTransformation):
+
+    itervar = Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc='The name of the iteration variable (optional).',
+    )
+
+    def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
+        # Obtain loop information
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
+
+        # Obtain iteration variable, range, and stride
+        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)
+
+        # Find all loop-body states
+        states = set()
+        to_visit = [body]
+        while to_visit:
+            state = to_visit.pop(0)
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in states and dst is not guard:
+                    to_visit.append(dst)
+            states.add(state)
+
+        rhs = end + 1 if step > 0 else end - 1
+        cond_expr = '%s < %s' % (itervar, rhs.simplify()) if step > 0 else '%s > %s' % (itervar, rhs.simplify())
+
+        # Construct the new loop region
+        loop = LoopRegion('lifted_loop_' + body.label,
+                          condition_expr=cond_expr,
+                          loop_var=itervar,
+                          initialize_expr='%s = %s' % (itervar, str(start)),
+                          update_expr='%s = %s + %s' % (itervar, itervar, str(step)))
+
+        graph.add_node(loop)
+
+        for state in states:
+            loop.add_node(state, is_start_block=state == body)
+            for e in graph.all_edges(state):
+                if e.src in states and e.dst in states:
+                    loop.add_edge(e.src, e.dst, e.data)
+
+        # Get rid of the loop exit condition edge
+        after_edge = graph.edges_between(guard, after)[0]
+        graph.remove_edge(after_edge)
+        # Remove the assignment to the iteration variable on the edge to the guard.
+        for e in graph.in_edges(guard):
+            if itervar in e.data.assignments:
+                del e.data.assignments[itervar]
+
+        # Remove the condition on the entry edge
+        condition_edge = graph.edges_between(guard, body)[0]
+        condition_edge.data.condition = CodeBlock('1')
+        graph.add_edge(guard, loop, condition_edge.data)
+        graph.remove_edge(condition_edge)
+
+        # Get rid of backedge
+        graph.remove_edge(graph.edges_between(body, guard)[0])
+
+        # Route the body directly out, maintaining other assignments
+        graph.add_edge(loop, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
+
+        for n in states:
+            graph.remove_node(n)
+
+        sdfg.reset_cfg_list()
+
+        print(graph)

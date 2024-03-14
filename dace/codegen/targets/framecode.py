@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
 import copy
-import functools
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -11,14 +10,13 @@ import numpy as np
 import dace
 from dace import config, data, dtypes
 from dace import memlet as mlt
-from dace import subsets
+from dace import subsets, symbolic
 from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
@@ -505,14 +503,16 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         offs_params = []
                         involved_scopes = []
                         for i, dim in enumerate(memlet.subset.ranges):
-                            dim_symbols = dim[0].free_symbols | dim[1].free_symbols | dim[2].free_symbols
+                            dim_symbols = set()
+                            for _d in dim:
+                                dim_symbols |= symbolic.free_symbols_and_functions(_d)
+                            #dim_symbols = dim[0].free_symbols | dim[1].free_symbols | dim[2].free_symbols
                             found_param = None
                             found_scope = None
                             found_scope_barrier = None
-                            for pparam, pscope, is_para in pass_params:
-                                param = dace.symbol(pparam)
+                            for param, pscope, is_para in pass_params:
                                 if param in dim_symbols:
-                                    found_param = param
+                                    found_param = dace.symbol(param)
                                     found_scope = pscope
                                     found_scope_barrier = is_para
                                     break

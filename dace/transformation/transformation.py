@@ -328,7 +328,7 @@ class PatternTransformation(TransformationBase):
             graph = sdfg
             state_id = -1
         elif isinstance(sample_node, nd.Node):
-            graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
+            graph = next(s for s in sdfg.states() if sample_node in s.nodes())
             state_id = sdfg.node_id(graph)
         else:
             raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
