@@ -326,7 +326,7 @@ class ExpandCSRMMMKL(ExpandTransformation):
             __descrA.mode = SPARSE_FILL_MODE_UPPER;
             __descrA.diag = SPARSE_DIAG_NON_UNIT;
 
-            {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, M, N, {beta}, _c, {ldc});
+            {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, M, N, {beta}, _c, N);
         """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
