@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
+from collections import defaultdict
 import copy
 from dace.dtypes import DebugInfo
 import os
@@ -791,12 +792,32 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     continue
                 raise error
 
-        if Config.get_bool("experimental.check_race_conditions"):
-            for node in state.nodes():
-                if isinstance(node, AccessNode):
-                    in_memlet_ranges = [e.data.dst_subset for e in state.in_edges(node)]
-                    if subsets.Range.are_intersecting(in_memlet_ranges):
-                        warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
+    if Config.get_bool("experimental.check_race_conditions"):
+        node_labels = []
+        write_accesses = defaultdict(list)
+        read_accesses = defaultdict(list)
+        for node in state.data_nodes():
+            node_labels.append(node.label)
+            write_accesses[node.label].extend([e.data.dst_subset for e in state.in_edges(node)])
+            read_accesses[node.label].extend([e.data.src_subset for e in state.out_edges(node)])
+
+        for node_label in node_labels:
+            write_memlet_subsets = write_accesses[node_label]
+            read_memlet_subsets = read_accesses[node_label]
+            # check write-write data races
+            for i in range(len(write_memlet_subsets)):
+                for j in range(i+1, len(write_memlet_subsets)):
+                    intersects = subsets.intersects(write_memlet_subsets[i], write_memlet_subsets[j])
+                    if intersects is not None:
+                        if intersects:
+                            warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
+            # check read-write data races
+            for write in write_memlet_subsets:
+                for read in read_memlet_subsets:
+                    intersects = subsets.intersects(write, read)
+                    if intersects is not None:
+                        if intersects:
+                            warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
     ########################################
 
