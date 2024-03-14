@@ -1589,7 +1589,7 @@ class Array(Data):
         if not with_types or for_call:
             return arrname
         if self.byval:
-            return str(self.dtype.ctype) + ''.join(f'[{s}]' for s in reversed(self.shape))
+            return self.dtype.as_arg(arrname + ''.join(f'[{s}]' for s in reversed(self.shape)))
         if hasattr(self.dtype, 'as_arg'):
             return self.dtype.as_arg('*' + arrname)
         if self.may_alias or isinstance(self, Reference):
@@ -1847,7 +1847,8 @@ class ContainerArray(Array):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
 
         self.stype = stype
         if stype:
@@ -1857,9 +1858,10 @@ class ContainerArray(Array):
                 dtype = dtypes.pointer(stype.dtype)
         else:
             dtype = dtypes.pointer(dtypes.typeclass(None))  # void*
+
         super(ContainerArray,
               self).__init__(dtype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                             lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, byval)
 
     @classmethod
     def from_json(cls, json_obj, context=None):
@@ -1881,6 +1883,8 @@ class ContainerArray(Array):
     def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call:
             return name
+        if self.byval:
+            return self.stype.as_arg(with_types, for_call, name + ''.join(f'[{s}]' for s in reversed(self.shape)))
         return self.stype.as_arg(with_types, for_call, '*' + name)
 
 
@@ -1926,6 +1930,7 @@ class View:
                                    location=viewed_container.location,
                                    lifetime=viewed_container.lifetime,
                                    debuginfo=debuginfo,
+                                   byval=viewed_container.byval,
                                    opaque=viewed_container.opaque,
                                    packed=viewed_container.packed)
         elif isinstance(viewed_container, ContainerArray):
@@ -1943,7 +1948,8 @@ class View:
                                    total_size=viewed_container.total_size,
                                    start_offset=viewed_container.start_offset,
                                    optional=viewed_container.optional,
-                                   pool=viewed_container.pool)
+                                   pool=viewed_container.pool,
+                                   byval=viewed_container.byval)
         elif isinstance(viewed_container, (Array, Scalar)):
             result = ArrayView(dtype=viewed_container.dtype,
                                shape=viewed_container.shape,
@@ -1959,7 +1965,8 @@ class View:
                                total_size=viewed_container.total_size,
                                start_offset=viewed_container.start_offset,
                                optional=viewed_container.optional,
-                               pool=viewed_container.pool)
+                               pool=viewed_container.pool,
+                               byval=getattr(viewed_container, 'byval', False))
         else:
             # In undefined cases, make a container array view of size 1
             result = ContainerView(cp.deepcopy(viewed_container), [1], debuginfo=debuginfo)
@@ -2101,10 +2108,11 @@ class ContainerView(ContainerArray, View):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 byval=False):
         shape = [1] if shape is None else shape
         super().__init__(stype, shape, transient, allow_conflicts, storage, location, strides, offset, may_alias,
-                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool)
+                         lifetime, alignment, debuginfo, total_size, start_offset, optional, pool, byval)
 
     def validate(self):
         super().validate()
