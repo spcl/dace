@@ -270,6 +270,7 @@ def test_constant_memlet_almost_overlap():
     B = np.zeros((20,), dtype=np.int32)
 
     with pytest.warns(UserWarning):
+        warnings.simplefilter("error", UserWarning)
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
             sdfg(A=A, B=B)
 
