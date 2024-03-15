@@ -2168,8 +2168,9 @@ class SDFG(ControlFlowRegion):
             :param symbols: Values to specialize.
         """
         # Update constants
-        for k, v in symbols.items():
-            self.add_constant(str(k), v)
+        for sd in self.all_sdfgs_recursive():
+            for k, v in symbols.items():
+                sd.add_constant(str(k), v)
 
     def is_loaded(self) -> bool:
         """

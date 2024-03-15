@@ -41,6 +41,7 @@ class DaCeCodeGenerator(object):
     to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode], List[Tuple[int, int, nodes.AccessNode]]]
     ptr_increments_to_define: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
     ptr_increments_to_update: DefaultDict[nodes.MapEntry, DefaultDict[int, Set[mlt.Memlet]]]
+    ptr_increment_name_mapping: Dict[mlt.Memlet, str]
     where_allocated: Dict[Tuple[SDFG, str], SDFG]
     fsyms: Dict[int, Set[str]]
     arglist: Dict[str, data.Data]
@@ -62,6 +63,7 @@ class DaCeCodeGenerator(object):
         self.to_allocate = collections.defaultdict(list)
         self.ptr_increments_to_define = collections.defaultdict(lambda: collections.defaultdict(set))
         self.ptr_increments_to_update = collections.defaultdict(lambda: collections.defaultdict(set))
+        self.ptr_increment_name_mapping = dict()
         self.where_allocated = {}
         self.fsyms = {}
         self._symbols_and_constants = {}
