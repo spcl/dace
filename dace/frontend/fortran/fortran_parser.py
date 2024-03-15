@@ -232,6 +232,7 @@ class AST_translator:
         self.last_loop_breaks = {}
         self.last_returns = {}
         self.module_vars = []
+        self.sdfgs_count=0
         self.libraries = {}
         self.local_not_transient_because_assign={}
         self.struct_views={}
@@ -441,12 +442,12 @@ class AST_translator:
             shapenames = [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].shape))]
             offsetnames = self.actual_offsets_per_sdfg[sdfg][node.name_pointer.name]
             [sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset[i] for i in range(len(sdfg.arrays[self.name_mapping[sdfg][node.name_pointer.name]].offset))]
-            for i in shapenames:
-                if str(i) in sdfg.symbols:
-                    sdfg.symbols.pop(str(i))
-                if sdfg.parent_nsdfg_node is not None:     
-                    if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
-                        sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))   
+            #for i in shapenames:
+            #    if str(i) in sdfg.symbols:
+            #        sdfg.symbols.pop(str(i))
+                #if sdfg.parent_nsdfg_node is not None:     
+                    #if str(i) in sdfg.parent_nsdfg_node.symbol_mapping:
+                        #sdfg.parent_nsdfg_node.symbol_mapping.pop(str(i))   
 
             #for i in offsetnames:
                 #if str(i) in sdfg.symbols:
@@ -695,7 +696,7 @@ class AST_translator:
         :param node: The node to be translated
         :param sdfg: The SDFG to which the node should be translated
         """
-
+        if node.name=="modname": return
         if self.contexts.get(sdfg.name) is None:
             self.contexts[sdfg.name] = ast_utils.Context(name=sdfg.name)
         if self.contexts[sdfg.name].constants.get(node.name) is None:
@@ -752,11 +753,12 @@ class AST_translator:
 
         # Collect the parameters and the function signature to comnpare and link
         parameters = node.args.copy()
-
-        new_sdfg = SDFG(node.name.name)
+        my_name_sdfg=node.name.name+str(self.sdfgs_count)
+        new_sdfg = SDFG(my_name_sdfg)
+        self.sdfgs_count+=1
         self.actual_offsets_per_sdfg[new_sdfg]={}
         self.names_of_object_in_parent_sdfg[new_sdfg]={}
-        substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + node.name.name)
+        substate = ast_utils.add_simple_state_to_sdfg(self, sdfg, "state" + my_name_sdfg)
 
         
         variables_in_call = []
@@ -815,10 +817,10 @@ class AST_translator:
         variables_in_call = var2
         parameters = par2
         assigns = []
-        self.local_not_transient_because_assign[node.name.name]=[]  
+        self.local_not_transient_because_assign[my_name_sdfg]=[]  
         for lit, litval in zip(literals, literal_values):
             local_name = lit
-            self.local_not_transient_because_assign[node.name.name].append(local_name.name)
+            self.local_not_transient_because_assign[my_name_sdfg].append(local_name.name)
             assigns.append(
                 ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=local_name.name),
                                                 rval=litval,
@@ -828,7 +830,7 @@ class AST_translator:
         # This handles the case where the function is called with symbols
         for parameter, symbol in symbol_arguments:
             if parameter.name != symbol.name:
-                self.local_not_transient_because_assign[node.name.name].append(parameter.name)
+                self.local_not_transient_because_assign[my_name_sdfg].append(parameter.name)
                 assigns.append(
                     ast_internal_classes.BinOp_Node(lval=ast_internal_classes.Name_Node(name=parameter.name),
                                                     rval=ast_internal_classes.Name_Node(name=symbol.name),
@@ -2039,6 +2041,8 @@ class AST_translator:
         :param sdfg: The sdfg to attach the access node to
 
         """
+        if node.name=="modname": return
+
         #if the sdfg is the toplevel-sdfg, the variable is a global variable
         is_arg = False
         if isinstance(node.parent,ast_internal_classes.Subroutine_Subprogram_Node) or isinstance(node.parent,ast_internal_classes.Function_Subprogram_Node):
@@ -3314,9 +3318,24 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             ast2sdfg.globalsdfg = sdfg
             
             ast2sdfg.translate(program, sdfg)
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfg"))
+            
+
+
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfgz"),compress=True)
+            sdfg.apply_transformations(IntrinsicSDFGTransformation,validate=False)    
+            for sd in sdfg.all_sdfgs_recursive():
+                free_symbols = sd.free_symbols
+                for i in free_symbols:
+                    #print("I want to remove:", i)
+                    if(i in sd.symbols):
+                        sd.symbols.pop(i)
+                        #print("Removed from symbols ",i)
+                        if sd.parent_nsdfg_node is not None:
+                            if i in sd.parent_nsdfg_node.symbol_mapping:
+                                #print("Removed from symbol mapping ",i)
+                                sd.parent_nsdfg_node.symbol_mapping.pop(i)
             #try:
-            sdfg.apply_transformations(IntrinsicSDFGTransformation)
+            
             #    sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw.sdfg"))
             #except:
             #    print("Intrinsics failed for ", sdfg.name)    
@@ -3329,10 +3348,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             
             sdfg.validate()
-            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfg"))
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfgz"),compress=True)
             try:    
                 sdfg.simplify(verbose=True)
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
+                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
             except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
                 print(e)
