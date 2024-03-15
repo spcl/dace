@@ -2250,11 +2250,26 @@ class PointerRemoval(NodeTransformer):
         if node.name.name in self.nodes:
             original_ref_node = self.nodes[node.name.name]
 
-            node.name = original_ref_node.part_ref
-            return ast_internal_classes.Data_Ref_Node(
-                parent_ref = original_ref_node.parent_ref,
-                part_ref = node
+            cur_ref_node = original_ref_node
+            new_ref_node = ast_internal_classes.Data_Ref_Node(
+                parent_ref=cur_ref_node.parent_ref,
+                part_ref=None
             )
+            newer_ref_node = new_ref_node
+
+            while isinstance(cur_ref_node.part_ref, ast_internal_classes.Data_Ref_Node):
+
+                cur_ref_node = cur_ref_node.part_ref
+                newest_ref_node = ast_internal_classes.Data_Ref_Node(
+                    parent_ref=cur_ref_node.parent_ref,
+                    part_ref=None
+                )
+                newer_ref_node.part_ref = newest_ref_node
+                newer_ref_node = newest_ref_node
+
+            node.name = cur_ref_node.part_ref
+            newer_ref_node.part_ref = node
+            return new_ref_node
         return node
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
@@ -2267,7 +2282,6 @@ class PointerRemoval(NodeTransformer):
         newbody = []
 
         for child in node.execution:
-            print(child, type(child))
             lister = CallExtractorNodeLister()
             lister.visit(child)
             res = lister.nodes
