@@ -40,7 +40,7 @@ def profile(
 
     :param repetitions: The number of times to run each DaCe program.
     :param warmup: Number of additional repetitions to run the program without measuring time.
-    :param tqdm_leave: Sets the ``leave`` parameter of the ``tqdm`` progress bar (usefull
+    :param tqdm_leave: Sets the ``leave`` parameter of the ``tqdm`` progress bar (useful
         for nested progress bars). Ignored if tqdm progress bar is not used.
     :param print_results: Whether or not to print the median execution time after
         all repetitions.
