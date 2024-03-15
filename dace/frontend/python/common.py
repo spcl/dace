@@ -103,6 +103,7 @@ class SDFGConvertible(object):
     def closure_resolver(self,
                          constant_args: Dict[str, Any],
                          given_args: Set[str],
+                         argtypes: Dict[str, data.Data],
                          parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
         """
         Returns an SDFGClosure object representing the closure of the
@@ -112,6 +113,7 @@ class SDFGConvertible(object):
                               compile-time values.
         :param given_args: Arguments that were given at call-time (used for
                            determining which arguments with defaults were provided).
+        :param argtypes: Arguments mapping to the caller data.Data
         :param parent_closure: The parent SDFGClosure object (used for, e.g.,
                                recursion detection).
         :return: New SDFG closure object representing the convertible object.
