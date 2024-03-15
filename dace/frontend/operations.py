@@ -60,24 +60,24 @@ class CompiledSDFGProfiler:
         # zeros to overwrite start time, followed by indices for each repetition
         iterator = chain(repeat(0, self.warmup), range(1, self.repetitions + 1))
 
-        if Config.get_bool("profiling_status"):
+        if Config.get_bool('profiling_status'):
             try:
                 from tqdm import tqdm
 
                 iterator = tqdm(
                     iterator,
-                    desc="Profiling",
+                    desc='Profiling',
                     total=(self.warmup + self.repetitions),
                     file=sys.stdout,
                     leave=self.tqdm_leave,
                 )
             except ImportError:
                 warnings.warn(
-                    "Cannot show profiling progress, missing optional dependency "
-                    "tqdm...\n\tTo see a live progress bar please install tqdm "
-                    "(`pip install tqdm`)\n\tTo disable this feature (and this "
-                    "warning) set `profiling_status` to false in the dace config "
-                    "(~/.dace.conf)."
+                    'Cannot show profiling progress, missing optional dependency '
+                    'tqdm...\n\tTo see a live progress bar please install tqdm '
+                    '(`pip install tqdm`)\n\tTo disable this feature (and this '
+                    'warning) set `profiling_status` to false in the dace config '
+                    '(~/.dace.conf).'
                 )
                 print('\nProfiling...')
         else:

@@ -40,10 +40,10 @@ def profile(
 
     :param repetitions: The number of times to run each DaCe program.
     :param warmup: Number of additional repetitions to run the program without measuring time.
-    :param tqdm_leave: Sets the leave parameter of the tqdm progress bar (usefull 
+    :param tqdm_leave: Sets the ``leave`` parameter of the ``tqdm`` progress bar (usefull
         for nested progress bars). Ignored if tqdm progress bar is not used.
-    :param print_results: Whether or not to print the average execution time after 
-        all repetitions (usefull to disable when using nested progress bars).
+    :param print_results: Whether or not to print the median execution time after
+        all repetitions.
     :note: Running functions multiple times may affect the results of the program.
     """
     from dace.frontend.operations import CompiledSDFGProfiler  # Avoid circular import
