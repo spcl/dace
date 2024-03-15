@@ -3169,7 +3169,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
-    program = ast_transforms.PointerRemoval().visit(program)
     
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
@@ -3279,6 +3278,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 struct_dep_graph.add_node(j)
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
+    program = ast_transforms.PointerRemoval().visit(program)
     program.structures = ast_transforms.Structures(structs_lister.structs)
     program.tables=partial_ast.symbols
     program.placeholders=partial_ast.placeholders
@@ -3304,13 +3304,14 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
         for j in i.subroutine_definitions:
             #if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
-            #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            if j.name.name!="rot_vertex_ri":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
             if j.execution_part is None:
                 continue
+            print(f"Building SDFG {j.name.name}")
             startpoint = j
             ast2sdfg = AST_translator(program, __file__,multiple_sdfgs=False,startpoint=startpoint,sdfg_path=icon_sdfgs_dir, normalize_offsets=normalize_offsets)
             sdfg = SDFG(j.name.name)
@@ -3363,6 +3364,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfgz"),compress=True)
             try:    
                 sdfg.simplify(verbose=True)
+                print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
                 sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
             except Exception as e:
                 print("Simplification failed for ", sdfg.name)    
@@ -3370,6 +3372,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 continue
             #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
             try:  
+                print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
                 sdfg.compile()
             except Exception as e:
                 print("Compilation failed for ", sdfg.name)
