@@ -939,7 +939,6 @@ class AST_translator:
                                             re=i
                                             already_there=True
                                             break
-
                                     # for i in substate.data_nodes():
                                     #     if i.data==current_parent_structure_name and len(substate.out_edges(i))==0:
                                     #         re=i
@@ -2579,6 +2578,7 @@ def create_sdfg_from_string(
 
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     for i in program.modules:
         count=0
@@ -3169,6 +3169,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.FunctionCallTransformer().visit(program)
     program = ast_transforms.FunctionToSubroutineDefiner().visit(program)
+    program = ast_transforms.PointerRemoval().visit(program)
     
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
