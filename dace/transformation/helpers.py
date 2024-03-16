@@ -1608,6 +1608,8 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
     map_dependency = False
     for e in state.in_edges(access):
         subset = e.data.get_dst_subset(e, state)
+        if not subset:
+            continue
         if any(str(s) in map_entry.map.params for s in subset.free_symbols):
             map_dependency = True
         if in_union is None:
@@ -1616,7 +1618,7 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
             in_union = in_union.union(subset)
 
     # If none of the input subsets depend on the map parameters, then abort, since the array is thread-local.
-    if not map_dependency:
+    if in_union is not None and not map_dependency:
         return [False, False]
 
     added_source = False
@@ -1627,18 +1629,20 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
     # Check if the union covers the output edges of `access`. Any not covered read is redirected.
     redirected_read = False
     redirected_write = False
-    if in_union is not None:
-        for e in state.out_edges(access):
-            subset = e.data.get_src_subset(e, state)
-            if not in_union.covers_precise(subset):
-                state.add_memlet_path(source,
-                                      map_entry,
-                                      e.dst,
-                                      memlet=Memlet(data=source.data,
-                                                    subset=copy.deepcopy(subset)),
-                                      dst_conn=e.dst_conn)
-                state.remove_edge(e)
-                redirected_read = True
+    for e in state.out_edges(access):
+        subset = e.data.get_src_subset(e, state)
+        if not subset:
+            continue
+
+        if in_union is None or not in_union.covers_precise(subset):
+            state.add_memlet_path(source,
+                                  map_entry,
+                                  e.dst,
+                                  memlet=Memlet(data=source.data,
+                                                subset=copy.deepcopy(subset)),
+                                  dst_conn=e.dst_conn)
+            state.remove_edge(e)
+            redirected_read = True
 
     if not redirected_read:
         if added_source:
@@ -1646,10 +1650,15 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
 
     # If all reads were removed, redirect connected writes to the outside as well.
     if state.out_degree(access) == 0:
-        exit_node = state.exit_node(map_entry)
-        outside_access = state.add_access(access.data)
-        redirected_write, _ = make_map_internal_write_external(sdfg, state, exit_node, access, outside_access)
-        if not redirected_write:
-            state.remove_node(outside_access)
+        if in_union:
+            exit_node = state.exit_node(map_entry)
+            outside_access = state.add_access(access.data)
+            redirected_write, _ = make_map_internal_write_external(sdfg, state, exit_node, access, outside_access)
+            if not redirected_write:
+                state.remove_node(outside_access)
+        else:
+            for ie in state.in_edges(access):
+                state.remove_edge(ie)
+            state.remove_node(access)
 
     return redirected_read, redirected_write

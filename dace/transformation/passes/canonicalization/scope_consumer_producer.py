@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 import networkx as nx
 from dace import properties
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import LoopRegion, SDFGState
@@ -128,7 +128,8 @@ class ScopeIntermediateAccessesCanonicalization(ppl.Pass):
                             if isinstance(node, nodes.AccessNode):
                                 iedges = state.in_edges(node)
                                 cover_subset = None
-                                if len(iedges) == 1 and iedges[0].data is not None and iedges[0].data.volume == 1:
+                                if (len(iedges) == 1 and iedges[0].data is not None and
+                                    iedges[0].data.data is not None and iedges[0].data.volume == 1):
                                     cover_subset = iedges[0].data.dst_subset or iedges[0].data.subset
                                 for iedge in iedges:
                                     if iedge.data.data is not None:
