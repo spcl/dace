@@ -215,3 +215,8 @@ def get_loop_stride(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:
     if update_assignment:
         return update_assignment - symbolic.pystr_to_symbolic(loop.loop_variable)
     return None
+
+
+def get_loop_range(loop: LoopRegion) -> Tuple[str, Tuple[symbolic.SymbolicType,
+                                                         symbolic.SymbolicType, symbolic.SymbolicType]]:
+    return loop.loop_variable, (get_init_assignment(loop), get_loop_end(loop), get_loop_stride(loop))

@@ -569,10 +569,13 @@ def _annotate_loop_ranges(cfg, unannotated_cycle_states):
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
+    from dace.transformation.passes.analysis import loop_analysis
     from dace.sdfg import utils as sdutils
+    from dace.sdfg.state import LoopRegion
 
     condition_edges = {}
 
+    # Handle traditional style for-loops.
     for cycle in cfg.find_cycles():
         # In each cycle, try to identify a valid loop guard state.
         guard = None
@@ -676,6 +679,12 @@ def _annotate_loop_ranges(cfg, unannotated_cycle_states):
             # There's no guard state, so this cycle marks all states in it as
             # dynamically unbounded.
             unannotated_cycle_states.append(cycle)
+
+    for ncfg in cfg.all_control_flow_regions():
+        if isinstance(ncfg, LoopRegion):
+            itvar, rng = loop_analysis.get_loop_range(ncfg)
+            for nblock in ncfg.all_control_flow_blocks():
+                nblock.ranges[itvar] = subsets.Range([rng])
 
     return condition_edges
 

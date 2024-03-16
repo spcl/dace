@@ -1656,9 +1656,9 @@ def make_map_internal_read_external(sdfg: SDFG, state: SDFGState, map_entry: nod
             redirected_write, _ = make_map_internal_write_external(sdfg, state, exit_node, access, outside_access)
             if not redirected_write:
                 state.remove_node(outside_access)
-        else:
-            for ie in state.in_edges(access):
-                state.remove_edge(ie)
-            state.remove_node(access)
+        #else:
+        #    for ie in state.in_edges(access):
+        #        state.remove_edge(ie)
+        #    state.remove_node(access)
 
     return redirected_read, redirected_write

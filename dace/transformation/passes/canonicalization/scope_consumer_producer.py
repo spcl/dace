@@ -75,11 +75,11 @@ class ScopeConsumerProducerCanonicalization(ppl.Pass):
                                                                                                         leaf.entry,
                                                                                                         node, source)
 
-                                if (state.out_degree(node) == 0 or
-                                    all([e.data.data is None for e in state.out_edges(node)])):
-                                    a_write_redir, _ = xfh.make_map_internal_write_external(state.sdfg, state,
-                                                                                            leaf.exit, node, sink)
-                                    write_redirected = write_redirected or a_write_redir
+                                #if (node in state.nodes() and (state.out_degree(node) == 0 or
+                                #    all([e.data.data is None for e in state.out_edges(node)]))):
+                                #    a_write_redir, _ = xfh.make_map_internal_write_external(state.sdfg, state,
+                                #                                                            leaf.exit, node, sink)
+                                #    write_redirected = write_redirected or a_write_redir
 
                                 if read_redirected:
                                     cfg_res[state][0].add(node.data)

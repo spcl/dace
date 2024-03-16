@@ -1000,6 +1000,12 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
             nsdfg: nodes.NestedSDFG) -> Tuple[Dict[str, Tuple[Memlet, Set[int]]], Dict[str, Tuple[Memlet, Set[int]]]]:
         in_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
         out_candidates: Dict[str, Tuple[Memlet, SDFGState, Set[int]]] = {}
+
+        for ns in nsdfg.sdfg.states():
+            ns.ranges = {}
+        from dace.sdfg.propagation import _annotate_loop_ranges
+        _annotate_loop_ranges(nsdfg.sdfg, [])
+
         ignore = set()
         for nstate in nsdfg.sdfg.states():
             for dnode in nstate.data_nodes():
@@ -1096,7 +1102,6 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     # TODO: Move out of here!
                     for ns in nsdfg.sdfg.states():
                         ns.ranges = {}
-                    from dace.sdfg.propagation import _annotate_loop_ranges
                     _annotate_loop_ranges(nsdfg.sdfg, [])
 
                     memlet = propagation.propagate_subset(
@@ -1170,13 +1175,13 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if aname in refined:
                     continue
                 # Refine internal memlets
-                for nstate in nsdfg.nodes():
+                for nstate in nsdfg.states():
                     for e in nstate.edges():
                         if e.data.data == aname:
                             e.data.subset.offset(refine.subset, True, indices)
                 # Refine accesses in interstate edges
                 refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
-                for isedge in nsdfg.edges():
+                for isedge in nsdfg.all_interstate_edges():
                     for k, v in isedge.data.assignments.items():
                         vast = ast.parse(v)
                         refiner.visit(vast)
