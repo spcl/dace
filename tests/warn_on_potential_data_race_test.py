@@ -35,13 +35,10 @@ def test_memlet_range_not_overlap_ranges():
         output_nodes={"B": B}
     )
 
-    N = 6
-    A = np.arange(N//2, dtype=np.int32)
-    B = np.zeros((N,), dtype=np.int32)
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         with dace.config.set_temporary("experimental.check_race_conditions", value=True):
-            sdfg(N=N, A=A, B=B)
+            sdfg.validate()
 
 
 def test_memlet_range_write_write_overlap_ranges():
@@ -73,12 +70,9 @@ def test_memlet_range_write_write_overlap_ranges():
         output_nodes={"B": B}
     )
 
-    N = 6
-    A = np.arange(N, dtype=np.int32)
-    B = np.zeros((N,), dtype=np.int32)
     with pytest.warns(UserWarning):
         with dace.config.set_temporary("experimental.check_race_conditions", value=True):
-            sdfg(N=N, A=A, B=B)
+            sdfg.validate()
 
 def test_memlet_range_write_read_overlap_ranges():
     sdfg = dace.SDFG('memlet_range_write_read_overlap_ranges')
@@ -112,14 +106,9 @@ def test_memlet_range_write_read_overlap_ranges():
         output_nodes={"A": A_write}
     )
 
-    N = 6
-    A = np.arange(N, dtype=np.int32)
-    B = np.zeros((N,), dtype=np.int32)
-    C = 20 * A
-
     with pytest.warns(UserWarning):
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
-            sdfg(N=N, A=A, B=B, C=C)
+            sdfg.validate()
 
 def test_memlet_overlap_ranges_two_access_nodes():
     sdfg = dace.SDFG('memlet_range_write_read_overlap_ranges')
@@ -153,14 +142,9 @@ def test_memlet_overlap_ranges_two_access_nodes():
         output_nodes={"B": B2}
     )
 
-    N = 6
-    A = np.arange(N, dtype=np.int32)
-    B = np.zeros((N,), dtype=np.int32)
-    C = 20 * A
-
     with pytest.warns(UserWarning):
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
-            sdfg(N=N, A=A, B=B, C=C)
+            sdfg.validate()
 
 def test_memlet_overlap_symbolic_ranges():
     sdfg = dace.SDFG('memlet_overlap_symbolic_ranges')
@@ -192,14 +176,9 @@ def test_memlet_overlap_symbolic_ranges():
         output_nodes={"B": B}
     )
 
-    N = 6
-    A = np.arange(2*N, dtype=np.int32)
-    B = np.zeros((2*N,), dtype=np.int32)
-    C = 20 * A
-
     with pytest.warns(UserWarning):
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
-            sdfg(N=N, A=A, B=B, C=C)
+            sdfg.validate()
 
 def test_constant_memlet_overlap():
     sdfg = dace.SDFG('constant_memlet_overlap')
@@ -230,12 +209,9 @@ def test_constant_memlet_overlap():
         output_nodes={"B": B}
     )
 
-    A = np.arange(12, dtype=np.int32)
-    B = np.zeros((12,), dtype=np.int32)
-
     with pytest.warns(UserWarning):
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
-            sdfg(A=A, B=B)
+            sdfg.validate()
 
 def test_constant_memlet_almost_overlap():
     sdfg = dace.SDFG('constant_memlet_almost_overlap')
@@ -266,13 +242,10 @@ def test_constant_memlet_almost_overlap():
         output_nodes={"B": B}
     )
 
-    A = np.arange(20, dtype=np.int32)
-    B = np.zeros((20,), dtype=np.int32)
-
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
-            sdfg(A=A, B=B)
+            sdfg.validate()
 
 
 if __name__ == '__main__':
