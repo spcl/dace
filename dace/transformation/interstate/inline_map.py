@@ -142,6 +142,9 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
                 return False
 
         nsdfg = self.nested_sdfg.sdfg
+        if len(nsdfg.states()) == 1:
+            return False
+
         start_state = nsdfg.start_state
         if len(start_state.nodes()) > 0:
             return False
@@ -170,111 +173,92 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         ############################################
         # Split nsdfg's first state
 
-        nsdfg = nsdfg_node.sdfg
+        nsdfg = nsdfg_node.sdfg        
         nsdfg_first_state = nsdfg.start_state
         nsdfg_second_state = nsdfg.out_edges(nsdfg_first_state)[0].dst
-        nsdfg_remaining_states = [state for state in nsdfg.states() if state != nsdfg_first_state]
-        new_state = nsdfg.add_state_before(nsdfg_second_state)
-        
-        new_nsdfg: SDFG = copy.deepcopy(nsdfg)
-        new_nsdfg_first_state = new_nsdfg.start_state
-        new_nsdfg_second_state = new_nsdfg.out_edges(new_nsdfg_first_state)[0].dst
-        new_nsdfg.remove_node(new_nsdfg_first_state)
-        new_nsdfg.start_state = new_nsdfg.node_id(new_nsdfg_second_state)
+        to_delete = [state for state in nsdfg.states() if state != nsdfg_first_state]
 
-        for rem_state in nsdfg_remaining_states:
+        # Create new nsdfg without initial first state
+        new_nsdfg: SDFG = dace.SDFG(nsdfg.label + "_inlined")
+        for sym, stype in nsdfg.symbols.items():
+            new_nsdfg.add_symbol(sym, stype)
+        for name, desc in nsdfg.arrays.items():
+            new_nsdfg.add_datadesc(name, copy.deepcopy(desc))
+
+        mapping = {}
+        for state in to_delete:
+            new_state = copy.deepcopy(state)
+            new_nsdfg.add_node(new_state, is_start_state=(state==nsdfg_second_state))
+            mapping[state] = new_state
+
+        for edge in nsdfg.edges():
+            if edge.src in to_delete and edge.dst in to_delete:
+                new_nsdfg.add_edge(mapping[edge.src], mapping[edge.dst], copy.deepcopy(edge.data))
+
+        new_nsdfg_state = nsdfg.add_state_before(nsdfg_second_state)
+        for rem_state in to_delete:
             nsdfg.remove_node(rem_state)
 
-        new_nsdfg_node = new_state.add_nested_sdfg(
+        new_map_entry = copy.deepcopy(map_entry)
+        new_nsdfg_state.add_node(new_map_entry)
+        new_map_exit = copy.deepcopy(map_exit)
+        new_nsdfg_state.add_node(new_map_exit)
+
+        new_nsdfg_node = new_nsdfg_state.add_nested_sdfg(
             sdfg=new_nsdfg,
             parent=nsdfg,
             inputs=copy.deepcopy(nsdfg_node.in_connectors),
             outputs=copy.deepcopy(nsdfg_node.out_connectors),
-            symbol_mapping=copy.deepcopy(nsdfg_node.symbol_mapping)
         )
-
-        new_map_entry = copy.deepcopy(map_entry)
-        new_state.add_node(new_map_entry)
-        new_map_exit = copy.deepcopy(map_exit)
-        new_state.add_node(new_map_exit)
 
         for iedge in outer_state.in_edges(map_entry):
             outer_state.add_edge(iedge.src, iedge.src_conn, nsdfg_node, iedge.src.data, Memlet.from_array(iedge.src.data, sdfg.arrays[iedge.src.data]))
 
-            inner_access_node = new_state.add_access(iedge.src.data)
-            new_state.add_edge(inner_access_node, iedge.src_conn, new_map_entry, iedge.dst_conn, copy.deepcopy(iedge.data))
+            inner_access_node = new_nsdfg_state.add_access(iedge.src.data)
+            new_nsdfg_state.add_edge(inner_access_node, iedge.src_conn, new_map_entry, iedge.dst_conn, copy.deepcopy(iedge.data))
 
         for oedge in outer_state.out_edges(map_entry):
-            new_state.add_edge(new_map_entry, oedge.src_conn, new_nsdfg_node, oedge.dst_conn, copy.deepcopy(oedge.data))
+            new_nsdfg_state.add_edge(new_map_entry, oedge.src_conn, new_nsdfg_node, oedge.dst_conn, copy.deepcopy(oedge.data))
 
         for oedge in outer_state.out_edges(map_exit):
             outer_state.add_edge(nsdfg_node, oedge.dst.data, oedge.dst, oedge.dst_conn, Memlet.from_array(oedge.dst.data, sdfg.arrays[oedge.dst.data]))
 
-            inner_access_node = new_state.add_access(oedge.dst.data)
-            new_state.add_edge(new_map_exit, oedge.src_conn, inner_access_node, oedge.dst_conn, copy.deepcopy(oedge.data))
+            inner_access_node = new_nsdfg_state.add_access(oedge.dst.data)
+            new_nsdfg_state.add_edge(new_map_exit, oedge.src_conn, inner_access_node, oedge.dst_conn, copy.deepcopy(oedge.data))
 
         for iedge in outer_state.in_edges(map_exit):
-            new_state.add_edge(new_nsdfg_node, iedge.src_conn, new_map_exit, iedge.dst_conn, copy.deepcopy(iedge.data))
+            new_nsdfg_state.add_edge(new_nsdfg_node, iedge.src_conn, new_map_exit, iedge.dst_conn, copy.deepcopy(iedge.data))
 
         ############################################
-        # Clean up
+
+        # Cache symbols defined in the current nested SDFG (before `new_nsdfg_state`)`
+        defined_symbols = set()
+        for iedge in nsdfg.in_edges(new_nsdfg_state):
+            defined_symbols |= set(iedge.data.assignments.keys())
+        
+        for sym in new_map_entry.map.params:
+            if sym not in new_nsdfg.symbols:
+                new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
+            new_nsdfg_node.symbol_mapping[sym] = sym
+
+        for sym in new_map_entry.free_symbols:
+            if sym not in nsdfg.symbols:
+                nsdfg.add_symbol(sym, sdfg.symbols[sym])
+            nsdfg_node.symbol_mapping[sym] = sym
+        
+            if sym not in new_nsdfg.symbols:
+                new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
+            new_nsdfg_node.symbol_mapping[sym] = sym
+
+        for sym in defined_symbols:
+            if sym not in new_nsdfg.symbols:
+                new_nsdfg.add_symbol(sym, nsdfg.symbols[sym])
+            new_nsdfg_node.symbol_mapping[sym] = sym
 
         outer_state.remove_node(map_entry)
         outer_state.remove_node(map_exit)
 
-        for sym in map_entry.map.params:
-            nsdfg.remove_symbol(sym)
-        
-        # Cache symbols defined in the current nested SDFG (before `new_state`)`
-        defined_symbols = set()
-        for iedge in nsdfg.in_edges(new_state):
-            defined_symbols |= set(iedge.data.assignments.keys())
-
-        for sym in map_entry.free_symbols:
-            # If the symbol is not defined in current nested SDFG, it has to be added to it.
-            if sym not in defined_symbols and sym not in nsdfg_node.symbol_mapping:
-                if sym not in nsdfg.symbols:
-                    nsdfg.add_symbol(sym, sdfg.symbols[sym])
-                nsdfg_node.symbol_mapping[sym] = sym
-            if sym not in new_nsdfg_node.symbol_mapping:
-                if sym not in new_nsdfg.symbols:
-                    new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
-                new_nsdfg_node.symbol_mapping[sym] = sym
-        
-        for sym in defined_symbols:
-            if sym not in new_nsdfg_node.symbol_mapping:
-                if sym not in new_nsdfg.symbols:
-                    new_nsdfg.add_symbol(sym, nsdfg.symbols[sym])
-                new_nsdfg_node.symbol_mapping[sym] = sym
-            # If the symbol is defined in the currned nested SDFG, drop it from its symbols and symbol_mapping.
-            if sym in nsdfg_node.symbol_mapping:
-                del nsdfg_node.symbol_mapping[sym]
-                del nsdfg.symbols[sym]
-
-        # NOTE: The following lines "fix" prexisting issues with symbols and symbol mappings.
-        # TODO: Investigate why these issues are present in the first place.
-        # Fix missing symbols in the new nested SDFG.
-        for sym in new_nsdfg.free_symbols:
-            if sym not in new_nsdfg_node.symbol_mapping:
-                if sym not in new_nsdfg.symbols:
-                    new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
-                new_nsdfg_node.symbol_mapping[sym] = sym
-                # If the symbol is missing from the new nested SDFG,
-                # then it should be missing from the current nested SDFG.
-                if sym not in nsdfg_node.symbol_mapping:
-                    if sym not in nsdfg.symbols:
-                        nsdfg.add_symbol(sym, sdfg.symbols[sym])
-                    nsdfg_node.symbol_mapping[sym] = sym
-        # Fix missing symbols in the current nested SDFG.
-        for sym in nsdfg.free_symbols:
-            if sym not in nsdfg_node.symbol_mapping:
-                if sym not in nsdfg.symbols:
-                    nsdfg.add_symbol(sym, sdfg.symbols[sym])
-                nsdfg_node.symbol_mapping[sym] = sym
-
-        sdfg.reset_cfg_list()
-
-        sdutil.fuse_states(new_nsdfg)
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
 @make_properties
 class InlineMapByConditions(transformation.SingleStateTransformation):
@@ -407,7 +391,7 @@ class InlineMapByConditions(transformation.SingleStateTransformation):
         state.remove_node(nsdfg_node)
         state.remove_node(map_exit)
 
-        sdfg.reset_cfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
 
 
 @make_properties
@@ -583,4 +567,4 @@ class InlineMapSingleState(transformation.SingleStateTransformation):
                     nsdfg.add_symbol(sym, sdfg.symbols[sym])
                 nsdfg_node.symbol_mapping[sym] = sym
 
-        sdfg.reset_cfg_list()
+        sdfg._cfg_list = sdfg.reset_cfg_list()
