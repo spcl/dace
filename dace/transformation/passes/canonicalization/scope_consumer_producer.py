@@ -53,20 +53,34 @@ class ScopeConsumerProducerCanonicalization(ppl.Pass):
                 for leaf in state.scope_leaves():
                     if leaf.entry is not None:
                         in_nodes: Dict[str, nodes.AccessNode] = dict()
+                        out_nodes: Dict[str, nodes.AccessNode] = dict()
                         for ie in state.in_edges(leaf.entry):
                             if isinstance(ie.src, nodes.AccessNode):
                                 in_nodes[ie.src.data] = ie.src
+                        for ie in state.out_edges(leaf.exit):
+                            if isinstance(ie.dst, nodes.AccessNode):
+                                out_nodes[ie.dst.data] = ie.dst
 
                         scope_nodes = scopes[leaf.entry]
                         for node in scope_nodes:
                             if isinstance(node, nodes.AccessNode):
                                 source = None
+                                sink = None
                                 if node.data in in_nodes:
                                     source = in_nodes[node.data]
+                                if node.data in out_nodes:
+                                    sink = out_nodes[node.data]
                                 read_redirected, write_redirected = xfh.make_map_internal_read_external(state.sdfg,
                                                                                                         state,
                                                                                                         leaf.entry,
                                                                                                         node, source)
+
+                                if (state.out_degree(node) == 0 or
+                                    all([e.data.data is None for e in state.out_edges(node)])):
+                                    a_write_redir, _ = xfh.make_map_internal_write_external(state.sdfg, state,
+                                                                                            leaf.exit, node, sink)
+                                    write_redirected = write_redirected or a_write_redir
+
                                 if read_redirected:
                                     cfg_res[state][0].add(node.data)
                                     did_something = True
