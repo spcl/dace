@@ -247,6 +247,28 @@ def test_constant_memlet_almost_overlap():
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
             sdfg.validate()
 
+def test_elementwise_map():
+    sdfg = dace.SDFG('elementwise_map')
+    state = sdfg.add_state()
+    sdfg.add_array("A", (20,), dace.int32)
+    A_read = state.add_read("A")
+    A_write = state.add_write("A")
+
+    state.add_mapped_tasklet(
+        name="first_tasklet",
+        code="aa = a + 10",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"aa": dace.Memlet(data="A", subset="k")},
+        map_ranges={"k": "0:20"},
+        external_edges=True,
+        input_nodes={"A": A_read},
+        output_nodes={"A": A_write}
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
+            sdfg.validate()
 
 if __name__ == '__main__':
     test_memlet_range_not_overlap_ranges()
@@ -256,3 +278,4 @@ if __name__ == '__main__':
     test_memlet_overlap_symbolic_ranges()
     test_constant_memlet_overlap()
     test_constant_memlet_almost_overlap()
+    test_elementwise_map()
