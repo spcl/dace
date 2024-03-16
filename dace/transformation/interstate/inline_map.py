@@ -168,15 +168,18 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         map_exit = state.exit_node(self.map_entry)
         nsdfg_node = self.nested_sdfg
+        nsdfg = nsdfg_node.sdfg
         outer_state = state
+
+        # Cache innerly defined symbols
+        nested_defined_symbols = set(nsdfg.symbols) - set(nsdfg_node.symbol_mapping)
 
         ############################################
         # Split nsdfg's first state
 
-        nsdfg = nsdfg_node.sdfg        
         nsdfg_first_state = nsdfg.start_state
         nsdfg_second_state = nsdfg.out_edges(nsdfg_first_state)[0].dst
-        to_delete = [state for state in nsdfg.states() if state != nsdfg_first_state]
+        to_delete = [s for s in nsdfg.states() if s != nsdfg_first_state]
 
         # Create new nsdfg without initial first state
         new_nsdfg: SDFG = dace.SDFG(nsdfg.label + "_inlined")
@@ -186,10 +189,13 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
             new_nsdfg.add_datadesc(name, copy.deepcopy(desc))
 
         mapping = {}
-        for state in to_delete:
-            new_state = copy.deepcopy(state)
-            new_nsdfg.add_node(new_state, is_start_state=(state==nsdfg_second_state))
-            mapping[state] = new_state
+        for s in to_delete:
+            new_state = copy.deepcopy(s)
+            for node in new_state.nodes():
+                if isinstance(node, nodes.NestedSDFG):
+                    node.sdfg.parent_sdfg = new_nsdfg
+            new_nsdfg.add_node(new_state, is_start_state=(s==nsdfg_second_state))
+            mapping[s] = new_state
 
         for edge in nsdfg.edges():
             if edge.src in to_delete and edge.dst in to_delete:
@@ -212,6 +218,10 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         )
 
         for iedge in outer_state.in_edges(map_entry):
+            if iedge.src.data not in nsdfg_node.in_connectors:
+                nsdfg_node.add_in_connector(iedge.src.data)
+                nsdfg.add_datadesc(iedge.src.data, copy.deepcopy(sdfg.arrays[iedge.src.data]))
+
             outer_state.add_edge(iedge.src, iedge.src_conn, nsdfg_node, iedge.src.data, Memlet.from_array(iedge.src.data, sdfg.arrays[iedge.src.data]))
 
             inner_access_node = new_nsdfg_state.add_access(iedge.src.data)
@@ -235,11 +245,15 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         defined_symbols = set()
         for iedge in nsdfg.in_edges(new_nsdfg_state):
             defined_symbols |= set(iedge.data.assignments.keys())
-        
+
+        for sym in (nested_defined_symbols - defined_symbols):
+            nsdfg.remove_symbol(sym)
+
         for sym in new_map_entry.map.params:
             if sym not in new_nsdfg.symbols:
                 new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
-            new_nsdfg_node.symbol_mapping[sym] = sym
+            if sym in nsdfg.symbols:
+                nsdfg.remove_symbol(sym)
 
         for sym in new_map_entry.free_symbols:
             if sym not in nsdfg.symbols:
@@ -248,11 +262,6 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
         
             if sym not in new_nsdfg.symbols:
                 new_nsdfg.add_symbol(sym, sdfg.symbols[sym])
-            new_nsdfg_node.symbol_mapping[sym] = sym
-
-        for sym in defined_symbols:
-            if sym not in new_nsdfg.symbols:
-                new_nsdfg.add_symbol(sym, nsdfg.symbols[sym])
             new_nsdfg_node.symbol_mapping[sym] = sym
 
         outer_state.remove_node(map_entry)
