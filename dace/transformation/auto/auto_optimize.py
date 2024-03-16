@@ -14,6 +14,9 @@ from typing import Set, Tuple, Union, List, Any, Dict
 # Transformations
 from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopRegionElimination
+from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.optimization.loop_parallelization import ParallelizeDoacrossLoops
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
@@ -569,7 +572,8 @@ def auto_optimize(sdfg: SDFG,
 
     # Simplification and loop parallelization
     transformed = True
-    sdfg.apply_transformations_repeated((TrivialMapElimination, TrivialLoopRegionElimination), validate=validate, validate_all=validate_all)
+    sdfg.apply_transformations_repeated((TrivialMapElimination, TrivialLoopRegionElimination),
+                                        validate=False, validate_all=validate_all)
     while transformed:
         sdfg.simplify(validate=False, validate_all=validate_all)
         for s in sdfg.cfg_list:
@@ -602,7 +606,12 @@ def auto_optimize(sdfg: SDFG,
     # Move Loops inside Maps when possible
     if move_loop_into_maps:
         from dace.transformation.interstate import MoveLoopIntoMap
-        sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+        # Canonicalize the SDFG.
+        sdfg.canonicalize(validate=False, validate_all=validate_all)
+        sdfg.reset_cfg_list()
+        sdfg.simplify(validate=False, validate_all=validate_all)
+        sdfg.reset_cfg_list()
+        sdfg.apply_transformations_repeated([MoveLoopIntoMap], validate=False, validate_all=validate_all)
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
@@ -665,6 +674,63 @@ def auto_optimize(sdfg: SDFG,
         sdfg.specialize(known_symbols)
 
     # Validate at the end
+    if validate or validate_all:
+        sdfg.validate()
+
+    return sdfg
+
+
+def auto_parallelize(sdfg: SDFG,
+                     device: dtypes.DeviceType,
+                     validate: bool = True,
+                     validate_all: bool = False,
+                     symbols: Dict[str, int] = None,
+                     use_gpu_storage: bool = False,
+                     use_doacross_parallelism: bool = False,
+                     force_collapse_parallelism: bool = False) -> SDFG:
+    # To start with, make sure the SDFG is simplified.
+    sdfg.simplify()
+    sdfg.reset_cfg_list()
+    if validate and validate_all:
+        sdfg.validate()
+
+    # Do regular auto-optimization.
+    auto_optimize(sdfg, device, validate=validate, validate_all=validate_all, symbols=symbols,
+                  use_gpu_storage=use_gpu_storage, move_loop_into_maps=True)
+    sdfg.simplify()
+    sdfg.reset_cfg_list()
+
+    # Canonicalize the SDFG.
+    sdfg.canonicalize(validate=False, validate_all=validate_all)
+    sdfg.reset_cfg_list()
+    if validate_all:
+        sdfg.validate()
+
+    # Try to parallelize loops that are still sequential. Analyze the data dependencies of loops and check if they can
+    # be parallelized. If `use_doacross_parallelism` is set, also try to parallelize loops with sequential data
+    # dependencies, if they allow for it.
+    parallelization_pass = ParallelizeDoacrossLoops()
+    parallelization_pass.use_doacross = use_doacross_parallelism
+    pipeline = Pipeline([parallelization_pass])
+    res = {}
+    pipeline.apply_pass(sdfg, res)
+    sdfg.reset_cfg_list()
+    if validate and validate_all:
+        sdfg.validate()
+
+    # Collapse parallelism if enabled to force, otherwise try to be smart about it and only collapse where the contents
+    # of the map seem to be easily vectorizable by the compiler.
+    sdfg.apply_transformations_repeated([MapCollapse])
+    sdfg.reset_cfg_list()
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                    if force_collapse_parallelism:
+                        node.map.collapse = len(node.map.params)
+                    else:
+                        pass
+
     if validate or validate_all:
         sdfg.validate()
 

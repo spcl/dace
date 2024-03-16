@@ -14,6 +14,7 @@ from dace.transformation import pass_pipeline as ppl, helpers as xfh
 from dace.transformation.passes.analysis import loop_analysis
 
 
+#TODO: rename to just parallelize loops
 @properties.make_properties
 class ParallelizeDoacrossLoops(ppl.Pass):
     """

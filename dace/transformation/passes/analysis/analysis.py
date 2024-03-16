@@ -241,6 +241,74 @@ class AccessSets(ppl.Pass):
 
 
 @properties.make_properties
+class NonCoveredReads(ppl.Pass):
+    """
+    Evaluates memory reads that are not self-covering, meaning they are not guaranteed to have been preceeded by a
+    write that covers every part of the read.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes & ppl.Modifies.InterstateEdges
+
+    def apply_pass(self, top_sdfg: SDFG, _) -> Dict[int, Dict[SDFGState, Set[str]]]:
+        """
+        :return: A dictionary mapping each state to a set of not covered read data descriptors.
+        """
+        top_result: Dict[int, Dict[SDFGState, Set[str]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            anames = sdfg.arrays.keys()
+            result: Dict[SDFGState, Set[str]] = {}
+            for cfg in sdfg.all_control_flow_regions():
+                for state in cfg.nodes():
+                    if not isinstance(state, SDFGState):
+                        continue
+
+                    result[state] = set()
+                    for anode in state.data_nodes():
+                        write_subset = None
+                        for ie in state.in_edges(anode):
+                            if ie.data.data == anode.data and ie.data.subset.num_elements_exact() == 1:
+                                if write_subset:
+                                    write_subset = None
+                                    break
+                                write_subset = ie.data.subset
+
+                        all_covered = True
+                        if not write_subset:
+                            all_covered = False
+                        else:
+                            for oe in state.out_edges(anode):
+                                if (oe.data is not None and oe.data.data == anode.data and
+                                    not write_subset.covers_precise(oe.data.src_subset)):
+                                    all_covered = False
+                                    break
+                                elif oe.data.data != anode.data:
+                                    # This indicates a copy to a different data container - meaning we cannot
+                                    # safely eliminate this container no matter what.
+                                    all_covered = False
+                                    break
+
+                        if state.out_degree(anode) > 0 and not all_covered:
+                            result[state].add(anode.data)
+
+                # Edges that read from arrays add to both ends' access sets
+                for e in cfg.edges():
+                    fsyms = e.data.free_symbols & anames
+                    if fsyms:
+                        result[e.src].update(fsyms)
+                        result[e.dst].update(fsyms)
+
+            top_result[sdfg.cfg_id] = result
+        return top_result
+
+
+@properties.make_properties
 class FindAccessStates(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.

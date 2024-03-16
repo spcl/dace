@@ -43,7 +43,7 @@ class DeadDataflowElimination(ppl.Pass):
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
 
     def depends_on(self) -> Set[Type[ppl.Pass]]:
-        return {ap.StateReachability, ap.AccessSets}
+        return {ap.StateReachability, ap.AccessSets, ap.NonCoveredReads}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
@@ -60,6 +60,7 @@ class DeadDataflowElimination(ppl.Pass):
         #  * Read/write access sets per state
         reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.cfg_id]
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.cfg_id]
+        non_covered_reads: Dict[SDFGState, Set[str]] = pipeline_results[ap.NonCoveredReads.__name__][sdfg.cfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse SDFG backwards
@@ -75,7 +76,7 @@ class DeadDataflowElimination(ppl.Pass):
             # Compute states where memory will no longer be read
             writes = access_sets[state][1]
             descendants = reachable[state]
-            descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+            descendant_reads = set().union(*(non_covered_reads[succ] for succ in descendants))
             no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
             # Compute dead nodes

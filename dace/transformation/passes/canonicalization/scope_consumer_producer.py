@@ -9,7 +9,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 from dace.subsets import Subset
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import helpers as xfh
@@ -142,6 +142,12 @@ class ScopeIntermediateAccessesCanonicalization(ppl.Pass):
                                         if (oedge.data is not None and oedge.data.data == node.data and
                                             not cover_subset.covers_precise(oedge.data.src_subset)):
                                             all_covered = False
+                                            break
+                                        elif oedge.data.data != node.data:
+                                            # This indicates a copy to a different data container - meaning we cannot
+                                            # safely eliminate this container no matter what.
+                                            all_covered = False
+                                            break
                                 if all_covered:
                                     elimination_candidates.append([node, cover_subset])
 
