@@ -166,20 +166,31 @@ def test_fortran_frontend_type3_array():
         SUBROUTINE type3_array_test_function(d,p_prog)
             REAL :: d(5,5)
             TYPE(simple_type2) :: p_prog
+            integer :: istep
+            istep=1
 
-            CALL type2_array_test_f2(d,p_prog%pprog, p_prog%diag, p_prog%metrics)
-            
+            DO istep=1,2
+             if (istep==1) then
+                CALL type2_array_test_f2(d,p_prog%pprog, p_prog%diag, p_prog%metrics,istep)
+             else
+                CALL type2_array_test_f2(d,p_prog%pprog, p_prog%diag, p_prog%metrics,istep)
+             endif
+            ENDDO
+             
         END SUBROUTINE type3_array_test_function
 
-        SUBROUTINE type2_array_test_f2(d,stuff,diag,metrics)
+        SUBROUTINE type2_array_test_f2(d,stuff,diag,metrics,istep)
             TYPE(simple_type) :: stuff
             TYPE(bla_type) :: diag
             TYPE(metrics_type) :: metrics
+            INTEGER :: istep
             REAL :: d(5,5)
             diag%a=1
             metrics%b=2
             d(1,1)=stuff%w(1,1)+diag%a+metrics%b
+            if (istep==1) then
             CALL deepest(stuff,d)
+            endif
             
         END SUBROUTINE type2_array_test_f2
 
@@ -208,4 +219,4 @@ def test_fortran_frontend_type3_array():
 
 if __name__ == "__main__":
   
-   test_fortran_frontend_type_array()
+   test_fortran_frontend_type3_array()

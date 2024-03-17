@@ -840,8 +840,8 @@ class AST_translator:
 
         # This handles the case where the function is called with variables starting with the case that the variable is local to the calling SDFG
         needs_replacement={}
-        substate_reads = []
-        substate_writes = []
+        substate_sources = []
+        substate_destinations = []
         for variable_in_call in variables_in_call:
             all_arrays = self.get_arrays_in_context(sdfg)
             
@@ -942,84 +942,70 @@ class AST_translator:
                                 wv=None
                                 wr=None
                                 rv=None
+                                if current_parent_structure_name==top_structure_name:
+                                    top_level=True
+                                else:
+                                    top_level=False
                                 if local_name.name in read_names:
                                     
-                                    for i in substate_writes:
+                                    for i in substate_sources:
                                         if i.data==current_parent_structure_name:
                                             re=i
                                             already_there_1=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==current_parent_structure_name and len(substate.out_edges(i))==0:
-                                    #         re=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_1:
                                         re=substate.add_read(current_parent_structure_name)    
                                         
-                                    for i in substate_reads:
+                                    for i in substate_destinations:
                                         if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
                                             wv=i
                                             already_there_2=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.out_edges(i))==0:
-                                    #         wv=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_2:
                                         wv = substate.add_write(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
-                                    
-                                    
+                                                                        
                                     mem=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
                                     substate.add_edge(re,None,wv,"views",dpcp(mem))
 
                                 if local_name.name in write_names:
                                     
-                                    for i in substate_reads:
+                                    for i in substate_destinations:
                                         if i.data==current_parent_structure_name:
                                             wr=i
                                             already_there_3=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==current_parent_structure_name  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                    #         already_there=True
-                                    #         wr=i
-                                    #         break
                                     if not already_there_3:
                                         wr=substate.add_write(current_parent_structure_name)
-                                        
                                     
-                                    
-                                    for i in substate_writes:
+                                    for i in substate_sources:
                                         if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
                                             rv=i
                                             already_there_4=True
                                             break
-                                    
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                    #         rv=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_4:    
                                         rv = substate.add_read(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
-                                        substate_reads.append(rv)
+                                        
                                     mem2=Memlet.simple(current_parent_structure_name + "." + current_member_name, subset)
                                     substate.add_edge(rv,"views",wr,None,dpcp(mem2))
     
                                 if not already_there_1:
                                     if re is not None:
-                                        substate_reads.append(re)
+                                        if not top_level:
+                                            substate_sources.append(re)
+                                        else:
+                                            substate_destinations.append(re)
                                 if not already_there_2:
                                     if wv is not None:
-                                        substate_writes.append(wv)
+                                        substate_destinations.append(wv)
                                 if not already_there_3:
                                     if wr is not None:
-                                        substate_writes.append(wr)
+                                        if not top_level:
+                                            substate_destinations.append(wr)
+                                        else:
+                                            substate_sources.append(wr)
                                 if not already_there_4:
                                     if rv is not None:
-                                        substate_writes.append(rv)    
+                                        substate_sources.append(rv)     
                                 
                                 current_parent_structure_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
                                 current_parent_structure=current_parent_structure.members[current_member_name]
@@ -1061,8 +1047,12 @@ class AST_translator:
                                 already_there_2=False
                                 already_there_3=False
                                 already_there_4=False
+                                if current_parent_structure_name==top_structure_name:
+                                    top_level=True
+                                else:
+                                    top_level=False
                                 if local_name.name in read_names:
-                                    for i in substate_writes:
+                                    for i in substate_destinations:
                                         if i.data==last_view_name:
                                             re=i
                                             already_there_1=True
@@ -1075,7 +1065,7 @@ class AST_translator:
                                     if not already_there_1:
                                         re=substate.add_read(last_view_name)
                                     
-                                    for i in substate_reads:
+                                    for i in substate_sources:
                                         if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count):
                                             wv=i
                                             already_there_2=True
@@ -1094,7 +1084,7 @@ class AST_translator:
                                     last_view_name_read=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
                                 last_view_name_write=None
                                 if local_name.name in write_names:
-                                    for i in substate_reads:
+                                    for i in substate_sources:
                                         if i.data==last_view_name:
                                             wr=i
                                             already_there_3=True
@@ -1106,7 +1096,7 @@ class AST_translator:
                                     #         break
                                     if not already_there_3:
                                         wr=substate.add_write(last_view_name)
-                                    for i in substate_writes:
+                                    for i in substate_destinations:
                                         if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count):
                                             rv=i
                                             already_there_4=True
@@ -1126,16 +1116,22 @@ class AST_translator:
                                     last_view_name_write=concatenated_name+"_"+array_name+"_"+str(self.struct_view_count)
                                 if not already_there_1:
                                     if re is not None:
-                                        substate_reads.append(re)
+                                        if not top_level:
+                                            substate_sources.append(re)
+                                        else:
+                                            substate_destinations.append(re)
                                 if not already_there_2:
                                     if wv is not None:
-                                        substate_writes.append(wv)
+                                        substate_destinations.append(wv)
                                 if not already_there_3:
                                     if wr is not None:
-                                        substate_writes.append(wr)
+                                        if not top_level:
+                                            substate_destinations.append(wr)
+                                        else:
+                                            substate_sources.append(wr)
                                 if not already_there_4:
                                     if rv is not None:
-                                        substate_writes.append(rv)   
+                                        substate_sources.append(rv)   
                                 mapped_name_overwrite=concatenated_name+"_"+array_name
                                 self.views = self.views + 1
                                 views.append([mapped_name_overwrite, wv, rv, variables_in_call.index(variable_in_call)])
@@ -1208,8 +1204,12 @@ class AST_translator:
                                     wv=None
                                     wr=None
                                     rv=None      
+                                    if current_parent_structure_name==top_structure_name:
+                                        top_level=True
+                                    else:
+                                        top_level=False
                                     if local_name.name in read_names:
-                                        for i in substate_writes:
+                                        for i in substate_destinations:
                                             if i.data==last_view_name:
                                                 re=i
                                                 already_there_1=True
@@ -1222,7 +1222,7 @@ class AST_translator:
                                         if not already_there_1:
                                             re=substate.add_read(last_view_name)  
                                         
-                                        for i in substate_reads:
+                                        for i in substate_sources:
                                             if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
                                                 wv=i
                                                 already_there_2=True
@@ -1243,7 +1243,7 @@ class AST_translator:
                                         substate.add_edge(re,None,wv,"views",dpcp(mem))
 
                                     if local_name.name in write_names:
-                                        for i in substate_reads:
+                                        for i in substate_sources:
                                             if i.data==last_view_name:
                                                 wr=i
                                                 already_there_3=True
@@ -1256,7 +1256,7 @@ class AST_translator:
                                         if not already_there_3:
                                             wr=substate.add_write(last_view_name)
                                         
-                                        for i in substate_writes:
+                                        for i in substate_destinations:
                                             if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count):
                                                 rv=i
                                                 already_there_4=True
@@ -1278,16 +1278,22 @@ class AST_translator:
                                         substate.add_edge(rv,"views",wr,None,dpcp(mem2))
                                     if not already_there_1:
                                         if re is not None:
-                                            substate_reads.append(re)
+                                            if not top_level:
+                                                substate_sources.append(re)
+                                            else:
+                                                substate_destinations.append(re)
                                     if not already_there_2:
                                         if wv is not None:
-                                            substate_writes.append(wv)
+                                            substate_destinations.append(wv)
                                     if not already_there_3:
                                         if wr is not None:
-                                            substate_writes.append(wr)
+                                            if not top_level:
+                                                substate_destinations.append(wr)
+                                            else:
+                                                substate_sources.append(wr)
                                     if not already_there_4:
                                         if rv is not None:
-                                            substate_writes.append(rv)         
+                                            substate_sources.append(rv)         
                                     last_view_name=concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)
                                     if not isinstance(current_member,dat.ContainerArray):
                                         mapped_name_overwrite=concatenated_name+"_"+current_member_name   
@@ -1443,7 +1449,7 @@ class AST_translator:
                                     # rv = None
                                     # if local_name.name in read_names:
                                     #     found = False
-                                    #     for i in substate_reads:
+                                    #     for i in substate_sources:
                                     #         if i.data==last_view_name :
                                     #             re=i
                                     #             found=True
@@ -1455,13 +1461,13 @@ class AST_translator:
                                     #     #         break    
                                     #     if not found:
                                     #         re = substate.add_read(last_view_name)
-                                    #         substate_reads.append(re)
+                                    #         substate_sources.append(re)
                                     #     rv = substate.add_read(viewname)
                                     #     substate.add_edge(rv, 'views', re,None , dpcp(memlet))
                                     # if local_name.name in write_names:
                                     #     wv = substate.add_write(viewname)
                                     #     found = False
-                                    #     for i in substate_writes:
+                                    #     for i in substate_destinations:
                                     #         if i.data==last_view_name:
                                     #             wr=i
                                     #             found=True
@@ -1473,7 +1479,7 @@ class AST_translator:
                                     #     #         break    
                                     #     if not found:
                                     #         wr = substate.add_write(last_view_name)
-                                    #         substate_writes.append(wr)
+                                    #         substate_destinations.append(wr)
                                     #     substate.add_edge(wr,None , wv, 'views', dpcp(memlet2))
 
                                     # self.views = self.views + 1
@@ -3368,10 +3374,10 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            if j.name.name!="solve_nh":
-            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+            #if j.name.name!="solve_nh":
+            if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
-            if j.name.name!="velocity_tendencies":
+            #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue

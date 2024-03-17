@@ -572,21 +572,23 @@ def test_fortran_frontend_type_arg2():
         SUBROUTINE type_arg2_test_function(d)
             REAL :: d(5,5)
             TYPE(simple_type2) :: p_prog
-
-            CALL deepest(p_prog%pprog(1)%w)
-            d(1,1) = p_prog%pprog(1)%w(1,1)
+            p_prog%pprog(1)%w(1,1) = 5.5
+            CALL deepest(p_prog%pprog(1)%w,d)
+            
         END SUBROUTINE type_arg2_test_function
 
-        SUBROUTINE deepest(my_arr)
+        SUBROUTINE deepest(my_arr,d)
             REAL :: my_arr(:,:)
+            REAL :: d(5,5)
 
-            my_arr(1,1) = 42
+            d(1,1) = my_arr(1,1)
         END SUBROUTINE deepest
 
     """
     sources={}
     sources["type_arg2_test"]=test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type_arg2_test",sources=sources, normalize_offsets=True)
+    sdfg.save("before.sdfg")
     sdfg.simplify(verbose=True)
     a = np.full([5, 5], 42, order="F", dtype=np.float32)
     sdfg(d=a)
@@ -649,6 +651,6 @@ if __name__ == "__main__":
     #test_fortran_frontend_type_array()
     #test_fortran_frontend_type_array2()
     #test_fortran_frontend_type_pointer()
-    test_fortran_frontend_type_arg()
+    #test_fortran_frontend_type_arg()
     #test_fortran_frontend_type_view()
-   # test_fortran_frontend_type_arg2()
+    test_fortran_frontend_type_arg2()
