@@ -1219,7 +1219,6 @@ class IndexExtractor(NodeTransformer):
                                 # it can be a symbol - Name_Node - or a value
                                 if not isinstance(offset, ast_internal_classes.Name_Node):
                                     offset = ast_internal_classes.Int_Literal_Node(value=str(offset))
-
                                 newbody.append(
                                     ast_internal_classes.BinOp_Node(
                                         op="=",
@@ -2270,7 +2269,8 @@ class PointerRemoval(NodeTransformer):
             node.name = cur_ref_node.part_ref
             newer_ref_node.part_ref = node
             return new_ref_node
-        return node
+        else:
+            return self.generic_visit(node)
 
     def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
 
@@ -2292,3 +2292,55 @@ class PointerRemoval(NodeTransformer):
                 newbody.append(self.visit(child))
 
         return ast_internal_classes.Execution_Part_Node(execution=newbody)
+
+    def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
+
+        execution_part = self.visit(node.execution_part)
+        specification_part = self.visit(node.specification_part)
+
+        return ast_internal_classes.Subroutine_Subprogram_Node(
+            name=node.name,
+            args=node.args,
+            specification_part=specification_part,
+            execution_part=execution_part,
+            line_number=node.line_number
+        )
+
+    def visit_Specification_Part_Node(self, node: ast_internal_classes.Specification_Part_Node):
+
+        newspec = []
+
+        symbols_to_remove = set()
+
+        for i in node.specifications:
+
+            if not isinstance(i, ast_internal_classes.Decl_Stmt_Node):
+                newspec.append(self.visit(i))
+            else:
+
+                newdecls = []
+                for var_decl in i.vardecl:
+
+                    if var_decl.name in self.nodes:
+
+                        for symbol in var_decl.sizes:
+                            symbols_to_remove.add(symbol.name)
+                        for symbol in var_decl.offsets:
+                            symbols_to_remove.add(symbol.name)
+
+                    else:
+                        newdecls.append(var_decl)
+                if len(newdecls) > 0:
+                    newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
+
+        new_symbols = []
+        for symbol in node.symbols:
+            if symbol.name not in symbols_to_remove:
+                new_symbols.append(symbol)
+
+        return ast_internal_classes.Specification_Part_Node(
+            specifications=newspec,
+            symbols=new_symbols,
+            typedecls=node.typedecls,
+            uses=node.uses
+        )
