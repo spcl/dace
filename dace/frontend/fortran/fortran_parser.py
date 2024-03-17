@@ -3274,6 +3274,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
     program = ast_transforms.ForDeclarer().visit(program)
+    program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
     structs_lister=ast_transforms.StructLister()
     structs_lister.visit(program)
@@ -3344,7 +3345,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 struct_dep_graph.add_node(j)
             struct_dep_graph.add_edge(name,j,pointing=pointing,point_name=point_name)
 
-    program = ast_transforms.PointerRemoval().visit(program)
     program.structures = ast_transforms.Structures(structs_lister.structs)
     program.tables=partial_ast.symbols
     program.placeholders=partial_ast.placeholders
@@ -3371,7 +3371,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             if j.name.name!="solve_nh":
             #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
-            #if j.name.name!="velocity_tendencies":
+            if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
                 continue
@@ -3402,6 +3402,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                                 print("Removed from symbol mapping ",i)
                                 sd.parent_nsdfg_node.symbol_mapping.pop(i)
             sdfg.apply_transformations(IntrinsicSDFGTransformation)    
+
             # for sd in sdfg.all_sdfgs_recursive():
             #     free_symbols = sd.free_symbols
             #     for i in free_symbols:
