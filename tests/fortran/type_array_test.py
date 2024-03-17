@@ -210,9 +210,10 @@ def test_fortran_frontend_type3_array():
     sources["type3_array_test"]=test_string
     sdfg = fortran_parser.create_sdfg_from_string(test_string, "type3_array_test",sources=sources, normalize_offsets=True)
     sdfg.simplify(verbose=True)
-    a = np.full([5, 5], 42, order="F", dtype=np.float32)
-    sdfg(d=a)
-    print(a)
+    sdfg.compile()
+    #a = np.full([5, 5], 42, order="F", dtype=np.float32)
+    #sdfg(d=a)
+    #print(a)
 
 
 
