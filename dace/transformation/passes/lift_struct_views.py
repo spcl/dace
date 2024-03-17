@@ -139,7 +139,7 @@ class RecodeAttributeNodes(ast.NodeTransformer):
                                 Memlet.from_array(attr_view_name, attr_view))
             # TODO: determine the actual subset from the tasklet accesses.
             attr_memlet = Memlet.from_array(slice_view_name + '.' + node.attr, struct.members[node.attr])
-            self.state.add_edge(attr_view_node, 'views', slice_view_node, 'views', attr_memlet)
+            self.state.add_edge(attr_view_node, 'views', slice_view_node, None, attr_memlet)
             idx = ast.unparse(val.slice)
             slice_memlet = Memlet(self.data_node.data + '[' + idx + ']')
             self.state.add_edge(slice_view_node, 'views', self.data_node, None, slice_memlet)
