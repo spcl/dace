@@ -181,12 +181,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Collect symbols that are overwritten
         inner_assignments = set()
         for e in nsdfg.edges():
-            inner_assignments |= e.data.assignments.keys()
+            inner_assignments |= set(e.data.assignments.keys())
 
         # Replace only those symbols
         outer_assignments = set()
         for e in sdfg.edges():
-            outer_assignments |= e.data.assignments.keys()
+            outer_assignments |= set(e.data.assignments.keys())
         
         outer_symbols = {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.arrays.keys()) | outer_assignments
 
@@ -200,6 +200,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sym_replacements[assign] = newname
         
         nsdfg.replace_dict(sym_replacements)
+
+        for sym, new_sym in sym_replacements.items():
+            if sym in nsdfg_node.symbol_mapping:
+                nsdfg_node.symbol_mapping[new_sym] = nsdfg_node.symbol_mapping[sym]
+                del nsdfg_node.symbol_mapping[sym]
 
 
     def _rename_nested_transients(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG):
@@ -252,7 +257,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
     def _isolate_nsdfg_node(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG, outer_state: SDFGState) -> SDFGState:
         # Push nsdfg plus childs into new state
         nsdfg_state = helpers.state_fission_after(sdfg, outer_state, nsdfg_node)
-        
+
         # Split nsdfg from its childs
         direct_subgraph = set()
         direct_subgraph.add(nsdfg_node)
@@ -265,7 +270,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     direct_subgraph.add(view_node)
 
         direct_subgraph = StateSubgraphView(nsdfg_state, direct_subgraph)
-        return helpers.state_fission(sdfg, direct_subgraph)
+        new_state = helpers.state_fission(sdfg, direct_subgraph)
+        return new_state
 
     def _replace_arguments_by_views(
         self,

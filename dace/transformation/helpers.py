@@ -695,15 +695,21 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
 
     # Bookkeeping
     nodes_to_move = set([node])
-    boundary_nodes = set()
     orig_edges = set()
 
     # Collect predecessors
     if not isinstance(node, nodes.AccessNode):
         for edge in state.in_edges(node):
-            for e in state.memlet_path(edge):
-                nodes_to_move.add(e.src)
-                orig_edges.add(e)
+            nodes_to_move.add(edge.src)
+            orig_edges.add(edge)
+
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(sdfg.arrays[edge.src.data], data.View):
+                for view_node in get_all_view_nodes(state, edge.src):
+                    view_edge = get_view_edge(state, view_node)
+
+                    nodes_to_move.add(view_node)
+                    orig_edges.add(view_edge)
+
 
     # Collect nodes_to_move
     for edge in state.bfs_edges(node):
@@ -719,35 +725,30 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                     nodes_to_move.add(e.src)
                     orig_edges.add(e)
 
-    for n in list(nodes_to_move):
-        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
-            for view_node in get_all_view_nodes(state, n):
-                nodes_to_move.add(view_node)
-                orig_edges.add(get_view_edge(state, view_node))
-
-
     # Define boundary nodes
-    for node in set(nodes_to_move):
-        if isinstance(node, nodes.AccessNode):
-            for iedge in state.in_edges(node):
+    boundary_nodes = set()
+    for n in nodes_to_move:
+        if isinstance(n, nodes.AccessNode):
+            for iedge in state.in_edges(n):
                 if iedge.src not in nodes_to_move:
-                    boundary_nodes.add(node)
+                    boundary_nodes.add(n)
                     break
 
-            if node in boundary_nodes:
-                continue
-
-            for oedge in state.out_edges(node):
+            for oedge in state.out_edges(n):
                 if oedge.dst not in nodes_to_move:
-                    boundary_nodes.add(node)
+                    boundary_nodes.add(n)
                     break
+
+            if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
+                for view_node in get_all_view_nodes(state, n):
+                    boundary_nodes.add(view_node)
 
     # Duplicate boundary nodes
     new_nodes = {}
-    for node in boundary_nodes:
-        node_ = copy.deepcopy(node)
+    for n in boundary_nodes:
+        node_ = copy.deepcopy(n)
         state.add_node(node_)
-        new_nodes[node] = node_
+        new_nodes[n] = node_
 
     for edge in state.edges():
         if edge.src in boundary_nodes and edge.dst in boundary_nodes:
