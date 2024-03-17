@@ -1740,9 +1740,9 @@ class AST_translator:
                     first=False
                 else:
                     if local_name.name in write_names:
-                        nested_sdfg.parent_nsdfg_node.add_out_connector(self.name_mapping[parent_sdfg][i])
+                        nested_sdfg.parent_nsdfg_node.add_out_connector(self.name_mapping[parent_sdfg][i], force=True)
                     if local_name.name in read_names:
-                        nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i])
+                        nested_sdfg.parent_nsdfg_node.add_in_connector(self.name_mapping[parent_sdfg][i], force=True)
 
                 memlet = ast_utils.generate_memlet(ast_internal_classes.Name_Node(name=i), parent_sdfg, self, self.normalize_offsets)
                 if local_name.name in write_names:
@@ -2936,7 +2936,6 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                             names.append(k.string)
         rename_dict[i] = local_rename_dict
         name_dict[i] = names
-    rename_dict["mo_solve_nonhydro"] = {}
 
     for i in ast.children:
     
@@ -3277,7 +3276,7 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
             #if j.name.name!="get_indices_c":
-                continue
+            #    continue
             if j.execution_part is None:
                 continue
             print(f"Building SDFG {j.name.name}")
