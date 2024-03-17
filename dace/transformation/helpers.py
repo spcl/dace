@@ -704,10 +704,9 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
             orig_edges.add(edge)
 
             if isinstance(edge.src, nodes.AccessNode) and isinstance(sdfg.arrays[edge.src.data], data.View):
-                for view_node in get_all_view_nodes(state, edge.src):
+                for view_node in get_all_view_nodes(state, edge.src)[:-1]:
                     view_edge = get_view_edge(state, view_node)
-
-                    nodes_to_move.add(view_node)
+                    nodes_to_move.add(view_edge.src)
                     orig_edges.add(view_edge)
 
 

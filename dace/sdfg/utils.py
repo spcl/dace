@@ -1320,19 +1320,19 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                 counter += 1
                 continue
 
-        candidate = {
-            InlineSDFG.nested_sdfg: nsdfg_node,
-        }
-        inliner = InlineSDFG()
-        inliner.setup_match(sdfg=parent_sdfg,
-                            cfg_id=parent_sdfg.sdfg_id,
-                            state_id=parent_state_id,
-                            subgraph=candidate,
-                            expr_index=0,
-                            override=True)
-        if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
-            inliner.apply(parent_state, parent_sdfg)
-            counter += 1
+        # candidate = {
+        #     InlineSDFG.nested_sdfg: nsdfg_node,
+        # }
+        # inliner = InlineSDFG()
+        # inliner.setup_match(sdfg=parent_sdfg,
+        #                     cfg_id=parent_sdfg.sdfg_id,
+        #                     state_id=parent_state_id,
+        #                     subgraph=candidate,
+        #                     expr_index=0,
+        #                     override=True)
+        # if inliner.can_be_applied(parent_state, 0, parent_sdfg, permissive=permissive):
+        #     inliner.apply(parent_state, parent_sdfg)
+        #     counter += 1
 
     return counter
 

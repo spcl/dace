@@ -133,7 +133,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         outer_start_state = sdfg.start_state
 
-        sdfg.add_nodes_from(nsdfg.nodes())
+        sdfg.add_nodes_from(set(nsdfg.nodes()))
         for ise in nsdfg.edges():
             sdfg.add_edge(ise.src, ise.dst, ise.data)
 
@@ -168,6 +168,10 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         sdfg.remove_node(nsdfg_state)
 
         sdfg._cfg_list = sdfg.reset_cfg_list()
+
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes import ArrayElimination
+        Pipeline([ArrayElimination()]).apply_pass(sdfg, {})
 
         return nsdfg.nodes()
 
@@ -492,20 +496,42 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         # Convert argument into path to full data
         for arg in args_used_in_assignments:
             in_edge = input_memlets[arg]
-            if isinstance(nsdfg.arrays[in_edge.data.data], (ArrayView, Array)):
-                first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+            if not isinstance(nsdfg.arrays[in_edge.data.data], View):
+                if isinstance(nsdfg.arrays[in_edge.data.data], Array):
+                    first_data = in_edge.data.data + "[" + str(in_edge.data.subset) + "]"
+                else:
+                    first_data = in_edge.data.data
+
+                data_path = [first_data]
             else:
-                first_data = in_edge.data.data
+                view_nodes = get_all_view_nodes(outer_state, in_edge.src)[::-1]
+                current_node = view_nodes[0]
+                current_desc = sdfg.arrays[current_node.data]
+                data_path = [current_node.data]
+                for i in range(1, len(view_nodes)):
+                    view_node = view_nodes[i]
+                    view_edge = get_view_edge(outer_state, view_node)
 
-            data_path = [first_data]
+                    if "." in view_edge.data.data:
+                        member_name = view_edge.data.data.split(".")[-1]
+                        memlet_part = member_name
+                        if i < len(view_nodes) - 1:
+                            memlet_part += "[" + view_edge.data.subset.__str__() + "]"
+                        
+                        data_path.append(memlet_part)
 
-            # TODO: More complex data paths
-            outer_nodes = get_all_view_nodes(outer_state, in_edge.src)
-            if len(outer_nodes) > 1:
-                raise NotImplementedError
+                        current_node = view_node
+                        current_desc = current_desc.members[member_name]
+                    else:
+                        # View on a subset
+                        if view_edge.data.subset != Memlet.from_array(current_node.data, current_desc).subset:
+                            # TODO: Non-trivial, memlet offsetting required
+                            raise NotImplementedError
+                        else:
+                            # We can simply skip
+                            continue
 
-
-            data_path = ".".join(data_path)
+            data_path = ".".join(data_path[::-1])
             for edge in nsdfg.edges():
                 edge.data.replace(arg, data_path)
 
