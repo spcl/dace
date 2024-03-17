@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import collections
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import dace
 from dace import dtypes, symbolic
@@ -18,11 +18,16 @@ class ScopeTree(object):
     """ A class defining a scope, its parent and children scopes, and
         scope entry/exit nodes. """
 
+    parent: Optional['ScopeTree']
+    children: List['ScopeTree']
+    entry: Optional[EntryNodeType]
+    exit: Optional[ExitNodeType]
+
     def __init__(self, entrynode: EntryNodeType, exitnode: ExitNodeType):
-        self.parent: 'ScopeTree' = None
-        self.children: List['ScopeTree'] = []
-        self.entry: EntryNodeType = entrynode
-        self.exit: ExitNodeType = exitnode
+        self.parent = None
+        self.children = []
+        self.entry = entrynode
+        self.exit = exitnode
 
 
 class ScopeSubgraphView(StateSubgraphView):

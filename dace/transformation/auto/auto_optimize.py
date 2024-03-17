@@ -748,6 +748,31 @@ def auto_parallelize(sdfg: SDFG,
                         # TODO: Be smart about it, or try to.
                         pass
 
+    # If there is any chance for doacross parallelism being used in the program, ensure that all doacross dependencies
+    # are code-generated as late as they can possibly be. To ensure this, we force them to the lowest part of the scope
+    # with empty memlets.
+    # NOTE: This is hacky and there should probably eventually be a codegen solution for this instead - needs to be
+    # discussed.
+    if use_doacross_parallelism:
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for entry in state.scope_tree().keys():
+                    if entry and isinstance(entry, nodes.MapEntry):
+                        if entry.map.schedule == dtypes.ScheduleType.CPU_Multicore_Doacross:
+                            dependency_sinks = set()
+                            doacross_frontier = set()
+                            for edge in state.scope_subgraph(entry).edges():
+                                if edge.data.schedule == dtypes.MemletScheduleType.Doacross_Sink:
+                                    dependency_sinks.add(edge.dst)
+                                    for succ in state.successors(edge.dst):
+                                        for pred in state.predecessors(succ):
+                                            if pred is not edge.dst:
+                                                doacross_frontier.add(pred)
+
+                            for frontier_node in doacross_frontier:
+                                for sink_node in dependency_sinks:
+                                    state.add_edge(frontier_node, None, sink_node, None, Memlet())
+
     # Set all Default storage types that are constant sized to registers and make all independent arrays persistent.
     # We are doing this here for the second time because repeated simplification and canonicalization has most likely
     # made more accesses transients.
