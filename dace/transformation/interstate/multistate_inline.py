@@ -295,6 +295,19 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             replacements[outp] = new_name
 
         nsdfg.replace_dict(replacements)
+        for state in nsdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    for iconn in list(node.in_connectors):
+                        if iconn in replacements:
+                            iedges = list(state.in_edges_by_connector(node, iconn))
+                            node.add_in_connector(replacements[iconn])
+
+                            for iedge in iedges:
+                                state.add_edge(iedge.src, iedge.src_conn, iedge.dst, replacements[iconn], dc(iedge.data))
+                                state.remove_edge(iedge)
+                            
+                            node.remove_in_connector(iconn)
 
         input_memlets: Dict[str, MultiConnectorEdge] = {}
         for e in list(outer_state.in_edges(nsdfg_node)):

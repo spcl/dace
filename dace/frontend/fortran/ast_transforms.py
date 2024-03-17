@@ -2258,3 +2258,56 @@ class ReplaceInterfaceBlocks(NodeTransformer):
             node.name = ast_internal_classes.Name_Node(name=available_names[0])
 
         return node
+
+class PointerRemoval(NodeTransformer):
+
+    def __init__(self):
+        self.nodes = {}
+
+    def visit_Array_Subscript_Node(self, node: ast_internal_classes.Array_Subscript_Node):
+
+        if node.name.name in self.nodes:
+            original_ref_node = self.nodes[node.name.name]
+
+            cur_ref_node = original_ref_node
+            new_ref_node = ast_internal_classes.Data_Ref_Node(
+                parent_ref=cur_ref_node.parent_ref,
+                part_ref=None
+            )
+            newer_ref_node = new_ref_node
+
+            while isinstance(cur_ref_node.part_ref, ast_internal_classes.Data_Ref_Node):
+
+                cur_ref_node = cur_ref_node.part_ref
+                newest_ref_node = ast_internal_classes.Data_Ref_Node(
+                    parent_ref=cur_ref_node.parent_ref,
+                    part_ref=None
+                )
+                newer_ref_node.part_ref = newest_ref_node
+                newer_ref_node = newest_ref_node
+
+            node.name = cur_ref_node.part_ref
+            newer_ref_node.part_ref = node
+            return new_ref_node
+        return node
+
+    def visit_Name_Node(self, node: ast_internal_classes.Name_Node):
+
+        if node.name in self.nodes:
+            return self.nodes[node.name]
+        return node
+
+    def visit_Execution_Part_Node(self, node: ast_internal_classes.Execution_Part_Node):
+        newbody = []
+
+        for child in node.execution:
+            lister = CallExtractorNodeLister()
+            lister.visit(child)
+            res = lister.nodes
+
+            if isinstance(child, ast_internal_classes.Pointer_Assignment_Stmt_Node):
+                self.nodes[child.name_pointer.name] = child.name_target
+            else:
+                newbody.append(self.visit(child))
+
+        return ast_internal_classes.Execution_Part_Node(execution=newbody)

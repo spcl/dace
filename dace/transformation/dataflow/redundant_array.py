@@ -1473,13 +1473,17 @@ class RemoveSliceView(pm.SingleStateTransformation):
         desc = self.view.desc(sdfg)
 
         # Ensure view
-        if not isinstance(desc, data.View) or isinstance(desc, data.StructureView):
+        if not isinstance(desc, data.View):
             return False
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
         if view_edge is None:
             return False
+
+        if isinstance(desc, data.StructureView):
+            if "." in view_edge.data.data:
+                return False
 
         # Gather metadata
         viewed: nodes.AccessNode
@@ -1561,8 +1565,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
-                if e.data.data == self.view.data:
-                    e.data.data = viewed.data
+                data_path = e.data.data.split(".")
+                if self.view.data in data_path:
+                    new_data_path = [viewed.data if data == self.view.data else data for data in data_path]
+                    e.data.data = ".".join(new_data_path)
 
                     # Update subsets with instructions as follows:
                     #   * Dimensions in mapping are offset by view subset, size is taken from view subset
@@ -1573,7 +1579,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     elif subset is not None:
                         # Fill in the subset from the original memlet
                         e.data.subset = copy.deepcopy(subset)
-
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
                         e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
