@@ -2314,8 +2314,15 @@ class PointerRemoval(NodeTransformer):
 
     def visit_Subroutine_Subprogram_Node(self, node: ast_internal_classes.Subroutine_Subprogram_Node):
 
-        execution_part = self.visit(node.execution_part)
-        specification_part = self.visit(node.specification_part)
+        if node.execution_part is not None:
+            execution_part = self.visit(node.execution_part)
+        else:
+            execution_part = node.execution_part
+
+        if node.specification_part is not None:
+            specification_part = self.visit(node.specification_part)
+        else:
+            specification_part = node.specification_part
 
         return ast_internal_classes.Subroutine_Subprogram_Node(
             name=node.name,
@@ -2352,10 +2359,13 @@ class PointerRemoval(NodeTransformer):
                 if len(newdecls) > 0:
                     newspec.append(ast_internal_classes.Decl_Stmt_Node(vardecl=newdecls))
 
-        new_symbols = []
-        for symbol in node.symbols:
-            if symbol.name not in symbols_to_remove:
-                new_symbols.append(symbol)
+        if node.symbols is not None:
+            new_symbols = []
+            for symbol in node.symbols:
+                if symbol.name not in symbols_to_remove:
+                    new_symbols.append(symbol)
+        else:
+            new_symbols = None
 
         return ast_internal_classes.Specification_Part_Node(
             specifications=newspec,
