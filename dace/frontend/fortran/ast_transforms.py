@@ -1354,6 +1354,8 @@ def optionalArgsHandleFunction(func):
 
     vardecls = []
     new_args = []
+    for i in func.args:
+        new_args.append(i)
     for arg in func.args:
 
         found = False
@@ -1365,7 +1367,13 @@ def optionalArgsHandleFunction(func):
         if found:
 
             name = f'__f2dace_OPTIONAL_{arg.name}'
-            var = ast_internal_classes.Var_Decl_Node(name=name,
+            already_there = False
+            for i in func.args:
+                if hasattr(i, "name") and i.name == name:
+                    already_there = True
+                    break
+            if not already_there:
+                var = ast_internal_classes.Var_Decl_Node(name=name,
                                             type='BOOL',
                                             alloc=False,
                                             sizes=None,
@@ -1374,19 +1382,26 @@ def optionalArgsHandleFunction(func):
                                             optional=False,
                                             init=None,
                                             line_number=func.line_number)
-            new_args.append(ast_internal_classes.Name_Node(name=name))
-            vardecls.append(var)
+                new_args.append(ast_internal_classes.Name_Node(name=name))
+                vardecls.append(var)
 
-    if len(new_args) > 0:
-        func.args.extend(new_args)
+    if len(new_args) > len(func.args):
+        
+        func.args.clear()
+        func.args=new_args
 
     if len(vardecls) > 0:
-        func.specification_part.specifications.append(
+        specifiers=[]
+        for i in func.specification_part.specifications:
+            specifiers.append(i)
+        specifiers.append(
             ast_internal_classes.Decl_Stmt_Node(
                 vardecl=vardecls,
                 line_number=func.line_number
             )
         )
+        func.specification_part.specifications.clear()
+        func.specification_part.specifications=specifiers
 
     return len(new_args)
 
@@ -1418,6 +1433,9 @@ class OptionalArgsTransformer(NodeTransformer):
         missing_args_count = should_be_args - present_args
         present_optional_args = present_args - mandatory_args
         new_args=[None]*should_be_args
+        print("Func len args: ",len(func_decl.args))
+        print("Func: ",func_decl.name.name, "Mandatory: ",mandatory_args, "Optional: ",optional_args, "Present: ",present_args, "Missing: ",missing_args_count, "Present Optional: ",present_optional_args)
+        print("List: ",node.name.name ,len(new_args),mandatory_args)
         for i in range(mandatory_args):
             new_args[i] = node.args[i]
         for i in range(mandatory_args,len(node.args)):
@@ -2176,7 +2194,8 @@ class ReplaceInterfaceBlocks(NodeTransformer):
     def visit_Call_Expr_Node(self, node: ast_internal_classes.Call_Expr_Node):
 
         #is_func = node.name.name in self.excepted_funcs or node.name in self.funcs.names
-        is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
+        #is_interface_func = not node.name in self.funcs.names and node.name.name in self.funcs.iblocks
+        is_interface_func = node.name.name in self.funcs.iblocks
 
         if is_interface_func:
 
