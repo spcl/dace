@@ -753,22 +753,21 @@ def auto_parallelize(sdfg: SDFG,
     if use_pointer_incrementation:
         for sd in sdfg.all_sdfgs_recursive():
             for state in sd.states():
-                for node in state.nodes():
-                    for leaf_scope in state.scope_leaves()
-                        if isinstance(leaf_scope.entry, nodes.MapEntry):
-                            mp = leaf_scope.entry.map
-                            exclude = (dtypes.ScheduleType.CPU_Multicore_Doacross, dtypes.ScheduleType.CPU_Persistent)
-                            if (mp.schedule not in exclude and
-                                (mp.schedule != dtypes.ScheduleType.CPU_Multicore or mp.collapse < len(mp.params))):
-                                # This map has some sequentialism, set up pointer incrementation for accesses to CPU
-                                # heap arrays.
-                                for edge in state.scope_subgraph(leaf_scope.entry):
-                                    mlt: Memlet = edge.data
-                                    if mlt.data and state.is_leaf_memlet(edge):
-                                        desc = sd.desc(mlt.data)
-                                        if (isinstance(desc, dt.Arrays) and desc.total_size > 1 and
-                                            desc.storage == dtypes.StorageType.CPU_Heap):
-                                            mlt.schedule = dtypes.MemletSchedule.Pointer_Increment
+                for leaf_scope in state.scope_leaves():
+                    if isinstance(leaf_scope.entry, nodes.MapEntry):
+                        mmap = leaf_scope.entry.map
+                        exclude = (dtypes.ScheduleType.CPU_Multicore_Doacross, dtypes.ScheduleType.CPU_Persistent)
+                        if (mmap.schedule not in exclude and
+                            (mmap.schedule != dtypes.ScheduleType.CPU_Multicore or mmap.collapse < len(mmap.params))):
+                            # This map has some sequentialism, set up pointer incrementation for accesses to CPU
+                            # heap arrays.
+                            for edge in state.scope_subgraph(leaf_scope.entry):
+                                mlt: Memlet = edge.data
+                                if mlt.data and state.is_leaf_memlet(edge):
+                                    desc = sd.desc(mlt.data)
+                                    if (isinstance(desc, dt.Arrays) and desc.total_size > 1 and
+                                        desc.storage == dtypes.StorageType.CPU_Heap):
+                                        mlt.schedule = dtypes.MemletSchedule.Pointer_Increment
 
     # If there is any chance for doacross parallelism being used in the program, ensure that all doacross dependencies
     # are code-generated as late as they can possibly be. To ensure this, we force them to the lowest part of the scope
