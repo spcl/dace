@@ -928,7 +928,7 @@ class AST_translator:
                                             stype=stype.stype
                                         bonus_step=True
                                         #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.shape,current_member.dtype)
-                                        view_to_member = dat.View.view(current_member.stype)
+                                        view_to_member = dat.View.view(stype)
                                         sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)] = view_to_member
                                         #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.stype.dtype)
                                 else:    
@@ -1057,11 +1057,6 @@ class AST_translator:
                                             re=i
                                             already_there_1=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==last_view_name and len(substate.out_edges(i))==0 :
-                                    #         re=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_1:
                                         re=substate.add_read(last_view_name)
                                     
@@ -1070,11 +1065,6 @@ class AST_translator:
                                             wv=i
                                             already_there_2=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count) and len(substate.out_edges(i))==0 :
-                                    #         wv=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_2:    
                                         wv = substate.add_write(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
                                     
@@ -1089,11 +1079,6 @@ class AST_translator:
                                             wr=i
                                             already_there_3=True
                                             break
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==last_view_name and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                    #         already_there=True
-                                    #         wr=i
-                                    #         break
                                     if not already_there_3:
                                         wr=substate.add_write(last_view_name)
                                     for i in substate_destinations:
@@ -1101,11 +1086,6 @@ class AST_translator:
                                             rv=i
                                             already_there_4=True
                                             break   
-                                    # for i in substate.data_nodes():
-                                    #     if i.data==concatenated_name+"_"+array_name+"_"+str(self.struct_view_count) and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                    #         rv=i
-                                    #         already_there=True
-                                    #         break
                                     if not already_there_4:        
                                         rv = substate.add_read(concatenated_name+"_"+array_name+"_"+str(self.struct_view_count))
                                     
@@ -1189,9 +1169,11 @@ class AST_translator:
                                     if isinstance(current_member,dat.ContainerArray):
                                         if len(new_shape)==0:
                                             stype=current_member.stype
+                                            while isinstance(stype, dat.ContainerArray):
+                                                stype=stype.stype
                                             bonus_step=True
                                             #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.shape,current_member.dtype)
-                                            view_to_member = dat.View.view(current_member.stype)
+                                            view_to_member = dat.View.view(stype)
                                             sdfg.arrays[concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)] = view_to_member
                                             #sdfg.add_view(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count),current_member.stype.dtype)
                                         else:    
@@ -1214,11 +1196,6 @@ class AST_translator:
                                                 re=i
                                                 already_there_1=True
                                                 break
-                                        # for i in substate.data_nodes():
-                                        #     if i.data==last_view_name and len(substate.out_edges(i))==0:
-                                        #         re=i
-                                        #         already_there=True
-                                        #         break
                                         if not already_there_1:
                                             re=substate.add_read(last_view_name)  
                                         
@@ -1227,11 +1204,6 @@ class AST_translator:
                                                 wv=i
                                                 already_there_2=True
                                                 break
-                                        # for i in substate.data_nodes():
-                                        #     if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.out_edges(i))==0:
-                                        #         wv=i
-                                        #         already_there=True
-                                        #         break
                                         if not already_there_2:
                                             wv = substate.add_write(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
                                          
@@ -1248,11 +1220,6 @@ class AST_translator:
                                                 wr=i
                                                 already_there_3=True
                                                 break
-                                        # for i in substate.data_nodes():
-                                        #     if i.data==last_view_name  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                        #         already_there=True
-                                        #         wr=i
-                                        #         break
                                         if not already_there_3:
                                             wr=substate.add_write(last_view_name)
                                         
@@ -1261,11 +1228,6 @@ class AST_translator:
                                                 rv=i
                                                 already_there_4=True
                                                 break   
-                                        # for i in substate.data_nodes():
-                                        #     if i.data==concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count)  and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                        #         rv=i
-                                        #         already_there=True
-                                        #         break
                                         if not already_there_4:    
                                             rv = substate.add_read(concatenated_name+"_"+current_member_name+"_"+str(self.struct_view_count))
                                    
@@ -1420,72 +1382,7 @@ class AST_translator:
                                 #arr_dtype.offset = [offset_value for _ in sizes]
                                 #sdfg.add_datadesc(self.name_mapping[sdfg][node.name], arr_dtype)    
                             else:
-                                #if not (shape == () or shape == (1, ) or shape == [] or shape == [1]):
-                                    # offsets_zero = []
-                                    # for index in offsets:
-                                    #     offsets_zero.append(0)
-                                    # viewname, view = sdfg.add_view(array_name + "_view_" + str(self.views),
-                                    #                             shape,
-                                    #                             array.dtype,
-                                    #                             storage=array.storage,
-                                    #                             strides=strides,
-                                    #                             offset=offsets_zero)
-                                    # from dace import subsets
-
-                                    # all_indices = [None] * (len(array.shape) - len(index_list)) + index_list
-                                    # if self.normalize_offsets:
-                                    #     subset = subsets.Range([(i, i, 1) if i is not None else (0, s-1, 1)
-                                    #                             for i, s in zip(all_indices, array.shape)])
-                                    # else:
-                                    #     subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
-                                    #                             for i, s in zip(all_indices, array.shape)])
-                                    # smallsubset = subsets.Range([(0, s - 1, 1) for s in shape])
-
-                                    # #memlet = Memlet(f'{last_view_name}[{subset}]')
-                                    # #memlet2 = Memlet(f'{viewname}[{smallsubset}]')
-                                    # memlet = Memlet(f'{last_view_name}[{smallsubset}]')
-                                    # memlet2 = Memlet(f'{viewname}[{smallsubset}]')
-                                    # wv = None
-                                    # rv = None
-                                    # if local_name.name in read_names:
-                                    #     found = False
-                                    #     for i in substate_sources:
-                                    #         if i.data==last_view_name :
-                                    #             re=i
-                                    #             found=True
-                                    #             break
-                                    #     # for i in substate.data_nodes():
-                                    #     #     if i.data==last_view_name and len(substate.out_edges(i))==0:
-                                    #     #         re=i
-                                    #     #         found=True
-                                    #     #         break    
-                                    #     if not found:
-                                    #         re = substate.add_read(last_view_name)
-                                    #         substate_sources.append(re)
-                                    #     rv = substate.add_read(viewname)
-                                    #     substate.add_edge(rv, 'views', re,None , dpcp(memlet))
-                                    # if local_name.name in write_names:
-                                    #     wv = substate.add_write(viewname)
-                                    #     found = False
-                                    #     for i in substate_destinations:
-                                    #         if i.data==last_view_name:
-                                    #             wr=i
-                                    #             found=True
-                                    #             break
-                                    #     # for i in substate.data_nodes():
-                                    #     #     if i.data==last_view_name and len(substate.in_edges(i))==0 and i.data!=top_structure_name:
-                                    #     #         wr=i
-                                    #     #         found=True
-                                    #     #         break    
-                                    #     if not found:
-                                    #         wr = substate.add_write(last_view_name)
-                                    #         substate_destinations.append(wr)
-                                    #     substate.add_edge(wr,None , wv, 'views', dpcp(memlet2))
-
-                                    # self.views = self.views + 1
-                                    # views.append([mapped_name_overwrite, wv, rv, variables_in_call.index(variable_in_call)])
-                                    #views.append([array_name, wv, rv, variables_in_call.index(variable_in_call)])
-                                #print("Adding nested array",self.name_mapping[new_sdfg][local_name.name],shape,array.dtype,array.storage,strides,offsets)
+                                
                                 new_sdfg.add_array(self.name_mapping[new_sdfg][local_name.name],
                                             shape,
                                             array.dtype,
@@ -2125,10 +2022,10 @@ class AST_translator:
             transient = self.transient_mode
         # find the type
         datatype = self.get_dace_type(node.type)
-        if hasattr(node, "alloc"):
-            if node.alloc:
-                self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
-                return
+        #if hasattr(node, "alloc"):
+        #    if node.alloc:
+        #        self.unallocated_arrays.append([node.name, datatype, sdfg, transient])
+        #        return
         # get the dimensions
         #print(node.name)
         if node.sizes is not None:
@@ -3374,8 +3271,8 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
                 break
         #copyfile(mypath, os.path.join(icon_sources_dir, i.name.name.lower()+".f90"))
         for j in i.subroutine_definitions:
-            #if j.name.name!="solve_nh":
-            if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
+            if j.name.name!="solve_nh":
+            #if j.name.name!="rot_vertex_ri" and j.name.name!="cells2verts_scalar_ri" and j.name.name!="get_indices_c" and j.name.name!="get_indices_v" and j.name.name!="get_indices_e" and j.name.name!="velocity_tendencies":
             #if j.name.name!="rot_vertex_ri":
             #if j.name.name!="velocity_tendencies":
             #if j.name.name!="cells2verts_scalar_ri":
@@ -3396,17 +3293,17 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
 
 
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_raw_before_intrinsics.sdfgz"),compress=True)
-            for sd in sdfg.all_sdfgs_recursive():
-                free_symbols = sd.free_symbols
-                for i in ['__f2dace_OA_iblk_d_0_s_4140', '__f2dace_OA_iidx_d_1_s_4138', '__f2dace_OA_iidx_d_2_s_4139', '__f2dace_OA_iblk_d_2_s_4142', '__f2dace_OA_iblk_d_1_s_4141', '__f2dace_OA_iidx_d_0_s_4137','__f2dace_A_iidx_d_1_s_5395', '__f2dace_A_iblk_d_0_s_5397', '__f2dace_A_iidx_d_2_s_5396', '__f2dace_A_iblk_d_1_s_5398', '__f2dace_A_iblk_d_2_s_5399', '__f2dace_A_iidx_d_0_s_5394','__f2dace_A_iidx_d_0_s_4137', '__f2dace_A_iblk_d_2_s_4142', '__f2dace_A_iblk_d_0_s_4140', '__f2dace_A_iidx_d_1_s_4138', '__f2dace_A_iidx_d_2_s_4139', '__f2dace_A_iblk_d_1_s_4141','__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_opt_out2_d_1_s_8111','__f2dace_A_opt_out2_d_1_s_8111', '__f2dace_A_ieidx_d_2_s_8121', '__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_ieblk_d_1_s_8123', '__f2dace_A_inidx_d_1_s_8114', '__f2dace_A_inblk_d_2_s_8118', '__f2dace_A_ieidx_d_0_s_8119', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_ieidx_d_1_s_8120', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_inblk_d_0_s_8116', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_A_ieblk_d_2_s_8124', '__f2dace_A_inblk_d_1_s_8117', '__f2dace_A_ieblk_d_0_s_8122', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_A_inidx_d_2_s_8115', '__f2dace_A_inidx_d_0_s_8113','__f2dace_A_iidx_d_1_s_8159', '__f2dace_A_iidx_d_0_s_8158', '__f2dace_A_iblk_d_0_s_8161', '__f2dace_A_iblk_d_1_s_8162', '__f2dace_A_iblk_d_2_s_8163', '__f2dace_A_iidx_d_2_s_8160','__f2dace_A_iblk_d_0_s_6698', '__f2dace_A_iblk_d_1_s_6699', '__f2dace_A_iidx_d_2_s_6697', '__f2dace_A_iidx_d_1_s_6696', '__f2dace_A_iblk_d_2_s_6700', '__f2dace_A_iidx_d_0_s_6695','__f2dace_A_incidx_d_2_s_8055', '__f2dace_A_iqblk_d_0_s_8044', '__f2dace_A_incblk_d_1_s_8057', '__f2dace_A_iqblk_d_1_s_8045', '__f2dace_A_iqidx_d_2_s_8043', '__f2dace_A_icidx_d_2_s_8031', '__f2dace_A_ivblk_d_2_s_8052', '__f2dace_A_incidx_d_0_s_8053', '__f2dace_A_icidx_d_0_s_8029', '__f2dace_A_incblk_d_2_s_8058', '__f2dace_A_incblk_d_0_s_8056', '__f2dace_A_ividx_d_2_s_8049', '__f2dace_A_icblk_d_0_s_8032', '__f2dace_A_ieidx_d_0_s_8035', '__f2dace_A_ivblk_d_0_s_8050', '__f2dace_A_ieidx_d_1_s_8036', '__f2dace_A_icidx_d_1_s_8030', '__f2dace_A_incidx_d_1_s_8054', '__f2dace_A_iqidx_d_0_s_8041', '__f2dace_A_icblk_d_2_s_8034', '__f2dace_A_ieblk_d_0_s_8038', '__f2dace_A_ividx_d_0_s_8047', '__f2dace_A_ieblk_d_2_s_8040', '__f2dace_A_ividx_d_1_s_8048', '__f2dace_A_icblk_d_1_s_8033', '__f2dace_A_iqidx_d_1_s_8042', '__f2dace_A_ieblk_d_1_s_8039', '__f2dace_A_iqblk_d_2_s_8046', '__f2dace_A_ieidx_d_2_s_8037', '__f2dace_A_ivblk_d_1_s_8051']:
-                    #print("I want to remove:", i)
-                    if(i in sd.symbols):
-                        sd.symbols.pop(i)
-                        print("Removed from symbols ",i)
-                        if sd.parent_nsdfg_node is not None:
-                            if i in sd.parent_nsdfg_node.symbol_mapping:
-                                print("Removed from symbol mapping ",i)
-                                sd.parent_nsdfg_node.symbol_mapping.pop(i)
+            # for sd in sdfg.all_sdfgs_recursive():
+            #     free_symbols = sd.free_symbols
+            #     for i in ['__f2dace_OA_iblk_d_0_s_4140', '__f2dace_OA_iidx_d_1_s_4138', '__f2dace_OA_iidx_d_2_s_4139', '__f2dace_OA_iblk_d_2_s_4142', '__f2dace_OA_iblk_d_1_s_4141', '__f2dace_OA_iidx_d_0_s_4137','__f2dace_A_iidx_d_1_s_5395', '__f2dace_A_iblk_d_0_s_5397', '__f2dace_A_iidx_d_2_s_5396', '__f2dace_A_iblk_d_1_s_5398', '__f2dace_A_iblk_d_2_s_5399', '__f2dace_A_iidx_d_0_s_5394','__f2dace_A_iidx_d_0_s_4137', '__f2dace_A_iblk_d_2_s_4142', '__f2dace_A_iblk_d_0_s_4140', '__f2dace_A_iidx_d_1_s_4138', '__f2dace_A_iidx_d_2_s_4139', '__f2dace_A_iblk_d_1_s_4141','__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_opt_out2_d_1_s_8111','__f2dace_A_opt_out2_d_1_s_8111', '__f2dace_A_ieidx_d_2_s_8121', '__f2dace_OA_opt_out2_d_1_s_8111', '__f2dace_A_ieblk_d_1_s_8123', '__f2dace_A_inidx_d_1_s_8114', '__f2dace_A_inblk_d_2_s_8118', '__f2dace_A_ieidx_d_0_s_8119', '__f2dace_A_opt_out2_d_2_s_8112', '__f2dace_A_ieidx_d_1_s_8120', '__f2dace_OA_opt_out2_d_0_s_8110', '__f2dace_A_inblk_d_0_s_8116', '__f2dace_OA_opt_out2_d_2_s_8112', '__f2dace_A_ieblk_d_2_s_8124', '__f2dace_A_inblk_d_1_s_8117', '__f2dace_A_ieblk_d_0_s_8122', '__f2dace_A_opt_out2_d_0_s_8110', '__f2dace_A_inidx_d_2_s_8115', '__f2dace_A_inidx_d_0_s_8113','__f2dace_A_iidx_d_1_s_8159', '__f2dace_A_iidx_d_0_s_8158', '__f2dace_A_iblk_d_0_s_8161', '__f2dace_A_iblk_d_1_s_8162', '__f2dace_A_iblk_d_2_s_8163', '__f2dace_A_iidx_d_2_s_8160','__f2dace_A_iblk_d_0_s_6698', '__f2dace_A_iblk_d_1_s_6699', '__f2dace_A_iidx_d_2_s_6697', '__f2dace_A_iidx_d_1_s_6696', '__f2dace_A_iblk_d_2_s_6700', '__f2dace_A_iidx_d_0_s_6695','__f2dace_A_incidx_d_2_s_8055', '__f2dace_A_iqblk_d_0_s_8044', '__f2dace_A_incblk_d_1_s_8057', '__f2dace_A_iqblk_d_1_s_8045', '__f2dace_A_iqidx_d_2_s_8043', '__f2dace_A_icidx_d_2_s_8031', '__f2dace_A_ivblk_d_2_s_8052', '__f2dace_A_incidx_d_0_s_8053', '__f2dace_A_icidx_d_0_s_8029', '__f2dace_A_incblk_d_2_s_8058', '__f2dace_A_incblk_d_0_s_8056', '__f2dace_A_ividx_d_2_s_8049', '__f2dace_A_icblk_d_0_s_8032', '__f2dace_A_ieidx_d_0_s_8035', '__f2dace_A_ivblk_d_0_s_8050', '__f2dace_A_ieidx_d_1_s_8036', '__f2dace_A_icidx_d_1_s_8030', '__f2dace_A_incidx_d_1_s_8054', '__f2dace_A_iqidx_d_0_s_8041', '__f2dace_A_icblk_d_2_s_8034', '__f2dace_A_ieblk_d_0_s_8038', '__f2dace_A_ividx_d_0_s_8047', '__f2dace_A_ieblk_d_2_s_8040', '__f2dace_A_ividx_d_1_s_8048', '__f2dace_A_icblk_d_1_s_8033', '__f2dace_A_iqidx_d_1_s_8042', '__f2dace_A_ieblk_d_1_s_8039', '__f2dace_A_iqblk_d_2_s_8046', '__f2dace_A_ieidx_d_2_s_8037', '__f2dace_A_ivblk_d_1_s_8051']:
+            #         #print("I want to remove:", i)
+            #         if(i in sd.symbols):
+            #             sd.symbols.pop(i)
+            #             print("Removed from symbols ",i)
+            #             if sd.parent_nsdfg_node is not None:
+            #                 if i in sd.parent_nsdfg_node.symbol_mapping:
+            #                     print("Removed from symbol mapping ",i)
+            #                     sd.parent_nsdfg_node.symbol_mapping.pop(i)
             sdfg.apply_transformations(IntrinsicSDFGTransformation)    
 
             # for sd in sdfg.all_sdfgs_recursive():
@@ -3435,21 +3332,21 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
             
             sdfg.validate()
             sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_validated.sdfgz"),compress=True)
-            try:    
-                sdfg.simplify(verbose=True)
-                print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
-                sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
-            except Exception as e:
-                print("Simplification failed for ", sdfg.name)    
-                print(e)
-                continue
+            #try:    
+            sdfg.simplify(verbose=True)
+            print(f'Saving SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
+            sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz"),compress=True)
+            #except Exception as e:
+            #    print("Simplification failed for ", sdfg.name)    
+            #    print(e)
+            #    continue
             #sdfg.save(os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfg"))
-            try:  
-                print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
-                sdfg.compile()
-            except Exception as e:
-                print("Compilation failed for ", sdfg.name)
-                print(e)
-                continue
+            #try:  
+            print(f'Compiling SDFG {os.path.join(icon_sdfgs_dir, sdfg.name + "_simplified.sdfgz")}')
+            sdfg.compile()
+            #except Exception as e:
+            #    print("Compilation failed for ", sdfg.name)
+            #    print(e)
+            #    continue
 
     #return sdfg
