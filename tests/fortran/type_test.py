@@ -572,15 +572,17 @@ def test_fortran_frontend_type_arg2():
         SUBROUTINE type_arg2_test_function(d)
             REAL :: d(5,5)
             TYPE(simple_type2) :: p_prog
-            p_prog%pprog(1)%w(1,1) = 5.5
-            CALL deepest(p_prog%pprog(1)%w,d)
+            integer :: i
+            i=1
+            !p_prog%pprog(1)%w(1,1) = 5.5
+            CALL deepest(p_prog%pprog(i)%w,d)
             
         END SUBROUTINE type_arg2_test_function
 
         SUBROUTINE deepest(my_arr,d)
             REAL :: my_arr(:,:)
             REAL :: d(5,5)
-
+            my_arr(1,1) = 5.5
             d(1,1) = my_arr(1,1)
         END SUBROUTINE deepest
 
