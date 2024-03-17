@@ -2041,7 +2041,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         if off != 0:
                             offset_expr = '(' + cpp.sym2cpp(off) + ' * ' + cpp.sym2cpp(desc.strides[j]) + ')'
                             offsets_to_add.append(offset_expr)
-                    data_ptr_expr = access.data
+                    data_ptr_expr = ptr
                     if offsets_to_add:
                         data_ptr_expr += ' + ' + ' + '.join(offsets_to_add)
                     result.write(

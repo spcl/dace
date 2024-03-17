@@ -761,13 +761,18 @@ def auto_parallelize(sdfg: SDFG,
                             (mmap.schedule != dtypes.ScheduleType.CPU_Multicore or mmap.collapse < len(mmap.params))):
                             # This map has some sequentialism, set up pointer incrementation for accesses to CPU
                             # heap arrays.
-                            for edge in state.scope_subgraph(leaf_scope.entry):
+                            for edge in state.scope_subgraph(leaf_scope.entry).edges():
                                 mlt: Memlet = edge.data
                                 if mlt.data and state.is_leaf_memlet(edge):
-                                    desc = sd.desc(mlt.data)
-                                    if (isinstance(desc, dt.Arrays) and desc.total_size > 1 and
+                                    # TODO: This is a workaround for bugs related to move map into loop and refine
+                                    # nested access. Once these problems are addressed, this limitation can be lifted.
+                                    if isinstance(edge.dst, nodes.NestedSDFG) or isinstance(edge.src, nodes.NestedSDFG):
+                                        continue
+
+                                    desc = sd.data(mlt.data)
+                                    if (isinstance(desc, dt.Array) and desc.total_size != 1 and
                                         desc.storage == dtypes.StorageType.CPU_Heap):
-                                        mlt.schedule = dtypes.MemletSchedule.Pointer_Increment
+                                        mlt.schedule = dtypes.MemletScheduleType.Pointer_Increment
 
     # If there is any chance for doacross parallelism being used in the program, ensure that all doacross dependencies
     # are code-generated as late as they can possibly be. To ensure this, we force them to the lowest part of the scope
