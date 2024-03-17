@@ -270,6 +270,42 @@ def test_elementwise_map():
         with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
             sdfg.validate()
 
+def test_memlet_overlap_with_wcr():
+    sdfg = dace.SDFG('memlet_overlap_with_wcr')
+    state = sdfg.add_state()
+    sdfg.add_array("A", (20,), dace.int32)
+    sdfg.add_array("B", (1,), dace.int32)
+    A = state.add_read("A")
+    B = state.add_write("B")
+
+    state.add_mapped_tasklet(
+        name="first_reduction",
+        code="b = a",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="0", wcr="lambda old, new: old + new")},
+        map_ranges={"k": "0:20"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+
+    state.add_mapped_tasklet(
+        name="second_reduction",
+        code="b = a",
+        inputs={"a": dace.Memlet(data="A", subset="k")},
+        outputs={"b": dace.Memlet(data="B", subset="0", wcr="lambda old, new: old + new")},
+        map_ranges={"k": "0:20"},
+        external_edges=True,
+        input_nodes={"A": A},
+        output_nodes={"B": B}
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        with dace.config.set_temporary('experimental', 'check_race_conditions', value=True):
+            sdfg.validate()
+
+
 if __name__ == '__main__':
     test_memlet_range_not_overlap_ranges()
     test_memlet_range_write_write_overlap_ranges()
@@ -279,3 +315,4 @@ if __name__ == '__main__':
     test_constant_memlet_overlap()
     test_constant_memlet_almost_overlap()
     test_elementwise_map()
+    test_memlet_overlap_with_wcr()
