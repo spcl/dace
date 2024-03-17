@@ -739,10 +739,6 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
                     boundary_nodes.add(n)
                     break
 
-            if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
-                for view_node in get_all_view_nodes(state, n):
-                    boundary_nodes.add(view_node)
-
     # Duplicate boundary nodes
     new_nodes = {}
     for n in boundary_nodes:
@@ -750,13 +746,19 @@ def state_fission_after(sdfg: SDFG, state: SDFGState, node: nodes.Node, label: O
         state.add_node(node_)
         new_nodes[n] = node_
 
+        if isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View):
+            for view_node in get_all_view_nodes(state, n):
+                node_ = copy.deepcopy(view_node)
+                state.add_node(node_)
+                new_nodes[view_node] = node_
+
     for edge in state.edges():
-        if edge.src in boundary_nodes and edge.dst in boundary_nodes:
+        if edge.src in new_nodes and edge.dst in new_nodes:
             state.add_edge(new_nodes[edge.src], edge.src_conn, new_nodes[edge.dst], edge.dst_conn,
                            copy.deepcopy(edge.data))
-        elif edge.src in boundary_nodes:
+        elif edge.src in new_nodes:
             state.add_edge(new_nodes[edge.src], edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
-        elif edge.dst in boundary_nodes:
+        elif edge.dst in new_nodes:
             state.add_edge(edge.src, edge.src_conn, new_nodes[edge.dst], edge.dst_conn, copy.deepcopy(edge.data))
 
     # Move nodes
