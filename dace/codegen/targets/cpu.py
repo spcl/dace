@@ -40,7 +40,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(v, data.Structure):
                     _visit_structure(v, args, f'{prefix}->{k}')
                 elif isinstance(v, data.ContainerArray):
-                    _visit_structure(v.stype, args, f'{prefix}->{k}')
+
+                    cur_v = v.stype
+                    prefix = f'{prefix}->{k}'
+
+                    while isinstance(cur_v, data.ContainerArray):
+                        cur_v = cur_v.stype
+                        prefix = f'(*{prefix})'
+
+                    _visit_structure(cur_v, args, prefix)
+
                 if isinstance(v, data.Data):
                     args[f'{prefix}->{k}'] = v
 

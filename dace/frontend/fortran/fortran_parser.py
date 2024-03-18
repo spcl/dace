@@ -174,7 +174,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 #view=sdfg.arrays[viewname]
                                                 strides = [dat._prod(shapelist[:i]) for i in range(len(shapelist))]
                                                 if isinstance(object.members[ast_struct_type.name],dat.ContainerArray):
-                                                    tmpobject=dat.ContainerArray(object.members[ast_struct_type.name],shape_replace,strides=strides)
+                                                    tmpobject=dat.ContainerArray(object.members[ast_struct_type.name].stype,shape_replace,strides=strides)
                                                     
                                                 
                                                 elif isinstance(object.members[ast_struct_type.name],dat.Array):  
