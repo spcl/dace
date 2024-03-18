@@ -122,7 +122,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                         if offset.name.startswith('__f2dace_SOA'):
                                             newoffset=offset.name+"_"+name_+"_"+str(local_counter)
                                             sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                                            sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                                            if isinstance(var,dat.ContainerArray):
+                                                sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                                            else:
+                                                sdfg.append_init_code(f"{newoffset} = (* {name} )->{offset.name};\n")
                                             sdfg.add_symbol(newoffset, dtypes.int32)
                                             offsets_to_replace.append(newoffset)
                                             names_to_replace[offset.name]=newoffset
@@ -153,7 +156,10 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 names_to_replace[size.name]=newsize
                                                 #var_type.sizes[var_type.sizes.index(size)]=newsize
                                                 sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n") 
-                                                sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                                                if isinstance(var,dat.ContainerArray):
+                                                    sdfg.append_init_code(f"{newsize} = (*{name})->{size.name};\n")
+                                                else:
+                                                    sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                                                 sdfg.add_symbol(newsize, dtypes.int32)
                                                 if isinstance(object,dat.Structure):
                                                     shape2=dpcp(object.members[ast_struct_type.name].shape)
