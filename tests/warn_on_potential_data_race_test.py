@@ -2,7 +2,6 @@
 
 import warnings
 import dace
-import numpy as np
 import pytest
 
 
