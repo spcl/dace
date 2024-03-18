@@ -58,6 +58,7 @@ class NestedDict(dict):
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
+        
         while tokens:
             token = tokens.pop(0)
             result = result.members[token]
