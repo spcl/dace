@@ -122,10 +122,8 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                         if offset.name.startswith('__f2dace_SOA'):
                                             newoffset=offset.name+"_"+name_+"_"+str(local_counter)
                                             sdfg.append_global_code(f"{dtypes.int32.ctype} {newoffset};\n")
-                                            if isinstance(var,dat.ContainerArray):
-                                                sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
-                                            else:
-                                                sdfg.append_init_code(f"{newoffset} = (* {name} )->{offset.name};\n")
+                                            sdfg.append_init_code(f"{newoffset} = {name}->{offset.name};\n")
+                                            
                                             sdfg.add_symbol(newoffset, dtypes.int32)
                                             offsets_to_replace.append(newoffset)
                                             names_to_replace[offset.name]=newoffset
@@ -156,10 +154,7 @@ def add_deferred_shape_assigns_for_structs(structures: ast_transforms.Structures
                                                 names_to_replace[size.name]=newsize
                                                 #var_type.sizes[var_type.sizes.index(size)]=newsize
                                                 sdfg.append_global_code(f"{dtypes.int32.ctype} {newsize};\n") 
-                                                if isinstance(var,dat.ContainerArray):
-                                                    sdfg.append_init_code(f"{newsize} = (*{name})->{size.name};\n")
-                                                else:
-                                                    sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
+                                                sdfg.append_init_code(f"{newsize} = {name}->{size.name};\n")
                                                 sdfg.add_symbol(newsize, dtypes.int32)
                                                 if isinstance(object,dat.Structure):
                                                     shape2=dpcp(object.members[ast_struct_type.name].shape)
@@ -3181,6 +3176,11 @@ def create_sdfg_from_fortran_file_with_options(source_string: str, source_list, 
     program = ast_transforms.optionalArgsExpander(program)
     program = ast_transforms.ArgumentExtractor(program).visit(program)
     program = ast_transforms.ElementalFunctionExpander(functions_and_subroutines_builder.names).visit(program)
+    print("Before intrinsics")
+    for transformation in partial_ast.fortran_intrinsics().transformations():
+        transformation.initialize(program)
+        program = transformation.visit(program)
+    print("After intrinsics")
     program = ast_transforms.ForDeclarer().visit(program)
     program = ast_transforms.PointerRemoval().visit(program)
     program = ast_transforms.IndexExtractor(program, normalize_offsets).visit(program)
