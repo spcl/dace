@@ -265,7 +265,8 @@ class FindInputs(NodeVisitor):
                 if isinstance(node.lval.parent_ref, ast_internal_classes.Array_Subscript_Node):
                     #self.nodes.append(node.lval.parent_ref.name)
                     for i in node.lval.parent_ref.indices:
-                        self.visit(i)        
+                        self.visit(i)  
+                self.visit(node.lval.part_ref)              
 
         else:
             if isinstance(node.lval, ast_internal_classes.Data_Ref_Node):
