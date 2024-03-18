@@ -1437,6 +1437,10 @@ class OptionalArgsTransformer(NodeTransformer):
         print("Func len args: ",len(func_decl.args))
         print("Func: ",func_decl.name.name, "Mandatory: ",mandatory_args, "Optional: ",optional_args, "Present: ",present_args, "Missing: ",missing_args_count, "Present Optional: ",present_optional_args)
         print("List: ",node.name.name ,len(new_args),mandatory_args)
+
+        if missing_args_count == 0:
+            return node
+
         for i in range(mandatory_args):
             new_args[i] = node.args[i]
         for i in range(mandatory_args,len(node.args)):
