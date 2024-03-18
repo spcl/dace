@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, List, Set
 import warnings
 from dace import dtypes, subsets
 from dace import symbolic
-from dace.sdfg.nodes import AccessNode
+import networkx as nx
 
 if TYPE_CHECKING:
     import dace
@@ -798,21 +798,24 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         read_accesses = defaultdict(list)
         for node in state.data_nodes():
             node_labels.append(node.label)
-            write_accesses[node.label].extend([e.data.dst_subset for e in state.in_edges(node)])
-            read_accesses[node.label].extend([e.data.src_subset for e in state.out_edges(node)])
+            write_accesses[node.label].extend([{"subset": e.data.dst_subset, "node": node, "wcr": e.data.wcr} for e in state.in_edges(node)])
+            read_accesses[node.label].extend([{"subset": e.data.src_subset, "node": node} for e in state.out_edges(node)])
 
         for node_label in node_labels:
-            write_memlet_subsets = write_accesses[node_label]
-            read_memlet_subsets = read_accesses[node_label]
+            writes = write_accesses[node_label]
+            reads = read_accesses[node_label]
             # check write-write data races
-            for i in range(len(write_memlet_subsets)):
-                for j in range(i+1, len(write_memlet_subsets)):
-                    if subsets.intersects(write_memlet_subsets[i], write_memlet_subsets[j]) is True:
+            for i in range(len(writes)):
+                for j in range(i+1, len(writes)):
+                    if (writes[i]["node"] == writes[j]["node"] or not nx.has_path(state.nx, writes[i]["node"], writes[j]["node"])) and \
+                        writes[i]["wcr"] is None and writes[j]["wcr"] is None and \
+                        subsets.intersects(writes[i]["subset"], writes[j]["subset"]) is True:
                         warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
             # check read-write data races
-            for write in write_memlet_subsets:
-                for read in read_memlet_subsets:
-                    if subsets.intersects(write, read) is True:
+            for write in writes:
+                for read in reads:
+                    if not nx.has_path(state.nx, read["node"], write["node"]) and \
+                        subsets.intersects(write["subset"], read["subset"]) is True:
                         warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
     ########################################
