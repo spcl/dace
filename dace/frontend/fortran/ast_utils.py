@@ -368,6 +368,7 @@ class TaskletWriter:
         self.input = input
         self.input_changes = input_changes
         self.rename_dict = rename_dict
+        self.depth=0
 
         self.ast_elements = {
             ast_internal_classes.BinOp_Node: self.binop2string,
@@ -389,6 +390,7 @@ class TaskletWriter:
 
     def pardecl2string(self, node: ast_internal_classes.ParDecl_Node):
         #At this point in the process, the should not be any ParDecl nodes left in the AST - they should have been replaced by the appropriate ranges
+        #raise NameError("Error in code generation")
         return f"ERROR{node.type}"
 
     def actualarg2string(self, node: ast_internal_classes.Actual_Arg_Spec_Node):
@@ -405,19 +407,26 @@ class TaskletWriter:
         :note If it not, an error is raised
 
         """
+        self.depth+=1
         if node.__class__ in self.ast_elements:
             text = self.ast_elements[node.__class__](node)
             if text is None:
                 raise NameError("Error in code generation")
-
+            if "ERRORALL" in text and self.depth==1:
+                print(text)
+                raise NameError("Error in code generation") 
+            self.depth-=1
             return text
         elif isinstance(node, int):
+            self.depth-=1
             return str(node)
         elif isinstance(node, str):
+            self.depth-=1
             return node
         elif isinstance(node, sym.symbol):
             string_name=str(node)
             string_to_return = self.write_code(ast_internal_classes.Name_Node(name=string_name))
+            self.depth-=1
             return string_to_return
         else:
             raise NameError("Error in code generation" + node.__class__.__name__)
@@ -597,6 +606,7 @@ class ProcessedWriter(TaskletWriter):
     """
     def __init__(self, sdfg: SDFG, mapping, placeholders, placeholders_offsets,rename_dict):
         self.sdfg = sdfg
+        self.depth=0
         self.mapping = mapping
         self.placeholders = placeholders
         self.placeholders_offsets = placeholders_offsets
