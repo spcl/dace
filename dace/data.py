@@ -1240,6 +1240,18 @@ class Tensor(Structure):
             "CSR_Matrix"
         )
 
+    def is_CSR(self) -> bool:
+        if len(self.indices) != 2:
+            return False
+        if not isinstance(self.indices[0], TensorIndexDense):
+            return False
+        if not isinstance(self.indices[1], TensorIndexCompressed):
+            return False
+        if self.index_ordering != [0, 1]:
+            return False
+
+        return True
+
     @staticmethod
     def CSC(shape, nnz, dtype=dtypes.float32) -> "Tensor":
         return Tensor(
@@ -1249,6 +1261,18 @@ class Tensor(Structure):
             nnz,
             "CSC_Matrix"
         )
+
+    def is_CSC(self) -> bool:
+        if len(self.indices) != 2:
+            return False
+        if not isinstance(self.indices[0], TensorIndexDense):
+            return False
+        if not isinstance(self.indices[1], TensorIndexCompressed):
+            return False
+        if self.index_ordering != [1, 0]:
+            return False
+        
+        return True
 
     @staticmethod
     def Dense(shape, nnz, dtype=dtypes.float32) -> "Tensor":

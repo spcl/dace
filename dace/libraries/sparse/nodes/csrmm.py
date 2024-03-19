@@ -308,26 +308,26 @@ class ExpandCSRMMMKL(ExpandTransformation):
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
 
-        # code += """
-        #     sparse_matrix_t __csrA;
-        #     {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
-        #     struct matrix_descr __descrA;
-        #     __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
-        #     __descrA.mode = SPARSE_FILL_MODE_UPPER;
-        #     __descrA.diag = SPARSE_DIAG_NON_UNIT;
-
-        #     {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
-        # """.format_map(opt)
         code += """
             sparse_matrix_t __csrA;
-            {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, N, N, _a_rows, _a_rows + 1, _a_cols, _a_vals);
+            {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
             struct matrix_descr __descrA;
             __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
             __descrA.mode = SPARSE_FILL_MODE_UPPER;
             __descrA.diag = SPARSE_DIAG_NON_UNIT;
 
-            {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, M, N, {beta}, _c, N);
+            {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
         """.format_map(opt)
+        # code += """
+        #     sparse_matrix_t __csrA;
+        #     {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, N, N, _a_rows, _a_rows + 1, _a_cols, _a_vals);
+        #     struct matrix_descr __descrA;
+        #     __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
+        #     __descrA.mode = SPARSE_FILL_MODE_UPPER;
+        #     __descrA.diag = SPARSE_DIAG_NON_UNIT;
+
+        #     {func}_mm({opA}, {alpha}, __csrA, __descrA, SPARSE_LAYOUT_COLUMN_MAJOR, _b, M, N, {beta}, _c, N);
+        # """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
@@ -634,27 +634,27 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
         #                      "dimensions")
 
 
-@oprepo.replaces("CSRMM")
-def something(
-    pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name, A_rows, A_cols, A_vals, B, C, transB=False, alpha=1, beta=0
-):
+# @oprepo.replaces("CSRMM")
+# def something(
+#     pv: "ProgramVisitor", sdfg: SDFG, state: SDFGState, name, A_rows, A_cols, A_vals, B, C, transB=False, alpha=1, beta=0
+# ):
     
-    csrmm_node = CSRMM(name=name.value, transB=transB, alpha=alpha, beta=beta)
-    state.add_node(csrmm_node)
+#     csrmm_node = CSRMM(name=name.value, transB=transB, alpha=alpha, beta=beta)
+#     state.add_node(csrmm_node)
 
-    A_rows = state.add_access(A_rows)
-    A_cols = state.add_access(A_cols)
-    A_vals = state.add_access(A_vals)
-    B = state.add_access(B)
-    C = state.add_access(C)
+#     A_rows = state.add_access(A_rows)
+#     A_cols = state.add_access(A_cols)
+#     A_vals = state.add_access(A_vals)
+#     B = state.add_access(B)
+#     C = state.add_access(C)
 
-    state.add_edge(A_rows, None, csrmm_node, "_a_rows", mm.Memlet(data=A_rows.data))
-    state.add_edge(A_cols, None, csrmm_node, "_a_cols", mm.Memlet(data=A_cols.data))
-    state.add_edge(A_vals, None, csrmm_node, "_a_vals", mm.Memlet(data=A_vals.data))
-    state.add_edge(B, None, csrmm_node, "_b", mm.Memlet(data=B.data))
-    if beta != 0:
-        state.add_edge(C, None, csrmm_node, "_cin", mm.Memlet(data=C.data))
+#     state.add_edge(A_rows, None, csrmm_node, "_a_rows", mm.Memlet(data=A_rows.data))
+#     state.add_edge(A_cols, None, csrmm_node, "_a_cols", mm.Memlet(data=A_cols.data))
+#     state.add_edge(A_vals, None, csrmm_node, "_a_vals", mm.Memlet(data=A_vals.data))
+#     state.add_edge(B, None, csrmm_node, "_b", mm.Memlet(data=B.data))
+#     if beta != 0:
+#         state.add_edge(C, None, csrmm_node, "_cin", mm.Memlet(data=C.data))
 
-    state.add_edge(csrmm_node, "_c", C, None, mm.Memlet(data=C.data))
+#     state.add_edge(csrmm_node, "_c", C, None, mm.Memlet(data=C.data))
     
-    return []
+#     return []
