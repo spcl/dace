@@ -1,6 +1,7 @@
 from dace import data, library, properties
 from dace.libraries.blas import blas_helpers
 from dace.libraries.sparse import environments
+from dace.libraries.sparse.nodes import TensorIndexNotation
 from dace.sdfg import nodes, SDFGState, SDFG
 
 
@@ -154,3 +155,37 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
         )
 
         return tasklet
+
+
+@library.register_expansion(SPMMD, 'taco')
+class TacoSPMMDExpansion(library.ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(
+        node: SPMMD, parent_state: SDFGState, parent_sdfg: SDFG
+    ) -> nodes.LibraryNode:
+        
+        if node.beta != 0.0:
+            raise NotImplementedError('TACO SPMMD does not support beta != 0.0')
+        
+        a_access = 'A(i, k)' if not node.transA else 'A(k, i)'
+        b_access = 'B(k, j)' if not node.transB else 'B(j, k)'
+        
+        node = TensorIndexNotation(
+            'taco_spmmd',
+            'C(i, j) = {node.alpha} * {a_access} * {b_access}',
+            [],  # TODO improve loop ordering
+        )
+
+        node.add_in_connector('tin_A')
+        node.add_in_connector('tin_B')
+        node.add_out_connector('tin_C')
+
+        # rewrite memlet destinations because TIN node expects them to be of the form `tin_{tensor_name}`
+        for e in parent_state.in_edges(node):
+            e.dst_conn = f'tin{e.dst_conn}'
+        for e in parent_state.out_edges(node):
+            e.src_conn = f'tin{e.src_conn}'
+
+        return node
