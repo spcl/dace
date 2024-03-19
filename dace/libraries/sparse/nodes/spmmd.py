@@ -128,7 +128,7 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
 
         code += f"""
             sparse_matrix_t __A;
-            {func_pref}_create_{a_format}(&__A, SPARSE_INDEX_BASE_ZERO, {a_rows}, {a_cols}, _A.idx1_pos, _A.idx1_pos + 1, _A.idx1_crd, _A.values);
+            {func_pref}_create_{a_format}(&__A, SPARSE_INDEX_BASE_ZERO, {a_rows}, {a_cols}, _A->idx1_pos, _A->idx1_pos + 1, _A->idx1_crd, _A->values);
             struct matrix_descr __A_descr;
             __A_descr.type = SPARSE_MATRIX_TYPE_GENERAL;
             sparse_operation_t __A_op = {a_op};
@@ -141,7 +141,7 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
 
         code += f"""
             sparse_matrix_t __B;
-            {func_pref}_create_{b_format}(&__B, SPARSE_INDEX_BASE_ZERO, {b_rows}, {b_cols}, _B.idx1_pos, _B.idx1_pos + 1, _B.idx1_crd, _B.values);
+            {func_pref}_create_{b_format}(&__B, SPARSE_INDEX_BASE_ZERO, {b_rows}, {b_cols}, _B->idx1_pos, _B->idx1_pos + 1, _B->idx1_crd, _B->values);
             struct matrix_descr __B_descr;
             __B_descr.type = SPARSE_MATRIX_TYPE_GENERAL;
             sparse_operation_t __B_op = {b_op};
