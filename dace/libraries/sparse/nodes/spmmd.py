@@ -1,4 +1,5 @@
-from dace import data, library, properties
+from dace import data, library, properties, Memlet
+from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers
 from dace.libraries.sparse import environments
 from dace.libraries.sparse.nodes import TensorIndexNotation
@@ -42,6 +43,14 @@ class SPMMD(nodes.LibraryNode):
     def __init__(
         self, name, location=None, transA=False, transB=False, alpha=1.0, beta=0.0
     ):
+        """
+        :param name: Name of the library node.
+        :param location: ??
+        :param transA: Whether to transpose ``A`` before multiplying
+        :param transB: Whether to transpose ``B`` before multiplying
+        :param alpha: Scalar multiplied with ``(A @ B)`` before adding ``C``
+        :param beta: Scalar multiplied with ``C`` before adding
+        """
         super().__init__(
             name,
             location=location,
@@ -189,3 +198,34 @@ class TacoSPMMDExpansion(library.ExpandTransformation):
             e.src_conn = f'tin{e.src_conn}'
 
         return node
+
+
+@oprepo.replaces('dace.libraries.blas.SPMMD')
+def spdmm_frontend(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    name,
+    transA: bool = False,
+    transB: bool = False,
+    alpha: float = 1.0,
+    beta: float = 0.0,
+    **kwargs,
+):
+    name = name.value
+
+    data_nodes = {name: state.add_access(data) for name, data in kwargs.items()}
+
+    spmmd_node = SPMMD(name, transA=transA, transB=transB, alpha=alpha, beta=beta)
+    state.add_node(spmmd_node)
+
+    # input memlets
+    state.add_edge(data_nodes['A'], None, spmmd_node, '_A', Memlet(data=kwargs['A']))
+    state.add_edge(data_nodes['B'], None, spmmd_node, '_B', Memlet(data=kwargs['B']))
+    if beta != 0.0:  # add C input memlet if neccessary
+        state.add_edge(data_nodes['C'], None, spmmd_node, '_C', Memlet(data=kwargs['C']))
+
+    # output memlet
+    state.add_edge(spmmd_node, '_C', data_nodes['C'], None, Memlet(data=kwargs['C']))
+
+    return []
