@@ -34,9 +34,9 @@ class TensorIndexNotation(nodes.LibraryNode):
     )
 
     def __init__(self, name, expr, extra_taco_args: List[str] = [], *args, schedule=None, **kwargs):
+        super().__init__(name, *args, schedule=schedule, **kwargs)
         self.tensor_index_notation = expr
         self.extra_taco_args = extra_taco_args
-        super().__init__(name, *args, schedule=schedule, **kwargs)
 
 
 @library.register_expansion(TensorIndexNotation, "taco")

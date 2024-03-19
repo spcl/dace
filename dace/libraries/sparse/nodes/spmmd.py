@@ -1,8 +1,7 @@
-from dace import data, library, properties, Memlet
+from dace import data, dtypes, library, properties, Memlet
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import blas_helpers
 from dace.libraries.sparse import environments
-from dace.libraries.sparse.nodes import TensorIndexNotation
 from dace.sdfg import nodes, SDFGState, SDFG
 
 
@@ -122,7 +121,7 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
 
         code = ''
 
-        a_rows = A.tenor_shape[0]
+        a_rows = A.tensor_shape[0]
         a_cols = A.tensor_shape[1]
         a_op = 'SPARSE_OPERATION_TRANSPOSE' if node.transA else 'SPARSE_OPERATION_NON_TRANSPOSE'
         a_format = 'csr' if A.is_CSR() else 'csc'
@@ -155,12 +154,14 @@ class MKLSPMMDExpansion(library.ExpandTransformation):
             {func_pref}_sp2md(__A_op, __A_descr, __A, __B_op, __B_descr, __B, {node.alpha}, {node.beta}, _C, {layout}, {C.shape[0]});
         """
 
+        # TODO do we need to destroy the matrices?
+
         tasklet = nodes.Tasklet(
             node.name,
             node.in_connectors,
             node.out_connectors,
             code,
-            language=nodes.Language.CPP,
+            language=dtypes.Language.CPP,
         )
 
         return tasklet
@@ -174,33 +175,34 @@ class TacoSPMMDExpansion(library.ExpandTransformation):
     def expansion(
         node: SPMMD, parent_state: SDFGState, parent_sdfg: SDFG
     ) -> nodes.LibraryNode:
-        
+        from dace.libraries.sparse.nodes import TensorIndexNotation
+
         if node.beta != 0.0:
             raise NotImplementedError('TACO SPMMD does not support beta != 0.0')
         
         a_access = 'A(i, k)' if not node.transA else 'A(k, i)'
         b_access = 'B(k, j)' if not node.transB else 'B(j, k)'
         
-        node = TensorIndexNotation(
+        tin_node = TensorIndexNotation(
             'taco_spmmd',
-            'C(i, j) = {node.alpha} * {a_access} * {b_access}',
+            f'C(i, j) = {node.alpha} * {a_access} * {b_access}',
             [],  # TODO improve loop ordering
         )
 
-        node.add_in_connector('tin_A')
-        node.add_in_connector('tin_B')
-        node.add_out_connector('tin_C')
+        tin_node.add_in_connector('tin_A')
+        tin_node.add_in_connector('tin_B')
+        tin_node.add_out_connector('tin_C')
 
         # rewrite memlet destinations because TIN node expects them to be of the form `tin_{tensor_name}`
         for e in parent_state.in_edges(node):
             e.dst_conn = f'tin{e.dst_conn}'
         for e in parent_state.out_edges(node):
             e.src_conn = f'tin{e.src_conn}'
+        
+        return tin_node
 
-        return node
 
-
-@oprepo.replaces('dace.libraries.blas.SPMMD')
+@oprepo.replaces('dace.libraries.sparse.SPMMD')
 def spdmm_frontend(
     pv: 'ProgramVisitor',
     sdfg: SDFG,
