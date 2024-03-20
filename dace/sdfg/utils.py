@@ -1355,7 +1355,7 @@ def load_precompiled_sdfg(folder: str):
                               csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
 
 
-def distributed_compile(sdfg: SDFG, comm) -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm, validate: bool = True) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 
@@ -1371,7 +1371,7 @@ def distributed_compile(sdfg: SDFG, comm) -> csdfg.CompiledSDFG:
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile()
+        func = sdfg.compile(validate=validate)
         folder = sdfg.build_folder
 
     # Broadcasts build folder.

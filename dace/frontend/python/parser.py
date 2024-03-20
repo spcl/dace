@@ -454,7 +454,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 # altering transformations such as Vectorization)
                 binaryobj = sdfg.compile(validate=self.validate)
             else:
-                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD)
+                binaryobj = distributed_compile(sdfg, mpi4py.MPI.COMM_WORLD, validate=self.validate)
 
             # Recreate key and add to cache
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
