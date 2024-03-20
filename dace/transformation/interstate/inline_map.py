@@ -157,9 +157,26 @@ class InlineMapByAssignment(transformation.SingleStateTransformation):
             if not oedge.data.is_unconditional():
                 return False
             
+            candidates = set()
             for symbol, value in oedge.data.assignments.items():
                 sympy_value = symbolic.pystr_to_symbolic(value)
                 if ({str(sym) for sym in sympy_value.free_symbols} & itervars):
+                    return False
+                
+                candidates.add(symbol)
+
+        # Candidates must be nsdfg-local
+        for sym in candidates:
+            if sym in self.nested_sdfg.symbol_mapping:
+                return False
+
+        # Check that symbol is constant
+        for edge in nsdfg.edges():
+            if edge.src == nsdfg.start_state:
+                continue
+
+            for sym in candidates:
+                if sym in edge.data.assignments:
                     return False
 
         return True
