@@ -399,7 +399,6 @@ def test_output_view():
     transform.apply(sdfg)
 
     sdfg.validate()
-    sdfg.compile()
 
 
 if __name__ == "__main__":

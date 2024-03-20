@@ -213,13 +213,19 @@ class GPUPersistentKernel(SubgraphTransformation):
         # normal data will be added as kernel argument
         kernel_args = []
         for data in kernel_data:
-            if data not in other_data and (isinstance(sdfg.arrays[data], dace.data.Stream) or
-                                           (isinstance(sdfg.arrays[data], dace.data.Array) and sdfg.arrays[data].storage
+            desc = sdfg.arrays[data]
+            if isinstance(desc, dace.data.View):
+                kernel_sdfg.add_datadesc(data, desc)
+                # Potentially replicate the view
+                if data not in other_data:
+                    del sdfg.arrays[data]
+            elif data not in other_data and (isinstance(desc, dace.data.Stream) or
+                                           (isinstance(desc, dace.data.Array) and desc.storage
                                             in (StorageType.Register, StorageType.GPU_Shared))):
-                kernel_sdfg.add_datadesc(data, sdfg.arrays[data])
+                kernel_sdfg.add_datadesc(data, desc)
                 del sdfg.arrays[data]
             else:
-                copy_desc = copy.deepcopy(sdfg.arrays[data])
+                copy_desc = copy.deepcopy(desc)
                 copy_desc.transient = False
                 copy_desc.storage = StorageType.Default
                 kernel_sdfg.add_datadesc(data, copy_desc)
