@@ -480,6 +480,10 @@ class MapFusion(transformation.SingleStateTransformation):
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
+                if isinstance(edge.src, nodes.AccessNode):
+                    edge.data.data = edge.src.data
+                elif isinstance(edge.dst, nodes.AccessNode):
+                    edge.data.data = edge.dst.data
 
             # If destination of edge leads to multiple destinations, redirect all through an access node.
             if other_edges:
