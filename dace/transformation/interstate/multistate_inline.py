@@ -123,6 +123,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         #######################################################
         # Add nested SDFG states into top-level SDFG
 
+        # Make symbol mapping explicit
+        mapping_state = nsdfg.add_state_before(nsdfg.start_state, is_start_state=True)
+        mapping_edge = nsdfg.out_edges(mapping_state)[0]
+        for inner_sym, expr in nsdfg_node.symbol_mapping.items():
+            if str(inner_sym) == str(expr):
+                continue
+            mapping_edge.data.assignments[inner_sym] = str(expr)
+
         # Make unique names for states
         statenames = set(s.label for s in sdfg.nodes())
         for nstate in nsdfg.nodes():
@@ -178,23 +186,20 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
     def _rename_nested_symbols(self, nsdfg_node: nodes.NestedSDFG, sdfg: SDFG) -> None:
         nsdfg = nsdfg_node.sdfg
-
-        # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
-        # symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
         
         # Collect symbols that are overwritten
         inner_assignments = set()
+
+        for inner_sym, expr in nsdfg_node.symbol_mapping.items():
+            if str(inner_sym) == str(expr):
+                continue
+            inner_assignments.add(inner_sym)
+        
         for e in nsdfg.edges():
             inner_assignments |= set(e.data.assignments.keys())
 
-        # Replace only those symbols
-        outer_assignments = set()
-        for e in sdfg.edges():
-            outer_assignments |= set(e.data.assignments.keys())
-        
-        outer_symbols = {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.arrays.keys()) | outer_assignments
-
-        assignments_to_replace = inner_assignments & outer_symbols
+        outer_symbols = {str(sym) for sym in sdfg.symbols.keys()} | set(sdfg.arrays.keys())
+        assignments_to_replace = inner_assignments
         
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
@@ -204,7 +209,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sym_replacements[assign] = newname
         
         nsdfg.replace_dict(sym_replacements)
-
         for sym, new_sym in sym_replacements.items():
             if sym in nsdfg_node.symbol_mapping:
                 nsdfg_node.symbol_mapping[new_sym] = nsdfg_node.symbol_mapping[sym]
