@@ -78,16 +78,12 @@ class GPUPersistentKernel(SubgraphTransformation):
                 return False
 
         # for now exactly one inner and one outer entry state
-        entry_states_in, entry_states_out = \
-            GPUPersistentKernel.get_entry_states(sdfg, subgraph)
+        entry_states_in, entry_states_out = GPUPersistentKernel.get_entry_states(sdfg, subgraph)
         if len(entry_states_in) != 1 or len(entry_states_out) > 1:
             return False
 
         entry_state_in = entry_states_in.pop()
-        if len(entry_states_out) == 1 \
-                and len(sdfg.edges_between(entry_states_out.pop(),
-                                           entry_state_in)
-                        ) > 1:
+        if len(entry_states_out) == 1 and len(sdfg.edges_between(entry_states_out.pop(), entry_state_in)) > 1:
             return False
 
         # for now only one outside state allowed, multiple inner exit states
@@ -118,10 +114,8 @@ class GPUPersistentKernel(SubgraphTransformation):
         _, exit_states_out = self.get_exit_states(sdfg, subgraph)
 
         entry_state_in = entry_states_in.pop()
-        entry_state_out = entry_states_out.pop() \
-            if len(entry_states_out) > 0 else None
-        exit_state_out = exit_states_out.pop() \
-            if len(exit_states_out) > 0 else None
+        entry_state_out = entry_states_out.pop() if len(entry_states_out) > 0 else None
+        exit_state_out = exit_states_out.pop() if len(exit_states_out) > 0 else None
 
         launch_state = None
         entry_guard_state = None
@@ -194,12 +188,10 @@ class GPUPersistentKernel(SubgraphTransformation):
         sdfg.remove_nodes_from(subgraph.nodes())
         other_states = sdfg.nodes()
 
-        if entry_state_out is not None \
-                and len(sdfg.edges_between(entry_state_out, launch_state)) == 0:
+        if entry_state_out is not None and len(sdfg.edges_between(entry_state_out, launch_state)) == 0:
             sdfg.add_edge(entry_state_out, launch_state, InterstateEdge())
 
-        if exit_state_out is not None \
-                and len(sdfg.edges_between(launch_state, exit_state_out)) == 0:
+        if exit_state_out is not None and len(sdfg.edges_between(launch_state, exit_state_out)) == 0:
             sdfg.add_edge(launch_state, exit_state_out, InterstateEdge())
 
         # Handle data for kernel
@@ -207,6 +199,15 @@ class GPUPersistentKernel(SubgraphTransformation):
                           if isinstance(node, nodes.AccessNode))
         other_data = set(node.data for state in other_states for node in state.nodes()
                          if isinstance(node, nodes.AccessNode))
+
+        # Add code->code scalar memlets
+        for state in kernel_sdfg.nodes():
+            for edge in state.edges():
+                if (isinstance(edge.src, dace.nodes.CodeNode) and isinstance(edge.dst, dace.nodes.CodeNode)
+                        and not edge.data.is_empty()):
+                    data = edge.data.data
+                    kernel_sdfg.add_datadesc(data, sdfg.arrays[data])
+                    del sdfg.arrays[data]
 
         # move Streams and Register data into the nested SDFG
         # normal data will be added as kernel argument
@@ -303,9 +304,8 @@ class GPUPersistentKernel(SubgraphTransformation):
         ]
 
         for node in state.data_nodes():
-            if type(node.desc(sdfg)) in [dace.data.Array,
-                                        dace.data.Stream] \
-                    and node.desc(sdfg).storage not in gpu_accessible:
+            if type(node.desc(sdfg)) in [dace.data.Array, dace.data.Stream
+                                         ] and node.desc(sdfg).storage not in gpu_accessible:
                 return False
 
         gpu_fused_schedules = [
