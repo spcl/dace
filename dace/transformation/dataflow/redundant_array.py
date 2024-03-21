@@ -1475,15 +1475,15 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # Ensure view
         if not isinstance(desc, data.View) or isinstance(desc, data.StructureView):
             return False
+        if isinstance(desc, (data.ContainerArray, data.ContainerView)):
+            return False
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
         if view_edge is None:
             return False
-
-        if isinstance(desc, data.StructureView):
-            if "." in view_edge.data.data:
-                return False
+        if "." in view_edge.data.data:
+            return False
 
         # Gather metadata
         viewed: nodes.AccessNode
@@ -1499,6 +1499,9 @@ class RemoveSliceView(pm.SingleStateTransformation):
             non_view_edges = state.in_edges(self.view)
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
+
+        if isinstance(sdfg.arrays[viewed.data], (data.ContainerArray, data.ContainerView)):
+            return False
 
         if subset is None:
             # `subset = None` means the entire viewed data container is used
