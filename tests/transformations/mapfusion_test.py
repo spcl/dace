@@ -194,10 +194,11 @@ def test_fusion_with_transient_scalar():
     sdfg.apply_transformations(MapFusion)
 
     A = np.random.rand(N, K)
-    B = np.random.rand(N)
+    B = np.repeat(np.nan, N)
     sdfg(A=A, B=B)
 
     assert np.allclose(B, (A[:, K-1] + 1))
+
 
 def test_fusion_with_inverted_indices():
 
