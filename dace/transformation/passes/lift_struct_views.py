@@ -149,16 +149,32 @@ class RecodeAttributeNodes(ast.NodeTransformer):
         if not node.value:
             return self.generic_visit(node)
 
-        if isinstance(self.data, dt.Structure):
-            if (not isinstance(node.value, ast.Name) or
-                node.value.id != self.connector):
+        if isinstance(self.data, (dt.Structure, dt.StructureView, dt.StructureReference)):
+            if not isinstance(node.value, ast.Name) or node.value.id != self.connector:
                 return self.generic_visit(node)
             return self._handle_simple_name_access(node, node.value)
-        elif isinstance(self.data, dt.ContainerView):
-            if (not isinstance(node.value, ast.Subscript) or
-                node.value.value.id != self.connector):
-                return self.generic_visit(node)
-            return self._handle_sliced_access(node, node.value)
+        elif isinstance(self.data, (dt.ContainerView, dt.ContainerArray, dt.ContainerArrayReference)):
+            if isinstance(node.value, ast.Name) and node.value.id == self.connector:
+                # We are directly accessing a slice of a container array / view. That needs an inserted view to the
+                # container first.
+                slice_view_name = 'v_' + self.data_node.data + '_slice'
+                try:
+                    slice_view = self.state.sdfg.arrays[slice_view_name]
+                except KeyError:
+                    slice_view = dt.View.view(self.data.stype)
+                    slice_view_name = self.state.sdfg.add_datadesc(slice_view_name, slice_view, find_new_name=True)
+                slice_view_node = self.state.add_access(slice_view_name)
+                if self.direction == 'in':
+                    self.state.add_edge(self.data_node, None, slice_view_node, 'views', self.memlet)
+                    self.state.add_edge(slice_view_node, None, self.tasklet, self.connector,
+                                        Memlet.from_array(slice_view_name, slice_view))
+                else:
+                    self.state.add_edge(slice_view_node, None, self.data_node, 'views', self.memlet)
+                    self.state.add_edge(self.tasklet, self.connector, slice_view_node, None,
+                                        Memlet.from_array(slice_view_name, slice_view))
+            elif isinstance(node.value, ast.Subscript) and node.value.value.id == self.connector:
+                return self._handle_sliced_access(node, node.value)
+            return self.generic_visit(node)
         else:
             raise NotImplementedError()
 
@@ -197,9 +213,11 @@ class LiftStructViews(ppl.Pass):
         # Clean up by removing the lifted connector and connected edges.
         state.remove_edge(edge)
         if direction == 'in':
-            tasklet.remove_in_connector(connector)
+            if len(list(state.in_edges_by_connector(tasklet, connector))) == 0:
+                tasklet.remove_in_connector(connector)
         else:
-            tasklet.remove_out_connector(connector)
+            if len(list(state.out_edges_by_connector(tasklet, connector))) == 0:
+                tasklet.remove_out_connector(connector)
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """
@@ -212,8 +230,8 @@ class LiftStructViews(ppl.Pass):
             for state in nsdfg.states():
                 for node in state.data_nodes():
                     container = nsdfg.data(node.data)
-                    if (isinstance(container, dt.Structure) or
-                        (isinstance(container, dt.ContainerView) and
+                    if (isinstance(container, (dt.Structure, dt.StructureView, dt.StructureReference)) or
+                        (isinstance(container, (dt.ContainerView, dt.ContainerArray, dt.ContainerArrayReference)) and
                         isinstance(container.stype, dt.Structure))):
                         for oedge in state.out_edges(node):
                             if isinstance(oedge.dst, nd.Tasklet):
