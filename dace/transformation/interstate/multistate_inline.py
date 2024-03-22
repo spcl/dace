@@ -426,16 +426,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                     
                     # Split node
                     if in_edges and out_edges:
-                        raise NotImplementedError
+                        out_node = node
+                        in_node = nstate.add_access(node.data)
+                        for iedge in in_edges:
+                            nstate.add_ege(iedge.src, iedge.src_conn, in_node, iedge.dst_conn, dc(iedge.data))
+                            nstate.remove_edge(iedge)
+                    else:
+                        in_node = node
+                        out_node = node
 
-                    if out_edges and not in_edges:
+                    if out_edges:
                         # Add directly viewed node
                         outer_node = input_memlets[node.data].src
                         viewed_node = nstate.add_access(outer_node.data)
                         nstate.add_edge(
                             viewed_node,
                             None,
-                            node,
+                            out_node,
                             "views",
                             dc(input_memlets[node.data].data)
                         )
@@ -457,12 +464,14 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             viewing_node = viewed_node
                             outer_node_ = outer_node
 
-                    elif in_edges and not out_edges:
+                        last_out_node = viewing_node
+                    
+                    if in_edges:
                         # Add directly viewed node
                         outer_node = output_memlets[node.data].dst
                         viewed_node = nstate.add_access(outer_node.data)
                         nstate.add_edge(
-                            node,
+                            in_node,
                             "views",
                             viewed_node,
                             None,
@@ -485,6 +494,16 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
                             )
                             viewing_node = viewed_node
                             outer_node_ = outer_node
+                        
+                        last_in_node = viewed_node
+
+                    # Connect splitted nodes
+                    if in_edges and out_edges:
+                        for oedge in nstate.out_edges(last_out_node):
+                            nstate.add_edge(last_in_node, oedge.src_conn, oedge.dst, oedge.dst_conn, dc(oedge.data))
+                            nstate.remove_edge(oedge)
+
+                        nstate.remove_node(last_out_node)
 
         #######################################################
         # Control-flow: Replace old arguments by the true data
